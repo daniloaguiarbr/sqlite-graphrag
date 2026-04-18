@@ -91,3 +91,346 @@ pub fn traverse_from_memories(
     result_ids.dedup();
     Ok(result_ids)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                deleted_at TEXT
+            );
+            CREATE TABLE memory_entities (
+                memory_id INTEGER NOT NULL,
+                entity_id INTEGER NOT NULL
+            );
+            CREATE TABLE relationships (
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                weight REAL NOT NULL,
+                namespace TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_memory(conn: &Connection, id: i64, namespace: &str, deleted: bool) {
+        conn.execute(
+            "INSERT INTO memories (id, namespace, deleted_at) VALUES (?1, ?2, ?3)",
+            params![
+                id,
+                namespace,
+                if deleted { Some("2024-01-01") } else { None }
+            ],
+        )
+        .unwrap();
+    }
+
+    fn link_memory_entity(conn: &Connection, memory_id: i64, entity_id: i64) {
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
+            params![memory_id, entity_id],
+        )
+        .unwrap();
+    }
+
+    fn insert_relationship(conn: &Connection, src: i64, tgt: i64, weight: f64, ns: &str) {
+        conn.execute(
+            "INSERT INTO relationships (source_id, target_id, weight, namespace) VALUES (?1, ?2, ?3, ?4)",
+            params![src, tgt, weight, ns],
+        )
+        .unwrap();
+    }
+
+    // --- edge cases retornando vazio ---
+
+    #[test]
+    fn retorna_vazio_quando_seeds_vazio() {
+        let conn = setup_db();
+        let resultado = traverse_from_memories(&conn, &[], "ns", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    #[test]
+    fn retorna_vazio_quando_max_hops_zero() {
+        let conn = setup_db();
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 0).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    #[test]
+    fn retorna_vazio_quando_seed_sem_entidades() {
+        let conn = setup_db();
+        insert_memory(&conn, 1, "ns", false);
+        // memoria existe mas não tem entidades associadas
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    #[test]
+    fn retorna_vazio_quando_sem_relacionamentos() {
+        let conn = setup_db();
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+        // entidade 10 não tem relacionamentos
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    // --- happy path básico ---
+
+    #[test]
+    fn traversal_basico_um_hop() {
+        let conn = setup_db();
+
+        // seed: memory 1 com entity 10
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        // vizinha: entity 20 ligada a memory 2
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        // relacionamento 10 -> 20
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 1).unwrap();
+        assert_eq!(resultado, vec![2]);
+    }
+
+    #[test]
+    fn traversal_dois_hops() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_memory(&conn, 3, "ns", false);
+        link_memory_entity(&conn, 3, 30);
+
+        // cadeia 10 -> 20 -> 30
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+        insert_relationship(&conn, 20, 30, 1.0, "ns");
+
+        let mut resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 2).unwrap();
+        resultado.sort_unstable();
+        assert_eq!(resultado, vec![2, 3]);
+    }
+
+    #[test]
+    fn max_hops_limita_profundidade() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_memory(&conn, 3, "ns", false);
+        link_memory_entity(&conn, 3, 30);
+
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+        insert_relationship(&conn, 20, 30, 1.0, "ns");
+
+        // com apenas 1 hop, memory 3 não deve aparecer
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 1).unwrap();
+        assert_eq!(resultado, vec![2]);
+        assert!(!resultado.contains(&3));
+    }
+
+    // --- filtro de peso ---
+
+    #[test]
+    fn relacionamento_com_peso_abaixo_do_minimo_ignorado() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        // peso 0.3 < min_weight 0.5
+        insert_relationship(&conn, 10, 20, 0.3, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    #[test]
+    fn relacionamento_com_peso_exatamente_no_minimo_incluido() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_relationship(&conn, 10, 20, 0.5, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 1).unwrap();
+        assert_eq!(resultado, vec![2]);
+    }
+
+    // --- isolamento de namespace ---
+
+    #[test]
+    fn relacionamento_de_namespace_diferente_ignorado() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns_a", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns_a", false);
+        link_memory_entity(&conn, 2, 20);
+
+        // relacionamento no namespace errado
+        insert_relationship(&conn, 10, 20, 1.0, "ns_b");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns_a", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    // --- excluir seeds do resultado ---
+
+    #[test]
+    fn seeds_nao_aparecem_no_resultado() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        // relacionamento de 20 de volta para 10 (ciclo)
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+        insert_relationship(&conn, 20, 10, 1.0, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 3).unwrap();
+        // memory 1 não deve aparecer mesmo com ciclo
+        assert!(!resultado.contains(&1));
+        assert_eq!(resultado, vec![2]);
+    }
+
+    // --- memórias soft-deleted excluídas ---
+
+    #[test]
+    fn memorias_deletadas_nao_incluidas() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        // memory 2 foi deletada
+        insert_memory(&conn, 2, "ns", true);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 3).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    // --- múltiplos seeds ---
+
+    #[test]
+    fn multiplos_seeds_unidos_no_resultado() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_memory(&conn, 3, "ns", false);
+        link_memory_entity(&conn, 3, 30);
+
+        insert_memory(&conn, 4, "ns", false);
+        link_memory_entity(&conn, 4, 40);
+
+        insert_relationship(&conn, 10, 30, 1.0, "ns");
+        insert_relationship(&conn, 20, 40, 1.0, "ns");
+
+        let mut resultado = traverse_from_memories(&conn, &[1, 2], "ns", 0.5, 1).unwrap();
+        resultado.sort_unstable();
+        assert_eq!(resultado, vec![3, 4]);
+    }
+
+    // --- deduplicação de resultado ---
+
+    #[test]
+    fn resultado_sem_duplicatas() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+        link_memory_entity(&conn, 1, 11); // dois seeds na mesma memory
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        // ambos os seeds apontam para a mesma entity 20
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+        insert_relationship(&conn, 11, 20, 1.0, "ns");
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 1).unwrap();
+        // memory 2 deve aparecer apenas uma vez
+        assert_eq!(resultado.len(), 1);
+        assert_eq!(resultado, vec![2]);
+    }
+
+    // --- nó único (single node) ---
+
+    #[test]
+    fn single_node_sem_vizinhos_retorna_vazio() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+        // entity 10 não tem relacionamentos de saída
+
+        let resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 5).unwrap();
+        assert!(resultado.is_empty());
+    }
+
+    // --- ciclos no grafo ---
+
+    #[test]
+    fn ciclo_nao_causa_loop_infinito() {
+        let conn = setup_db();
+
+        insert_memory(&conn, 1, "ns", false);
+        link_memory_entity(&conn, 1, 10);
+
+        insert_memory(&conn, 2, "ns", false);
+        link_memory_entity(&conn, 2, 20);
+
+        insert_memory(&conn, 3, "ns", false);
+        link_memory_entity(&conn, 3, 30);
+
+        // triângulo 10 -> 20 -> 30 -> 10
+        insert_relationship(&conn, 10, 20, 1.0, "ns");
+        insert_relationship(&conn, 20, 30, 1.0, "ns");
+        insert_relationship(&conn, 30, 10, 1.0, "ns");
+
+        let mut resultado = traverse_from_memories(&conn, &[1], "ns", 0.5, 10).unwrap();
+        resultado.sort_unstable();
+        // deve retornar 2 e 3 sem loop infinito
+        assert_eq!(resultado, vec![2, 3]);
+    }
+}

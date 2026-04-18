@@ -47,8 +47,8 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     output::emit_progress("Computing query embedding...");
-    let mut embedder = crate::embedder::Embedder::new(&paths.models)?;
-    let embedding = embedder.embed_query(&args.query)?;
+    let embedder = crate::embedder::get_embedder(&paths.models)?;
+    let embedding = crate::embedder::embed_query(embedder, &args.query)?;
 
     let conn = open_ro(&paths.db)?;
 

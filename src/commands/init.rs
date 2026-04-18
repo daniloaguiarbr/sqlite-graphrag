@@ -61,8 +61,8 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
 
     output::emit_progress("Initializing embedding model (may download on first run)...");
 
-    let mut embedder = crate::embedder::Embedder::new(&paths.models)?;
-    let test_emb = embedder.embed_passage("smoke test")?;
+    let embedder = crate::embedder::get_embedder(&paths.models)?;
+    let test_emb = crate::embedder::embed_passage(embedder, "smoke test")?;
 
     output::emit_json(&InitResponse {
         db_path: paths.db.display().to_string(),

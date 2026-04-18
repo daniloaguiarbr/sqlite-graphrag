@@ -5,6 +5,7 @@ use tempfile::TempDir;
 fn cmd(tmp: &TempDir) -> Command {
     let mut c = Command::cargo_bin("neurographrag").unwrap();
     c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
     c
 }
@@ -18,6 +19,7 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
     c.current_dir(dir);
     c.env_remove("NEUROGRAPHRAG_NAMESPACE");
     c.env_remove("NEUROGRAPHRAG_DB_PATH");
+    c.env("NEUROGRAPHRAG_CACHE_DIR", dir.join("cache"));
     c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
     c
 }
@@ -870,4 +872,617 @@ fn test_forget_purge_nao_corrompe_fts_index() {
         json["integrity"], "ok",
         "PRAGMA integrity_check DEVE permanecer ok após ciclos forget+purge"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers para testes de grafo (link, unlink, related, graph, cleanup-orphans)
+// ---------------------------------------------------------------------------
+
+/// Cria uma memória com entidades anexadas via entities-file para popular o grafo.
+fn seed_memory_with_entities(
+    tmp: &TempDir,
+    memory_name: &str,
+    entities_json: &str,
+) -> std::path::PathBuf {
+    let entities_path = tmp.path().join(format!("entities-{memory_name}.json"));
+    std::fs::write(&entities_path, entities_json).unwrap();
+
+    cmd(tmp)
+        .args([
+            "remember",
+            "--name",
+            memory_name,
+            "--type",
+            "project",
+            "--description",
+            "seed memory for graph tests",
+            "--body",
+            "body",
+            "--entities-file",
+            entities_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    entities_path
+}
+
+// ---------------------------------------------------------------------------
+// link
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_link_cria_relacao_explicita() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "link-seed",
+        r#"[
+            {"name":"projeto-alpha","entity_type":"project","description":null},
+            {"name":"tokio","entity_type":"tool","description":null}
+        ]"#,
+    );
+
+    let output = cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "projeto-alpha",
+            "--to",
+            "tokio",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["from"], "projeto-alpha");
+    assert_eq!(json["to"], "tokio");
+    assert_eq!(json["relation"], "uses");
+    assert!((json["weight"].as_f64().unwrap() - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn test_link_idempotente_retorna_already_exists() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "link-idem",
+        r#"[
+            {"name":"servico-x","entity_type":"project","description":null},
+            {"name":"banco-y","entity_type":"tool","description":null}
+        ]"#,
+    );
+
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "servico-x",
+            "--to",
+            "banco-y",
+            "--relation",
+            "depends-on",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "servico-x",
+            "--to",
+            "banco-y",
+            "--relation",
+            "depends-on",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["action"], "already_exists");
+}
+
+#[test]
+fn test_link_entidade_inexistente_retorna_exit_4() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "nao-existe-a",
+            "--to",
+            "nao-existe-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .failure()
+        .code(4);
+}
+
+#[test]
+fn test_link_reflexivo_retorna_exit_1() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "mesmo-nome",
+            "--to",
+            "mesmo-nome",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn test_link_peso_invalido_retorna_exit_1() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "a",
+            "--to",
+            "b",
+            "--relation",
+            "uses",
+            "--weight",
+            "1.5",
+        ])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+// ---------------------------------------------------------------------------
+// unlink
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_unlink_remove_relacao_existente() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "unlink-seed",
+        r#"[
+            {"name":"ent-u-a","entity_type":"project","description":null},
+            {"name":"ent-u-b","entity_type":"tool","description":null}
+        ]"#,
+    );
+
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "ent-u-a",
+            "--to",
+            "ent-u-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args([
+            "unlink",
+            "--from",
+            "ent-u-a",
+            "--to",
+            "ent-u-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["action"], "deleted");
+    assert_eq!(json["from_name"], "ent-u-a");
+    assert_eq!(json["to_name"], "ent-u-b");
+}
+
+#[test]
+fn test_unlink_relacao_inexistente_retorna_exit_4() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "unlink-inexistente-seed",
+        r#"[
+            {"name":"ent-ui-a","entity_type":"project","description":null},
+            {"name":"ent-ui-b","entity_type":"tool","description":null}
+        ]"#,
+    );
+
+    cmd(&tmp)
+        .args([
+            "unlink",
+            "--from",
+            "ent-ui-a",
+            "--to",
+            "ent-ui-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .failure()
+        .code(4);
+}
+
+#[test]
+fn test_unlink_entidade_ausente_retorna_exit_4() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "unlink",
+            "--from",
+            "nenhuma-a",
+            "--to",
+            "nenhuma-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .failure()
+        .code(4);
+}
+
+// ---------------------------------------------------------------------------
+// regressão: INSERT OR REPLACE em vec_entities (vec0 não suporta REPLACE)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_remember_nao_duplica_vec_entities_para_entidade_compartilhada() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    // Primeira memória com entidade "entidade-comum".
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-primeiro",
+        r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
+    );
+
+    // Segunda memória reutiliza a MESMA entidade — vec0 não tolera INSERT OR REPLACE duplicado.
+    // DEVE ter sucesso sem UNIQUE constraint error.
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-segundo",
+        r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
+    );
+
+    // Terceira memória também reutiliza, garantindo robustez com múltiplas duplicações.
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-terceiro",
+        r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// related
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_related_encontra_memorias_via_grafo() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    // Memória 1 e 2 compartilham a entidade "projeto-compartilhado".
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-um",
+        r#"[{"name":"projeto-compartilhado","entity_type":"project","description":null}]"#,
+    );
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-dois",
+        r#"[{"name":"projeto-compartilhado","entity_type":"project","description":null}]"#,
+    );
+
+    // Relacionamento artificial para garantir hop>=1.
+    seed_memory_with_entities(
+        &tmp,
+        "memoria-link",
+        r#"[
+            {"name":"projeto-compartilhado","entity_type":"project","description":null},
+            {"name":"ferramenta-x","entity_type":"tool","description":null}
+        ]"#,
+    );
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "projeto-compartilhado",
+            "--to",
+            "ferramenta-x",
+            "--relation",
+            "uses",
+            "--weight",
+            "0.9",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["related", "--name", "memoria-um"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let arr = json.as_array().expect("related retorna array");
+    // deve conter pelo menos uma das outras duas memórias via hop
+    let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();
+    assert!(
+        names.contains(&"memoria-link"),
+        "esperava memoria-link em {names:?}"
+    );
+}
+
+#[test]
+fn test_related_memoria_inexistente_retorna_exit_4() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args(["related", "--name", "nao-existe-mem"])
+        .assert()
+        .failure()
+        .code(4);
+}
+
+#[test]
+fn test_related_retorna_vazio_quando_memoria_sem_entidades() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "sem-entidades",
+            "--type",
+            "user",
+            "--description",
+            "memoria solitaria",
+            "--body",
+            "corpo",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["related", "--name", "sem-entidades"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// graph (export)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_graph_export_json_estrutura_correta() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "graph-seed-json",
+        r#"[
+            {"name":"graph-ent-a","entity_type":"project","description":null},
+            {"name":"graph-ent-b","entity_type":"tool","description":null}
+        ]"#,
+    );
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "graph-ent-a",
+            "--to",
+            "graph-ent-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["graph", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["nodes"].is_array());
+    assert!(json["edges"].is_array());
+    assert!(json["nodes"].as_array().unwrap().len() >= 2);
+    assert!(!json["edges"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_graph_export_dot_contem_digraph() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "graph-seed-dot",
+        r#"[
+            {"name":"dot-a","entity_type":"project","description":null},
+            {"name":"dot-b","entity_type":"tool","description":null}
+        ]"#,
+    );
+    cmd(&tmp)
+        .args([
+            "link",
+            "--from",
+            "dot-a",
+            "--to",
+            "dot-b",
+            "--relation",
+            "uses",
+        ])
+        .assert()
+        .success();
+
+    let out = cmd(&tmp)
+        .args(["graph", "--format", "dot"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rendered = String::from_utf8(out).unwrap();
+    assert!(rendered.contains("digraph neurographrag"));
+    assert!(rendered.contains("dot_a"));
+    assert!(rendered.contains("dot_b"));
+    assert!(rendered.contains("uses"));
+}
+
+#[test]
+fn test_graph_export_mermaid_contem_graph_lr() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "graph-seed-mermaid",
+        r#"[{"name":"mer-a","entity_type":"project","description":null}]"#,
+    );
+
+    let out = cmd(&tmp)
+        .args(["graph", "--format", "mermaid"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rendered = String::from_utf8(out).unwrap();
+    assert!(rendered.contains("graph LR"));
+    assert!(rendered.contains("mer_a"));
+}
+
+// ---------------------------------------------------------------------------
+// cleanup-orphans
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cleanup_orphans_remove_entidades_orfas() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    // Cria uma memória com entidades vinculadas
+    seed_memory_with_entities(
+        &tmp,
+        "co-mem-ligada",
+        r#"[{"name":"co-ent-ligada","entity_type":"project","description":null}]"#,
+    );
+
+    // Cria uma memória com entidades adicionais e remove a memória, deixando as entidades órfãs
+    seed_memory_with_entities(
+        &tmp,
+        "co-mem-descartada",
+        r#"[{"name":"co-ent-orfa","entity_type":"project","description":null}]"#,
+    );
+    cmd(&tmp)
+        .args(["forget", "--name", "co-mem-descartada"])
+        .assert()
+        .success();
+    cmd(&tmp)
+        .args(["purge", "--name", "co-mem-descartada"])
+        .assert()
+        .success();
+
+    // Dry-run conta órfãos sem remover
+    let output = cmd(&tmp)
+        .args(["cleanup-orphans", "--dry-run"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let dry: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(dry["dry_run"], true);
+    assert!(dry["orphan_count"].as_u64().unwrap() >= 1);
+    assert_eq!(dry["deleted"].as_u64().unwrap(), 0);
+
+    // Execução real remove os órfãos
+    let output = cmd(&tmp)
+        .args(["cleanup-orphans", "--yes"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let done: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(done["dry_run"], false);
+    assert!(done["deleted"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn test_cleanup_orphans_sem_orfaos_retorna_zero() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    seed_memory_with_entities(
+        &tmp,
+        "co-limpo",
+        r#"[{"name":"co-ent-limpa","entity_type":"project","description":null}]"#,
+    );
+
+    let output = cmd(&tmp)
+        .args(["cleanup-orphans"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["orphan_count"], 0);
+    assert_eq!(json["deleted"], 0);
 }

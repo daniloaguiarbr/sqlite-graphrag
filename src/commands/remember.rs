@@ -149,17 +149,20 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     output::emit_progress("Computing embedding...");
-    let mut embedder = crate::embedder::Embedder::new(&paths.models)?;
+    let embedder = crate::embedder::get_embedder(&paths.models)?;
 
     let chunks_info = chunking::split_into_chunks(&raw_body);
     let chunks_created = chunks_info.len();
 
     let (body_for_storage, embedding) = if chunks_info.len() == 1 {
-        (raw_body.clone(), embedder.embed_passage(&raw_body)?)
+        (
+            raw_body.clone(),
+            crate::embedder::embed_passage(embedder, &raw_body)?,
+        )
     } else {
         output::emit_progress(&format!("Embedding {} chunks...", chunks_info.len()));
         let texts: Vec<String> = chunks_info.iter().map(|c| c.text.clone()).collect();
-        let chunk_embeddings = embedder.embed_passages_batch(&texts)?;
+        let chunk_embeddings = crate::embedder::embed_passages_batch(embedder, &texts)?;
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
         (raw_body.clone(), aggregated)
     };
@@ -283,7 +286,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         storage_chunks::insert_chunks(&tx, &chunks)?;
 
         let texts: Vec<String> = chunks_info.iter().map(|c| c.text.clone()).collect();
-        let chunk_embeddings = embedder.embed_passages_batch(&texts)?;
+        let chunk_embeddings = crate::embedder::embed_passages_batch(embedder, &texts)?;
 
         for (i, emb) in chunk_embeddings.iter().enumerate() {
             storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
@@ -302,7 +305,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 Some(desc) => format!("{} {}", entity.name, desc),
                 None => entity.name.clone(),
             };
-            let entity_embedding = embedder.embed_passage(&entity_text)?;
+            let entity_embedding = crate::embedder::embed_passage(embedder, &entity_text)?;
             entities::upsert_entity_vec(
                 &tx,
                 entity_id,
