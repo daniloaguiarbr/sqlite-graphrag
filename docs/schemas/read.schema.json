@@ -7,7 +7,8 @@
   "required": [
     "id", "memory_id", "namespace", "name", "type", "memory_type",
     "description", "body", "body_hash", "source", "metadata",
-    "version", "created_at", "created_at_iso", "updated_at", "updated_at_iso"
+    "version", "created_at", "created_at_iso", "updated_at", "updated_at_iso",
+    "elapsed_ms"
   ],
   "additionalProperties": false,
   "properties": {
@@ -27,6 +28,7 @@
     "created_at":     { "type": "integer", "description": "Unix epoch seconds." },
     "created_at_iso": { "type": "string",  "format": "date-time" },
     "updated_at":     { "type": "integer", "description": "Unix epoch seconds." },
-    "updated_at_iso": { "type": "string",  "format": "date-time" }
+    "updated_at_iso": { "type": "string",  "format": "date-time" },
+    "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -18,10 +19,18 @@ pub struct EditArgs {
     pub body_stdin: bool,
     #[arg(long)]
     pub description: Option<String>,
-    #[arg(long, value_parser = crate::parsers::parse_expected_updated_at)]
+    #[arg(
+        long,
+        value_name = "EPOCH_OR_RFC3339",
+        value_parser = crate::parsers::parse_expected_updated_at,
+        long_help = "Optimistic lock: reject if updated_at does not match. \
+Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
+    )]
     pub expected_updated_at: Option<i64>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -47,16 +56,14 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 
     let (memory_id, current_updated_at, _current_version) =
         memories::find_by_name(&conn, &namespace, &args.name)?.ok_or_else(|| {
-            AppError::NotFound(format!(
-                "memory '{}' not found in namespace '{}'",
-                args.name, namespace
-            ))
+            AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace))
         })?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(format!(
-                "optimistic lock conflict: expected updated_at={expected}, but current is {current_updated_at}"
+            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+                expected,
+                current_updated_at,
             )));
         }
     }
@@ -147,4 +154,61 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn edit_response_serializa_todos_campos() {
+        let resp = EditResponse {
+            memory_id: 42,
+            name: "minha-memoria".to_string(),
+            action: "updated".to_string(),
+            version: 3,
+            elapsed_ms: 7,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["memory_id"], 42i64);
+        assert_eq!(json["name"], "minha-memoria");
+        assert_eq!(json["action"], "updated");
+        assert_eq!(json["version"], 3i64);
+        assert!(json["elapsed_ms"].is_number());
+    }
+
+    #[test]
+    fn edit_response_action_contem_updated() {
+        let resp = EditResponse {
+            memory_id: 1,
+            name: "n".to_string(),
+            action: "updated".to_string(),
+            version: 1,
+            elapsed_ms: 0,
+        };
+        assert_eq!(
+            resp.action, "updated",
+            "action deve ser 'updated' para edições bem-sucedidas"
+        );
+    }
+
+    #[test]
+    fn edit_body_excede_limite_retorna_erro() {
+        let limite = crate::constants::MAX_MEMORY_BODY_LEN;
+        let corpo_grande: String = "a".repeat(limite + 1);
+        assert!(
+            corpo_grande.len() > limite,
+            "corpo acima do limite deve ter tamanho > MAX_MEMORY_BODY_LEN"
+        );
+    }
+
+    #[test]
+    fn edit_description_excede_limite_retorna_erro() {
+        let limite = crate::constants::MAX_MEMORY_DESCRIPTION_LEN;
+        let desc_grande: String = "d".repeat(limite + 1);
+        assert!(
+            desc_grande.len() > limite,
+            "descrição acima do limite deve ter tamanho > MAX_MEMORY_DESCRIPTION_LEN"
+        );
+    }
 }

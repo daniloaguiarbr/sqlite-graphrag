@@ -1,6 +1,7 @@
 use crate::cli::RelationKind;
 use crate::constants::DEFAULT_RELATION_WEIGHT;
 use crate::errors::AppError;
+use crate::i18n::{erros, validacao};
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -23,6 +24,8 @@ pub struct LinkArgs {
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -49,22 +52,17 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if args.from == args.to {
-        return Err(AppError::Validation(
-            "--from and --to must be different entities — self-referential relationships are not supported".to_string(),
-        ));
+        return Err(AppError::Validation(validacao::link_auto_referencial()));
     }
 
     let weight = args.weight.unwrap_or(DEFAULT_RELATION_WEIGHT);
     if !(0.0..=1.0).contains(&weight) {
-        return Err(AppError::Validation(format!(
-            "--weight: must be between 0.0 and 1.0 (actual: {weight})"
-        )));
+        return Err(AppError::Validation(validacao::link_peso_invalido(weight)));
     }
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -73,17 +71,10 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "entity \"{}\" does not exist in namespace \"{}\"",
-            args.from, namespace
-        ))
+        AppError::NotFound(erros::entidade_nao_encontrada(&args.from, &namespace))
     })?;
-    let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "entity \"{}\" does not exist in namespace \"{}\"",
-            args.to, namespace
-        ))
-    })?;
+    let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?
+        .ok_or_else(|| AppError::NotFound(erros::entidade_nao_encontrada(&args.to, &namespace)))?;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let (_rel_id, was_created) = entities::create_or_fetch_relationship(

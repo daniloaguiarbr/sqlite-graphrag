@@ -4,12 +4,13 @@
   "title": "EditResponse",
   "description": "Response emitted by `neurographrag edit` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["memory_id", "name", "action", "version"],
+  "required": ["memory_id", "name", "action", "version", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "memory_id": { "type": "integer" },
-    "name":      { "type": "string" },
-    "action":    { "type": "string", "enum": ["updated"] },
-    "version":   { "type": "integer", "minimum": 1 }
+    "memory_id":  { "type": "integer" },
+    "name":       { "type": "string" },
+    "action":     { "type": "string", "enum": ["updated"] },
+    "version":    { "type": "integer", "minimum": 1 },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

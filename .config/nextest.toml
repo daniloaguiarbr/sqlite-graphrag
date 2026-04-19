@@ -1,0 +1,56 @@
+# .config/nextest.toml — profiles para prevenir livelock térmico
+# Docs oficiais: https://nexte.st/docs/configuration/
+# Incidente 2026-04-19: loom_lock_slots em paralelo saturou i9-14900KF a 100°C
+
+[profile.default]
+test-threads = 2
+slow-timeout = { period = "60s", terminate-after = 2 }
+leak-timeout = "200ms"
+retries = 0
+fail-fast = true
+
+[[profile.default.overrides]]
+filter = 'test(/^loom_/)'
+threads-required = "num-cpus"
+slow-timeout = { period = "600s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(/^stress_/)'
+threads-required = "num-cpus"
+slow-timeout = { period = "600s", terminate-after = 2 }
+
+[profile.ci]
+test-threads = 2
+slow-timeout = { period = "180s", terminate-after = 3 }
+leak-timeout = "200ms"
+retries = 2
+fail-fast = false
+
+[[profile.ci.overrides]]
+filter = 'test(/^loom_/)'
+threads-required = "num-cpus"
+slow-timeout = { period = "900s", terminate-after = 2 }
+retries = 0
+
+[[profile.ci.overrides]]
+filter = 'test(/^stress_/)'
+threads-required = "num-cpus"
+slow-timeout = { period = "600s", terminate-after = 2 }
+
+[profile.ci.junit]
+path = "junit.xml"
+report-name = "neurographrag-ci"
+store-success-output = false
+store-failure-output = true
+
+[profile.heavy]
+test-threads = 1
+slow-timeout = { period = "900s", terminate-after = 2 }
+leak-timeout = "500ms"
+retries = 0
+fail-fast = false
+
+[[profile.heavy.overrides]]
+filter = 'test(/^loom_/)'
+threads-required = "num-cpus"
+slow-timeout = { period = "1800s", terminate-after = 2 }

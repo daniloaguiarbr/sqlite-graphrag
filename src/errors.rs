@@ -112,6 +112,22 @@ impl AppError {
     /// `75` (EX_TEMPFAIL) when the advisory CLI lock is held or all concurrency
     /// slots are exhausted, and `77` when available memory is insufficient to
     /// load the embedding model.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use neurographrag::errors::AppError;
+    ///
+    /// assert_eq!(AppError::Validation("campo inválido".into()).exit_code(), 1);
+    /// assert_eq!(AppError::Duplicate("ns/mem".into()).exit_code(), 2);
+    /// assert_eq!(AppError::Conflict("ts mudou".into()).exit_code(), 3);
+    /// assert_eq!(AppError::NotFound("id 42".into()).exit_code(), 4);
+    /// assert_eq!(AppError::NamespaceError("sem marcador".into()).exit_code(), 5);
+    /// assert_eq!(AppError::LimitExceeded("corpo grande".into()).exit_code(), 6);
+    /// assert_eq!(AppError::Embedding("dim errada".into()).exit_code(), 11);
+    /// assert_eq!(AppError::DbBusy("retries esgotados".into()).exit_code(), 15);
+    /// assert_eq!(AppError::LockBusy("outra instância".into()).exit_code(), 75);
+    /// ```
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::Validation(_) => 1,
@@ -144,6 +160,21 @@ impl AppError {
 
     /// Retorna a mensagem localizada para o idioma explicitamente fornecido.
     /// Útil em testes que não podem depender do `OnceLock` global.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use neurographrag::errors::AppError;
+    /// use neurographrag::i18n::Language;
+    ///
+    /// let err = AppError::NotFound("mem-xyz".into());
+    ///
+    /// let en = err.localized_message_for(Language::English);
+    /// assert!(en.contains("not found"));
+    ///
+    /// let pt = err.localized_message_for(Language::Portugues);
+    /// assert!(pt.contains("não encontrado"));
+    /// ```
     pub fn localized_message_for(&self, lang: Language) -> String {
         match lang {
             Language::English => self.to_string(),

@@ -85,6 +85,13 @@ pub struct Cli {
     #[arg(long, global = true, value_enum, value_name = "LANG")]
     pub lang: Option<crate::i18n::Language>,
 
+    /// Fuso horário para campos `*_iso` no JSON de saída (ex: `America/Sao_Paulo`).
+    ///
+    /// Aceita qualquer nome IANA da IANA Time Zone Database. Sem a flag, usa
+    /// `NEUROGRAPHRAG_DISPLAY_TZ`; se ausente, usa UTC. Não afeta campos epoch inteiros.
+    #[arg(long, global = true, value_name = "IANA")]
+    pub tz: Option<chrono_tz::Tz>,
+
     #[command(subcommand)]
     pub command: Commands,
 }

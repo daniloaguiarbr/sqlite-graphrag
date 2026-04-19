@@ -10,6 +10,8 @@ pub struct NamespaceDetectArgs {
     /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
+    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -36,4 +38,79 @@ pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use crate::namespace::NamespaceSource;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn namespace_detect_default_retorna_global_via_detect() {
+        // Garante que sem flag e sem env, detect_namespace retorna "global"
+        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+        let resolution = namespace::detect_namespace(None).unwrap();
+        assert_eq!(resolution.namespace, "global");
+        assert_eq!(resolution.source, NamespaceSource::Default);
+    }
+
+    #[test]
+    #[serial]
+    fn namespace_detect_explicit_flag_sobrepoe_env() {
+        std::env::set_var("NEUROGRAPHRAG_NAMESPACE", "env-namespace");
+        let resolution = namespace::detect_namespace(Some("flag-namespace")).unwrap();
+        assert_eq!(resolution.namespace, "flag-namespace");
+        assert_eq!(resolution.source, NamespaceSource::ExplicitFlag);
+        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+    }
+
+    #[test]
+    #[serial]
+    fn namespace_detect_env_var_usada_quando_sem_flag() {
+        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+        std::env::set_var("NEUROGRAPHRAG_NAMESPACE", "namespace-de-env");
+        let resolution = namespace::detect_namespace(None).unwrap();
+        assert_eq!(resolution.namespace, "namespace-de-env");
+        assert_eq!(resolution.source, NamespaceSource::Environment);
+        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+    }
+
+    #[test]
+    fn namespace_detect_response_serializa_todos_campos() {
+        let resp = NamespaceDetectResponse {
+            namespace: "meu-projeto".to_string(),
+            source: NamespaceSource::ExplicitFlag,
+            cwd: "/home/usuario/projeto".to_string(),
+            project_config_path: "/home/usuario/projeto/.neurographrag/config.toml".to_string(),
+            projects_mapping_path: "/home/usuario/.config/neurographrag/projects.toml".to_string(),
+            elapsed_ms: 3,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["namespace"], "meu-projeto");
+        assert_eq!(json["source"], "explicit_flag");
+        assert!(json["cwd"].is_string());
+        assert!(json["project_config_path"].is_string());
+        assert!(json["projects_mapping_path"].is_string());
+        assert_eq!(json["elapsed_ms"], 3);
+    }
+
+    #[test]
+    fn namespace_source_serializa_em_snake_case() {
+        let casos = vec![
+            (NamespaceSource::ExplicitFlag, "explicit_flag"),
+            (NamespaceSource::Environment, "environment"),
+            (NamespaceSource::ProjectConfig, "project_config"),
+            (NamespaceSource::ProjectsMapping, "projects_mapping"),
+            (NamespaceSource::Default, "default"),
+        ];
+        for (source, esperado) in casos {
+            let json = serde_json::to_value(source).unwrap();
+            assert_eq!(
+                json, esperado,
+                "NamespaceSource::{source:?} deve serializar como \"{esperado}\""
+            );
+        }
+    }
 }

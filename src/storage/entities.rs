@@ -457,23 +457,24 @@ mod tests {
     use rusqlite::Connection;
     use tempfile::TempDir;
 
-    fn setup_db() -> (TempDir, Connection) {
+    type Resultado = Result<(), Box<dyn std::error::Error>>;
+
+    fn setup_db() -> Result<(TempDir, Connection), Box<dyn std::error::Error>> {
         register_vec_extension();
-        let tmp = TempDir::new().unwrap();
+        let tmp = TempDir::new()?;
         let db_path = tmp.path().join("test.db");
-        let mut conn = Connection::open(&db_path).unwrap();
-        crate::migrations::runner().run(&mut conn).unwrap();
-        (tmp, conn)
+        let mut conn = Connection::open(&db_path)?;
+        crate::migrations::runner().run(&mut conn)?;
+        Ok((tmp, conn))
     }
 
-    fn insert_memory(conn: &Connection) -> i64 {
+    fn insert_memory(conn: &Connection) -> Result<i64, Box<dyn std::error::Error>> {
         conn.execute(
             "INSERT INTO memories (namespace, name, type, description, body, body_hash)
              VALUES ('global', 'test-mem', 'user', 'desc', 'body', 'hash1')",
             [],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
+        )?;
+        Ok(conn.last_insert_rowid())
     }
 
     fn nova_entidade(name: &str) -> NewEntity {
@@ -493,53 +494,55 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_upsert_entity_cria_nova() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_cria_nova() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("projeto-alpha");
-        let id = upsert_entity(&conn, "global", &e).unwrap();
+        let id = upsert_entity(&conn, "global", &e)?;
         assert!(id > 0);
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_entity_idempotente_retorna_mesmo_id() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_idempotente_retorna_mesmo_id() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("projeto-beta");
-        let id1 = upsert_entity(&conn, "global", &e).unwrap();
-        let id2 = upsert_entity(&conn, "global", &e).unwrap();
+        let id1 = upsert_entity(&conn, "global", &e)?;
+        let id2 = upsert_entity(&conn, "global", &e)?;
         assert_eq!(id1, id2);
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_entity_atualiza_descricao() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_atualiza_descricao() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e1 = nova_entidade("projeto-gamma");
-        let id1 = upsert_entity(&conn, "global", &e1).unwrap();
+        let id1 = upsert_entity(&conn, "global", &e1)?;
 
         let e2 = NewEntity {
             name: "projeto-gamma".to_string(),
             entity_type: "tool".to_string(),
             description: Some("nova desc".to_string()),
         };
-        let id2 = upsert_entity(&conn, "global", &e2).unwrap();
+        let id2 = upsert_entity(&conn, "global", &e2)?;
         assert_eq!(id1, id2);
 
-        let desc: Option<String> = conn
-            .query_row(
-                "SELECT description FROM entities WHERE id = ?1",
-                params![id1],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let desc: Option<String> = conn.query_row(
+            "SELECT description FROM entities WHERE id = ?1",
+            params![id1],
+            |r| r.get(0),
+        )?;
         assert_eq!(desc.as_deref(), Some("nova desc"));
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_entity_namespaces_diferentes_criam_registros_distintos() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_namespaces_diferentes_criam_registros_distintos() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("compartilhada");
-        let id1 = upsert_entity(&conn, "ns1", &e).unwrap();
-        let id2 = upsert_entity(&conn, "ns2", &e).unwrap();
+        let id1 = upsert_entity(&conn, "ns1", &e)?;
+        let id2 = upsert_entity(&conn, "ns2", &e)?;
         assert_ne!(id1, id2);
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -547,34 +550,33 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_upsert_entity_vec_primeira_vez_sem_conflito() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_vec_primeira_vez_sem_conflito() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("vec-nova");
-        let entity_id = upsert_entity(&conn, "global", &e).unwrap();
+        let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
 
         let resultado = upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-nova");
         assert!(resultado.is_ok(), "primeira inserção deve ter sucesso");
 
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
-                params![entity_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
         assert_eq!(count, 1, "deve existir exatamente uma linha após inserção");
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_entity_vec_segunda_vez_substitui_sem_erro() {
+    fn test_upsert_entity_vec_segunda_vez_substitui_sem_erro() -> Resultado {
         // Cobre o branch onde DELETE remove a linha existente antes do INSERT.
-        let (_tmp, conn) = setup_db();
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("vec-existente");
-        let entity_id = upsert_entity(&conn, "global", &e).unwrap();
+        let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
 
-        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-existente").unwrap();
+        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-existente")?;
 
         // Segunda chamada: DELETE retorna 1 linha removida, INSERT deve ter sucesso.
         let resultado =
@@ -584,35 +586,33 @@ mod tests {
             "segunda inserção (replace) deve ter sucesso: {resultado:?}"
         );
 
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
-                params![entity_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
         assert_eq!(
             count, 1,
             "deve existir exatamente uma linha após substituição"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_entity_vec_multiplas_entidades_independentes() {
-        let (_tmp, conn) = setup_db();
+    fn test_upsert_entity_vec_multiplas_entidades_independentes() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let emb = embedding_zero();
 
         for i in 0..3i64 {
             let nome = format!("ent-{i}");
             let e = nova_entidade(&nome);
-            let entity_id = upsert_entity(&conn, "global", &e).unwrap();
-            upsert_entity_vec(&conn, entity_id, "global", "project", &emb, &nome).unwrap();
+            let entity_id = upsert_entity(&conn, "global", &e)?;
+            upsert_entity_vec(&conn, entity_id, "global", "project", &emb, &nome)?;
         }
 
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))
-            .unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))?;
         assert_eq!(count, 3, "deve haver três linhas distintas em vec_entities");
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -620,19 +620,21 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_find_entity_id_existente_retorna_some() {
-        let (_tmp, conn) = setup_db();
+    fn test_find_entity_id_existente_retorna_some() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("entidade-busca");
-        let id_inserido = upsert_entity(&conn, "global", &e).unwrap();
-        let id_encontrado = find_entity_id(&conn, "global", "entidade-busca").unwrap();
+        let id_inserido = upsert_entity(&conn, "global", &e)?;
+        let id_encontrado = find_entity_id(&conn, "global", "entidade-busca")?;
         assert_eq!(id_encontrado, Some(id_inserido));
+        Ok(())
     }
 
     #[test]
-    fn test_find_entity_id_inexistente_retorna_none() {
-        let (_tmp, conn) = setup_db();
-        let id = find_entity_id(&conn, "global", "nao-existe").unwrap();
+    fn test_find_entity_id_inexistente_retorna_none() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id = find_entity_id(&conn, "global", "nao-existe")?;
         assert_eq!(id, None);
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -640,78 +642,79 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_delete_entities_by_ids_lista_vazia_retorna_zero() {
-        let (_tmp, conn) = setup_db();
-        let removidos = delete_entities_by_ids(&conn, &[]).unwrap();
+    fn test_delete_entities_by_ids_lista_vazia_retorna_zero() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let removidos = delete_entities_by_ids(&conn, &[])?;
         assert_eq!(removidos, 0);
+        Ok(())
     }
 
     #[test]
-    fn test_delete_entities_by_ids_remove_entidade_valida() {
-        let (_tmp, conn) = setup_db();
+    fn test_delete_entities_by_ids_remove_entidade_valida() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("para-deletar");
-        let entity_id = upsert_entity(&conn, "global", &e).unwrap();
+        let entity_id = upsert_entity(&conn, "global", &e)?;
 
-        let removidos = delete_entities_by_ids(&conn, &[entity_id]).unwrap();
+        let removidos = delete_entities_by_ids(&conn, &[entity_id])?;
         assert_eq!(removidos, 1);
 
-        let id = find_entity_id(&conn, "global", "para-deletar").unwrap();
+        let id = find_entity_id(&conn, "global", "para-deletar")?;
         assert_eq!(id, None, "entidade deve ter sido removida");
+        Ok(())
     }
 
     #[test]
-    fn test_delete_entities_by_ids_id_inexistente_retorna_zero() {
-        let (_tmp, conn) = setup_db();
-        let removidos = delete_entities_by_ids(&conn, &[9999]).unwrap();
+    fn test_delete_entities_by_ids_id_inexistente_retorna_zero() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let removidos = delete_entities_by_ids(&conn, &[9999])?;
         assert_eq!(removidos, 0);
+        Ok(())
     }
 
     #[test]
-    fn test_delete_entities_by_ids_remove_multiplas() {
-        let (_tmp, conn) = setup_db();
-        let id1 = upsert_entity(&conn, "global", &nova_entidade("del-a")).unwrap();
-        let id2 = upsert_entity(&conn, "global", &nova_entidade("del-b")).unwrap();
-        let id3 = upsert_entity(&conn, "global", &nova_entidade("del-c")).unwrap();
+    fn test_delete_entities_by_ids_remove_multiplas() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id1 = upsert_entity(&conn, "global", &nova_entidade("del-a"))?;
+        let id2 = upsert_entity(&conn, "global", &nova_entidade("del-b"))?;
+        let id3 = upsert_entity(&conn, "global", &nova_entidade("del-c"))?;
 
-        let removidos = delete_entities_by_ids(&conn, &[id1, id2]).unwrap();
+        let removidos = delete_entities_by_ids(&conn, &[id1, id2])?;
         assert_eq!(removidos, 2);
 
-        assert!(find_entity_id(&conn, "global", "del-a").unwrap().is_none());
-        assert!(find_entity_id(&conn, "global", "del-b").unwrap().is_none());
-        assert!(find_entity_id(&conn, "global", "del-c").unwrap().is_some());
+        assert!(find_entity_id(&conn, "global", "del-a")?.is_none());
+        assert!(find_entity_id(&conn, "global", "del-b")?.is_none());
+        assert!(find_entity_id(&conn, "global", "del-c")?.is_some());
         let _ = id3;
+        Ok(())
     }
 
     #[test]
-    fn test_delete_entities_by_ids_tambem_remove_vec() {
-        let (_tmp, conn) = setup_db();
+    fn test_delete_entities_by_ids_tambem_remove_vec() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
         let e = nova_entidade("del-com-vec");
-        let entity_id = upsert_entity(&conn, "global", &e).unwrap();
+        let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
-        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "del-com-vec").unwrap();
+        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "del-com-vec")?;
 
-        let count_antes: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
-                params![entity_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count_antes: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
         assert_eq!(count_antes, 1);
 
-        delete_entities_by_ids(&conn, &[entity_id]).unwrap();
+        delete_entities_by_ids(&conn, &[entity_id])?;
 
-        let count_depois: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
-                params![entity_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count_depois: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
         assert_eq!(
             count_depois, 0,
             "vec_entities deve ser limpo junto com entities"
         );
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -719,10 +722,10 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_upsert_relationship_cria_nova() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("rel-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("rel-b")).unwrap();
+    fn test_upsert_relationship_cria_nova() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("rel-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("rel-b"))?;
 
         let rel = NewRelationship {
             source: "rel-a".to_string(),
@@ -731,15 +734,16 @@ mod tests {
             strength: 0.8,
             description: None,
         };
-        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
+        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
         assert!(rel_id > 0);
+        Ok(())
     }
 
     #[test]
-    fn test_upsert_relationship_idempotente() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("idem-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("idem-b")).unwrap();
+    fn test_upsert_relationship_idempotente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("idem-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("idem-b"))?;
 
         let rel = NewRelationship {
             source: "idem-a".to_string(),
@@ -748,16 +752,17 @@ mod tests {
             strength: 0.5,
             description: None,
         };
-        let id1 = upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
-        let id2 = upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
+        let id1 = upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
+        let id2 = upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
         assert_eq!(id1, id2);
+        Ok(())
     }
 
     #[test]
-    fn test_find_relationship_existente() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("fr-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("fr-b")).unwrap();
+    fn test_find_relationship_existente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("fr-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("fr-b"))?;
 
         let rel = NewRelationship {
             source: "fr-a".to_string(),
@@ -766,21 +771,22 @@ mod tests {
             strength: 0.7,
             description: None,
         };
-        upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
+        upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
 
-        let encontrada = find_relationship(&conn, id_a, id_b, "depends_on").unwrap();
-        assert!(encontrada.is_some());
-        let row = encontrada.unwrap();
+        let encontrada = find_relationship(&conn, id_a, id_b, "depends_on")?;
+        let row = encontrada.ok_or("relação deveria existir")?;
         assert_eq!(row.source_id, id_a);
         assert_eq!(row.target_id, id_b);
         assert!((row.weight - 0.7).abs() < 1e-9);
+        Ok(())
     }
 
     #[test]
-    fn test_find_relationship_inexistente_retorna_none() {
-        let (_tmp, conn) = setup_db();
-        let resultado = find_relationship(&conn, 9999, 8888, "uses").unwrap();
+    fn test_find_relationship_inexistente_retorna_none() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let resultado = find_relationship(&conn, 9999, 8888, "uses")?;
         assert!(resultado.is_none());
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -788,25 +794,26 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_link_memory_entity_idempotente() {
-        let (_tmp, conn) = setup_db();
-        let memory_id = insert_memory(&conn);
-        let entity_id = upsert_entity(&conn, "global", &nova_entidade("me-ent")).unwrap();
+    fn test_link_memory_entity_idempotente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let memory_id = insert_memory(&conn)?;
+        let entity_id = upsert_entity(&conn, "global", &nova_entidade("me-ent"))?;
 
-        link_memory_entity(&conn, memory_id, entity_id).unwrap();
+        link_memory_entity(&conn, memory_id, entity_id)?;
         let resultado = link_memory_entity(&conn, memory_id, entity_id);
         assert!(
             resultado.is_ok(),
             "INSERT OR IGNORE não deve falhar em duplicata"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_link_memory_relationship_idempotente() {
-        let (_tmp, conn) = setup_db();
-        let memory_id = insert_memory(&conn);
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("mr-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("mr-b")).unwrap();
+    fn test_link_memory_relationship_idempotente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let memory_id = insert_memory(&conn)?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("mr-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("mr-b"))?;
 
         let rel = NewRelationship {
             source: "mr-a".to_string(),
@@ -815,14 +822,15 @@ mod tests {
             strength: 0.5,
             description: None,
         };
-        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
+        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
 
-        link_memory_relationship(&conn, memory_id, rel_id).unwrap();
+        link_memory_relationship(&conn, memory_id, rel_id)?;
         let resultado = link_memory_relationship(&conn, memory_id, rel_id);
         assert!(
             resultado.is_ok(),
             "INSERT OR IGNORE não deve falhar em duplicata"
         );
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -830,29 +838,28 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_increment_degree_aumenta_contador() {
-        let (_tmp, conn) = setup_db();
-        let entity_id = upsert_entity(&conn, "global", &nova_entidade("grau-ent")).unwrap();
+    fn test_increment_degree_aumenta_contador() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let entity_id = upsert_entity(&conn, "global", &nova_entidade("grau-ent"))?;
 
-        increment_degree(&conn, entity_id).unwrap();
-        increment_degree(&conn, entity_id).unwrap();
+        increment_degree(&conn, entity_id)?;
+        increment_degree(&conn, entity_id)?;
 
-        let degree: i64 = conn
-            .query_row(
-                "SELECT degree FROM entities WHERE id = ?1",
-                params![entity_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let degree: i64 = conn.query_row(
+            "SELECT degree FROM entities WHERE id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
         assert_eq!(degree, 2);
+        Ok(())
     }
 
     #[test]
-    fn test_recalculate_degree_reflete_relacoes_reais() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("rc-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("rc-b")).unwrap();
-        let id_c = upsert_entity(&conn, "global", &nova_entidade("rc-c")).unwrap();
+    fn test_recalculate_degree_reflete_relacoes_reais() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("rc-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("rc-b"))?;
+        let id_c = upsert_entity(&conn, "global", &nova_entidade("rc-c"))?;
 
         let rel1 = NewRelationship {
             source: "rc-a".to_string(),
@@ -868,19 +875,18 @@ mod tests {
             strength: 0.5,
             description: None,
         };
-        upsert_relationship(&conn, "global", id_a, id_b, &rel1).unwrap();
-        upsert_relationship(&conn, "global", id_c, id_a, &rel2).unwrap();
+        upsert_relationship(&conn, "global", id_a, id_b, &rel1)?;
+        upsert_relationship(&conn, "global", id_c, id_a, &rel2)?;
 
-        recalculate_degree(&conn, id_a).unwrap();
+        recalculate_degree(&conn, id_a)?;
 
-        let degree: i64 = conn
-            .query_row(
-                "SELECT degree FROM entities WHERE id = ?1",
-                params![id_a],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let degree: i64 = conn.query_row(
+            "SELECT degree FROM entities WHERE id = ?1",
+            params![id_a],
+            |r| r.get(0),
+        )?;
         assert_eq!(degree, 2, "rc-a aparece em duas relações (source+target)");
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -888,34 +894,37 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_find_orphan_entity_ids_sem_orfaos() {
-        let (_tmp, conn) = setup_db();
-        let memory_id = insert_memory(&conn);
-        let entity_id = upsert_entity(&conn, "global", &nova_entidade("nao-orfa")).unwrap();
-        link_memory_entity(&conn, memory_id, entity_id).unwrap();
+    fn test_find_orphan_entity_ids_sem_orfaos() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let memory_id = insert_memory(&conn)?;
+        let entity_id = upsert_entity(&conn, "global", &nova_entidade("nao-orfa"))?;
+        link_memory_entity(&conn, memory_id, entity_id)?;
 
-        let orfas = find_orphan_entity_ids(&conn, Some("global")).unwrap();
+        let orfas = find_orphan_entity_ids(&conn, Some("global"))?;
         assert!(!orfas.contains(&entity_id));
+        Ok(())
     }
 
     #[test]
-    fn test_find_orphan_entity_ids_detecta_orfas() {
-        let (_tmp, conn) = setup_db();
-        let entity_id = upsert_entity(&conn, "global", &nova_entidade("sim-orfa")).unwrap();
+    fn test_find_orphan_entity_ids_detecta_orfas() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let entity_id = upsert_entity(&conn, "global", &nova_entidade("sim-orfa"))?;
 
-        let orfas = find_orphan_entity_ids(&conn, Some("global")).unwrap();
+        let orfas = find_orphan_entity_ids(&conn, Some("global"))?;
         assert!(orfas.contains(&entity_id));
+        Ok(())
     }
 
     #[test]
-    fn test_find_orphan_entity_ids_sem_namespace_retorna_todas() {
-        let (_tmp, conn) = setup_db();
-        let id1 = upsert_entity(&conn, "ns-a", &nova_entidade("orfa-a")).unwrap();
-        let id2 = upsert_entity(&conn, "ns-b", &nova_entidade("orfa-b")).unwrap();
+    fn test_find_orphan_entity_ids_sem_namespace_retorna_todas() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id1 = upsert_entity(&conn, "ns-a", &nova_entidade("orfa-a"))?;
+        let id2 = upsert_entity(&conn, "ns-b", &nova_entidade("orfa-b"))?;
 
-        let orfas = find_orphan_entity_ids(&conn, None).unwrap();
+        let orfas = find_orphan_entity_ids(&conn, None)?;
         assert!(orfas.contains(&id1));
         assert!(orfas.contains(&id2));
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -923,32 +932,34 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_list_entities_com_namespace() {
-        let (_tmp, conn) = setup_db();
-        upsert_entity(&conn, "le-ns", &nova_entidade("le-ent-1")).unwrap();
-        upsert_entity(&conn, "le-ns", &nova_entidade("le-ent-2")).unwrap();
-        upsert_entity(&conn, "outro-ns", &nova_entidade("le-ent-3")).unwrap();
+    fn test_list_entities_com_namespace() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        upsert_entity(&conn, "le-ns", &nova_entidade("le-ent-1"))?;
+        upsert_entity(&conn, "le-ns", &nova_entidade("le-ent-2"))?;
+        upsert_entity(&conn, "outro-ns", &nova_entidade("le-ent-3"))?;
 
-        let lista = list_entities(&conn, Some("le-ns")).unwrap();
+        let lista = list_entities(&conn, Some("le-ns"))?;
         assert_eq!(lista.len(), 2);
         assert!(lista.iter().all(|e| e.namespace == "le-ns"));
+        Ok(())
     }
 
     #[test]
-    fn test_list_entities_sem_namespace_retorna_todas() {
-        let (_tmp, conn) = setup_db();
-        upsert_entity(&conn, "ns1", &nova_entidade("all-ent-1")).unwrap();
-        upsert_entity(&conn, "ns2", &nova_entidade("all-ent-2")).unwrap();
+    fn test_list_entities_sem_namespace_retorna_todas() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        upsert_entity(&conn, "ns1", &nova_entidade("all-ent-1"))?;
+        upsert_entity(&conn, "ns2", &nova_entidade("all-ent-2"))?;
 
-        let lista = list_entities(&conn, None).unwrap();
+        let lista = list_entities(&conn, None)?;
         assert!(lista.len() >= 2);
+        Ok(())
     }
 
     #[test]
-    fn test_list_relationships_by_namespace_filtra_corretamente() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "rel-ns", &nova_entidade("lr-a")).unwrap();
-        let id_b = upsert_entity(&conn, "rel-ns", &nova_entidade("lr-b")).unwrap();
+    fn test_list_relationships_by_namespace_filtra_corretamente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "rel-ns", &nova_entidade("lr-a"))?;
+        let id_b = upsert_entity(&conn, "rel-ns", &nova_entidade("lr-b"))?;
 
         let rel = NewRelationship {
             source: "lr-a".to_string(),
@@ -957,11 +968,12 @@ mod tests {
             strength: 0.5,
             description: None,
         };
-        upsert_relationship(&conn, "rel-ns", id_a, id_b, &rel).unwrap();
+        upsert_relationship(&conn, "rel-ns", id_a, id_b, &rel)?;
 
-        let lista = list_relationships_by_namespace(&conn, Some("rel-ns")).unwrap();
+        let lista = list_relationships_by_namespace(&conn, Some("rel-ns"))?;
         assert!(!lista.is_empty());
         assert!(lista.iter().all(|r| r.namespace == "rel-ns"));
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -969,10 +981,10 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn test_delete_relationship_by_id_remove_relacao() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("dr-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("dr-b")).unwrap();
+    fn test_delete_relationship_by_id_remove_relacao() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("dr-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("dr-b"))?;
 
         let rel = NewRelationship {
             source: "dr-a".to_string(),
@@ -981,36 +993,39 @@ mod tests {
             strength: 0.5,
             description: None,
         };
-        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel).unwrap();
+        let rel_id = upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
 
-        delete_relationship_by_id(&conn, rel_id).unwrap();
+        delete_relationship_by_id(&conn, rel_id)?;
 
-        let encontrada = find_relationship(&conn, id_a, id_b, "uses").unwrap();
+        let encontrada = find_relationship(&conn, id_a, id_b, "uses")?;
         assert!(encontrada.is_none(), "relação deve ter sido removida");
+        Ok(())
     }
 
     #[test]
-    fn test_create_or_fetch_relationship_cria_nova() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("cf-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("cf-b")).unwrap();
+    fn test_create_or_fetch_relationship_cria_nova() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("cf-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("cf-b"))?;
 
         let (rel_id, criada) =
-            create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None).unwrap();
+            create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
         assert!(rel_id > 0);
         assert!(criada);
+        Ok(())
     }
 
     #[test]
-    fn test_create_or_fetch_relationship_retorna_existente() {
-        let (_tmp, conn) = setup_db();
-        let id_a = upsert_entity(&conn, "global", &nova_entidade("cf2-a")).unwrap();
-        let id_b = upsert_entity(&conn, "global", &nova_entidade("cf2-b")).unwrap();
+    fn test_create_or_fetch_relationship_retorna_existente() -> Resultado {
+        let (_tmp, conn) = setup_db()?;
+        let id_a = upsert_entity(&conn, "global", &nova_entidade("cf2-a"))?;
+        let id_b = upsert_entity(&conn, "global", &nova_entidade("cf2-b"))?;
 
-        create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None).unwrap();
+        create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
         let (_, criada) =
-            create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None).unwrap();
+            create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
         assert!(!criada, "segunda chamada deve retornar a relação existente");
+        Ok(())
     }
 
     // ------------------------------------------------------------------ //
@@ -1018,17 +1033,19 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
-    fn aceita_campo_type_como_alias() {
+    fn aceita_campo_type_como_alias() -> Resultado {
         let json = r#"{"name": "X", "type": "concept"}"#;
-        let ent: NewEntity = serde_json::from_str(json).unwrap();
+        let ent: NewEntity = serde_json::from_str(json)?;
         assert_eq!(ent.entity_type, "concept");
+        Ok(())
     }
 
     #[test]
-    fn aceita_campo_entity_type_canonico() {
+    fn aceita_campo_entity_type_canonico() -> Resultado {
         let json = r#"{"name": "X", "entity_type": "concept"}"#;
-        let ent: NewEntity = serde_json::from_str(json).unwrap();
+        let ent: NewEntity = serde_json::from_str(json)?;
         assert_eq!(ent.entity_type, "concept");
+        Ok(())
     }
 
     #[test]

@@ -7,13 +7,14 @@
   "required": ["action", "from", "source", "to", "target", "relation", "weight", "namespace"],
   "additionalProperties": false,
   "properties": {
-    "action":    { "type": "string", "enum": ["created", "updated"] },
-    "from":      { "type": "string", "description": "Source entity name." },
-    "source":    { "type": "string", "description": "Alias of from." },
-    "to":        { "type": "string", "description": "Target entity name." },
-    "target":    { "type": "string", "description": "Alias of to." },
-    "relation":  { "type": "string" },
-    "weight":    { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-    "namespace": { "type": "string" }
+    "action":     { "type": "string", "enum": ["created", "updated"] },
+    "from":       { "type": "string", "description": "Source entity name." },
+    "source":     { "type": "string", "description": "Alias of from." },
+    "to":         { "type": "string", "description": "Target entity name." },
+    "target":     { "type": "string", "description": "Alias of to." },
+    "relation":   { "type": "string" },
+    "weight":     { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "namespace":  { "type": "string" },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
   }
 }

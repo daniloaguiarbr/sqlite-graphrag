@@ -4,12 +4,13 @@
   "title": "SyncSafeCopyResponse",
   "description": "Response emitted by `neurographrag sync-safe-copy` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["source_db_path", "dest_path", "bytes_copied", "status"],
+  "required": ["source_db_path", "dest_path", "bytes_copied", "status", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "source_db_path": { "type": "string" },
     "dest_path":      { "type": "string" },
     "bytes_copied":   { "type": "integer", "minimum": 0 },
-    "status":         { "type": "string", "enum": ["ok"] }
+    "status":         { "type": "string", "enum": ["ok"] },
+    "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

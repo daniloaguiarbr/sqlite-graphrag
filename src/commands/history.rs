@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -12,6 +13,8 @@ pub struct HistoryArgs {
     pub name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -46,13 +49,8 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let conn = open_ro(&paths.db)?;
 
-    let (memory_id, _, _) =
-        memories::find_by_name(&conn, &namespace, &args.name)?.ok_or_else(|| {
-            AppError::NotFound(format!(
-                "memory '{}' not found in namespace '{}'",
-                args.name, namespace
-            ))
-        })?;
+    let (memory_id, _, _) = memories::find_by_name(&conn, &namespace, &args.name)?
+        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
 
     let mut stmt = conn.prepare(
         "SELECT version, name, type, description, body, metadata,
@@ -65,9 +63,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let versions = stmt
         .query_map(params![memory_id], |r| {
             let created_at: i64 = r.get(8)?;
-            let created_at_iso = chrono::DateTime::<chrono::Utc>::from_timestamp(created_at, 0)
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-                .unwrap_or_default();
+            let created_at_iso = crate::tz::epoch_para_iso(created_at);
             Ok(HistoryVersion {
                 version: r.get(0)?,
                 name: r.get(1)?,
@@ -97,36 +93,30 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
 mod testes {
     #[test]
     fn epoch_zero_gera_iso_valido() {
-        let epoch: i64 = 0;
-        let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)
-            .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-            .unwrap_or_default();
-        assert_eq!(iso, "1970-01-01T00:00:00Z");
+        // epoch_para_iso usa chrono-tz com offset explícito (+00:00 para UTC)
+        let iso = crate::tz::epoch_para_iso(0);
+        assert!(iso.starts_with("1970-01-01T00:00:00"), "obtido: {iso}");
+        assert!(iso.contains("00:00"), "deve conter offset, obtido: {iso}");
     }
 
     #[test]
     fn epoch_tipico_gera_iso_rfc3339() {
-        let epoch: i64 = 1_745_000_000;
-        let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)
-            .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-            .unwrap_or_default();
+        let iso = crate::tz::epoch_para_iso(1_745_000_000);
         assert!(!iso.is_empty(), "created_at_iso não deve ser vazio");
-        assert!(
-            iso.ends_with('Z'),
-            "created_at_iso deve terminar em Z (UTC)"
-        );
         assert!(iso.contains('T'), "created_at_iso deve conter separador T");
+        // Com UTC o offset é +00:00; verifica formato geral sem depender do fuso global
+        assert!(
+            iso.contains('+') || iso.contains('-'),
+            "deve conter sinal de offset, obtido: {iso}"
+        );
     }
 
     #[test]
-    fn epoch_negativo_retorna_string_vazia() {
-        let epoch: i64 = i64::MIN;
-        let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)
-            .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-            .unwrap_or_default();
-        assert_eq!(
-            iso, "",
-            "epoch inválido deve retornar string vazia via unwrap_or_default"
+    fn epoch_invalido_retorna_fallback() {
+        let iso = crate::tz::epoch_para_iso(i64::MIN);
+        assert!(
+            !iso.is_empty(),
+            "epoch inválido deve retornar fallback não-vazio"
         );
     }
 }

@@ -4,12 +4,13 @@
   "title": "VacuumResponse",
   "description": "Response emitted by `neurographrag vacuum` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["db_path", "size_before_bytes", "size_after_bytes", "status"],
+  "required": ["db_path", "size_before_bytes", "size_after_bytes", "status", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "db_path":           { "type": "string" },
     "size_before_bytes": { "type": "integer", "minimum": 0 },
     "size_after_bytes":  { "type": "integer", "minimum": 0 },
-    "status":            { "type": "string", "enum": ["ok"] }
+    "status":            { "type": "string", "enum": ["ok"] },
+    "elapsed_ms":        { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

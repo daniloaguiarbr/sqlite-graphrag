@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/graph-traverse.schema.json",
+  "title": "GraphTraverseResponse",
+  "description": "Response emitted by `neurographrag graph traverse` on stdout as a single JSON line. BFS traversal from a starting entity up to a configurable depth.",
+  "$defs": {
+    "TraverseHop": {
+      "type": "object",
+      "required": ["entity", "relation", "direction", "weight", "depth"],
+      "additionalProperties": false,
+      "properties": {
+        "entity":    { "type": "string",  "description": "Name of the connected entity." },
+        "relation":  { "type": "string",  "description": "Relationship label between the two entities." },
+        "direction": { "type": "string",  "enum": ["outbound", "inbound"], "description": "Direction relative to the traversal source." },
+        "weight":    { "type": "number",  "description": "Edge weight." },
+        "depth":     { "type": "integer", "minimum": 1, "description": "BFS depth level at which this hop was discovered." }
+      }
+    }
+  },
+  "type": "object",
+  "required": ["from", "namespace", "depth", "hops", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "from":       { "type": "string",  "description": "Name of the starting entity passed via --from." },
+    "namespace":  { "type": "string",  "description": "Namespace used for the traversal." },
+    "depth":      { "type": "integer", "minimum": 1, "description": "Maximum BFS depth requested via --depth." },
+    "hops":       { "type": "array",   "items": { "$ref": "#/$defs/TraverseHop" }, "description": "Ordered list of hops discovered during BFS traversal." },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

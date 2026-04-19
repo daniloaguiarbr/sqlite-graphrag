@@ -21,6 +21,16 @@ pub enum Language {
 }
 
 impl Language {
+    /// Converte string de linha de comando em Language sem depender do clap.
+    /// Aceita os mesmos aliases definidos em `#[value(...)]`: "en", "pt", etc.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "en" | "english" => Some(Language::English),
+            "pt" | "pt-br" | "portugues" | "portuguese" => Some(Language::Portugues),
+            _ => None,
+        }
+    }
+
     pub fn from_env_or_locale() -> Self {
         if let Ok(v) = std::env::var("NEUROGRAPHRAG_LANG") {
             let v = v.to_lowercase();
@@ -65,6 +75,147 @@ pub fn tr(en: &str, pt: &str) -> &'static str {
     match current() {
         Language::English => Box::leak(en.to_string().into_boxed_str()),
         Language::Portugues => Box::leak(pt.to_string().into_boxed_str()),
+    }
+}
+
+/// Prefixo localizado para mensagens de erro exibidas ao usuário final.
+pub fn prefixo_erro() -> &'static str {
+    match current() {
+        Language::English => "Error",
+        Language::Portugues => "Erro",
+    }
+}
+
+/// Mensagens de erro localizadas para as variantes de AppError.
+pub mod erros {
+    use super::current;
+    use crate::i18n::Language;
+
+    pub fn memoria_nao_encontrada(nome: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("memory '{nome}' not found in namespace '{namespace}'")
+            }
+            Language::Portugues => {
+                format!("memória '{nome}' não encontrada no namespace '{namespace}'")
+            }
+        }
+    }
+
+    pub fn banco_nao_encontrado(path: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("database not found at {path}. Run 'neurographrag init' first.")
+            }
+            Language::Portugues => format!(
+                "banco de dados não encontrado em {path}. Execute 'neurographrag init' primeiro."
+            ),
+        }
+    }
+
+    pub fn entidade_nao_encontrada(nome: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("entity \"{nome}\" does not exist in namespace \"{namespace}\"")
+            }
+            Language::Portugues => {
+                format!("entidade \"{nome}\" não existe no namespace \"{namespace}\"")
+            }
+        }
+    }
+
+    pub fn relacionamento_nao_encontrado(
+        de: &str,
+        rel: &str,
+        para: &str,
+        namespace: &str,
+    ) -> String {
+        match current() {
+            Language::English => format!(
+                "relationship \"{de}\" --[{rel}]--> \"{para}\" does not exist in namespace \"{namespace}\""
+            ),
+            Language::Portugues => format!(
+                "relacionamento \"{de}\" --[{rel}]--> \"{para}\" não existe no namespace \"{namespace}\""
+            ),
+        }
+    }
+
+    pub fn memoria_duplicada(nome: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => format!(
+                "memory '{nome}' already exists in namespace '{namespace}'. Use --force-merge to update."
+            ),
+            Language::Portugues => format!(
+                "memória '{nome}' já existe no namespace '{namespace}'. Use --force-merge para atualizar."
+            ),
+        }
+    }
+
+    pub fn conflito_optimistic_lock(expected: i64, current_ts: i64) -> String {
+        match current() {
+            Language::English => format!(
+                "optimistic lock conflict: expected updated_at={expected}, but current is {current_ts}"
+            ),
+            Language::Portugues => format!(
+                "conflito de optimistic lock: esperava updated_at={expected}, mas atual é {current_ts}"
+            ),
+        }
+    }
+
+    pub fn versao_nao_encontrada(versao: i64, nome: &str) -> String {
+        match current() {
+            Language::English => format!("version {versao} not found for memory '{nome}'"),
+            Language::Portugues => {
+                format!("versão {versao} não encontrada para a memória '{nome}'")
+            }
+        }
+    }
+
+    pub fn sem_resultados_recall(min_distance: f32, query: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => format!(
+                "no results within --min-distance {min_distance} for query '{query}' in namespace '{namespace}'"
+            ),
+            Language::Portugues => format!(
+                "nenhum resultado dentro de --min-distance {min_distance} para a consulta '{query}' no namespace '{namespace}'"
+            ),
+        }
+    }
+
+    pub fn memoria_soft_deleted_nao_encontrada(nome: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("soft-deleted memory '{nome}' not found in namespace '{namespace}'")
+            }
+            Language::Portugues => {
+                format!("memória soft-deleted '{nome}' não encontrada no namespace '{namespace}'")
+            }
+        }
+    }
+
+    pub fn conflito_processo_concorrente() -> String {
+        match current() {
+            Language::English => {
+                "optimistic lock conflict: memory was modified by another process".to_string()
+            }
+            Language::Portugues => {
+                "conflito de optimistic lock: memória foi modificada por outro processo".to_string()
+            }
+        }
+    }
+
+    pub fn limite_entidades(max: usize) -> String {
+        match current() {
+            Language::English => format!("entities exceed limit of {max}"),
+            Language::Portugues => format!("entidades excedem o limite de {max}"),
+        }
+    }
+
+    pub fn limite_relacionamentos(max: usize) -> String {
+        match current() {
+            Language::English => format!("relationships exceed limit of {max}"),
+            Language::Portugues => format!("relacionamentos excedem o limite de {max}"),
+        }
     }
 }
 
@@ -133,35 +284,128 @@ pub mod validacao {
             ),
         }
     }
+
+    pub fn namespace_comprimento() -> String {
+        match current() {
+            Language::English => "namespace must be 1-80 chars".to_string(),
+            Language::Portugues => "namespace deve ter entre 1 e 80 caracteres".to_string(),
+        }
+    }
+
+    pub fn namespace_formato() -> String {
+        match current() {
+            Language::English => "namespace must be alphanumeric + hyphens/underscores".to_string(),
+            Language::Portugues => {
+                "namespace deve ser alfanumérico com hífens/sublinhados".to_string()
+            }
+        }
+    }
+
+    pub fn path_traversal(p: &str) -> String {
+        match current() {
+            Language::English => format!("path traversal rejected: {p}"),
+            Language::Portugues => format!("traversal de caminho rejeitado: {p}"),
+        }
+    }
+
+    pub fn tz_invalido(v: &str) -> String {
+        match current() {
+            Language::English => format!(
+                "NEUROGRAPHRAG_DISPLAY_TZ invalid: '{v}'; use an IANA name like 'America/Sao_Paulo'"
+            ),
+            Language::Portugues => format!(
+                "NEUROGRAPHRAG_DISPLAY_TZ inválido: '{v}'; use um nome IANA como 'America/Sao_Paulo'"
+            ),
+        }
+    }
+
+    pub fn config_namespace_invalido(path: &str, err: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("invalid project namespace config '{path}': {err}")
+            }
+            Language::Portugues => {
+                format!("configuração de namespace de projeto inválida '{path}': {err}")
+            }
+        }
+    }
+
+    pub fn projects_mapping_invalido(path: &str, err: &str) -> String {
+        match current() {
+            Language::English => format!("invalid projects mapping '{path}': {err}"),
+            Language::Portugues => format!("mapeamento de projetos inválido '{path}': {err}"),
+        }
+    }
+
+    pub fn link_auto_referencial() -> String {
+        match current() {
+            Language::English => "--from and --to must be different entities — self-referential relationships are not supported".to_string(),
+            Language::Portugues => "--from e --to devem ser entidades diferentes — relacionamentos auto-referenciais não são suportados".to_string(),
+        }
+    }
+
+    pub fn link_peso_invalido(weight: f64) -> String {
+        match current() {
+            Language::English => {
+                format!("--weight: must be between 0.0 and 1.0 (actual: {weight})")
+            }
+            Language::Portugues => {
+                format!("--weight: deve estar entre 0.0 e 1.0 (atual: {weight})")
+            }
+        }
+    }
+
+    pub fn sync_destino_igual_fonte() -> String {
+        match current() {
+            Language::English => {
+                "destination path must differ from the source database path".to_string()
+            }
+            Language::Portugues => {
+                "caminho de destino deve ser diferente do caminho do banco de dados fonte"
+                    .to_string()
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn fallback_english_quando_env_ausente() {
         std::env::remove_var("NEUROGRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "C");
         std::env::set_var("LANG", "C");
         assert_eq!(Language::from_env_or_locale(), Language::English);
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
     }
 
     #[test]
+    #[serial]
     fn env_pt_seleciona_portugues() {
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
         std::env::set_var("NEUROGRAPHRAG_LANG", "pt");
         assert_eq!(Language::from_env_or_locale(), Language::Portugues);
         std::env::remove_var("NEUROGRAPHRAG_LANG");
     }
 
     #[test]
+    #[serial]
     fn env_pt_br_seleciona_portugues() {
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
         std::env::set_var("NEUROGRAPHRAG_LANG", "pt-BR");
         assert_eq!(Language::from_env_or_locale(), Language::Portugues);
         std::env::remove_var("NEUROGRAPHRAG_LANG");
     }
 
     #[test]
+    #[serial]
     fn locale_ptbr_utf8_seleciona_portugues() {
         std::env::remove_var("NEUROGRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "pt_BR.UTF-8");

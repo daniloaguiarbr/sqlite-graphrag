@@ -4,12 +4,13 @@
   "title": "CleanupOrphansResponse",
   "description": "Response emitted by `neurographrag cleanup-orphans` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["orphan_count", "deleted", "dry_run", "namespace"],
+  "required": ["orphan_count", "deleted", "dry_run", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "orphan_count": { "type": "integer", "minimum": 0, "description": "Total orphan entities found." },
     "deleted":      { "type": "integer", "minimum": 0, "description": "Entities deleted (0 when dry_run=true)." },
     "dry_run":      { "type": "boolean" },
-    "namespace":    { "type": "string" }
+    "namespace":    { "type": ["string", "null"], "description": "Namespace filter applied; null means global operation." },
+    "elapsed_ms":   { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

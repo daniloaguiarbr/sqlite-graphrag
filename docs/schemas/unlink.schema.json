@@ -4,7 +4,7 @@
   "title": "UnlinkResponse",
   "description": "Response emitted by `neurographrag unlink` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["action", "relationship_id", "from_name", "to_name", "relation", "namespace"],
+  "required": ["action", "relationship_id", "from_name", "to_name", "relation", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "action":          { "type": "string", "enum": ["deleted"] },
@@ -12,6 +12,7 @@
     "from_name":       { "type": "string" },
     "to_name":         { "type": "string" },
     "relation":        { "type": "string" },
-    "namespace":       { "type": "string" }
+    "namespace":       { "type": "string" },
+    "elapsed_ms":      { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

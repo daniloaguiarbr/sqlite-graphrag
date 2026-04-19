@@ -511,6 +511,11 @@ let output = Command::new("neurographrag")
 - Env `NEUROGRAPHRAG_LANG=pt` sobrescreve locale do sistema quando falta `--lang`
 - Sem flag e sem env cai no fallback por `sys_locale::get_locale()` do runtime
 - Locales desconhecidos caem em inglês sem emitir warning algum no stderr
+- Env `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` define o fuso IANA aplicado a todos os campos `*_iso` no JSON de saída
+- A flag `--tz <IANA>` tem prioridade sobre `NEUROGRAPHRAG_DISPLAY_TZ`; ambos caem para UTC quando ausentes
+- Nomes IANA inválidos causam exit 2 com mensagem de erro `Validation` antes de qualquer comando executar
+- Apenas campos string `*_iso` são afetados; campos epoch inteiros (`created_at`, `updated_at`) permanecem inalterados
+- Env `NEUROGRAPHRAG_LOG_FORMAT=json` alterna saída de tracing para JSON delimitado por linha; padrão é `pretty`
 
 
 ## Schemas Legíveis por Máquina

@@ -371,13 +371,13 @@ jobs:
 ### Solution
 ```bash
 neurographrag list --limit 10000 --json \
-  | jaq -c '.[]' > memories-$(date +%Y%m%d).ndjson
+  | jaq -c '.items[]' > memories-$(date +%Y%m%d).ndjson
 ```
 
 
 ### Explanation
 - `list --limit 10000` enumerates memories up to the ceiling with deterministic ordering
-- `jaq -c '.[]'` iterates the root array into NDJSON readable by any tool instantly
+- `jaq -c '.items[]'` iterates the `items` array into NDJSON readable by any tool instantly
 - Result file opens in `rg` `bat` or spreadsheet apps without SQLite knowledge at all
 - Diff two snapshots with `difft` to audit what changed between monthly backups cleanly
 - Saves auditor review time since NDJSON is human-readable versus opaque binary files
@@ -815,3 +815,46 @@ fn build_context_prompt(query: &str, memories: &[String]) -> String {
 ### See Also
 - Recipe "How to bootstrap memory database in 60 seconds"
 - Recipe "How to integrate with rig-core for agent memory"
+
+
+## How To Display Timestamps in a Local Timezone
+### Problem
+- JSON output from all subcommands includes `*_iso` fields in UTC by default
+- Agents running in a specific region want localized timestamps for logging and display
+- Pipelines parsing `created_at_iso` need offset-aware strings for correct sorting
+
+### Solution
+```bash
+# One-off flag: display timestamps in São Paulo timezone
+neurographrag read --name my-note --tz America/Sao_Paulo
+
+# Persistent env var: all commands in this shell session use the given timezone
+export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+neurographrag list --json | jaq '.items[].updated_at_iso'
+
+# CI pipeline: force UTC explicitly to avoid system timezone surprises
+NEUROGRAPHRAG_DISPLAY_TZ=UTC neurographrag recall "deploy notes" --json
+
+# Extract only the offset portion to verify the timezone is applied
+neurographrag read --name deploy-plan --tz Europe/Berlin --json \
+  | jaq -r '.created_at_iso' \
+  | rg '\+\d{2}:\d{2}$'
+```
+
+### Explanation
+- Flag `--tz <IANA>` overrides all other settings and applies the given IANA timezone
+- Env var `NEUROGRAPHRAG_DISPLAY_TZ` persists the setting across invocations without the flag
+- Both fall back to UTC when absent, ensuring backward-compatible deterministic output
+- Only string fields ending in `_iso` are affected; integer fields remain Unix epoch seconds
+- Invalid IANA names cause exit 2 with a `Validation` error message printed to stderr
+- Format produced: `2026-04-19T07:00:00-03:00` (offset explicit, no `Z` suffix)
+
+### Variants
+- Use `America/New_York` for Eastern Time (UTC-5/UTC-4 depending on DST)
+- Use `Asia/Tokyo` for Japan Standard Time (UTC+9, no DST)
+- Use `Europe/Berlin` for Central European Time (UTC+1/UTC+2 depending on DST)
+- Use `UTC` to reset to the default explicitly in environments with a conflicting env var
+
+### See Also
+- Recipe "How to bootstrap memory database in 60 seconds"
+- Recipe "How to configure language output with --lang flag"

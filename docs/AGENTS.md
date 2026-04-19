@@ -514,6 +514,11 @@ let output = Command::new("neurographrag")
 - Env `NEUROGRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
 - Missing flag and env falls back to `sys_locale::get_locale()` detection
 - Unknown locales default to English without emitting any warning to stderr
+- Env `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` sets the IANA timezone applied to all `*_iso` fields in JSON output
+- Flag `--tz <IANA>` takes priority over `NEUROGRAPHRAG_DISPLAY_TZ`; both fall back to UTC when absent
+- Invalid IANA names cause exit 2 with a `Validation` error message before any command runs
+- Only `*_iso` string fields are affected; integer epoch fields (`created_at`, `updated_at`) remain unchanged
+- Env `NEUROGRAPHRAG_LOG_FORMAT=json` switches tracing output to newline-delimited JSON; default is `pretty`
 
 
 ## JSON Output Flag

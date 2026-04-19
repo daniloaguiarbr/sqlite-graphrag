@@ -577,16 +577,17 @@ mod testes {
     use super::*;
     use rusqlite::Connection;
 
-    fn setup_conn() -> Connection {
+    type Resultado = Result<(), Box<dyn std::error::Error>>;
+
+    fn setup_conn() -> Result<Connection, Box<dyn std::error::Error>> {
         crate::storage::connection::register_vec_extension();
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory()?;
         conn.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA temp_store = MEMORY;",
-        )
-        .unwrap();
-        crate::migrations::runner().run(&mut conn).unwrap();
-        conn
+        )?;
+        crate::migrations::runner().run(&mut conn)?;
+        Ok(conn)
     }
 
     fn nova_memoria(name: &str) -> NewMemory {
@@ -604,323 +605,340 @@ mod testes {
     }
 
     #[test]
-    fn insert_e_find_by_name_retornam_id() {
-        let conn = setup_conn();
+    fn insert_e_find_by_name_retornam_id() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-alpha");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
         assert!(id > 0);
 
-        let found = find_by_name(&conn, "global", "mem-alpha").unwrap();
+        let found = find_by_name(&conn, "global", "mem-alpha")?;
         assert!(found.is_some());
-        let (found_id, _, _) = found.unwrap();
+        let (found_id, _, _) = found.ok_or("mem-alpha deveria existir")?;
         assert_eq!(found_id, id);
+        Ok(())
     }
 
     #[test]
-    fn find_by_name_retorna_none_quando_nao_existe() {
-        let conn = setup_conn();
-        let result = find_by_name(&conn, "global", "inexistente").unwrap();
+    fn find_by_name_retorna_none_quando_nao_existe() -> Resultado {
+        let conn = setup_conn()?;
+        let result = find_by_name(&conn, "global", "inexistente")?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn find_by_hash_retorna_id_correto() {
-        let conn = setup_conn();
+    fn find_by_hash_retorna_id_correto() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-hash");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let found = find_by_hash(&conn, "global", "hash-mem-hash").unwrap();
+        let found = find_by_hash(&conn, "global", "hash-mem-hash")?;
         assert_eq!(found, Some(id));
+        Ok(())
     }
 
     #[test]
-    fn find_by_hash_retorna_none_quando_hash_nao_existe() {
-        let conn = setup_conn();
-        let result = find_by_hash(&conn, "global", "hash-inexistente").unwrap();
+    fn find_by_hash_retorna_none_quando_hash_nao_existe() -> Resultado {
+        let conn = setup_conn()?;
+        let result = find_by_hash(&conn, "global", "hash-inexistente")?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn find_by_hash_ignora_namespace_diferente() {
-        let conn = setup_conn();
+    fn find_by_hash_ignora_namespace_diferente() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-ns");
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
-        let result = find_by_hash(&conn, "outro-namespace", "hash-mem-ns").unwrap();
+        let result = find_by_hash(&conn, "outro-namespace", "hash-mem-ns")?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn read_by_name_retorna_memoria_completa() {
-        let conn = setup_conn();
+    fn read_by_name_retorna_memoria_completa() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-read");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let row = read_by_name(&conn, "global", "mem-read").unwrap().unwrap();
+        let row = read_by_name(&conn, "global", "mem-read")?.ok_or("mem-read deveria existir")?;
         assert_eq!(row.id, id);
         assert_eq!(row.name, "mem-read");
         assert_eq!(row.memory_type, "user");
         assert_eq!(row.body, "corpo da memoria de teste");
         assert_eq!(row.namespace, "global");
+        Ok(())
     }
 
     #[test]
-    fn read_by_name_retorna_none_para_ausente() {
-        let conn = setup_conn();
-        let result = read_by_name(&conn, "global", "nao-existe").unwrap();
+    fn read_by_name_retorna_none_para_ausente() -> Resultado {
+        let conn = setup_conn()?;
+        let result = read_by_name(&conn, "global", "nao-existe")?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn read_full_por_id_retorna_memoria() {
-        let conn = setup_conn();
+    fn read_full_por_id_retorna_memoria() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-full");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id).unwrap().unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-full deveria existir")?;
         assert_eq!(row.id, id);
         assert_eq!(row.name, "mem-full");
+        Ok(())
     }
 
     #[test]
-    fn read_full_retorna_none_para_id_inexistente() {
-        let conn = setup_conn();
-        let result = read_full(&conn, 9999).unwrap();
+    fn read_full_retorna_none_para_id_inexistente() -> Resultado {
+        let conn = setup_conn()?;
+        let result = read_full(&conn, 9999)?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn update_sem_otimismo_modifica_campos() {
-        let conn = setup_conn();
+    fn update_sem_otimismo_modifica_campos() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-upd");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
         let mut m2 = nova_memoria("mem-upd");
         m2.body = "corpo atualizado".to_string();
         m2.body_hash = "hash-novo".to_string();
-        let ok = update(&conn, id, &m2, None).unwrap();
+        let ok = update(&conn, id, &m2, None)?;
         assert!(ok);
 
-        let row = read_full(&conn, id).unwrap().unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-upd deveria existir")?;
         assert_eq!(row.body, "corpo atualizado");
         assert_eq!(row.body_hash, "hash-novo");
+        Ok(())
     }
 
     #[test]
-    fn update_com_expected_updated_at_correto_tem_sucesso() {
-        let conn = setup_conn();
+    fn update_com_expected_updated_at_correto_tem_sucesso() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-opt");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let (_, updated_at, _) = find_by_name(&conn, "global", "mem-opt").unwrap().unwrap();
+        let (_, updated_at, _) =
+            find_by_name(&conn, "global", "mem-opt")?.ok_or("mem-opt deveria existir")?;
 
         let mut m2 = nova_memoria("mem-opt");
         m2.body = "corpo otimista".to_string();
         m2.body_hash = "hash-otimista".to_string();
-        let ok = update(&conn, id, &m2, Some(updated_at)).unwrap();
+        let ok = update(&conn, id, &m2, Some(updated_at))?;
         assert!(ok);
 
-        let row = read_full(&conn, id).unwrap().unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-opt deveria existir após update")?;
         assert_eq!(row.body, "corpo otimista");
+        Ok(())
     }
 
     #[test]
-    fn update_com_expected_updated_at_errado_retorna_false() {
-        let conn = setup_conn();
+    fn update_com_expected_updated_at_errado_retorna_false() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-conflict");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
         let mut m2 = nova_memoria("mem-conflict");
         m2.body = "nao deve aparecer".to_string();
         m2.body_hash = "hash-x".to_string();
-        let ok = update(&conn, id, &m2, Some(0)).unwrap();
+        let ok = update(&conn, id, &m2, Some(0))?;
         assert!(!ok);
 
-        let row = read_full(&conn, id).unwrap().unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-conflict deveria existir")?;
         assert_eq!(row.body, "corpo da memoria de teste");
+        Ok(())
     }
 
     #[test]
-    fn update_id_inexistente_retorna_false() {
-        let conn = setup_conn();
+    fn update_id_inexistente_retorna_false() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("fantasma");
-        let ok = update(&conn, 9999, &m, None).unwrap();
+        let ok = update(&conn, 9999, &m, None)?;
         assert!(!ok);
+        Ok(())
     }
 
     #[test]
-    fn soft_delete_marca_deleted_at() {
-        let conn = setup_conn();
+    fn soft_delete_marca_deleted_at() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-del");
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
-        let ok = soft_delete(&conn, "global", "mem-del").unwrap();
+        let ok = soft_delete(&conn, "global", "mem-del")?;
         assert!(ok);
 
-        let result = find_by_name(&conn, "global", "mem-del").unwrap();
+        let result = find_by_name(&conn, "global", "mem-del")?;
         assert!(result.is_none());
 
-        let result_read = read_by_name(&conn, "global", "mem-del").unwrap();
+        let result_read = read_by_name(&conn, "global", "mem-del")?;
         assert!(result_read.is_none());
+        Ok(())
     }
 
     #[test]
-    fn soft_delete_retorna_false_quando_nao_existe() {
-        let conn = setup_conn();
-        let ok = soft_delete(&conn, "global", "nao-existe").unwrap();
+    fn soft_delete_retorna_false_quando_nao_existe() -> Resultado {
+        let conn = setup_conn()?;
+        let ok = soft_delete(&conn, "global", "nao-existe")?;
         assert!(!ok);
+        Ok(())
     }
 
     #[test]
-    fn soft_delete_duplo_retorna_false_na_segunda_vez() {
-        let conn = setup_conn();
+    fn soft_delete_duplo_retorna_false_na_segunda_vez() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-del2");
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
-        soft_delete(&conn, "global", "mem-del2").unwrap();
-        let ok = soft_delete(&conn, "global", "mem-del2").unwrap();
+        soft_delete(&conn, "global", "mem-del2")?;
+        let ok = soft_delete(&conn, "global", "mem-del2")?;
         assert!(!ok);
+        Ok(())
     }
 
     #[test]
-    fn list_retorna_memorias_do_namespace() {
-        let conn = setup_conn();
-        insert(&conn, &nova_memoria("mem-list-a")).unwrap();
-        insert(&conn, &nova_memoria("mem-list-b")).unwrap();
+    fn list_retorna_memorias_do_namespace() -> Resultado {
+        let conn = setup_conn()?;
+        insert(&conn, &nova_memoria("mem-list-a"))?;
+        insert(&conn, &nova_memoria("mem-list-b"))?;
 
-        let rows = list(&conn, "global", None, 10, 0).unwrap();
+        let rows = list(&conn, "global", None, 10, 0)?;
         assert!(rows.len() >= 2);
         let nomes: Vec<_> = rows.iter().map(|r| r.name.as_str()).collect();
         assert!(nomes.contains(&"mem-list-a"));
         assert!(nomes.contains(&"mem-list-b"));
+        Ok(())
     }
 
     #[test]
-    fn list_com_filtro_de_tipo_retorna_apenas_tipo_correto() {
-        let conn = setup_conn();
-        insert(&conn, &nova_memoria("mem-user")).unwrap();
+    fn list_com_filtro_de_tipo_retorna_apenas_tipo_correto() -> Resultado {
+        let conn = setup_conn()?;
+        insert(&conn, &nova_memoria("mem-user"))?;
 
         let mut m2 = nova_memoria("mem-feedback");
         m2.memory_type = "feedback".to_string();
-        insert(&conn, &m2).unwrap();
+        insert(&conn, &m2)?;
 
-        let rows_user = list(&conn, "global", Some("user"), 10, 0).unwrap();
+        let rows_user = list(&conn, "global", Some("user"), 10, 0)?;
         assert!(rows_user.iter().all(|r| r.memory_type == "user"));
 
-        let rows_fb = list(&conn, "global", Some("feedback"), 10, 0).unwrap();
+        let rows_fb = list(&conn, "global", Some("feedback"), 10, 0)?;
         assert!(rows_fb.iter().all(|r| r.memory_type == "feedback"));
+        Ok(())
     }
 
     #[test]
-    fn list_exclui_soft_deleted() {
-        let conn = setup_conn();
+    fn list_exclui_soft_deleted() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-excluida");
-        insert(&conn, &m).unwrap();
-        soft_delete(&conn, "global", "mem-excluida").unwrap();
+        insert(&conn, &m)?;
+        soft_delete(&conn, "global", "mem-excluida")?;
 
-        let rows = list(&conn, "global", None, 10, 0).unwrap();
+        let rows = list(&conn, "global", None, 10, 0)?;
         assert!(rows.iter().all(|r| r.name != "mem-excluida"));
+        Ok(())
     }
 
     #[test]
-    fn list_paginacao_funciona() {
-        let conn = setup_conn();
+    fn list_paginacao_funciona() -> Resultado {
+        let conn = setup_conn()?;
         for i in 0..5 {
-            insert(&conn, &nova_memoria(&format!("mem-pag-{i}"))).unwrap();
+            insert(&conn, &nova_memoria(&format!("mem-pag-{i}")))?;
         }
 
-        let pagina1 = list(&conn, "global", None, 2, 0).unwrap();
-        let pagina2 = list(&conn, "global", None, 2, 2).unwrap();
+        let pagina1 = list(&conn, "global", None, 2, 0)?;
+        let pagina2 = list(&conn, "global", None, 2, 2)?;
         assert!(pagina1.len() <= 2);
         assert!(pagina2.len() <= 2);
         if !pagina1.is_empty() && !pagina2.is_empty() {
             assert_ne!(pagina1[0].id, pagina2[0].id);
         }
+        Ok(())
     }
 
     #[test]
-    fn upsert_vec_e_delete_vec_funcionam() {
-        let conn = setup_conn();
+    fn upsert_vec_e_delete_vec_funcionam() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-vec");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
         let embedding: Vec<f32> = vec![0.1; 384];
         upsert_vec(
             &conn, id, "global", "user", &embedding, "mem-vec", "snippet",
-        )
-        .unwrap();
+        )?;
 
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
         assert_eq!(count, 1);
 
-        delete_vec(&conn, id).unwrap();
+        delete_vec(&conn, id)?;
 
-        let count_after: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count_after: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
         assert_eq!(count_after, 0);
+        Ok(())
     }
 
     #[test]
-    fn upsert_vec_substitui_vetor_existente() {
-        let conn = setup_conn();
+    fn upsert_vec_substitui_vetor_existente() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-vec-upsert");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
         let emb1: Vec<f32> = vec![0.1; 384];
-        upsert_vec(&conn, id, "global", "user", &emb1, "mem-vec-upsert", "s1").unwrap();
+        upsert_vec(&conn, id, "global", "user", &emb1, "mem-vec-upsert", "s1")?;
 
         let emb2: Vec<f32> = vec![0.9; 384];
-        upsert_vec(&conn, id, "global", "user", &emb2, "mem-vec-upsert", "s2").unwrap();
+        upsert_vec(&conn, id, "global", "user", &emb2, "mem-vec-upsert", "s2")?;
 
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
         assert_eq!(count, 1);
+        Ok(())
     }
 
     #[test]
-    fn knn_search_retorna_resultados_por_distancia() {
-        let conn = setup_conn();
+    fn knn_search_retorna_resultados_por_distancia() -> Resultado {
+        let conn = setup_conn()?;
 
         // emb_a: predominantemente positivo — cosseno alto com query [1.0; 384]
         let ma = nova_memoria("mem-knn-a");
-        let id_a = insert(&conn, &ma).unwrap();
+        let id_a = insert(&conn, &ma)?;
         let emb_a: Vec<f32> = vec![1.0; 384];
-        upsert_vec(&conn, id_a, "global", "user", &emb_a, "mem-knn-a", "s").unwrap();
+        upsert_vec(&conn, id_a, "global", "user", &emb_a, "mem-knn-a", "s")?;
 
         // emb_b: predominantemente negativo — cosseno baixo com query [1.0; 384]
         let mb = nova_memoria("mem-knn-b");
-        let id_b = insert(&conn, &mb).unwrap();
+        let id_b = insert(&conn, &mb)?;
         let emb_b: Vec<f32> = vec![-1.0; 384];
-        upsert_vec(&conn, id_b, "global", "user", &emb_b, "mem-knn-b", "s").unwrap();
+        upsert_vec(&conn, id_b, "global", "user", &emb_b, "mem-knn-b", "s")?;
 
         let query: Vec<f32> = vec![1.0; 384];
-        let results = knn_search(&conn, &query, "global", None, 2).unwrap();
+        let results = knn_search(&conn, &query, "global", None, 2)?;
         assert!(!results.is_empty());
         assert_eq!(results[0].0, id_a);
+        Ok(())
     }
 
     #[test]
-    fn knn_search_com_filtro_de_tipo_restringe_resultado() {
-        let conn = setup_conn();
+    fn knn_search_com_filtro_de_tipo_restringe_resultado() -> Resultado {
+        let conn = setup_conn()?;
 
         let ma = nova_memoria("mem-knn-tipo-user");
-        let id_a = insert(&conn, &ma).unwrap();
+        let id_a = insert(&conn, &ma)?;
         let emb: Vec<f32> = vec![1.0; 384];
         upsert_vec(
             &conn,
@@ -930,12 +948,11 @@ mod testes {
             &emb,
             "mem-knn-tipo-user",
             "s",
-        )
-        .unwrap();
+        )?;
 
         let mut mb = nova_memoria("mem-knn-tipo-fb");
         mb.memory_type = "feedback".to_string();
-        let id_b = insert(&conn, &mb).unwrap();
+        let id_b = insert(&conn, &mb)?;
         upsert_vec(
             &conn,
             id_b,
@@ -944,141 +961,147 @@ mod testes {
             &emb,
             "mem-knn-tipo-fb",
             "s",
-        )
-        .unwrap();
+        )?;
 
         let query: Vec<f32> = vec![1.0; 384];
-        let results_user = knn_search(&conn, &query, "global", Some("user"), 5).unwrap();
+        let results_user = knn_search(&conn, &query, "global", Some("user"), 5)?;
         assert!(results_user.iter().all(|(id, _)| *id == id_a));
 
-        let results_fb = knn_search(&conn, &query, "global", Some("feedback"), 5).unwrap();
+        let results_fb = knn_search(&conn, &query, "global", Some("feedback"), 5)?;
         assert!(results_fb.iter().all(|(id, _)| *id == id_b));
+        Ok(())
     }
 
     #[test]
-    fn fts_search_encontra_por_prefixo_no_body() {
-        let conn = setup_conn();
+    fn fts_search_encontra_por_prefixo_no_body() -> Resultado {
+        let conn = setup_conn()?;
         let mut m = nova_memoria("mem-fts");
         m.body = "linguagem de programacao rust".to_string();
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
         conn.execute_batch(
             "INSERT INTO fts_memories(rowid, name, description, body)
              SELECT id, name, description, body FROM memories WHERE deleted_at IS NULL",
-        )
-        .unwrap();
+        )?;
 
-        let rows = fts_search(&conn, "programacao", "global", None, 10).unwrap();
+        let rows = fts_search(&conn, "programacao", "global", None, 10)?;
         assert!(!rows.is_empty());
         assert!(rows.iter().any(|r| r.name == "mem-fts"));
+        Ok(())
     }
 
     #[test]
-    fn fts_search_com_filtro_de_tipo() {
-        let conn = setup_conn();
+    fn fts_search_com_filtro_de_tipo() -> Resultado {
+        let conn = setup_conn()?;
         let mut m = nova_memoria("mem-fts-tipo");
         m.body = "linguagem especial para filtro".to_string();
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
         let mut m2 = nova_memoria("mem-fts-feedback");
         m2.memory_type = "feedback".to_string();
         m2.body = "linguagem especial para filtro".to_string();
-        insert(&conn, &m2).unwrap();
+        insert(&conn, &m2)?;
 
         conn.execute_batch(
             "INSERT INTO fts_memories(rowid, name, description, body)
              SELECT id, name, description, body FROM memories WHERE deleted_at IS NULL",
-        )
-        .unwrap();
+        )?;
 
-        let rows_user = fts_search(&conn, "especial", "global", Some("user"), 10).unwrap();
+        let rows_user = fts_search(&conn, "especial", "global", Some("user"), 10)?;
         assert!(rows_user.iter().all(|r| r.memory_type == "user"));
 
-        let rows_fb = fts_search(&conn, "especial", "global", Some("feedback"), 10).unwrap();
+        let rows_fb = fts_search(&conn, "especial", "global", Some("feedback"), 10)?;
         assert!(rows_fb.iter().all(|r| r.memory_type == "feedback"));
+        Ok(())
     }
 
     #[test]
-    fn fts_search_nao_retorna_deletados() {
-        let conn = setup_conn();
+    fn fts_search_nao_retorna_deletados() -> Resultado {
+        let conn = setup_conn()?;
         let mut m = nova_memoria("mem-fts-del");
         m.body = "conteudo deletado fts".to_string();
-        insert(&conn, &m).unwrap();
+        insert(&conn, &m)?;
 
         conn.execute_batch(
             "INSERT INTO fts_memories(rowid, name, description, body)
              SELECT id, name, description, body FROM memories WHERE deleted_at IS NULL",
-        )
-        .unwrap();
+        )?;
 
-        soft_delete(&conn, "global", "mem-fts-del").unwrap();
+        soft_delete(&conn, "global", "mem-fts-del")?;
 
-        let rows = fts_search(&conn, "deletado", "global", None, 10).unwrap();
+        let rows = fts_search(&conn, "deletado", "global", None, 10)?;
         assert!(rows.iter().all(|r| r.name != "mem-fts-del"));
+        Ok(())
     }
 
     #[test]
-    fn list_deleted_before_retorna_ids_corretos() {
-        let conn = setup_conn();
+    fn list_deleted_before_retorna_ids_corretos() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-purge");
-        insert(&conn, &m).unwrap();
-        soft_delete(&conn, "global", "mem-purge").unwrap();
+        insert(&conn, &m)?;
+        soft_delete(&conn, "global", "mem-purge")?;
 
-        let ids = list_deleted_before(&conn, "global", i64::MAX).unwrap();
+        let ids = list_deleted_before(&conn, "global", i64::MAX)?;
         assert!(!ids.is_empty());
 
-        let ids_antes = list_deleted_before(&conn, "global", 0).unwrap();
+        let ids_antes = list_deleted_before(&conn, "global", 0)?;
         assert!(ids_antes.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn find_by_name_retorna_max_version_correto() {
-        let conn = setup_conn();
+    fn find_by_name_retorna_max_version_correto() -> Resultado {
+        let conn = setup_conn()?;
         let m = nova_memoria("mem-ver");
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let (_, _, v0) = find_by_name(&conn, "global", "mem-ver").unwrap().unwrap();
+        let (_, _, v0) =
+            find_by_name(&conn, "global", "mem-ver")?.ok_or("mem-ver deveria existir")?;
         assert_eq!(v0, 0);
 
         conn.execute(
             "INSERT INTO memory_versions (memory_id, version, name, type, description, body, metadata, change_reason)
              VALUES (?1, 1, 'mem-ver', 'user', 'desc', 'body', '{}', 'create')",
             params![id],
-        )
-        .unwrap();
+        )?;
 
-        let (_, _, v1) = find_by_name(&conn, "global", "mem-ver").unwrap().unwrap();
+        let (_, _, v1) = find_by_name(&conn, "global", "mem-ver")?
+            .ok_or("mem-ver deveria existir após insert")?;
         assert_eq!(v1, 1);
+        Ok(())
     }
 
     #[test]
-    fn insert_com_metadata_json() {
-        let conn = setup_conn();
+    fn insert_com_metadata_json() -> Resultado {
+        let conn = setup_conn()?;
         let mut m = nova_memoria("mem-meta");
         m.metadata = serde_json::json!({"chave": "valor", "numero": 42});
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id).unwrap().unwrap();
-        let meta: serde_json::Value = serde_json::from_str(&row.metadata).unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-meta deveria existir")?;
+        let meta: serde_json::Value = serde_json::from_str(&row.metadata)?;
         assert_eq!(meta["chave"], "valor");
         assert_eq!(meta["numero"], 42);
+        Ok(())
     }
 
     #[test]
-    fn insert_com_session_id() {
-        let conn = setup_conn();
+    fn insert_com_session_id() -> Resultado {
+        let conn = setup_conn()?;
         let mut m = nova_memoria("mem-session");
         m.session_id = Some("sessao-xyz".to_string());
-        let id = insert(&conn, &m).unwrap();
+        let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id).unwrap().unwrap();
+        let row = read_full(&conn, id)?.ok_or("mem-session deveria existir")?;
         assert_eq!(row.session_id, Some("sessao-xyz".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn delete_vec_em_id_inexistente_nao_falha() {
-        let conn = setup_conn();
+    fn delete_vec_em_id_inexistente_nao_falha() -> Resultado {
+        let conn = setup_conn()?;
         let result = delete_vec(&conn, 99999);
         assert!(result.is_ok());
+        Ok(())
     }
 }

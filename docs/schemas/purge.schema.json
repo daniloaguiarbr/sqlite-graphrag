@@ -4,7 +4,7 @@
   "title": "PurgeResponse",
   "description": "Response emitted by `neurographrag purge` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["purged_count", "bytes_freed", "dry_run", "namespace"],
+  "required": ["purged_count", "bytes_freed", "dry_run", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "purged_count":         { "type": "integer", "minimum": 0 },
@@ -14,6 +14,7 @@
     "dry_run":              { "type": "boolean" },
     "namespace":            { "type": "string" },
     "cutoff_epoch":         { "type": ["integer", "null"] },
-    "warnings":             { "type": "array", "items": { "type": "string" } }
+    "warnings":             { "type": "array", "items": { "type": "string" } },
+    "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

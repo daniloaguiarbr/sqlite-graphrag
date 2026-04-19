@@ -59,7 +59,7 @@ neurographrag recall "authentication strategy" --k 5 --json
 neurographrag hybrid-search "jwt design" --k 10 --rrf-k 60 --json
 neurographrag read --name auth-design
 neurographrag forget --name auth-design
-neurographrag purge --days 90 --yes
+neurographrag purge --retention-days 90 --yes
 ```
 - `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
 - `remember` stores content, extracts entities and generates embeddings atomically
@@ -172,6 +172,26 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 - CLI flag takes precedence over environment variable
 - Use `--db` when operating multiple isolated databases in parallel processes
 
+### Log Format
+- `NEUROGRAPHRAG_LOG_FORMAT=json` emits tracing events as newline-delimited JSON to stderr
+- Default value is `pretty`; any value other than `json` falls back to human-readable pretty format
+- Use `json` format when shipping logs to structured aggregators such as Loki or Datadog
+
+### Display Timezone
+- `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` applies any IANA timezone to all `*_iso` fields in JSON output
+- Flag `--tz <IANA>` takes priority over the environment variable; both fall back to UTC when absent
+- Integer epoch fields (`created_at`, `updated_at`) are never affected — only the ISO string companions
+- Invalid IANA names cause exit 2 with a descriptive validation error before the command executes
+- Examples: `America/New_York`, `Europe/Berlin`, `Asia/Tokyo`, `America/Sao_Paulo`
+```bash
+# One-off with flag
+neurographrag read --name my-note --tz America/Sao_Paulo
+
+# Persistent via env var
+export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+neurographrag list | jaq '.items[].updated_at_iso'
+```
+
 ### Concurrency Cap
 - `--max-concurrency` is capped at `2×nCPUs`; higher values return exit 2
 - Exit code 2 signals invalid argument; reduce the value and retry immediately
@@ -223,6 +243,32 @@ neurographrag graph --format mermaid --output graph.mmd
 - `--format mermaid` emits a Mermaid flowchart block for Markdown embedding
 - `--output <PATH>` writes directly to a file instead of stdout
 - Exit code 0: export succeeded
+
+#### Using graph traverse
+- Traverses the entity graph from a starting node up to a given depth
+- Use `--from` to name the root entity and `--depth` to control how many hops to follow
+```bash
+neurographrag graph traverse --from auth-design --depth 2 --format json
+neurographrag graph traverse --from jwt-spec --depth 1
+```
+- Prerequisites: the root entity named by `--from` must exist in the graph
+- `--from <NAME>` sets the root entity; the value is the entity name (required)
+- `--depth <N>` controls maximum hop distance from the root (default: 2)
+- Output schema: `{"nodes": [...], "edges": [...]}` identical to the full export format
+- Exit code 0: traversal succeeded
+- Exit code 4: root entity not found
+
+#### Using graph stats
+- Returns aggregate statistics about the entity graph in the target namespace
+- Use to inspect graph density and connectivity before running traversals
+```bash
+neurographrag graph stats --format json
+neurographrag graph stats --namespace my-project
+```
+- Prerequisites: at least one entity must exist in the target namespace
+- Output fields: `entity_count`, `relationship_count`, `avg_connections`, `namespace`
+- `--format json` (default) emits the stats object to stdout
+- Exit code 0: stats returned
 
 ### Using history
 - Lists all immutable versions of a named memory in reverse chronological order
@@ -328,6 +374,9 @@ neurographrag link --from auth-design --to jwt-spec --relation depends-on
 neurographrag remember --name config-notes --type project \
   --description "updated config" --body "New body content" --force-merge
 ```
+- `--entities-file` accepts a JSON file where each object must include an `entity_type` field
+- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
 
 
 ## Integration With AI Agents
@@ -367,7 +416,7 @@ neurographrag remember --name config-notes --type project \
 ## Next Steps
 ### Level Up — Where to Go After This Guide
 - Read `COOKBOOK.md` for thirty recipes covering search, graph and batch workflows
-- Read `INTEGRATIONS.md` for vendor specific configuration of all 21 agents above
+- Read `INTEGRATIONS.md` for vendor specific configuration of all 27 agents above
 - Read `docs/AGENTS.md` for multi-agent orchestration patterns using Agent Teams
 - Read `docs/CROSS_PLATFORM.md` to understand target binaries across nine platforms
 - Star the repository at github.com/daniloaguiarbr/neurographrag to track releases

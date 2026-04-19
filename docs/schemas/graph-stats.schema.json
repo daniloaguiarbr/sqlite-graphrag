@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/graph-stats.schema.json",
+  "title": "GraphStatsResponse",
+  "description": "Response emitted by `neurographrag graph stats` on stdout as a single JSON line. Provides aggregate metrics for the entity/relationship graph.",
+  "type": "object",
+  "required": ["node_count", "edge_count", "avg_degree", "max_degree", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "namespace":  { "type": ["string", "null"], "description": "Namespace filter applied, or null when all namespaces are included." },
+    "node_count": { "type": "integer", "minimum": 0, "description": "Total number of entity nodes in the selected scope." },
+    "edge_count": { "type": "integer", "minimum": 0, "description": "Total number of relationship edges in the selected scope." },
+    "avg_degree": { "type": "number",  "minimum": 0, "description": "Average degree (edge count per node) across all nodes." },
+    "max_degree": { "type": "integer", "minimum": 0, "description": "Maximum degree observed across all nodes." },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

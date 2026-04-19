@@ -45,10 +45,44 @@ fn main() {
 
     register_vec_extension();
 
+    // Pre-parse --lang antes de Cli::parse() para que o idioma seja definido mesmo
+    // quando o clap encerra cedo via process::exit (--help, erros de parse, etc.).
+    // A chamada subsequente a init(cli.lang) será silenciosamente ignorada pelo OnceLock.
+    {
+        let args: Vec<String> = std::env::args().collect();
+        let mut lang_override: Option<neurographrag::i18n::Language> = None;
+        let mut i = 1usize;
+        while i < args.len() {
+            if args[i] == "--lang" {
+                if let Some(val) = args.get(i + 1) {
+                    lang_override = neurographrag::i18n::Language::from_str_opt(val);
+                }
+                i += 2;
+            } else if let Some(val) = args[i].strip_prefix("--lang=") {
+                lang_override = neurographrag::i18n::Language::from_str_opt(val);
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+        neurographrag::i18n::init(lang_override);
+    }
+
     let cli = Cli::parse();
 
     // Inicializar idioma global ANTES de qualquer emit_progress bilíngue.
+    // Esta chamada é no-op se o pre-parse acima já inicializou o OnceLock.
     neurographrag::i18n::init(cli.lang);
+
+    // Inicializar fuso de exibição (flag --tz > env NEUROGRAPHRAG_DISPLAY_TZ > UTC).
+    if let Err(e) = neurographrag::tz::init(cli.tz) {
+        eprintln!(
+            "{}: {}",
+            neurographrag::i18n::prefixo_erro(),
+            e.localized_message()
+        );
+        std::process::exit(e.exit_code());
+    }
 
     // Validar flags antes de qualquer inicialização pesada.
     if let Err(msg) = cli.validate_flags() {
@@ -63,7 +97,11 @@ fn main() {
     // Verificar disponibilidade de memória antes de carregar o modelo ONNX.
     if !cli.skip_memory_guard {
         if let Err(e) = check_available_memory(MIN_AVAILABLE_MEMORY_MB) {
-            eprintln!("Error: {}", e.localized_message());
+            eprintln!(
+                "{}: {}",
+                neurographrag::i18n::prefixo_erro(),
+                e.localized_message()
+            );
             std::process::exit(e.exit_code());
         }
     }
@@ -77,7 +115,11 @@ fn main() {
     let (_lock_handle, _slot) = match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("Error: {}", e.localized_message());
+            eprintln!(
+                "{}: {}",
+                neurographrag::i18n::prefixo_erro(),
+                e.localized_message()
+            );
             std::process::exit(e.exit_code());
         }
     };
@@ -123,7 +165,11 @@ fn main() {
 
     if let Err(e) = result {
         tracing::error!(error = %e);
-        eprintln!("Error: {}", e.localized_message());
+        eprintln!(
+            "{}: {}",
+            neurographrag::i18n::prefixo_erro(),
+            e.localized_message()
+        );
         std::process::exit(e.exit_code());
     }
 }

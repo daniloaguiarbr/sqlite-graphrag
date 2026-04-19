@@ -8,7 +8,7 @@
     "memories", "memories_total", "entities", "entities_total",
     "relationships", "relationships_total", "edges",
     "chunks_total", "avg_body_len", "namespaces",
-    "db_size_bytes", "db_bytes", "schema_version"
+    "db_size_bytes", "db_bytes", "schema_version", "elapsed_ms"
   ],
   "additionalProperties": false,
   "properties": {
@@ -21,9 +21,10 @@
     "edges":                { "type": "integer", "minimum": 0 },
     "chunks_total":         { "type": "integer", "minimum": 0 },
     "avg_body_len":         { "type": "number",  "minimum": 0 },
-    "namespaces":           { "type": "integer", "minimum": 0 },
+    "namespaces":           { "type": "array", "items": { "type": "string" }, "description": "List of namespace strings present in the database." },
     "db_size_bytes":        { "type": "integer", "minimum": 0 },
     "db_bytes":             { "type": "integer", "minimum": 0, "description": "Alias of db_size_bytes." },
-    "schema_version":       { "type": "integer" }
+    "schema_version":       { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version. Emitted as string by binary." },
+    "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

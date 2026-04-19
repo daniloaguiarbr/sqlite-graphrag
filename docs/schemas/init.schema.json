@@ -4,14 +4,15 @@
   "title": "InitResponse",
   "description": "Response emitted by `neurographrag init` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["db_path", "schema_version", "model", "dim", "namespace", "status"],
+  "required": ["db_path", "schema_version", "model", "dim", "namespace", "status", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "db_path":        { "type": "string", "description": "Absolute path to the SQLite database file." },
-    "schema_version": { "type": "integer", "description": "SQLite PRAGMA user_version after migration." },
+    "schema_version": { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version after migration. Emitted as string by binary." },
     "model":          { "type": "string", "description": "Embedding model name downloaded or reused." },
     "dim":            { "type": "integer", "description": "Embedding vector dimension (e.g. 384)." },
     "namespace":      { "type": "string", "description": "Active namespace resolved at init time." },
-    "status":         { "type": "string", "enum": ["created", "already_exists"], "description": "Whether the database was newly created or already existed." }
+    "status":         { "type": "string", "enum": ["created", "already_exists", "ok"], "description": "Whether the database was newly created or already existed." },
+    "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

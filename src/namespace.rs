@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::validacao;
 use directories::ProjectDirs;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -22,10 +23,70 @@ pub struct NamespaceResolution {
     pub projects_mapping_path: String,
 }
 
+/// Resolve o namespace ativo retornando apenas o nome final.
+///
+/// Atalho sobre [`detect_namespace`] quando a origem não importa.
+/// Com flag explícita válida, o namespace retornado é exatamente o valor passado.
+/// Sem flag, o fallback final é `"global"`.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Validation`] se `explicit` contiver caracteres inválidos
+/// ou ultrapassar 80 caracteres.
+///
+/// # Examples
+///
+/// ```
+/// use neurographrag::namespace::resolve_namespace;
+///
+/// // Flag explícita válida é aceita e refletida no resultado.
+/// let ns = resolve_namespace(Some("meu-projeto")).unwrap();
+/// assert_eq!(ns, "meu-projeto");
+/// ```
+///
+/// ```
+/// use neurographrag::namespace::resolve_namespace;
+/// use neurographrag::errors::AppError;
+///
+/// // Namespace com caracteres inválidos causa erro de validação (exit 1).
+/// let err = resolve_namespace(Some("ns com espaço")).unwrap_err();
+/// assert_eq!(err.exit_code(), 1);
+/// ```
 pub fn resolve_namespace(explicit: Option<&str>) -> Result<String, AppError> {
     Ok(detect_namespace(explicit)?.namespace)
 }
 
+/// Resolve o namespace ativo retornando estrutura com origem e caminhos.
+///
+/// A precedência é: flag explícita > `NEUROGRAPHRAG_NAMESPACE` > `.neurographrag/config.toml`
+/// > `projects.toml` > fallback `"global"`.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Validation`] se o namespace resolvido contiver caracteres inválidos.
+///
+/// # Examples
+///
+/// ```
+/// use neurographrag::namespace::{detect_namespace, NamespaceSource};
+///
+/// // Com flag explícita, a fonte é `ExplicitFlag`.
+/// let res = detect_namespace(Some("producao")).unwrap();
+/// assert_eq!(res.namespace, "producao");
+/// assert_eq!(res.source, NamespaceSource::ExplicitFlag);
+/// ```
+///
+/// ```
+/// use neurographrag::namespace::{detect_namespace, NamespaceSource};
+///
+/// // Sem nenhuma configuração e fora de diretório mapeado, fallback é "global".
+/// // Desativa env var para garantir comportamento determinístico.
+/// std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+/// let res = detect_namespace(None).unwrap();
+/// // Fonte pode ser Default ou ProjectsMapping dependendo do diretório de trabalho;
+/// // mas o namespace nunca é vazio.
+/// assert!(!res.namespace.is_empty());
+/// ```
 pub fn detect_namespace(explicit: Option<&str>) -> Result<NamespaceResolution, AppError> {
     let cwd = std::env::current_dir().map_err(AppError::Io)?;
     let cwd_display = normalize_path(&cwd);
@@ -89,15 +150,13 @@ pub fn detect_namespace(explicit: Option<&str>) -> Result<NamespaceResolution, A
 
 fn validate_namespace(ns: &str) -> Result<(), AppError> {
     if ns.is_empty() || ns.len() > 80 {
-        return Err(AppError::Validation("namespace must be 1-80 chars".into()));
+        return Err(AppError::Validation(validacao::namespace_comprimento()));
     }
     if !ns
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(AppError::Validation(
-            "namespace must be alphanumeric + hyphens/underscores".into(),
-        ));
+        return Err(AppError::Validation(validacao::namespace_formato()));
     }
     Ok(())
 }
@@ -109,9 +168,9 @@ fn read_project_namespace(path: &Path) -> Result<Option<String>, AppError> {
 
     let content = std::fs::read_to_string(path)?;
     let value = content.parse::<toml::Value>().map_err(|e| {
-        AppError::Validation(format!(
-            "invalid project namespace config '{}': {e}",
-            path.display()
+        AppError::Validation(validacao::config_namespace_invalido(
+            &path.display().to_string(),
+            &e.to_string(),
         ))
     })?;
 
@@ -141,9 +200,9 @@ fn read_projects_mapping(path: &Path, cwd: &Path) -> Result<Option<String>, AppE
 
     let content = std::fs::read_to_string(path)?;
     let value = content.parse::<toml::Value>().map_err(|e| {
-        AppError::Validation(format!(
-            "invalid projects mapping '{}': {e}",
-            path.display()
+        AppError::Validation(validacao::projects_mapping_invalido(
+            &path.display().to_string(),
+            &e.to_string(),
         ))
     })?;
 

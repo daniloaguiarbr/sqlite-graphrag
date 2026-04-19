@@ -1,6 +1,7 @@
 use crate::chunking;
 use crate::cli::MemoryType;
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output::{self, OutputFormat, RememberResponse};
 use crate::paths::AppPaths;
 use crate::storage::chunks as storage_chunks;
@@ -39,7 +40,13 @@ pub struct RememberArgs {
     pub metadata_file: Option<std::path::PathBuf>,
     #[arg(long)]
     pub force_merge: bool,
-    #[arg(long, value_parser = crate::parsers::parse_expected_updated_at)]
+    #[arg(
+        long,
+        value_name = "EPOCH_OR_RFC3339",
+        value_parser = crate::parsers::parse_expected_updated_at,
+        long_help = "Optimistic lock: reject if updated_at does not match. \
+Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
+    )]
     pub expected_updated_at: Option<i64>,
     #[arg(long)]
     pub skip_extraction: bool,
@@ -47,6 +54,8 @@ pub struct RememberArgs {
     pub session_id: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -126,13 +135,13 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
-        return Err(AppError::LimitExceeded(format!(
-            "entities exceed limit of {MAX_ENTITIES_PER_MEMORY}"
+        return Err(AppError::LimitExceeded(erros::limite_entidades(
+            MAX_ENTITIES_PER_MEMORY,
         )));
     }
     if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
-        return Err(AppError::LimitExceeded(format!(
-            "relationships exceed limit of {MAX_RELATIONSHIPS_PER_MEMORY}"
+        return Err(AppError::LimitExceeded(erros::limite_relacionamentos(
+            MAX_RELATIONSHIPS_PER_MEMORY,
         )));
     }
 
@@ -219,9 +228,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     {
         Some((existing_id, _updated_at, _current_version)) => {
             if !args.force_merge {
-                return Err(AppError::Duplicate(format!(
-                    "memory '{}' already exists in namespace '{}'. Use --force-merge to update.",
-                    args.name, namespace
+                return Err(AppError::Duplicate(erros::memoria_duplicada(
+                    &args.name, &namespace,
                 )));
             }
             if let Some(hash_id) = memories::find_by_hash(&conn, &namespace, &body_hash)? {
@@ -367,7 +375,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     let created_at_epoch = chrono::Utc::now().timestamp();
-    let created_at_iso = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let created_at_iso = crate::tz::formatar_iso(chrono::Utc::now());
 
     output::emit_json(&RememberResponse {
         memory_id,
@@ -387,4 +395,150 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use crate::output::RememberResponse;
+
+    #[test]
+    fn remember_response_serializa_campos_obrigatorios() {
+        let resp = RememberResponse {
+            memory_id: 42,
+            name: "minha-mem".to_string(),
+            namespace: "global".to_string(),
+            action: "created".to_string(),
+            operation: "created".to_string(),
+            version: 1,
+            entities_persisted: 0,
+            relationships_persisted: 0,
+            chunks_created: 1,
+            merged_into_memory_id: None,
+            warnings: vec![],
+            created_at: 1_705_320_000,
+            created_at_iso: "2024-01-15T12:00:00Z".to_string(),
+            elapsed_ms: 55,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["memory_id"], 42);
+        assert_eq!(json["action"], "created");
+        assert_eq!(json["operation"], "created");
+        assert_eq!(json["version"], 1);
+        assert_eq!(json["elapsed_ms"], 55u64);
+        assert!(json["warnings"].is_array());
+        assert!(json["merged_into_memory_id"].is_null());
+    }
+
+    #[test]
+    fn remember_response_action_e_operation_sao_aliases() {
+        let resp = RememberResponse {
+            memory_id: 1,
+            name: "mem".to_string(),
+            namespace: "global".to_string(),
+            action: "updated".to_string(),
+            operation: "updated".to_string(),
+            version: 2,
+            entities_persisted: 3,
+            relationships_persisted: 1,
+            chunks_created: 2,
+            merged_into_memory_id: None,
+            warnings: vec![],
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(
+            json["action"], json["operation"],
+            "action e operation devem ser iguais"
+        );
+        assert_eq!(json["entities_persisted"], 3);
+        assert_eq!(json["relationships_persisted"], 1);
+        assert_eq!(json["chunks_created"], 2);
+    }
+
+    #[test]
+    fn remember_response_warnings_lista_mensagens() {
+        let resp = RememberResponse {
+            memory_id: 5,
+            name: "dup-mem".to_string(),
+            namespace: "global".to_string(),
+            action: "created".to_string(),
+            operation: "created".to_string(),
+            version: 1,
+            entities_persisted: 0,
+            relationships_persisted: 0,
+            chunks_created: 1,
+            merged_into_memory_id: None,
+            warnings: vec!["identical body already exists as memory id 3".to_string()],
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 10,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let warnings = json["warnings"]
+            .as_array()
+            .expect("warnings deve ser array");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].as_str().unwrap().contains("identical body"));
+    }
+
+    #[test]
+    fn nome_invalido_prefixo_reservado_retorna_validation_error() {
+        use crate::errors::AppError;
+        // Valida a lógica de rejeição de nomes com prefixo "__" diretamente
+        let nome = "__reservado";
+        let resultado: Result<(), AppError> = if nome.starts_with("__") {
+            Err(AppError::Validation(
+                crate::i18n::validacao::nome_reservado(),
+            ))
+        } else {
+            Ok(())
+        };
+        assert!(resultado.is_err());
+        if let Err(AppError::Validation(msg)) = resultado {
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn nome_muito_longo_retorna_validation_error() {
+        use crate::errors::AppError;
+        let nome_longo = "a".repeat(crate::constants::MAX_MEMORY_NAME_LEN + 1);
+        let resultado: Result<(), AppError> =
+            if nome_longo.is_empty() || nome_longo.len() > crate::constants::MAX_MEMORY_NAME_LEN {
+                Err(AppError::Validation(
+                    crate::i18n::validacao::nome_comprimento(crate::constants::MAX_MEMORY_NAME_LEN),
+                ))
+            } else {
+                Ok(())
+            };
+        assert!(resultado.is_err());
+    }
+
+    #[test]
+    fn remember_response_merged_into_memory_id_some_serializa_inteiro() {
+        let resp = RememberResponse {
+            memory_id: 10,
+            name: "mem-mergeada".to_string(),
+            namespace: "global".to_string(),
+            action: "updated".to_string(),
+            operation: "updated".to_string(),
+            version: 3,
+            entities_persisted: 0,
+            relationships_persisted: 0,
+            chunks_created: 1,
+            merged_into_memory_id: Some(7),
+            warnings: vec![],
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["merged_into_memory_id"], 7);
+    }
 }

@@ -1,5 +1,6 @@
 use crate::cli::RelationKind;
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -20,6 +21,8 @@ pub struct UnlinkArgs {
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -42,9 +45,8 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -53,23 +55,18 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "entity \"{}\" does not exist in namespace \"{}\"",
-            args.from, namespace
-        ))
+        AppError::NotFound(erros::entidade_nao_encontrada(&args.from, &namespace))
     })?;
-    let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "entity \"{}\" does not exist in namespace \"{}\"",
-            args.to, namespace
-        ))
-    })?;
+    let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?
+        .ok_or_else(|| AppError::NotFound(erros::entidade_nao_encontrada(&args.to, &namespace)))?;
 
     let rel = entities::find_relationship(&conn, source_id, target_id, relation_str)?.ok_or_else(
         || {
-            AppError::NotFound(format!(
-                "relationship \"{}\" --[{}]--> \"{}\" does not exist in namespace \"{}\"",
-                args.from, relation_str, args.to, namespace
+            AppError::NotFound(erros::relacionamento_nao_encontrado(
+                &args.from,
+                relation_str,
+                &args.to,
+                &namespace,
             ))
         },
     )?;
@@ -101,4 +98,76 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use crate::cli::RelationKind;
+
+    #[test]
+    fn unlink_response_serializa_todos_campos() {
+        let resp = UnlinkResponse {
+            action: "deleted".to_string(),
+            relationship_id: 99,
+            from_name: "entidade-a".to_string(),
+            to_name: "entidade-b".to_string(),
+            relation: "uses".to_string(),
+            namespace: "global".to_string(),
+            elapsed_ms: 5,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["action"], "deleted");
+        assert_eq!(json["relationship_id"], 99i64);
+        assert_eq!(json["from_name"], "entidade-a");
+        assert_eq!(json["to_name"], "entidade-b");
+        assert_eq!(json["relation"], "uses");
+        assert_eq!(json["namespace"], "global");
+        assert_eq!(json["elapsed_ms"], 5u64);
+    }
+
+    #[test]
+    fn unlink_args_relation_kind_as_str_correto() {
+        assert_eq!(RelationKind::Uses.as_str(), "uses");
+        assert_eq!(RelationKind::DependsOn.as_str(), "depends_on");
+        assert_eq!(RelationKind::AppliesTo.as_str(), "applies_to");
+        assert_eq!(RelationKind::Causes.as_str(), "causes");
+        assert_eq!(RelationKind::Fixes.as_str(), "fixes");
+    }
+
+    #[test]
+    fn unlink_response_action_deve_ser_deleted() {
+        let resp = UnlinkResponse {
+            action: "deleted".to_string(),
+            relationship_id: 1,
+            from_name: "a".to_string(),
+            to_name: "b".to_string(),
+            relation: "related".to_string(),
+            namespace: "global".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(
+            json["action"], "deleted",
+            "ação de unlink deve sempre ser 'deleted'"
+        );
+    }
+
+    #[test]
+    fn unlink_response_relationship_id_positivo() {
+        let resp = UnlinkResponse {
+            action: "deleted".to_string(),
+            relationship_id: 42,
+            from_name: "origem".to_string(),
+            to_name: "destino".to_string(),
+            relation: "supports".to_string(),
+            namespace: "projeto".to_string(),
+            elapsed_ms: 3,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert!(
+            json["relationship_id"].as_i64().unwrap() > 0,
+            "relationship_id deve ser positivo após unlink"
+        );
+    }
 }

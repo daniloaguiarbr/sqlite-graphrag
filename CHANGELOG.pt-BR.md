@@ -10,24 +10,37 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [2.1.0] - 2026-04-19
 
-### Documentação
+### Corrigido
+- G-001: `rename` agora emite `action: "renamed"` no JSON de saída (`src/commands/rename.rs`)
+- G-002: ranks do `hybrid-search` agora começam em 1 atendendo restrição `minimum: 1` do schema
+- G-003: `--expected-updated-at` agora aplica lock otimista via cláusula WHERE + verificação `changes()` (exit 3 em conflito)
+- G-005: prefixo i18n `Error:` agora traduzido para `Erro:` em PT via `i18n::prefixo_erro()` em `main.rs`
+- G-007: `health` retorna exit 10 quando `integrity_ok: false` via `AppError::Database` (emite JSON antes de retornar Err)
+- G-013: `restore` agora encontra memórias soft-deleted (WHERE inclui `deleted_at IS NOT NULL`)
+- G-018: `emit_progress()` agora usa `tracing::info!` respeitando `LOG_FORMAT=json`
+- Receitas 8 e 14 do COOKBOOK corrigidas para usar `jaq '.items[]'` conforme estrutura de `list --json`
+- Semântica de score no HOW_TO_USE pt-BR corrigida (`score` alto = mais relevante, não distância baixa)
 
-- Adicionada seção "Crates Rust Compatíveis" ao README listando 18 crates Rust
-- Adicionados 6 agentes de IA ausentes em docs/AGENTS.md (Minimax, Z.ai, Ollama, Hermes, LangChain, LangGraph)
-- Adicionada cobertura do shell Nushell em INTEGRATIONS
-- Adicionadas 5 receitas novas ao docs/COOKBOOK cobrindo integrações com crates Rust
-- Adicionados LICENSE-MIT e LICENSE-APACHE como arquivos separados
-- Adicionado llms.pt-BR.txt espelhado para descoberta por LLMs em português
-- Adicionado schema canônico evals/queries.json em skill/
-- Reescritos README, docs/AGENTS, INTEGRATIONS, llms.txt com framework AIDA
-- Removidas 59 violações de em-dash fora de headings H3
-- Removidos 4 marcadores de negrito do CHANGELOG
-- Divididos 36 bullets longos no CHANGELOG EN e PT em declarações concisas
+### Adicionado
+- G-004: Documentação dos valores válidos de `entity_type` em `--entities-file` (`project|tool|person|file|concept|incident|decision|memory|dashboard|issue_tracker`)
+- G-006: `docs/MIGRATION.md` + `docs/MIGRATION.pt-BR.md` com guia de atualização v1.x para v2.x
+- G-016: Subcomando `graph traverse` (flags `--from`/`--depth`) com novo schema `docs/schemas/graph-traverse.schema.json`
+- G-016: Subcomando `graph stats` com novo schema `docs/schemas/graph-stats.schema.json`
+- G-019/G-020: Flag global `--tz` + `tz::init()` em `main.rs` populando `FUSO_GLOBAL` para timestamps com fuso horário
+- G-024: Flag `namespace-detect --db` para override de DB múltiplo
+- G-025: Flags `vacuum --checkpoint` + `--format`
+- G-026: Subcomando `migrate --status` com resposta `applied_migrations`
+- G-027: `PRAGMA user_version = 49` definido após conclusão das migrations do refinery
+- 6 novas seções H3 em HOW_TO_USE.pt-BR.md (Aliases de Flag de Idioma, Flag de Saída JSON, Descoberta de Caminho do DB, Limite de Concorrência, Nota sobre forget, Nota sobre optimize e migrate)
+- Nova receita no COOKBOOK pt-BR: "Como Exibir Timestamps no Fuso Horário Local"
 
 ### Alterado
+- `migrate.schema.json` agora usa `oneOf` cobrindo os modos run vs `--status` com `$defs.MigrationEntry`
+- `--json` aceito como no-op em `remember`/`read`/`history`/`forget`/`purge` para consistência
+- `docs/schemas/README.md` documenta convenção de nomenclatura `__debug_schema` (binário) vs kebab-case (arquivo de schema)
 
-- Entradas do CHANGELOG abrem com verbos persuasivos e benefícios quantificados
-- Toda a documentação agora segue docs_rules/rules_rust_documentacao.md
+### Descontinuado
+- `--allow-parallel` removida em v1.2.0 — consulte `docs/MIGRATION.md` para caminho de atualização
 
 
 ## [2.0.5] — 2026-04-19
@@ -283,16 +296,27 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - Variáveis de ambiente `ORT_NUM_THREADS`, `OMP_NUM_THREADS` e `ORT_INTRA_OP_NUM_THREADS` pré-definidas para 1.
 - Singleton `OnceLock<Mutex<TextEmbedding>>` para reuso do modelo intra-processo.
 - Testes de integração em `tests/lock_integration.rs` cobrindo aquisição e liberação de lock.
+- `.cargo/config.toml` com `RUST_TEST_THREADS` conservador padrão e aliases cargo padronizados.
+- `.config/nextest.toml` com profiles `default`, `ci`, `heavy` e override `threads-required` para loom e stress.
+- `scripts/test-loom.sh` como invocação canônica local com `RUSTFLAGS="--cfg loom"`.
+- `docs/TESTING.md` e `docs/TESTING.pt-BR.md` guia bilíngue de testes.
+- Feature Cargo `slow-tests` para futuros testes pesados opt-in.
 
 ### Alterado
 
 - Comportamento padrão agora é single-instance.
 - Uma segunda invocação concorrente sai com código 75 exceto se `--allow-parallel` for passada.
 - Módulo embedder refatorado de struct-com-estado para funções livres operando sobre um singleton.
+- Mover `loom = "0.7"` para `[target.'cfg(loom)'.dev-dependencies]` — ignorado em cargo test padrão.
+- Remover feature Cargo legada `loom-tests` substituída pelo gate oficial `#[cfg(loom)]`.
+- Workflow CI `ci.yml` migrado para `cargo nextest run --profile ci` com `RUST_TEST_THREADS` explícito por job.
+- Job CI loom agora exporta `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`, `RUST_TEST_THREADS=1`, `--release`.
 
 ### Corrigido
 
 - Previne OOM livelock quando a CLI é invocada em paralelismo massivo por orquestradores LLM.
+- Previne livelock térmico nos testes loom ao alinhar gate `#[cfg(loom)]` com padrão upstream.
+- Serializa `tests/loom_lock_slots.rs` com `#[serial(loom_model)]` para impedir execução paralela dos modelos loom.
 
 
 ## [0.1.0] - 2026-04-17

@@ -3,8 +3,39 @@
 use crate::errors::AppError;
 use rusqlite::{params, Connection};
 
-/// BFS traversal from seed memories through entity relationships.
-/// Returns memory_ids reachable via entity graph (excluding seeds).
+/// Percorre o grafo de entidades por BFS a partir de memórias-semente.
+///
+/// Retorna `memory_id`s alcançáveis pelo grafo de entidades e relacionamentos,
+/// excluindo as próprias sementes. O algoritmo:
+/// 1. Coleta entidades associadas às sementes via `memory_entities`.
+/// 2. Executa BFS sobre `relationships` filtrando por `weight >= min_weight` e `namespace`.
+/// 3. Retorna memórias ligadas às entidades descobertas (excluindo soft-deleted).
+///
+/// # Errors
+///
+/// Propaga [`AppError::Database`] (exit 10) em falhas de consulta SQLite.
+///
+/// # Examples
+///
+/// ```
+/// use rusqlite::Connection;
+/// use neurographrag::graph::traverse_from_memories;
+///
+/// // Lista de sementes vazia retorna imediatamente sem consultar o banco.
+/// let conn = Connection::open_in_memory().unwrap();
+/// let ids = traverse_from_memories(&conn, &[], "global", 0.5, 3).unwrap();
+/// assert!(ids.is_empty());
+/// ```
+///
+/// ```
+/// use rusqlite::Connection;
+/// use neurographrag::graph::traverse_from_memories;
+///
+/// // max_hops == 0 retorna imediatamente sem traversal.
+/// let conn = Connection::open_in_memory().unwrap();
+/// let ids = traverse_from_memories(&conn, &[1, 2], "global", 0.5, 0).unwrap();
+/// assert!(ids.is_empty());
+/// ```
 pub fn traverse_from_memories(
     conn: &Connection,
     seed_memory_ids: &[i64],

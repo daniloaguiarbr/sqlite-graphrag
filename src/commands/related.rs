@@ -3,6 +3,7 @@ use crate::constants::{
     DEFAULT_K_RECALL, DEFAULT_MAX_HOPS, DEFAULT_MIN_WEIGHT, TEXT_DESCRIPTION_PREVIEW_LEN,
 };
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -35,6 +36,8 @@ pub struct RelatedArgs {
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -77,9 +80,8 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -94,8 +96,8 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     ) {
         Ok(id) => id,
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            return Err(AppError::NotFound(format!(
-                "memory '{name}' not found in namespace '{namespace}'"
+            return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+                &name, &namespace,
             )));
         }
         Err(e) => return Err(AppError::Database(e)),
@@ -372,4 +374,201 @@ fn fetch_neighbours(
     results.extend(rows);
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    fn setup_related_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'global',
+                type TEXT NOT NULL DEFAULT 'fact',
+                description TEXT NOT NULL DEFAULT '',
+                deleted_at INTEGER
+            );
+            CREATE TABLE entities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace TEXT NOT NULL,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                relation TEXT NOT NULL DEFAULT 'related_to',
+                weight REAL NOT NULL DEFAULT 1.0
+            );
+            CREATE TABLE memory_entities (
+                memory_id INTEGER NOT NULL,
+                entity_id INTEGER NOT NULL
+            );",
+        )
+        .expect("falha ao criar tabelas de teste");
+        conn
+    }
+
+    fn insert_memory(conn: &rusqlite::Connection, name: &str, namespace: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO memories (name, namespace) VALUES (?1, ?2)",
+            rusqlite::params![name, namespace],
+        )
+        .expect("falha ao inserir memória");
+        conn.last_insert_rowid()
+    }
+
+    fn insert_entity(conn: &rusqlite::Connection, name: &str, namespace: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO entities (name, namespace) VALUES (?1, ?2)",
+            rusqlite::params![name, namespace],
+        )
+        .expect("falha ao inserir entidade");
+        conn.last_insert_rowid()
+    }
+
+    fn link_memory_entity(conn: &rusqlite::Connection, memory_id: i64, entity_id: i64) {
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
+            rusqlite::params![memory_id, entity_id],
+        )
+        .expect("falha ao vincular memória-entidade");
+    }
+
+    fn insert_relationship(
+        conn: &rusqlite::Connection,
+        namespace: &str,
+        source_id: i64,
+        target_id: i64,
+        relation: &str,
+        weight: f64,
+    ) {
+        conn.execute(
+            "INSERT INTO relationships (namespace, source_id, target_id, relation, weight)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![namespace, source_id, target_id, relation, weight],
+        )
+        .expect("falha ao inserir relacionamento");
+    }
+
+    #[test]
+    fn related_response_serializa_results_e_elapsed_ms() {
+        let resp = RelatedResponse {
+            results: vec![RelatedMemory {
+                memory_id: 1,
+                name: "mem-vizinha".to_string(),
+                namespace: "global".to_string(),
+                memory_type: "fact".to_string(),
+                description: "desc".to_string(),
+                hop_distance: 1,
+                source_entity: Some("entidade-a".to_string()),
+                target_entity: Some("entidade-b".to_string()),
+                relation: Some("related_to".to_string()),
+                weight: Some(0.9),
+            }],
+            elapsed_ms: 7,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert!(json["results"].is_array());
+        assert_eq!(json["results"].as_array().unwrap().len(), 1);
+        assert_eq!(json["elapsed_ms"], 7u64);
+        assert_eq!(json["results"][0]["type"], "fact");
+        assert_eq!(json["results"][0]["hop_distance"], 1);
+    }
+
+    #[test]
+    fn traverse_related_retorna_vazio_sem_entidades_seed() {
+        let conn = setup_related_db();
+        let resultado = traverse_related(&conn, 1, &[], "global", 2, 0.0, None, 10)
+            .expect("traverse_related falhou");
+        assert!(
+            resultado.is_empty(),
+            "sem entidades seed deve retornar vazio"
+        );
+    }
+
+    #[test]
+    fn traverse_related_retorna_vazio_com_max_hops_zero() {
+        let conn = setup_related_db();
+        let mem_id = insert_memory(&conn, "seed-mem", "global");
+        let ent_id = insert_entity(&conn, "ent-a", "global");
+        link_memory_entity(&conn, mem_id, ent_id);
+
+        let resultado = traverse_related(&conn, mem_id, &[ent_id], "global", 0, 0.0, None, 10)
+            .expect("traverse_related falhou");
+        assert!(resultado.is_empty(), "max_hops=0 deve retornar vazio");
+    }
+
+    #[test]
+    fn traverse_related_descobre_memoria_vizinha_por_grafo() {
+        let conn = setup_related_db();
+
+        let seed_id = insert_memory(&conn, "seed-mem", "global");
+        let vizinha_id = insert_memory(&conn, "vizinha-mem", "global");
+        let ent_a = insert_entity(&conn, "ent-a", "global");
+        let ent_b = insert_entity(&conn, "ent-b", "global");
+
+        link_memory_entity(&conn, seed_id, ent_a);
+        link_memory_entity(&conn, vizinha_id, ent_b);
+        insert_relationship(&conn, "global", ent_a, ent_b, "related_to", 1.0);
+
+        let resultado = traverse_related(&conn, seed_id, &[ent_a], "global", 2, 0.0, None, 10)
+            .expect("traverse_related falhou");
+
+        assert_eq!(resultado.len(), 1, "deve encontrar 1 memória vizinha");
+        assert_eq!(resultado[0].name, "vizinha-mem");
+        assert_eq!(resultado[0].hop_distance, 1);
+    }
+
+    #[test]
+    fn traverse_related_respeita_limite() {
+        let conn = setup_related_db();
+
+        let seed_id = insert_memory(&conn, "seed", "global");
+        let ent_seed = insert_entity(&conn, "ent-seed", "global");
+        link_memory_entity(&conn, seed_id, ent_seed);
+
+        for i in 0..5 {
+            let mem_id = insert_memory(&conn, &format!("vizinha-{i}"), "global");
+            let ent_id = insert_entity(&conn, &format!("ent-{i}"), "global");
+            link_memory_entity(&conn, mem_id, ent_id);
+            insert_relationship(&conn, "global", ent_seed, ent_id, "related_to", 1.0);
+        }
+
+        let resultado = traverse_related(&conn, seed_id, &[ent_seed], "global", 1, 0.0, None, 3)
+            .expect("traverse_related falhou");
+
+        assert!(
+            resultado.len() <= 3,
+            "limite=3 deve restringir a no máximo 3 resultados"
+        );
+    }
+
+    #[test]
+    fn related_memory_campos_opcionais_nulos_serializados() {
+        let mem = RelatedMemory {
+            memory_id: 99,
+            name: "sem-relacao".to_string(),
+            namespace: "ns".to_string(),
+            memory_type: "concept".to_string(),
+            description: "".to_string(),
+            hop_distance: 2,
+            source_entity: None,
+            target_entity: None,
+            relation: None,
+            weight: None,
+        };
+
+        let json = serde_json::to_value(&mem).expect("serialização falhou");
+        assert!(json["source_entity"].is_null());
+        assert!(json["target_entity"].is_null());
+        assert!(json["relation"].is_null());
+        assert!(json["weight"].is_null());
+        assert_eq!(json["hop_distance"], 2);
+    }
 }

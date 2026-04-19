@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -23,6 +24,8 @@ pub struct PurgeArgs {
     /// Compatibilidade com ferramentas que passam --yes para confirmar operações destrutivas.
     #[arg(long, hide = true, default_value_t = false)]
     pub yes: bool,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -47,9 +50,8 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "banco de dados não encontrado em {}. Execute 'neurographrag init' primeiro.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -73,11 +75,12 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
         compute_metrics(&conn, cutoff_epoch, namespace_opt, args.name.as_deref())?;
 
     if candidates_count == 0 && args.name.is_some() {
-        return Err(AppError::NotFound(format!(
-            "memória soft-deleted '{}' não encontrada no namespace '{}'",
-            args.name.unwrap_or_default(),
-            namespace
-        )));
+        return Err(AppError::NotFound(
+            erros::memoria_soft_deleted_nao_encontrada(
+                args.name.as_deref().unwrap_or_default(),
+                &namespace,
+            ),
+        ));
     }
 
     if !args.dry_run {

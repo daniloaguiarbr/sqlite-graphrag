@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -11,6 +12,8 @@ pub struct ReadArgs {
     pub name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -46,9 +49,7 @@ struct ReadResponse {
 }
 
 fn epoch_to_iso(epoch: i64) -> String {
-    chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    crate::tz::epoch_para_iso(epoch)
 }
 
 pub fn run(args: ReadArgs) -> Result<(), AppError> {
@@ -91,12 +92,134 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
             output::emit_json(&response)?;
         }
         None => {
-            return Err(AppError::NotFound(format!(
-                "memory '{}' not found in namespace '{}'",
-                args.name, namespace
+            return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+                &args.name, &namespace,
             )))
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn epoch_to_iso_converte_zero_para_epoch_unix() {
+        let resultado = epoch_to_iso(0);
+        assert!(
+            resultado.starts_with("1970-01-01T00:00:00"),
+            "epoch 0 deve mapear para 1970-01-01T00:00:00, obtido: {resultado}"
+        );
+    }
+
+    #[test]
+    fn epoch_to_iso_converte_timestamp_conhecido() {
+        let resultado = epoch_to_iso(1_705_320_000);
+        assert!(
+            resultado.starts_with("2024-01-15"),
+            "timestamp 1705320000 deve mapear para 2024-01-15, obtido: {resultado}"
+        );
+    }
+
+    #[test]
+    fn epoch_to_iso_retorna_fallback_para_epoch_negativo_invalido() {
+        let resultado = epoch_to_iso(i64::MIN);
+        assert!(
+            !resultado.is_empty(),
+            "deve retornar string não vazia mesmo para epoch inválido"
+        );
+    }
+
+    #[test]
+    fn read_response_serializa_aliases_id_e_memory_id() {
+        let resp = ReadResponse {
+            id: 42,
+            memory_id: 42,
+            namespace: "global".to_string(),
+            name: "minha-mem".to_string(),
+            type_alias: "fact".to_string(),
+            memory_type: "fact".to_string(),
+            description: "desc".to_string(),
+            body: "corpo".to_string(),
+            body_hash: "abc123".to_string(),
+            session_id: None,
+            source: "agent".to_string(),
+            metadata: "{}".to_string(),
+            version: 1,
+            created_at: 1_705_320_000,
+            created_at_iso: "2024-01-15T12:00:00Z".to_string(),
+            updated_at: 1_705_320_000,
+            updated_at_iso: "2024-01-15T12:00:00Z".to_string(),
+            elapsed_ms: 5,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["id"], 42);
+        assert_eq!(json["memory_id"], 42);
+        assert_eq!(json["type"], "fact");
+        assert_eq!(json["memory_type"], "fact");
+        assert_eq!(json["elapsed_ms"], 5u64);
+        assert!(
+            json["session_id"].is_null(),
+            "session_id None deve serializar como null"
+        );
+    }
+
+    #[test]
+    fn read_response_session_id_some_serializa_string() {
+        let resp = ReadResponse {
+            id: 1,
+            memory_id: 1,
+            namespace: "global".to_string(),
+            name: "mem".to_string(),
+            type_alias: "skill".to_string(),
+            memory_type: "skill".to_string(),
+            description: "d".to_string(),
+            body: "b".to_string(),
+            body_hash: "h".to_string(),
+            session_id: Some("sess-123".to_string()),
+            source: "agent".to_string(),
+            metadata: "{}".to_string(),
+            version: 2,
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            updated_at: 0,
+            updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["session_id"], "sess-123");
+    }
+
+    #[test]
+    fn read_response_elapsed_ms_esta_presente() {
+        let resp = ReadResponse {
+            id: 7,
+            memory_id: 7,
+            namespace: "ns".to_string(),
+            name: "n".to_string(),
+            type_alias: "procedure".to_string(),
+            memory_type: "procedure".to_string(),
+            description: "d".to_string(),
+            body: "b".to_string(),
+            body_hash: "h".to_string(),
+            session_id: None,
+            source: "agent".to_string(),
+            metadata: "{}".to_string(),
+            version: 3,
+            created_at: 1000,
+            created_at_iso: "1970-01-01T00:16:40Z".to_string(),
+            updated_at: 2000,
+            updated_at_iso: "1970-01-01T00:33:20Z".to_string(),
+            elapsed_ms: 123,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["elapsed_ms"], 123u64);
+        assert!(json["created_at_iso"].is_string());
+        assert!(json["updated_at_iso"].is_string());
+    }
 }

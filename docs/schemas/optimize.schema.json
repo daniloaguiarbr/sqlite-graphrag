@@ -4,10 +4,11 @@
   "title": "OptimizeResponse",
   "description": "Response emitted by `neurographrag optimize` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["db_path", "status"],
+  "required": ["db_path", "status", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "db_path": { "type": "string" },
-    "status":  { "type": "string", "enum": ["ok"] }
+    "db_path":    { "type": "string" },
+    "status":     { "type": "string", "enum": ["ok"] },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

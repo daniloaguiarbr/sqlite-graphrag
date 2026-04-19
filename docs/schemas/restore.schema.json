@@ -4,12 +4,13 @@
   "title": "RestoreResponse",
   "description": "Response emitted by `neurographrag restore` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["memory_id", "name", "version", "restored_from"],
+  "required": ["memory_id", "name", "version", "restored_from", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "memory_id":     { "type": "integer" },
     "name":          { "type": "string" },
     "version":       { "type": "integer", "minimum": 1, "description": "New version number after restore." },
-    "restored_from": { "type": "integer", "minimum": 1, "description": "Source version number that was restored." }
+    "restored_from": { "type": "integer", "minimum": 1, "description": "Source version number that was restored." },
+    "elapsed_ms":    { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

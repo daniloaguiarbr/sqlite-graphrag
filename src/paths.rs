@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::validacao;
 use directories::ProjectDirs;
 use std::path::PathBuf;
 
@@ -60,9 +61,7 @@ impl AppPaths {
 
 fn validate_path(p: &str) -> Result<(), AppError> {
     if p.contains("..") {
-        return Err(AppError::Validation(format!(
-            "path traversal rejected: {p}"
-        )));
+        return Err(AppError::Validation(validacao::path_traversal(p)));
     }
     Ok(())
 }

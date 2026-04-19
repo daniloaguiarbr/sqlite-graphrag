@@ -33,12 +33,14 @@
 | `unlink` | `unlink.schema.json` |
 | `related` | `related.schema.json` |
 | `graph` | `graph.schema.json` |
+| `graph traverse` | `graph-traverse.schema.json` |
+| `graph stats` | `graph-stats.schema.json` |
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
 ### Usage
 - Validate a `recall` response: `neurographrag recall "query" | jaq --from-file docs/schemas/recall.schema.json`
 - Validate with Python: `jsonschema --instance <(neurographrag stats) docs/schemas/stats.schema.json`
-- The `__debug_schema` subcommand is hidden and intended for diagnostic tooling only
+- The `__debug_schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`__debug_schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
 ### Stability Guarantee
 - Schemas track the `main` branch and are updated with every breaking change
 - Minor additions (new optional fields) do NOT bump the schema version
@@ -56,7 +58,7 @@
 ### Uso
 - Validar resposta do `recall`: `neurographrag recall "consulta" | jaq --from-file docs/schemas/recall.schema.json`
 - Validar com Python: `jsonschema --instance <(neurographrag stats) docs/schemas/stats.schema.json`
-- O subcomando `__debug_schema` é oculto e destinado apenas a ferramentas de diagnóstico
+- O subcomando `__debug_schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`__debug_schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 ### Garantia de Estabilidade
 - Os schemas acompanham a branch `main` e são atualizados a cada breaking change
 - Adições menores (novos campos opcionais) NÃO incrementam a versão do schema

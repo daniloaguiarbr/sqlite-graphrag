@@ -106,21 +106,21 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let vec_results =
         memories::knn_search(&conn, &embedding, &namespace, memory_type_str, args.k * 2)?;
 
-    // Mapear posição de ranking vetorial por memory_id
+    // Mapear posição de ranking vetorial por memory_id (1-indexed conforme schema)
     let vec_rank_map: HashMap<i64, usize> = vec_results
         .iter()
         .enumerate()
-        .map(|(pos, (id, _))| (*id, pos))
+        .map(|(pos, (id, _))| (*id, pos + 1))
         .collect();
 
     let fts_results =
         memories::fts_search(&conn, &args.query, &namespace, memory_type_str, args.k * 2)?;
 
-    // Mapear posição de ranking FTS por memory_id
+    // Mapear posição de ranking FTS por memory_id (1-indexed conforme schema)
     let fts_rank_map: HashMap<i64, usize> = fts_results
         .iter()
         .enumerate()
-        .map(|(pos, row)| (row.id, pos))
+        .map(|(pos, row)| (row.id, pos + 1))
         .collect();
 
     let rrf_k = args.rrf_k as f64;
@@ -281,7 +281,7 @@ mod testes {
             combined_score: 0.0328,
             score: 0.0328,
             source: "hybrid".to_string(),
-            vec_rank: Some(0),
+            vec_rank: Some(1),
             fts_rank: None,
         };
         let json = serde_json::to_string(&item).unwrap();
@@ -308,7 +308,7 @@ mod testes {
             score: 0.016,
             source: "hybrid".to_string(),
             vec_rank: None,
-            fts_rank: Some(1),
+            fts_rank: Some(2),
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(
@@ -333,8 +333,8 @@ mod testes {
             combined_score: 0.05,
             score: 0.05,
             source: "hybrid".to_string(),
-            vec_rank: Some(2),
-            fts_rank: Some(0),
+            vec_rank: Some(3),
+            fts_rank: Some(1),
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"vec_rank\""), "deve conter vec_rank");

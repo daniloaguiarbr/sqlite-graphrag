@@ -45,6 +45,29 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Retorna `true` se um sinal de encerramento foi recebido desde o início do processo.
+///
+/// O valor reflete o estado de [`SHUTDOWN`]. Sem chamada a `ctrlc::set_handler`,
+/// o estado inicial é sempre `false`.
+///
+/// # Examples
+///
+/// ```
+/// use neurographrag::shutdown_requested;
+///
+/// // Em condições normais de inicialização o sinal não foi recebido.
+/// assert!(!shutdown_requested());
+/// ```
+///
+/// ```
+/// use std::sync::atomic::Ordering;
+/// use neurographrag::{SHUTDOWN, shutdown_requested};
+///
+/// // Simula recebimento de sinal e verifica que a função reflete o estado.
+/// SHUTDOWN.store(true, Ordering::SeqCst);
+/// assert!(shutdown_requested());
+/// // Restaura para não contaminar outros testes.
+/// SHUTDOWN.store(false, Ordering::SeqCst);
+/// ```
 pub fn shutdown_requested() -> bool {
     SHUTDOWN.load(Ordering::SeqCst)
 }
@@ -96,6 +119,9 @@ pub mod pragmas;
 
 /// Persistence layer: memories, entities, chunks and version history.
 pub mod storage;
+
+/// Fuso horário de exibição para campos `*_iso` (flag `--tz`, env `NEUROGRAPHRAG_DISPLAY_TZ`, fallback UTC).
+pub mod tz;
 
 mod embedded_migrations {
     use refinery::embed_migrations;

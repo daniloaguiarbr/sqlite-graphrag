@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -11,6 +12,8 @@ pub struct ForgetArgs {
     pub name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -35,9 +38,8 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let forgotten = memories::soft_delete(&conn, &namespace, &args.name)?;
 
     if !forgotten {
-        return Err(AppError::NotFound(format!(
-            "memory '{}' not found in namespace '{}'",
-            args.name, namespace
+        return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+            &args.name, &namespace,
         )));
     }
 
@@ -59,4 +61,64 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn forget_response_serializa_campos_basicos() {
+        let resp = ForgetResponse {
+            forgotten: true,
+            name: "minha-memoria".to_string(),
+            namespace: "global".to_string(),
+            elapsed_ms: 5,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["forgotten"], true);
+        assert_eq!(json["name"], "minha-memoria");
+        assert_eq!(json["namespace"], "global");
+        assert!(json["elapsed_ms"].is_number());
+    }
+
+    #[test]
+    fn forget_response_forgotten_true_indica_sucesso() {
+        let resp = ForgetResponse {
+            forgotten: true,
+            name: "teste".to_string(),
+            namespace: "ns".to_string(),
+            elapsed_ms: 1,
+        };
+        assert!(
+            resp.forgotten,
+            "forgotten deve ser true quando soft-delete bem-sucedido"
+        );
+    }
+
+    #[test]
+    fn forget_resposta_com_namespace_correto() {
+        let resp = ForgetResponse {
+            forgotten: true,
+            name: "abc".to_string(),
+            namespace: "meu-projeto".to_string(),
+            elapsed_ms: 0,
+        };
+        assert_eq!(
+            resp.namespace, "meu-projeto",
+            "namespace deve ser preservado na resposta"
+        );
+    }
+
+    #[test]
+    fn forget_elapsed_ms_zero_e_valido() {
+        let resp = ForgetResponse {
+            forgotten: true,
+            name: "qualquer".to_string(),
+            namespace: "global".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["elapsed_ms"], 0u64);
+    }
 }

@@ -2,22 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiar/neurographrag/schemas/list.schema.json",
   "title": "ListResponse",
-  "description": "Response emitted by `neurographrag list` on stdout as a single JSON line: an array of memory summaries.",
-  "type": "array",
-  "items": {
-    "type": "object",
-    "required": ["id", "memory_id", "name", "namespace", "type", "description", "snippet", "updated_at", "updated_at_iso"],
-    "additionalProperties": false,
-    "properties": {
-      "id":             { "type": "integer" },
-      "memory_id":      { "type": "integer" },
-      "name":           { "type": "string" },
-      "namespace":      { "type": "string" },
-      "type":           { "type": "string" },
-      "description":    { "type": "string" },
-      "snippet":        { "type": "string" },
-      "updated_at":     { "type": "integer" },
-      "updated_at_iso": { "type": "string", "format": "date-time" }
-    }
+  "description": "Response emitted by `neurographrag list` on stdout as a single JSON line: an object containing items array and elapsed_ms.",
+  "type": "object",
+  "required": ["items", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "memory_id", "name", "namespace", "type", "description", "snippet", "updated_at", "updated_at_iso"],
+        "additionalProperties": false,
+        "properties": {
+          "id":             { "type": "integer" },
+          "memory_id":      { "type": "integer" },
+          "name":           { "type": "string" },
+          "namespace":      { "type": "string" },
+          "type":           { "type": "string" },
+          "description":    { "type": "string" },
+          "snippet":        { "type": "string" },
+          "updated_at":     { "type": "integer" },
+          "updated_at_iso": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

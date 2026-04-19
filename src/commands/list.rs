@@ -18,6 +18,8 @@ pub struct ListArgs {
     pub offset: usize,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -58,9 +60,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         .into_iter()
         .map(|r| {
             let snippet: String = r.body.chars().take(200).collect();
-            let updated_at_iso = chrono::DateTime::<chrono::Utc>::from_timestamp(r.updated_at, 0)
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-                .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+            let updated_at_iso = crate::tz::epoch_para_iso(r.updated_at);
             ListItem {
                 id: r.id,
                 memory_id: r.id,
@@ -87,4 +87,85 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn list_response_serializa_items_e_elapsed_ms() {
+        let resp = ListResponse {
+            items: vec![ListItem {
+                id: 1,
+                memory_id: 1,
+                name: "teste-memoria".to_string(),
+                namespace: "global".to_string(),
+                memory_type: "note".to_string(),
+                description: "descricao de teste".to_string(),
+                snippet: "corpo resumido".to_string(),
+                updated_at: 1_745_000_000,
+                updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
+            }],
+            elapsed_ms: 7,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["items"].is_array());
+        assert_eq!(json["items"].as_array().unwrap().len(), 1);
+        assert_eq!(json["items"][0]["name"], "teste-memoria");
+        assert_eq!(json["items"][0]["memory_id"], 1);
+        assert_eq!(json["elapsed_ms"], 7);
+    }
+
+    #[test]
+    fn list_response_items_vazio_serializa_array_vazio() {
+        let resp = ListResponse {
+            items: vec![],
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["items"].is_array());
+        assert_eq!(json["items"].as_array().unwrap().len(), 0);
+        assert_eq!(json["elapsed_ms"], 0);
+    }
+
+    #[test]
+    fn list_item_memory_id_igual_a_id() {
+        let item = ListItem {
+            id: 42,
+            memory_id: 42,
+            name: "memoria-alias".to_string(),
+            namespace: "projeto".to_string(),
+            memory_type: "fact".to_string(),
+            description: "desc".to_string(),
+            snippet: "snip".to_string(),
+            updated_at: 0,
+            updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(
+            json["id"], json["memory_id"],
+            "id e memory_id devem ser iguais"
+        );
+    }
+
+    #[test]
+    fn snippet_truncado_em_200_chars() {
+        let body_longo: String = "a".repeat(300);
+        let snippet: String = body_longo.chars().take(200).collect();
+        assert_eq!(snippet.len(), 200, "snippet deve ter exatamente 200 chars");
+    }
+
+    #[test]
+    fn updated_at_iso_epoch_zero_gera_utc_valido() {
+        let iso = crate::tz::epoch_para_iso(0);
+        assert!(
+            iso.starts_with("1970-01-01T00:00:00"),
+            "epoch 0 deve mapear para 1970-01-01, obtido: {iso}"
+        );
+        assert!(
+            iso.contains('+') || iso.contains('-'),
+            "deve conter sinal de offset, obtido: {iso}"
+        );
+    }
 }

@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -6,6 +7,8 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct OptimizeArgs {
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -23,9 +26,8 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -39,4 +41,57 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    #[test]
+    fn optimize_response_serializa_campos_obrigatorios() {
+        let resp = OptimizeResponse {
+            db_path: "/tmp/neurographrag.sqlite".to_string(),
+            status: "ok".to_string(),
+            elapsed_ms: 5,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["db_path"], "/tmp/neurographrag.sqlite");
+        assert_eq!(json["elapsed_ms"], 5);
+    }
+
+    #[test]
+    #[serial]
+    fn optimize_retorna_not_found_quando_db_ausente() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("inexistente.sqlite");
+        std::env::set_var("NEUROGRAPHRAG_DB_PATH", db_path.to_str().unwrap());
+        std::env::set_var("LOG_LEVEL", "error");
+
+        let args = OptimizeArgs {
+            json: false,
+            db: Some(db_path.to_string_lossy().to_string()),
+        };
+        let resultado = run(args);
+        assert!(resultado.is_err(), "deve falhar quando db não existe");
+        match resultado.unwrap_err() {
+            AppError::NotFound(_) => {}
+            outro => panic!("esperava NotFound, obteve: {outro:?}"),
+        }
+        std::env::remove_var("NEUROGRAPHRAG_DB_PATH");
+        std::env::remove_var("LOG_LEVEL");
+    }
+
+    #[test]
+    fn optimize_response_status_ok_fixo() {
+        let resp = OptimizeResponse {
+            db_path: "/qualquer/caminho".to_string(),
+            status: "ok".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["status"], "ok", "status deve ser sempre 'ok'");
+    }
 }

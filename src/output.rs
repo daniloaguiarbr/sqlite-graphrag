@@ -26,7 +26,7 @@ pub fn emit_text(msg: &str) {
 }
 
 pub fn emit_progress(msg: &str) {
-    eprintln!("{msg}");
+    tracing::info!(message = msg);
 }
 
 /// Emite mensagem de progresso bilíngue respeitando `--lang` ou `NEUROGRAPHRAG_LANG`.
@@ -34,11 +34,43 @@ pub fn emit_progress(msg: &str) {
 pub fn emit_progress_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
     match current() {
-        Language::English => eprintln!("{en}"),
-        Language::Portugues => eprintln!("{pt}"),
+        Language::English => tracing::info!(message = en),
+        Language::Portugues => tracing::info!(message = pt),
     }
 }
 
+/// Payload JSON emitido pelo subcomando `remember`.
+///
+/// Todos os campos são obrigatórios no contrato JSON (ver `docs/schemas/remember.schema.json`).
+/// `operation` é alias de `action` para compatibilidade com clientes que usam o campo antigo.
+///
+/// # Examples
+///
+/// ```
+/// use neurographrag::output::RememberResponse;
+///
+/// let resp = RememberResponse {
+///     memory_id: 1,
+///     name: "nota-inicial".into(),
+///     namespace: "global".into(),
+///     action: "created".into(),
+///     operation: "created".into(),
+///     version: 1,
+///     entities_persisted: 0,
+///     relationships_persisted: 0,
+///     chunks_created: 1,
+///     merged_into_memory_id: None,
+///     warnings: vec![],
+///     created_at: 1_700_000_000,
+///     created_at_iso: "2023-11-14T22:13:20Z".into(),
+///     elapsed_ms: 42,
+/// };
+///
+/// let json = serde_json::to_string(&resp).unwrap();
+/// assert!(json.contains("\"memory_id\":1"));
+/// assert!(json.contains("\"elapsed_ms\":42"));
+/// assert!(json.contains("\"merged_into_memory_id\":null"));
+/// ```
 #[derive(Serialize)]
 pub struct RememberResponse {
     pub memory_id: i64,
@@ -61,6 +93,34 @@ pub struct RememberResponse {
     pub elapsed_ms: u64,
 }
 
+/// Item individual retornado pela consulta `recall`.
+///
+/// O campo `memory_type` é serializado como `"type"` no JSON para manter
+/// compatibilidade com clientes externos — o nome Rust usa `memory_type`
+/// para evitar conflito com a palavra reservada.
+///
+/// # Examples
+///
+/// ```
+/// use neurographrag::output::RecallItem;
+///
+/// let item = RecallItem {
+///     memory_id: 7,
+///     name: "nota-rust".into(),
+///     namespace: "global".into(),
+///     memory_type: "user".into(),
+///     description: "aprendizado de Rust".into(),
+///     snippet: "ownership e borrowing".into(),
+///     distance: 0.12,
+///     source: "direct".into(),
+/// };
+///
+/// let json = serde_json::to_string(&item).unwrap();
+/// // Campo Rust `memory_type` aparece como `"type"` no JSON.
+/// assert!(json.contains("\"type\":\"user\""));
+/// assert!(!json.contains("memory_type"));
+/// assert!(json.contains("\"distance\":0.12"));
+/// ```
 #[derive(Serialize, Clone)]
 pub struct RecallItem {
     pub memory_id: i64,

@@ -1,9 +1,11 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
-use crate::storage::{memories, versions};
+use crate::storage::versions;
 use rusqlite::params;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 #[derive(clap::Args)]
@@ -15,11 +17,19 @@ pub struct RestoreArgs {
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
-    #[arg(long, value_name = "EPOCH", value_parser = crate::parsers::parse_expected_updated_at)]
+    #[arg(
+        long,
+        value_name = "EPOCH_OR_RFC3339",
+        value_parser = crate::parsers::parse_expected_updated_at,
+        long_help = "Optimistic lock: reject if updated_at does not match. \
+Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
+    )]
     pub expected_updated_at: Option<i64>,
     /// Formato da saída.
     #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
     pub format: crate::output::OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -40,18 +50,22 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
 
-    let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &args.name)?
-        .ok_or_else(|| {
-            AppError::NotFound(format!(
-                "memory '{}' not found in namespace '{}'",
-                args.name, namespace
-            ))
-        })?;
+    // PRD linha 1118: buscar SEM filtro deleted_at — restore deve funcionar em memórias soft-deletadas
+    let result: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT id, updated_at FROM memories WHERE namespace = ?1 AND name = ?2",
+            params![namespace, args.name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (memory_id, current_updated_at) = result
+        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(format!(
-                "optimistic lock conflict: expected updated_at={expected}, but current is {current_updated_at}"
+            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+                expected,
+                current_updated_at,
             )));
         }
     }
@@ -66,22 +80,18 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         stmt.query_row(params![memory_id, args.version], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })
-        .map_err(|_| {
-            AppError::NotFound(format!(
-                "version {} not found for memory '{}'",
-                args.version, args.name
-            ))
-        })?
+        .map_err(|_| AppError::NotFound(erros::versao_nao_encontrada(args.version, &args.name)))?
     };
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
+    // deleted_at = NULL reativa memórias soft-deletadas; sem filtro deleted_at no WHERE
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
-            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6
-             WHERE id=?1 AND updated_at=?7 AND deleted_at IS NULL",
+            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6, deleted_at=NULL
+             WHERE id=?1 AND updated_at=?7",
             rusqlite::params![
                 memory_id,
                 old_name,
@@ -94,8 +104,8 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         )?
     } else {
         tx.execute(
-            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6
-             WHERE id=?1 AND deleted_at IS NULL",
+            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6, deleted_at=NULL
+             WHERE id=?1",
             rusqlite::params![
                 memory_id,
                 old_name,
@@ -108,9 +118,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     };
 
     if affected == 0 {
-        return Err(AppError::Conflict(
-            "optimistic lock conflict: memory was modified by another process".to_string(),
-        ));
+        return Err(AppError::Conflict(erros::conflito_processo_concorrente()));
     }
 
     let next_v = versions::next_version(&tx, memory_id)?;

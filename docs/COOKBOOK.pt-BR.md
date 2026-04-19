@@ -369,13 +369,13 @@ jobs:
 ### Solution
 ```bash
 neurographrag list --limit 10000 --json \
-  | jaq -c '.[]' > memories-$(date +%Y%m%d).ndjson
+  | jaq -c '.items[]' > memories-$(date +%Y%m%d).ndjson
 ```
 
 
 ### Explanation
 - `list --limit 10000` enumera memórias até o teto com ordenação determinística estável
-- `jaq -c '.[]'` achata o array direto em NDJSON legível por qualquer ferramenta instantaneamente
+- `jaq -c '.items[]'` achata o array `items` em NDJSON legível por qualquer ferramenta instantaneamente
 - Arquivo resultante abre em `rg` `bat` ou planilhas sem conhecimento de SQLite algum
 - Diff dois snapshots com `difft` para auditar o que mudou entre backups mensais limpo
 - Poupa tempo do auditor porque NDJSON é legível por humano ao contrário de binário opaco
@@ -813,3 +813,46 @@ fn construir_prompt_com_contexto(consulta: &str, memorias: &[String]) -> String 
 ### See Also
 - Receita "Como Inicializar Banco De Dados De Memória Em 60 Segundos"
 - Receita "Como Integrar Com rig-core Para Memória De Agente"
+
+
+## Como Exibir Timestamps no Fuso Horário Local
+### Problem
+- Saída JSON de todos os subcomandos inclui campos `*_iso` em UTC por padrão
+- Agentes rodando em região específica querem timestamps localizados para log e exibição
+- Pipelines que leem `created_at_iso` precisam de strings com offset para ordenação correta
+
+### Solution
+```bash
+# Flag pontual: exibir timestamps no fuso horário de São Paulo
+neurographrag read --name minha-nota --tz America/Sao_Paulo
+
+# Variável de ambiente persistente: todos os comandos da sessão usam o fuso configurado
+export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+neurographrag list --json | jaq '.items[].updated_at_iso'
+
+# Pipeline CI: forçar UTC explicitamente para evitar surpresas de fuso do sistema
+NEUROGRAPHRAG_DISPLAY_TZ=UTC neurographrag recall "notas de deploy" --json
+
+# Extrair apenas a parte do offset para verificar que o fuso foi aplicado
+neurographrag read --name plano-deploy --tz Europe/Berlin --json \
+  | jaq -r '.created_at_iso' \
+  | rg '\+\d{2}:\d{2}$'
+```
+
+### Explanation
+- Flag `--tz <IANA>` sobrescreve todas as configurações e aplica o fuso IANA informado
+- Variável `NEUROGRAPHRAG_DISPLAY_TZ` mantém a configuração entre invocações sem a flag
+- Ambos caem para UTC quando ausentes, garantindo saída determinística retrocompatível
+- Apenas campos string terminando em `_iso` são afetados; campos inteiros permanecem epoch Unix
+- Nomes IANA inválidos causam exit 2 com mensagem de erro `Validation` no stderr
+- Formato produzido: `2026-04-19T04:00:00-03:00` (offset explícito, sem sufixo `Z`)
+
+### Variants
+- Use `America/New_York` para Eastern Time (UTC-5/UTC-4 dependendo do horário de verão)
+- Use `Asia/Tokyo` para Japan Standard Time (UTC+9, sem horário de verão)
+- Use `Europe/Berlin` para Central European Time (UTC+1/UTC+2 dependendo do horário de verão)
+- Use `UTC` para resetar ao padrão explicitamente em ambientes com variável de ambiente conflitante
+
+### See Also
+- Receita "Como Inicializar Banco De Dados De Memória Em 60 Segundos"
+- Receita "Como Configurar Saída de Idioma Com a Flag --lang"

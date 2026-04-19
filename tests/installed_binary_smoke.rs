@@ -301,13 +301,10 @@ fn smoke_06_list() {
         .output()
         .expect("list falhou");
     assert_json_stdout(&out);
-    // v2.0.4: list retorna array JSON direto na raiz, não {memories: [...]}
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        json.is_array(),
-        "list deve retornar array JSON direto na raiz: {json}"
-    );
-    let arr = json.as_array().unwrap();
+    let arr = json["items"]
+        .as_array()
+        .expect("list deve retornar objeto com campo 'items'");
     assert!(
         !arr.is_empty(),
         "list deve retornar pelo menos uma memória: {json}"
@@ -791,9 +788,7 @@ fn smoke_25_debug_schema() {
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
-        json["tables"].is_array()
-            || json["schema"].is_object()
-            || json["migrations_applied"].is_array(),
+        json["objects"].is_array() || json["migrations"].is_array(),
         "__debug_schema deve retornar informações de schema: {json}"
     );
 }

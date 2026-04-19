@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -75,9 +76,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -221,7 +221,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         },
     });
 
-    output::emit_json(&HealthResponse {
+    let response = HealthResponse {
         status: status.to_string(),
         integrity,
         integrity_ok,
@@ -245,7 +245,16 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         journal_mode,
         checks,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
-    })?;
+    };
+
+    output::emit_json(&response)?;
+
+    if !integrity_ok {
+        return Err(AppError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            Some("integrity check failed".to_string()),
+        )));
+    }
 
     Ok(())
 }

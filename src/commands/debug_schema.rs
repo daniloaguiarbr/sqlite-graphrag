@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -7,6 +8,8 @@ use std::time::Instant;
 
 #[derive(clap::Args)]
 pub struct DebugSchemaArgs {
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -39,9 +42,8 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
@@ -51,8 +53,23 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap_or(0);
 
+    // user_version reflete o contador de migrações aplicadas (refinery não usa PRAGMA user_version)
     let user_version: i64 = conn
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='refinery_schema_history'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .ok()
+        .filter(|&n| n > 0)
+        .and_then(|_| {
+            conn.query_row(
+                "SELECT MAX(version) FROM refinery_schema_history",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
         .unwrap_or(0);
 
     let mut stmt = conn.prepare(

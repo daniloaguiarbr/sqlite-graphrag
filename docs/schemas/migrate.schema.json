@@ -2,13 +2,45 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiar/neurographrag/schemas/migrate.schema.json",
   "title": "MigrateResponse",
-  "description": "Response emitted by `neurographrag migrate` on stdout as a single JSON line.",
-  "type": "object",
-  "required": ["db_path", "schema_version", "status"],
-  "additionalProperties": false,
-  "properties": {
-    "db_path":        { "type": "string" },
-    "schema_version": { "type": "integer" },
-    "status":         { "type": "string", "enum": ["ok", "already_up_to_date"] }
-  }
+  "description": "Response emitted by `neurographrag migrate` on stdout as a single JSON line. Without `--status` returns migration result; with `--status` returns applied migration list.",
+  "$defs": {
+    "MigrationEntry": {
+      "type": "object",
+      "required": ["version", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "version":    { "type": "integer", "description": "Migration version number." },
+        "name":       { "type": "string",  "description": "Migration file name." },
+        "applied_on": { "type": ["string", "null"], "description": "ISO 8601 timestamp when applied, or null." }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "MigrateRunResponse",
+      "description": "Emitted when `neurographrag migrate` runs without `--status`.",
+      "type": "object",
+      "required": ["db_path", "schema_version", "status", "elapsed_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "db_path":        { "type": "string" },
+        "schema_version": { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version. Emitted as string by binary." },
+        "status":         { "type": "string", "enum": ["ok", "already_up_to_date"] },
+        "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+      }
+    },
+    {
+      "title": "MigrateStatusResponse",
+      "description": "Emitted when `neurographrag migrate --status` is called.",
+      "type": "object",
+      "required": ["db_path", "schema_version", "applied_migrations", "elapsed_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "db_path":             { "type": "string" },
+        "schema_version":      { "type": ["integer", "string"], "description": "MAX(version) from refinery_schema_history." },
+        "applied_migrations":  { "type": "array", "items": { "$ref": "#/$defs/MigrationEntry" }, "description": "List of migrations already applied to this database." },
+        "elapsed_ms":          { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+      }
+    }
+  ]
 }

@@ -1,0 +1,21 @@
+# .cargo/config.toml — limita paralelismo para prevenir livelock térmico
+# Incidente 2026-04-19 — loom_lock_slots saturou i9-14900KF em Tjmax 100°C
+# Complementado por .config/nextest.toml e documentado em docs/TESTING.md
+
+[build]
+# Build jobs conservador para máquinas entre 8 e 24 cores
+# Sobrescreva localmente com CARGO_BUILD_JOBS se sua máquina tolerar mais
+jobs = 4
+
+[env]
+# Default conservador para cargo test sem --test-threads explícito
+# Docs oficiais: https://doc.rust-lang.org/cargo/commands/cargo-test.html
+# force = false permite override via env externa em CI dedicado
+RUST_TEST_THREADS = { value = "2", force = false }
+
+[alias]
+# Invocações padronizadas — evita que dev invoque variantes perigosas
+test-quick = "nextest run --profile default"
+test-ci = "nextest run --profile ci"
+test-heavy = "nextest run --profile heavy"
+test-loom = "nextest run --profile heavy -E 'test(/^loom_/)'"

@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::erros;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -16,7 +17,13 @@ pub struct RenameArgs {
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
-    #[arg(long, value_name = "EPOCH", value_parser = crate::parsers::parse_expected_updated_at)]
+    #[arg(
+        long,
+        value_name = "EPOCH_OR_RFC3339",
+        value_parser = crate::parsers::parse_expected_updated_at,
+        long_help = "Optimistic lock: reject if updated_at does not match. \
+Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
+    )]
     pub expected_updated_at: Option<i64>,
     /// Session ID opcional para rastrear origem da mudança.
     #[arg(long, value_name = "UUID")]
@@ -24,6 +31,8 @@ pub struct RenameArgs {
     /// Formato da saída.
     #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
     pub format: crate::output::OutputFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -32,6 +41,7 @@ pub struct RenameArgs {
 struct RenameResponse {
     memory_id: i64,
     name: String,
+    action: &'static str,
     version: i64,
     /// Tempo total de execução em milissegundos desde início do handler até serialização.
     elapsed_ms: u64,
@@ -69,17 +79,13 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &args.name)?
-        .ok_or_else(|| {
-            AppError::NotFound(format!(
-                "memory '{}' not found in namespace '{}'",
-                args.name, namespace
-            ))
-        })?;
+        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(format!(
-                "optimistic lock conflict: expected updated_at={expected}, but current is {current_updated_at}"
+            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+                expected,
+                current_updated_at,
             )));
         }
     }
@@ -132,6 +138,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     output::emit_json(&RenameResponse {
         memory_id,
         name: args.new_name,
+        action: "renamed",
         version: next_v,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;

@@ -55,20 +55,28 @@ jobs:
             ~/Library/Caches/fastembed
             ~\AppData\Local\fastembed\Cache
           key: fastembed-model-multilingual-e5-small-${{ runner.os }}
-      - name: Run tests (retry on network flake)
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - name: Run tests with nextest (retry on network flake)
         shell: bash
+        env:
+          RUST_TEST_THREADS: "2"
+          RUSTFLAGS: -D warnings
         run: |
           for attempt in 1 2 3; do
             echo "=== Test attempt $attempt ==="
-            if cargo test --all-features --no-fail-fast; then
-              exit 0
+            if cargo nextest run --profile ci --all-features; then
+              break
             fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
             echo "Attempt $attempt failed, retrying in 30s..."
             sleep 30
           done
-          exit 1
+      - name: Run doctests
         env:
+          RUST_TEST_THREADS: "2"
           RUSTFLAGS: -D warnings
+        run: cargo test --doc --all-features
 
   doc:
     name: Documentation
@@ -119,8 +127,14 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-llvm-cov --locked
-      - run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Install cargo-nextest and llvm-cov
+        run: |
+          cargo install cargo-nextest --locked
+          cargo install cargo-llvm-cov --locked
+      - name: Coverage with nextest
+        env:
+          RUST_TEST_THREADS: "2"
+        run: cargo llvm-cov nextest --profile ci --all-features --lcov --output-path lcov.info
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
@@ -144,3 +158,42 @@ jobs:
             exit 1
           fi
           echo "No forbidden co-authors detected"
+
+  loom:
+    name: Loom Concurrency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run loom tests
+        env:
+          RUSTFLAGS: "--cfg loom"
+          LOOM_MAX_PREEMPTIONS: "2"
+          LOOM_MAX_BRANCHES: "500"
+          RUST_TEST_THREADS: "1"
+        run: timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1
+
+  bench-regression:
+    name: Benchmark Regression
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download baseline artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-baseline
+          path: target/criterion
+        continue-on-error: true
+      - name: Run benchmarks
+        env:
+          RUST_TEST_THREADS: "2"
+        run: timeout 300 cargo bench --bench regression_baseline -- --quick
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: target/criterion

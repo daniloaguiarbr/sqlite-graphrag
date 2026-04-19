@@ -1,6 +1,7 @@
 use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::graph::traverse_from_memories;
+use crate::i18n::erros;
 use crate::output::{self, OutputFormat, RecallItem, RecallResponse};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -166,9 +167,10 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             .iter()
             .any(|item| item.distance <= args.min_distance);
         if !has_relevant {
-            return Err(AppError::NotFound(format!(
-                "no results within --min-distance {} for query '{}' in namespace '{}'",
-                args.min_distance, args.query, namespace
+            return Err(AppError::NotFound(erros::sem_resultados_recall(
+                args.min_distance,
+                &args.query,
+                &namespace,
             )));
         }
     }
@@ -189,4 +191,91 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use crate::output::{RecallItem, RecallResponse};
+
+    fn make_item(name: &str, distance: f32, source: &str) -> RecallItem {
+        RecallItem {
+            memory_id: 1,
+            name: name.to_string(),
+            namespace: "global".to_string(),
+            memory_type: "fact".to_string(),
+            description: "desc".to_string(),
+            snippet: "snippet".to_string(),
+            distance,
+            source: source.to_string(),
+        }
+    }
+
+    #[test]
+    fn recall_response_serializa_campos_obrigatorios() {
+        let resp = RecallResponse {
+            query: "rust memory".to_string(),
+            k: 5,
+            direct_matches: vec![make_item("mem-a", 0.12, "direct")],
+            graph_matches: vec![],
+            results: vec![make_item("mem-a", 0.12, "direct")],
+            elapsed_ms: 42,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["query"], "rust memory");
+        assert_eq!(json["k"], 5);
+        assert_eq!(json["elapsed_ms"], 42u64);
+        assert!(json["direct_matches"].is_array());
+        assert!(json["graph_matches"].is_array());
+        assert!(json["results"].is_array());
+    }
+
+    #[test]
+    fn recall_item_serializa_type_renomeado() {
+        let item = make_item("mem-teste", 0.25, "direct");
+        let json = serde_json::to_value(&item).expect("serialização falhou");
+
+        // O campo memory_type é renomeado para "type" no JSON
+        assert_eq!(json["type"], "fact");
+        assert_eq!(json["distance"], 0.25f32);
+        assert_eq!(json["source"], "direct");
+    }
+
+    #[test]
+    fn recall_response_results_contem_direct_e_graph() {
+        let direct = make_item("d-mem", 0.10, "direct");
+        let graph = make_item("g-mem", 0.0, "graph");
+
+        let resp = RecallResponse {
+            query: "query".to_string(),
+            k: 10,
+            direct_matches: vec![direct.clone()],
+            graph_matches: vec![graph.clone()],
+            results: vec![direct, graph],
+            elapsed_ms: 10,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["direct_matches"].as_array().unwrap().len(), 1);
+        assert_eq!(json["graph_matches"].as_array().unwrap().len(), 1);
+        assert_eq!(json["results"].as_array().unwrap().len(), 2);
+        assert_eq!(json["results"][0]["source"], "direct");
+        assert_eq!(json["results"][1]["source"], "graph");
+    }
+
+    #[test]
+    fn recall_response_vazio_serializa_arrays_vazios() {
+        let resp = RecallResponse {
+            query: "nada".to_string(),
+            k: 3,
+            direct_matches: vec![],
+            graph_matches: vec![],
+            results: vec![],
+            elapsed_ms: 1,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["direct_matches"].as_array().unwrap().len(), 0);
+        assert_eq!(json["results"].as_array().unwrap().len(), 0);
+    }
 }

@@ -150,22 +150,53 @@ neurographrag recall "$QUERY_USUARIO" --k 5 --json \
 
 
 ## Configuração e Notas de Namespace
-### Namespace Padrão — GAP 16
+### Namespace Padrão
 - Namespace padrão é `global` quando `--namespace` é omitido
 - Configure via variável de ambiente `NEUROGRAPHRAG_NAMESPACE` para sobrescrever globalmente
 - Use `namespace-detect` para inspecionar o namespace resolvido antes de operações em massa
 
-### Semântica do Score — GAP 17
-- Saída JSON usa o campo `distance` (distância cosseno, menor valor indica mais relevância)
-- Formatos texto e markdown expõem `score = 1 - distance` (maior valor indica mais relevância)
-- Prefira sempre `--json` em pipelines para obter `distance` bruto com filtragem precisa
+### Semântica do Score
+- Saída JSON usa o campo `score` (similaridade cosseno, maior valor indica mais relevância)
+- Resultados são ordenados por `score` decrescente; o melhor match aparece sempre primeiro
+- Prefira sempre `--json` em pipelines para obter o `score` bruto com filtragem precisa
 
-### Descoberta do Caminho do Banco — GAP 25
+### Aliases da Flag --lang
+- `--lang en` força saída em inglês independente do locale do sistema
+- `--lang pt`, `--lang pt-BR`, `--lang portuguese` e `--lang PT` forçam português
+- Variável `NEUROGRAPHRAG_LANG=pt` sobrescreve o locale do sistema quando `--lang` está ausente
+- Todos os aliases resolvem para as mesmas duas variantes internas: inglês e português
+
+### Flag --json
+- `--json` é aceita por todos os subcomandos como alias no-op para `--format json`
+- Forma canônica é `--format json`; ambas produzem saída idêntica
+- Use `--json` em pipelines pela brevidade; use `--format json` em arquivos de configuração
+
+### Descoberta do Caminho do Banco
 - Todos os comandos aceitam a flag `--db <PATH>` além da variável `NEUROGRAPHRAG_DB_PATH`
 - Flag CLI tem precedência sobre a variável de ambiente
 - Use `--db` ao operar múltiplos bancos isolados em processos paralelos
 
-### Limite de Concorrência — GAP 27
+### Formato do Log
+- `NEUROGRAPHRAG_LOG_FORMAT=json` emite eventos de tracing como JSON delimitado por linha no stderr
+- Valor padrão é `pretty`; qualquer valor diferente de `json` usa o formato legível por humanos
+- Use `json` ao encaminhar logs para agregadores estruturados como Loki ou Datadog
+
+### Fuso Horário de Exibição
+- `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` aplica qualquer fuso IANA a todos os campos `*_iso` no JSON de saída
+- A flag `--tz <IANA>` tem prioridade sobre a variável de ambiente; ambos caem para UTC quando ausentes
+- Campos epoch inteiros (`created_at`, `updated_at`) nunca são afetados — apenas os campos ISO string correspondentes
+- Nomes IANA inválidos causam exit 2 com erro de validação descritivo antes de o comando executar
+- Exemplos: `America/New_York`, `Europe/Berlin`, `Asia/Tokyo`, `America/Sao_Paulo`
+```bash
+# Uso pontual com flag
+neurographrag read --name minha-nota --tz America/Sao_Paulo
+
+# Persistente via variável de ambiente
+export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+neurographrag list | jaq '.items[].updated_at_iso'
+```
+
+### Limite de Concorrência
 - `--max-concurrency` é limitado a `2×nCPUs`; valores maiores retornam exit 2
 - Exit code 2 sinaliza argumento inválido; reduza o valor e repita a invocação
 - Padrão de 4 slots é ótimo para a maioria dos laptops com dois a quatro núcleos
@@ -216,6 +247,32 @@ neurographrag graph --format mermaid --output grafo.mmd
 - `--format mermaid` emite um bloco de fluxograma Mermaid para embutir em Markdown
 - `--output <PATH>` grava diretamente em arquivo em vez de imprimir no stdout
 - Exit code 0: exportação concluída
+
+#### Usando graph traverse
+- Percorre o grafo de entidades a partir de um nó inicial até a profundidade indicada
+- Use `--from` para nomear a entidade raiz e `--depth` para controlar quantos hops seguir
+```bash
+neurographrag graph traverse --from design-auth --depth 2 --format json
+neurographrag graph traverse --from spec-jwt --depth 1
+```
+- Pré-requisitos: a entidade raiz informada em `--from` deve existir no grafo
+- `--from <NOME>` define a entidade raiz pelo nome (obrigatório)
+- `--depth <N>` controla a distância máxima de hop a partir da raiz (padrão: 2)
+- Schema de saída: `{"nodes": [...], "edges": [...]}` idêntico ao formato de exportação completa
+- Exit code 0: travessia concluída
+- Exit code 4: entidade raiz não encontrada
+
+#### Usando graph stats
+- Retorna estatísticas agregadas sobre o grafo de entidades no namespace de destino
+- Use para inspecionar densidade e conectividade do grafo antes de executar travessias
+```bash
+neurographrag graph stats --format json
+neurographrag graph stats --namespace meu-projeto
+```
+- Pré-requisitos: ao menos uma entidade deve existir no namespace de destino
+- Campos de saída: `entity_count`, `relationship_count`, `avg_connections`, `namespace`
+- `--format json` (padrão) emite o objeto de estatísticas no stdout
+- Exit code 0: estatísticas retornadas
 
 ### Usando history
 - Lista todas as versões imutáveis de uma memória nomeada em ordem cronológica reversa
@@ -282,19 +339,43 @@ neurographrag unlink --source design-auth --target spec-jwt --relation depends-o
 
 
 ## Notas Adicionais Sobre Comandos Essenciais
-### Nota sobre link — GAP 9
+### Nota sobre link
 - Pré-requisito: as entidades devem existir no grafo antes de criar links explícitos
 - O comando `remember` extrai automaticamente entidades do texto `--body` durante a ingestão
 - Crie primeiro as memórias que referenciam as entidades e depois chame `link` para tipar as arestas
+- Use `--from`/`--source` e `--to`/`--target` de forma intercambiável (aliases desde v2.0.1)
+- Saída JSON: `{action, from, source, to, target, relation, weight, namespace}`
 ```bash
 neurographrag remember --name design-auth --type decision --description "..." --body "Usa JWT e OAuth2."
 neurographrag remember --name spec-jwt --type reference --description "..." --body "RFC 7519 define JWT."
 neurographrag link --from design-auth --to spec-jwt --relation depends-on
 ```
 
-### Nota sobre remember — GAP 18
+### Nota sobre forget
+- `forget` executa remoção lógica; a memória desaparece dos resultados de `recall` e `list`
+- Saída JSON: `{forgotten, name, namespace}`
+- Execute `purge` depois para apagar permanentemente as linhas removidas e recuperar espaço em disco
+
+### Nota sobre optimize e migrate
+- `optimize --json` retorna `{db_path, status}`
+- `migrate --json` retorna `{db_path, schema_version, status}`
+- Execute `migrate` após toda atualização do binário para aplicar mudanças de schema com segurança
+
+### Nota sobre cleanup-orphans
+- Saída JSON: `{orphan_count, deleted, dry_run, namespace}`
+- Execute `--dry-run` primeiro para confirmar a contagem antes de passar `--yes` em automação
+
+### Nota sobre o schema dos nós do grafo
+- `graph --format json` emite `{"nodes": [...], "edges": [...]}`
+- Campos de nó: `{id, name, namespace, kind, type}` onde `kind` e `type` carregam o mesmo valor
+- Campos de aresta espelham o schema de `link` com `from`, `source`, `to`, `target`, `relation`, `weight`
+
+### Nota sobre remember
 - `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 por nome duplicado
 - Use `--force-merge` em loops de pipeline idempotentes onde a mesma chave pode aparecer múltiplas vezes
+- `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
+- Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
 ```bash
 neurographrag remember --name notas-config --type project \
   --description "config atualizada" --body "Novo conteúdo do corpo" --force-merge

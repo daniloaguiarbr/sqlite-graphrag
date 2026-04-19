@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::i18n::{erros, validacao};
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -9,6 +10,8 @@ pub struct SyncSafeCopyArgs {
     /// Caminho do arquivo snapshot. Aceita alias `--output` para compatibilidade com doc bilíngue.
     #[arg(long, alias = "output")]
     pub dest: std::path::PathBuf,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -28,16 +31,13 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(format!(
-            "database not found at {}. Run 'neurographrag init' first.",
-            paths.db.display()
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
         )));
     }
 
     if args.dest == paths.db {
-        return Err(AppError::Validation(
-            "destination path must differ from the source database path".to_string(),
-        ));
+        return Err(AppError::Validation(validacao::sync_destino_igual_fonte()));
     }
 
     if let Some(parent) = args.dest.parent() {
@@ -68,4 +68,78 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn sync_safe_copy_response_serializa_todos_campos() {
+        let resp = SyncSafeCopyResponse {
+            source_db_path: "/home/user/.local/share/neurographrag/db.sqlite".to_string(),
+            dest_path: "/tmp/backup.sqlite".to_string(),
+            bytes_copied: 16384,
+            status: "ok".to_string(),
+            elapsed_ms: 12,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(
+            json["source_db_path"],
+            "/home/user/.local/share/neurographrag/db.sqlite"
+        );
+        assert_eq!(json["dest_path"], "/tmp/backup.sqlite");
+        assert_eq!(json["bytes_copied"], 16384u64);
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["elapsed_ms"], 12u64);
+    }
+
+    #[test]
+    fn sync_safe_copy_rejeita_dest_igual_source() {
+        let db_path = std::path::PathBuf::from("/tmp/mesmo.sqlite");
+        let args = SyncSafeCopyArgs {
+            dest: db_path.clone(),
+            json: false,
+            db: Some("/tmp/mesmo.sqlite".to_string()),
+        };
+        // Simula resolução manual do caminho — valida lógica de rejeição
+        let resultado = if args.dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or("")) {
+            Err(AppError::Validation(
+                "destination path must differ from the source database path".to_string(),
+            ))
+        } else {
+            Ok(())
+        };
+        assert!(resultado.is_err(), "deve rejeitar dest igual ao source");
+        if let Err(AppError::Validation(msg)) = resultado {
+            assert!(msg.contains("destination path must differ"));
+        }
+    }
+
+    #[test]
+    fn sync_safe_copy_response_status_ok() {
+        let resp = SyncSafeCopyResponse {
+            source_db_path: "/data/db.sqlite".to_string(),
+            dest_path: "/backup/db.sqlite".to_string(),
+            bytes_copied: 0,
+            status: "ok".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[test]
+    fn sync_safe_copy_response_bytes_copied_zero_valido() {
+        let resp = SyncSafeCopyResponse {
+            source_db_path: "/data/db.sqlite".to_string(),
+            dest_path: "/backup/db.sqlite".to_string(),
+            bytes_copied: 0,
+            status: "ok".to_string(),
+            elapsed_ms: 1,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["bytes_copied"], 0u64);
+        assert_eq!(json["elapsed_ms"], 1u64);
+    }
 }

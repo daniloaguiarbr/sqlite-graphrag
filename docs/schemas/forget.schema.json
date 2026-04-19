@@ -4,11 +4,12 @@
   "title": "ForgetResponse",
   "description": "Response emitted by `neurographrag forget` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["forgotten", "name", "namespace"],
+  "required": ["forgotten", "name", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "forgotten": { "type": "boolean", "description": "True when the memory was soft-deleted." },
-    "name":      { "type": "string" },
-    "namespace": { "type": "string" }
+    "forgotten":  { "type": "boolean", "description": "True when the memory was soft-deleted." },
+    "name":       { "type": "string" },
+    "namespace":  { "type": "string" },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }
