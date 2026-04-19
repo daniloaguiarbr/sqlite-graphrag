@@ -167,6 +167,48 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 - Canonical form is `--format json`; both forms produce identical output
 - Use `--json` in pipelines for brevity; use `--format json` in config files for clarity
 
+### Standardized Output Format Flags
+- Every subcommand that emits structured output accepts BOTH `--json` AND `--format json`
+- Both flags produce identical JSON to stdout; only the spelling differs
+- `--json` is the short form — preferred in one-liners and agent pipelines
+- `--format json` is the explicit form — preferred in config files and documentation
+- Subcommands that support JSON output:
+
+| Subcommand | `--json` | `--format json` | Default output |
+|---|---|---|---|
+| `remember` | yes | yes | human text |
+| `recall` | yes | yes | human text |
+| `read` | yes | yes | human text |
+| `list` | yes | yes | human text |
+| `forget` | yes | yes | human text |
+| `link` | yes | yes | human text |
+| `unlink` | yes | yes | human text |
+| `stats` | yes | yes | human text |
+| `health` | yes | yes | human text |
+| `history` | yes | yes | human text |
+| `edit` | yes | yes | human text |
+| `rename` | yes | yes | human text |
+| `restore` | yes | yes | human text |
+| `purge` | yes | yes | human text |
+| `cleanup-orphans` | yes | yes | human text |
+| `optimize` | yes | yes | human text |
+| `migrate` | yes | yes | human text |
+| `init` | yes | yes | human text |
+| `sync-safe-copy` | yes | yes | human text |
+| `hybrid-search` | yes | yes | human text |
+| `namespace-detect` | yes | yes | human text |
+
+```bash
+# Short form — preferred in pipelines
+neurographrag recall --query "auth" --json | jaq '.results[].name'
+
+# Explicit form — identical output
+neurographrag recall --query "auth" --format json | jaq '.results[].name'
+
+# Both forms accepted in the same pipeline
+neurographrag stats --json && neurographrag health --format json
+```
+
 ### DB Path Discovery
 - All commands accept `--db <PATH>` flag in addition to `NEUROGRAPHRAG_DB_PATH` env var
 - CLI flag takes precedence over environment variable
@@ -270,6 +312,41 @@ neurographrag graph stats --namespace my-project
 - `--format json` (default) emits the stats object to stdout
 - Exit code 0: stats returned
 
+#### Using graph entities
+- Lists typed graph entities with optional filters for type, namespace, limit, and offset
+- Use to enumerate all entities the graph knows about before running `traverse` or `link`
+```bash
+neurographrag graph entities --json
+neurographrag graph entities --entity-type concept --limit 20
+neurographrag graph entities --entity-type person --namespace my-project --json
+neurographrag graph entities --limit 50 --offset 100 --json
+```
+- Prerequisites: at least one entity must exist — created via `remember` or explicit `link`
+- `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--limit <N>` caps the result count (default: 50); `--offset <N>` enables cursor-style pagination
+- Output schema: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
+- Each item carries `id`, `name`, `entity_type`, `namespace`, and `created_at`
+- Exit code 0: list returned (empty `items` array when no entities match the filter)
+- Exit code 4: namespace not found
+
+### Using health
+- Runs an integrity check and reports storage statistics for the active database
+- Use in agent startup scripts to detect corrupted databases before processing begins
+```bash
+neurographrag health
+neurographrag health --json
+neurographrag health --format json
+```
+- Prerequisites: an initialized database must exist
+- Runs `PRAGMA integrity_check` first; returns exit code 10 with `integrity_ok: false` if corruption is detected
+- Output schema: `{"total_memories": N, "active_memories": N, "soft_deleted": N, "total_namespaces": N, "db_size_bytes": N, "journal_mode": "wal", "wal_size_mb": N.N, "checks": ["integrity_check: ok"], "elapsed_ms": N, "integrity_ok": true}`
+- `journal_mode` reports the SQLite journaling mode (`wal` or `delete`)
+- `wal_size_mb` reports the current WAL file size in megabytes (0.0 when not in WAL mode)
+- `checks` is an array of diagnostic strings emitted by `PRAGMA integrity_check`
+- `integrity_ok` is `true` when `integrity_check` returns `"ok"` and `false` otherwise
+- Exit code 0: database is healthy
+- Exit code 10: integrity check failed — treat as corrupted database
+
 ### Using history
 - Lists all immutable versions of a named memory in reverse chronological order
 - Use the returned `version` integer with `restore` to roll back to any prior state
@@ -293,6 +370,21 @@ neurographrag namespace-detect --namespace my-project
 - Output JSON with fields `namespace`, `source`, `cwd`, `project_config_path`, and `projects_mapping_path`
 - Precedence order: `--namespace` flag > `NEUROGRAPHRAG_NAMESPACE` env > auto-detect
 - Exit code 0: resolution succeeded
+
+### Using __debug_schema
+- Hidden diagnostic subcommand that dumps the full SQLite schema and migration history
+- Use when troubleshooting schema drift between binary versions or after failed migrations
+```bash
+neurographrag __debug_schema
+neurographrag __debug_schema --db /path/to/custom.db
+```
+- Prerequisites: an initialized database must exist at the default or specified path
+- Output schema: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`
+- `schema_version` mirrors `PRAGMA user_version`; `user_version` is the raw PRAGMA value
+- `objects` lists all SQLite schema objects (tables, indexes, virtual tables) with `name` and `type`
+- `migrations` lists all rows from `refinery_schema_history` with `version`, `name`, and `applied_on`
+- This subcommand is intentionally hidden from `--help` output; invoke it by exact name
+- Exit code 0: schema dump succeeded
 
 ### Using rename
 - Renames a memory preserving its full version history and entity graph connections
@@ -330,6 +422,7 @@ neurographrag unlink --source auth-design --target jwt-spec --relation depends-o
 ```
 - Prerequisites: the edge must exist; all three of `--from`, `--to`, and `--relation` are required
 - Valid `--relation` values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Exit code 0: edge removed
 - Exit code 4: edge not found
 
@@ -340,6 +433,8 @@ neurographrag unlink --source auth-design --target jwt-spec --relation depends-o
 - The `remember` command auto-extracts entities from the `--body` text during ingestion
 - Create the memories that reference the entities first, then call `link` to type the edges
 - Use `--from`/`--source` and `--to`/`--target` interchangeably (aliases from v2.0.1)
+- Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Attempting to link entities whose names do not match a typed node returns exit code 4
 - JSON output: `{action, from, source, to, target, relation, weight, namespace}`
 - Both `from` and `source` carry the same value; both `to` and `target` carry the same value
 ```bash

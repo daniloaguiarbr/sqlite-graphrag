@@ -8,6 +8,24 @@ Todas as mudanças notáveis deste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
 
+## [Sem Versão]
+
+## [2.2.0] - 2026-04-19
+
+### Corrigido
+- G-017: alias `--to` de `sync-safe-copy` restaurado; `--destination` permanece canônico (regressão da v2.0.3)
+- G-027: `PRAGMA user_version` agora definido como 49 após migrações refinery para corresponder à contagem de linhas de `refinery_schema_history`
+- NG-08: subcomando `health` agora executa `PRAGMA integrity_check` antes das contagens de memórias/entidades para defesa em profundidade; saída ganha campos `journal_mode`, `wal_size_mb` e `checks[]`
+
+### Adicionado
+- NG-04: subcomando `graph entities` lista nós do grafo com filtro opcional `--type` e saída `--json`
+- NG-06: flag `--format` adicionada ao `graph stats` para paridade com `graph traverse`
+- NG-05: subcomando diagnóstico oculto `__debug_schema` documentado; emite campos `schema_version`, `user_version`, `objects` e `migrations`
+- NG-03: todos os subcomandos agora aceitam tanto `--json` (forma curta) quanto `--format json` (forma explícita) produzindo saída idêntica
+
+### Alterado
+- NG-07: `link` e `unlink` esclarecidos para operar exclusivamente em entidades tipadas do grafo; tipos válidos documentados no `--help`
+
 ## [2.1.0] - 2026-04-19
 
 ### Corrigido

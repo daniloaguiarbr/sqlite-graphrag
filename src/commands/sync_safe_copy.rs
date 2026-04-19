@@ -7,8 +7,8 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct SyncSafeCopyArgs {
-    /// Caminho do arquivo snapshot. Aceita alias `--output` para compatibilidade com doc bilíngue.
-    #[arg(long, alias = "output")]
+    /// Caminho do arquivo snapshot. Aceita aliases `--to` e `--output` para compatibilidade com doc bilíngue.
+    #[arg(long, alias = "to", alias = "output")]
     pub dest: std::path::PathBuf,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,

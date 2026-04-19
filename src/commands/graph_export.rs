@@ -19,6 +19,8 @@ pub enum GraphSubcommand {
     Traverse(GraphTraverseArgs),
     /// Show graph statistics (node/edge counts, degree distribution)
     Stats(GraphStatsArgs),
+    /// List entities stored in the graph with optional filters
+    Entities(GraphEntitiesArgs),
 }
 
 #[derive(clap::Args)]
@@ -63,6 +65,28 @@ pub struct GraphTraverseArgs {
 pub struct GraphStatsArgs {
     #[arg(long)]
     pub namespace: Option<String>,
+    /// Formato de saída (json ou text).
+    #[arg(long, value_enum, default_value = "json")]
+    pub format: GraphExportFormat,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
+    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct GraphEntitiesArgs {
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Filtrar por tipo de entidade (ex: person, concept, agent).
+    #[arg(long)]
+    pub entity_type: Option<String>,
+    /// Número máximo de resultados a retornar.
+    #[arg(long, default_value_t = crate::constants::K_GRAPH_ENTITIES_DEFAULT_LIMIT)]
+    pub limit: usize,
+    /// Número de resultados a pular (paginação).
+    #[arg(long, default_value_t = 0usize)]
+    pub offset: usize,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
@@ -123,6 +147,25 @@ struct GraphStatsResponse {
     elapsed_ms: u64,
 }
 
+#[derive(Serialize)]
+struct EntityItem {
+    id: i64,
+    name: String,
+    entity_type: String,
+    namespace: String,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct GraphEntitiesResponse {
+    items: Vec<EntityItem>,
+    total_count: i64,
+    limit: usize,
+    offset: usize,
+    namespace: Option<String>,
+    elapsed_ms: u64,
+}
+
 pub fn run(args: GraphArgs) -> Result<(), AppError> {
     match args.subcommand {
         None => run_entities_snapshot(
@@ -133,6 +176,7 @@ pub fn run(args: GraphArgs) -> Result<(), AppError> {
         ),
         Some(GraphSubcommand::Traverse(a)) => run_traverse(a),
         Some(GraphSubcommand::Stats(a)) => run_stats(a),
+        Some(GraphSubcommand::Entities(a)) => run_entities(a),
     }
 }
 
@@ -328,16 +372,132 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
         )?
     };
 
-    output::emit_json(&GraphStatsResponse {
+    let resp = GraphStatsResponse {
         namespace: args.namespace,
         node_count,
         edge_count,
         avg_degree,
         max_degree,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
-    })?;
+    };
+
+    match args.format {
+        GraphExportFormat::Json => output::emit_json(&resp)?,
+        GraphExportFormat::Dot | GraphExportFormat::Mermaid => {
+            output::emit_text(&format!(
+                "nodes={} edges={} avg_degree={:.2} max_degree={} namespace={}",
+                resp.node_count,
+                resp.edge_count,
+                resp.avg_degree,
+                resp.max_degree,
+                resp.namespace.as_deref().unwrap_or("all"),
+            ));
+        }
+    }
 
     Ok(())
+}
+
+fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
+    let inicio = Instant::now();
+    let paths = AppPaths::resolve(args.db.as_deref())?;
+
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
+        )));
+    }
+
+    let conn = open_ro(&paths.db)?;
+
+    let row_to_item = |r: &rusqlite::Row<'_>| -> rusqlite::Result<EntityItem> {
+        let ts: i64 = r.get(4)?;
+        let created_at = chrono::DateTime::from_timestamp(ts, 0)
+            .unwrap_or_default()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        Ok(EntityItem {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            entity_type: r.get(2)?,
+            namespace: r.get(3)?,
+            created_at,
+        })
+    };
+
+    let limit_i = args.limit as i64;
+    let offset_i = args.offset as i64;
+
+    let (total_count, items) = match (args.namespace.as_deref(), args.entity_type.as_deref()) {
+        (Some(ns), Some(et)) => {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE namespace = ?1 AND kind = ?2",
+                rusqlite::params![ns, et],
+                |r| r.get(0),
+            )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, kind, namespace, created_at FROM entities
+                 WHERE namespace = ?1 AND kind = ?2
+                 ORDER BY name ASC LIMIT ?3 OFFSET ?4",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![ns, et, limit_i, offset_i], row_to_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            (count, rows)
+        }
+        (Some(ns), None) => {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE namespace = ?1",
+                rusqlite::params![ns],
+                |r| r.get(0),
+            )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, kind, namespace, created_at FROM entities
+                 WHERE namespace = ?1
+                 ORDER BY name ASC LIMIT ?2 OFFSET ?3",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![ns, limit_i, offset_i], row_to_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            (count, rows)
+        }
+        (None, Some(et)) => {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE kind = ?1",
+                rusqlite::params![et],
+                |r| r.get(0),
+            )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, kind, namespace, created_at FROM entities
+                 WHERE kind = ?1
+                 ORDER BY name ASC LIMIT ?2 OFFSET ?3",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![et, limit_i, offset_i], row_to_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            (count, rows)
+        }
+        (None, None) => {
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, kind, namespace, created_at FROM entities
+                 ORDER BY name ASC LIMIT ?1 OFFSET ?2",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![limit_i, offset_i], row_to_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            (count, rows)
+        }
+    };
+
+    output::emit_json(&GraphEntitiesResponse {
+        items,
+        total_count,
+        limit: args.limit,
+        offset: args.offset,
+        namespace: args.namespace,
+        elapsed_ms: inicio.elapsed().as_millis() as u64,
+    })
 }
 
 fn render_json(snapshot: &GraphSnapshot) -> Result<String, AppError> {
@@ -489,5 +649,48 @@ mod testes {
         assert_eq!(json["edge_count"], 15);
         assert_eq!(json["avg_degree"], 3.0);
         assert_eq!(json["max_degree"], 7);
+    }
+
+    #[test]
+    fn graph_entities_response_serializa_campos_obrigatorios() {
+        let resp = GraphEntitiesResponse {
+            items: vec![EntityItem {
+                id: 1,
+                name: "claude-code".to_string(),
+                entity_type: "agent".to_string(),
+                namespace: "global".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+            total_count: 1,
+            limit: 50,
+            offset: 0,
+            namespace: Some("global".to_string()),
+            elapsed_ms: 3,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["items"].is_array());
+        assert_eq!(json["items"][0]["name"], "claude-code");
+        assert_eq!(json["items"][0]["entity_type"], "agent");
+        assert_eq!(json["total_count"], 1);
+        assert_eq!(json["limit"], 50);
+        assert_eq!(json["offset"], 0);
+        assert_eq!(json["namespace"], "global");
+    }
+
+    #[test]
+    fn entity_item_serializa_todos_campos() {
+        let item = EntityItem {
+            id: 42,
+            name: "test-entity".to_string(),
+            entity_type: "concept".to_string(),
+            namespace: "project-a".to_string(),
+            created_at: "2026-04-19T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["id"], 42);
+        assert_eq!(json["name"], "test-entity");
+        assert_eq!(json["entity_type"], "concept");
+        assert_eq!(json["namespace"], "project-a");
+        assert_eq!(json["created_at"], "2026-04-19T12:00:00Z");
     }
 }

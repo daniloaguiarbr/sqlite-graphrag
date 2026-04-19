@@ -518,6 +518,14 @@ let output = Command::new("neurographrag")
 - Env `NEUROGRAPHRAG_LOG_FORMAT=json` alterna saída de tracing para JSON delimitado por linha; padrão é `pretty`
 
 
+## Flag de Saída JSON
+### Formato — --format json e --json São Ambos Aceitos
+- Todos os subcomandos aceitam TANTO `--format json` QUANTO `--json` — ambas produzem saída idêntica
+- `--json` é a forma curta — preferida em one-liners e pipelines de agentes
+- `--format json` é a forma explícita — preferida em arquivos de configuração e contextos de validação estrita
+- Nenhum subcomando rejeita qualquer das formas; ambas são aliases garantidos a partir da v2.2.0
+
+
 ## Schemas Legíveis por Máquina
 ### Arquivos JSON Schema Draft 2020-12 Para Cada Subcomando
 - O diretório `docs/schemas/` contém um arquivo `.schema.json` por subcomando

@@ -158,7 +158,7 @@ neurographrag related authentication-flow --hops 2 --json
 ### Solution
 ```bash
 # .claude/hooks/pre-task.sh
-CONTEXT=$(neurographrag recall "$USER_PROMPT" --k 5 --format json)
+CONTEXT=$(neurographrag recall "$USER_PROMPT" --k 5 --json)
 printf 'Relevant memories:\n%s\n' "$CONTEXT"
 
 # .claude/hooks/post-task.sh

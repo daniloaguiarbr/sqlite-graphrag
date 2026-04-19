@@ -523,10 +523,10 @@ let output = Command::new("neurographrag")
 
 ## JSON Output Flag
 ### Format — --format json and --json Are Both Accepted
-- All subcommands accept `--format json` as the primary flag for JSON output
-- Shorthand `--json` is accepted as a no-op alias on subcommands that default to JSON
-- Prefer `--format json` for strict pipelines where argument validation matters
-- Use `--json` for brevity in interactive shell sessions and quick-check commands
+- All subcommands accept BOTH `--format json` and `--json` — both flags produce identical output
+- `--json` is the short form — preferred in one-liners and agent pipelines
+- `--format json` is the explicit form — preferred in config files and strict validation contexts
+- No subcommand rejects either flag; both are guaranteed aliases as of v2.2.0
 
 
 ## Machine-Readable Schemas

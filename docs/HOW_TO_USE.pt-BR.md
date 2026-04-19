@@ -171,6 +171,48 @@ neurographrag recall "$QUERY_USUARIO" --k 5 --json \
 - Forma canônica é `--format json`; ambas produzem saída idêntica
 - Use `--json` em pipelines pela brevidade; use `--format json` em arquivos de configuração
 
+### Flags de Formato de Saída Padronizadas
+- Todos os subcomandos que emitem saída estruturada aceitam TANTO `--json` QUANTO `--format json`
+- Ambas as flags produzem JSON idêntico no stdout; apenas a grafia difere
+- `--json` é a forma curta — preferida em one-liners e pipelines de agentes
+- `--format json` é a forma explícita — preferida em arquivos de configuração e documentação
+- Subcomandos que suportam saída JSON:
+
+| Subcomando | `--json` | `--format json` | Saída padrão |
+|---|---|---|---|
+| `remember` | sim | sim | texto legível |
+| `recall` | sim | sim | texto legível |
+| `read` | sim | sim | texto legível |
+| `list` | sim | sim | texto legível |
+| `forget` | sim | sim | texto legível |
+| `link` | sim | sim | texto legível |
+| `unlink` | sim | sim | texto legível |
+| `stats` | sim | sim | texto legível |
+| `health` | sim | sim | texto legível |
+| `history` | sim | sim | texto legível |
+| `edit` | sim | sim | texto legível |
+| `rename` | sim | sim | texto legível |
+| `restore` | sim | sim | texto legível |
+| `purge` | sim | sim | texto legível |
+| `cleanup-orphans` | sim | sim | texto legível |
+| `optimize` | sim | sim | texto legível |
+| `migrate` | sim | sim | texto legível |
+| `init` | sim | sim | texto legível |
+| `sync-safe-copy` | sim | sim | texto legível |
+| `hybrid-search` | sim | sim | texto legível |
+| `namespace-detect` | sim | sim | texto legível |
+
+```bash
+# Forma curta — preferida em pipelines
+neurographrag recall --query "auth" --json | jaq '.results[].name'
+
+# Forma explícita — saída idêntica
+neurographrag recall --query "auth" --format json | jaq '.results[].name'
+
+# Ambas as formas aceitas no mesmo pipeline
+neurographrag stats --json && neurographrag health --format json
+```
+
 ### Descoberta do Caminho do Banco
 - Todos os comandos aceitam a flag `--db <PATH>` além da variável `NEUROGRAPHRAG_DB_PATH`
 - Flag CLI tem precedência sobre a variável de ambiente
@@ -274,6 +316,41 @@ neurographrag graph stats --namespace meu-projeto
 - `--format json` (padrão) emite o objeto de estatísticas no stdout
 - Exit code 0: estatísticas retornadas
 
+#### Usando graph entities
+- Lista entidades tipadas do grafo com filtros opcionais por tipo, namespace, limite e offset
+- Use para enumerar todas as entidades conhecidas pelo grafo antes de executar `traverse` ou `link`
+```bash
+neurographrag graph entities --json
+neurographrag graph entities --entity-type concept --limit 20
+neurographrag graph entities --entity-type person --namespace meu-projeto --json
+neurographrag graph entities --limit 50 --offset 100 --json
+```
+- Pré-requisitos: ao menos uma entidade deve existir — criada via `remember` ou `link` explícito
+- `--entity-type <TIPO>` filtra resultados por um único tipo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--limit <N>` limita a contagem de resultados (padrão: 50); `--offset <N>` habilita paginação por cursor
+- Schema de saída: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
+- Cada item contém `id`, `name`, `entity_type`, `namespace` e `created_at`
+- Exit code 0: lista retornada (array `items` vazio quando nenhuma entidade corresponde ao filtro)
+- Exit code 4: namespace não encontrado
+
+### Usando health
+- Executa verificação de integridade e reporta estatísticas de armazenamento do banco ativo
+- Use em scripts de inicialização de agentes para detectar bancos corrompidos antes de processar
+```bash
+neurographrag health
+neurographrag health --json
+neurographrag health --format json
+```
+- Pré-requisitos: um banco inicializado deve existir
+- Executa `PRAGMA integrity_check` primeiro; retorna exit code 10 com `integrity_ok: false` se corrupção for detectada
+- Schema de saída: `{"total_memories": N, "active_memories": N, "soft_deleted": N, "total_namespaces": N, "db_size_bytes": N, "journal_mode": "wal", "wal_size_mb": N.N, "checks": ["integrity_check: ok"], "elapsed_ms": N, "integrity_ok": true}`
+- `journal_mode` reporta o modo de journaling do SQLite (`wal` ou `delete`)
+- `wal_size_mb` reporta o tamanho atual do arquivo WAL em megabytes (0.0 quando não está em modo WAL)
+- `checks` é um array de strings diagnósticas emitidas pelo `PRAGMA integrity_check`
+- `integrity_ok` é `true` quando `integrity_check` retorna `"ok"` e `false` caso contrário
+- Exit code 0: banco está íntegro
+- Exit code 10: verificação de integridade falhou — trate como banco corrompido
+
 ### Usando history
 - Lista todas as versões imutáveis de uma memória nomeada em ordem cronológica reversa
 - Use o inteiro `version` retornado com `restore` para retornar a qualquer estado anterior
@@ -297,6 +374,21 @@ neurographrag namespace-detect --namespace meu-projeto
 - Saída JSON com campos `namespace` (valor resolvido) e `source` (flag, env ou auto)
 - Ordem de precedência: flag `--namespace` > env `NEUROGRAPHRAG_NAMESPACE` > auto-detecção
 - Exit code 0: resolução concluída
+
+### Usando __debug_schema
+- Subcomando diagnóstico oculto que exibe o schema SQLite completo e o histórico de migrações
+- Use ao solucionar problemas de deriva de schema entre versões do binário ou após migrações com falha
+```bash
+neurographrag __debug_schema
+neurographrag __debug_schema --db /caminho/para/custom.db
+```
+- Pré-requisitos: um banco de dados inicializado deve existir no caminho padrão ou especificado
+- Schema de saída: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`
+- `schema_version` espelha `PRAGMA user_version`; `user_version` é o valor bruto do PRAGMA
+- `objects` lista todos os objetos do schema SQLite (tabelas, índices, tabelas virtuais) com `name` e `type`
+- `migrations` lista todas as linhas de `refinery_schema_history` com `version`, `name` e `applied_on`
+- Este subcomando está intencionalmente oculto do `--help`; invoque-o pelo nome exato
+- Exit code 0: dump do schema concluído
 
 ### Usando rename
 - Renomeia uma memória preservando todo o histórico de versões e conexões do grafo de entidades
@@ -334,6 +426,7 @@ neurographrag unlink --source design-auth --target spec-jwt --relation depends-o
 ```
 - Pré-requisitos: a aresta deve existir; os três argumentos `--from`, `--to` e `--relation` são obrigatórios
 - Valores válidos para `--relation`: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Ambas as entidades `--from`/`--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Exit code 0: aresta removida
 - Exit code 4: aresta não encontrada
 
@@ -344,6 +437,8 @@ neurographrag unlink --source design-auth --target spec-jwt --relation depends-o
 - O comando `remember` extrai automaticamente entidades do texto `--body` durante a ingestão
 - Crie primeiro as memórias que referenciam as entidades e depois chame `link` para tipar as arestas
 - Use `--from`/`--source` e `--to`/`--target` de forma intercambiável (aliases desde v2.0.1)
+- Ambas as entidades `--from` e `--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Tentar vincular entidades cujos nomes não correspondam a nó tipado retorna exit code 4
 - Saída JSON: `{action, from, source, to, target, relation, weight, namespace}`
 ```bash
 neurographrag remember --name design-auth --type decision --description "..." --body "Usa JWT e OAuth2."

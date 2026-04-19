@@ -95,9 +95,6 @@ neurographrag recall "graphrag" --k 5 --json
 ### Multiple distribution channels
 - Install from crates.io with `cargo install --locked neurographrag`
 - Build from source with `git clone` followed by `cargo build --release`
-- Homebrew formula is planned for v2.1 under `brew install neurographrag`
-- Scoop bucket is planned for v2.1 under `scoop install neurographrag`
-- Docker image is planned as `ghcr.io/daniloaguiarbr/neurographrag:2.0.0`
 
 
 ## Usage

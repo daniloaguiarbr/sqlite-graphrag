@@ -84,6 +84,44 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let conn = open_ro(&paths.db)?;
 
     let integrity: String = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0))?;
+    let integrity_ok = integrity == "ok";
+
+    if !integrity_ok {
+        let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
+        output::emit_json(&HealthResponse {
+            status: "degraded".to_string(),
+            integrity: integrity.clone(),
+            integrity_ok: false,
+            schema_ok: false,
+            vec_memories_ok: false,
+            vec_entities_ok: false,
+            vec_chunks_ok: false,
+            fts_ok: false,
+            model_ok: false,
+            counts: HealthCounts {
+                memories: 0,
+                entities: 0,
+                relationships: 0,
+                vec_memories: 0,
+            },
+            db_path: paths.db.display().to_string(),
+            db_size_bytes,
+            schema_version: 0,
+            missing_entities: vec![],
+            wal_size_mb: 0.0,
+            journal_mode: "unknown".to_string(),
+            checks: vec![HealthCheck {
+                name: "integrity".to_string(),
+                ok: false,
+                detail: Some(integrity),
+            }],
+            elapsed_ms: inicio.elapsed().as_millis() as u64,
+        })?;
+        return Err(AppError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            Some("integrity check failed".to_string()),
+        )));
+    }
 
     let memories_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
@@ -96,8 +134,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let vec_memories_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM vec_memories", [], |r| r.get(0))?;
 
-    let integrity_ok = integrity == "ok";
-    let status = if integrity_ok { "ok" } else { "degraded" };
+    let status = "ok";
 
     let schema_version: u32 = conn
         .query_row(
@@ -148,14 +185,11 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     // Monta array de checks para diagnóstico detalhado
     let mut checks: Vec<HealthCheck> = Vec::new();
 
+    // Neste ponto integrity_ok é sempre true (DB corrompido retorna cedo acima).
     checks.push(HealthCheck {
         name: "integrity".to_string(),
-        ok: integrity_ok,
-        detail: if integrity_ok {
-            None
-        } else {
-            Some(integrity.clone())
-        },
+        ok: true,
+        detail: None,
     });
 
     checks.push(HealthCheck {
@@ -248,13 +282,6 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     };
 
     output::emit_json(&response)?;
-
-    if !integrity_ok {
-        return Err(AppError::Database(rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
-            Some("integrity check failed".to_string()),
-        )));
-    }
 
     Ok(())
 }

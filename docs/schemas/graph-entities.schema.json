@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphEntitiesResponse",
+  "description": "Response emitted by `neurographrag graph entities`. Lists entities stored in the graph with optional filters by namespace and entity_type. Supports pagination via --limit and --offset. The --json flag is a no-op kept for backward compatibility; JSON is always emitted on stdout.",
+  "type": "object",
+  "required": ["items", "total_count", "limit", "offset", "elapsed_ms"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "description": "Page of entity records matching the applied filters.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "entity_type", "namespace", "created_at"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Internal SQLite row ID of the entity."
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name of the entity."
+          },
+          "entity_type": {
+            "type": "string",
+            "description": "Semantic type label (e.g. agent, concept, person, project, tool)."
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace the entity belongs to."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 / RFC 3339 timestamp of entity creation (UTC, Z suffix)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "total_count": {
+      "type": "integer",
+      "description": "Total number of entities matching the filter (before pagination)."
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum number of items requested (from --limit flag)."
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of items skipped (from --offset flag)."
+    },
+    "namespace": {
+      "type": ["string", "null"],
+      "description": "Namespace filter applied to the query; null when no --namespace was provided."
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock time in milliseconds for the database query."
+    }
+  },
+  "additionalProperties": false
+}

@@ -50,6 +50,11 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         .run(&mut conn)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("migration failed: {e}")))?;
 
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {};",
+        crate::constants::SCHEMA_USER_VERSION
+    ))?;
+
     let schema_version = latest_schema_version(&conn)?;
 
     conn.execute(

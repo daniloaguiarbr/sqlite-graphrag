@@ -53,23 +53,9 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap_or(0);
 
-    // user_version reflete o contador de migrações aplicadas (refinery não usa PRAGMA user_version)
+    // PRAGMA user_version é setado explicitamente após migrações (valor canônico SCHEMA_USER_VERSION).
     let user_version: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='refinery_schema_history'",
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .ok()
-        .filter(|&n| n > 0)
-        .and_then(|_| {
-            conn.query_row(
-                "SELECT MAX(version) FROM refinery_schema_history",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .ok()
-        })
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap_or(0);
 
     let mut stmt = conn.prepare(
@@ -136,7 +122,7 @@ mod testes {
     fn debug_schema_response_serializa_campos_obrigatorios() {
         let resp = DebugSchemaResponse {
             schema_version: 42,
-            user_version: 5,
+            user_version: 49,
             objects: vec![SchemaObject {
                 name: "memories".to_string(),
                 object_type: "table".to_string(),
@@ -150,7 +136,7 @@ mod testes {
         };
         let json: Value = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["schema_version"], 42);
-        assert_eq!(json["user_version"], 5);
+        assert_eq!(json["user_version"], 49);
         assert!(json["objects"].is_array());
         assert_eq!(json["objects"][0]["name"], "memories");
         assert_eq!(json["objects"][0]["type"], "table");

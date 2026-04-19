@@ -215,3 +215,11 @@ pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 750;
 /// Valor `77` é `EX_NOPERM` na glibc sysexits, reutilizado aqui para indicar
 /// "recurso de sistema insuficiente para prosseguir".
 pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
+
+/// Valor canônico de `PRAGMA user_version` gravado após migrações.
+///
+/// Deve permanecer em sincronia com o identificador legível-por-humanos
+/// da versão do schema. Refinery usa sua própria tabela de histórico;
+/// `user_version` é um campo auxiliar de diagnóstico para ferramentas
+/// externas (ex: `sqlite3 db.sqlite "PRAGMA user_version"`).
+pub const SCHEMA_USER_VERSION: i64 = 49;
