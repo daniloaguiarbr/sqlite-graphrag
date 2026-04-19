@@ -119,8 +119,59 @@ pub const QUERY_PREFIX: &str = "query: ";
 /// Crate version string sourced from `CARGO_PKG_VERSION` at build time.
 pub const NEUROGRAPHRAG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Regular expression that validates kebab-case identifiers.
-pub const SLUG_REGEX: &str = r"^[a-z0-9]+(?:-[a-z0-9]+)*$";
+/// PRD-canonical regex que valida nomes e namespaces. Permite 1 char `[a-z0-9]`
+/// OU string de 2-80 chars começando com letra e terminando com letra/dígito,
+/// contendo apenas `[a-z0-9-]`. Rejeita prefixo `__` (internal reserved).
+pub const NAME_SLUG_REGEX: &str = r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$";
+
+/// Retenção padrão (dias) usada por `purge` quando `--retention-days` é omitido.
+pub const PURGE_RETENTION_DAYS_DEFAULT: u32 = 90;
+
+/// Limite máximo de namespaces ativos (deleted_at IS NULL) simultâneos. Exit 5 ao exceder.
+pub const MAX_NAMESPACES_ACTIVE: u32 = 100;
+
+/// Máximo de tokens aceito por embedding input antes de chunking.
+pub const EMBEDDING_MAX_TOKENS: usize = 512;
+
+/// Limite máximo de resultados da CTE recursiva de grafo em `recall`.
+pub const K_GRAPH_MATCHES_LIMIT: usize = 20;
+
+/// Default `--limit` para `list` quando omitido.
+pub const K_LIST_DEFAULT_LIMIT: usize = 100;
+
+/// Default `--limit` para `graph entities` quando omitido.
+pub const K_GRAPH_ENTITIES_DEFAULT_LIMIT: usize = 50;
+
+/// Default `--limit` para `related` quando omitido.
+pub const K_RELATED_DEFAULT_LIMIT: usize = 10;
+
+/// Default `--limit` para `history` quando omitido.
+pub const K_HISTORY_DEFAULT_LIMIT: usize = 20;
+
+/// Peso padrão da contribuição vetorial na fórmula RRF de `hybrid-search`.
+pub const WEIGHT_VEC_DEFAULT: f64 = 1.0;
+
+/// Peso padrão da contribuição textual BM25 na fórmula RRF de `hybrid-search`.
+pub const WEIGHT_FTS_DEFAULT: f64 = 1.0;
+
+/// Tamanho em caracteres do preview do body emitido em formatos text/markdown.
+pub const TEXT_BODY_PREVIEW_LEN: usize = 200;
+
+/// Valor default injetado em ORT_NUM_THREADS quando não definido pelo usuário.
+pub const ORT_NUM_THREADS_DEFAULT: &str = "1";
+
+/// Valor default injetado em ORT_INTRA_OP_NUM_THREADS quando não definido.
+pub const ORT_INTRA_OP_NUM_THREADS_DEFAULT: &str = "1";
+
+/// Valor default injetado em OMP_NUM_THREADS quando não definido pelo usuário.
+pub const OMP_NUM_THREADS_DEFAULT: &str = "1";
+
+/// Exit code para falha parcial de batch (PRD linha 1822). Conflita com DbBusy em v1.x;
+/// em v2.0.0 DbBusy migra para 15 e este código assume 13 conforme PRD.
+pub const BATCH_PARTIAL_FAILURE_EXIT_CODE: i32 = 13;
+
+/// Exit code para DbBusy em v2.0.0 (migrado de 13 para liberar 13 para batch failure).
+pub const DB_BUSY_EXIT_CODE: i32 = 15;
 
 /// Filename used for the advisory exclusive lock that prevents parallel invocations.
 pub const CLI_LOCK_FILE: &str = "cli.lock";

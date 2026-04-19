@@ -70,8 +70,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         )));
     }
 
+    if args.name.starts_with("__") {
+        return Err(AppError::Validation(
+            "names and namespaces starting with __ are reserved for internal use".to_string(),
+        ));
+    }
+
     {
-        let slug_re = regex::Regex::new(crate::constants::SLUG_REGEX)
+        let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
         if !slug_re.is_match(&args.name) {
             return Err(AppError::Validation(format!(
@@ -147,6 +153,25 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
+
+    {
+        use crate::constants::MAX_NAMESPACES_ACTIVE;
+        let active_count: u32 = conn.query_row(
+            "SELECT COUNT(DISTINCT namespace) FROM memories WHERE deleted_at IS NULL",
+            [],
+            |r| r.get::<_, i64>(0).map(|v| v as u32),
+        )?;
+        let ns_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memories WHERE namespace = ?1 AND deleted_at IS NULL)",
+            rusqlite::params![namespace],
+            |r| r.get::<_, i64>(0).map(|v| v > 0),
+        )?;
+        if !ns_exists && active_count >= MAX_NAMESPACES_ACTIVE {
+            return Err(AppError::NamespaceError(format!(
+                "limite de {MAX_NAMESPACES_ACTIVE} namespaces ativos excedido ao tentar criar '{namespace}'"
+            )));
+        }
+    }
 
     output::emit_progress("Computing embedding...");
     let embedder = crate::embedder::get_embedder(&paths.models)?;
@@ -341,11 +366,13 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     output::emit_json(&RememberResponse {
         memory_id,
         name: args.name,
+        namespace,
         action,
         version,
         entities_persisted,
         relationships_persisted,
         chunks_created,
+        merged_into_memory_id: None,
         warnings,
     })?;
 

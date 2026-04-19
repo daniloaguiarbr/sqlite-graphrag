@@ -1,0 +1,68 @@
+# neurographrag
+
+
+> Persistent memory for 21 AI agents in a single 25 MB Rust binary
+
+- Local GraphRAG memory combining FTS5, sqlite-vec KNN and entity graph
+- Single SQLite file storage with deterministic JSON CLI output for orchestration
+- Cross-platform native binary for Linux, macOS and Windows without external services
+
+
+## Primary Documentation
+### Canonical English sources for LLM ingestion
+- [README](https://github.com/daniloaguiarbr/neurographrag/blob/main/README.md)
+- [HOW_TO_USE](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/HOW_TO_USE.md)
+- [CROSS_PLATFORM](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/CROSS_PLATFORM.md)
+- [AGENTS persuasive guide](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/AGENTS.md)
+- [AGENT_PROTOCOL imperative spec](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/AGENT_PROTOCOL.md)
+- [COOKBOOK recipes](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/COOKBOOK.md)
+- [INTEGRATIONS guide](https://github.com/daniloaguiarbr/neurographrag/blob/main/INTEGRATIONS.md)
+- [CHANGELOG](https://github.com/daniloaguiarbr/neurographrag/blob/main/CHANGELOG.md)
+- [CODE_OF_CONDUCT](https://github.com/daniloaguiarbr/neurographrag/blob/main/CODE_OF_CONDUCT.md)
+- [SECURITY](https://github.com/daniloaguiarbr/neurographrag/blob/main/SECURITY.md)
+- [CONTRIBUTING](https://github.com/daniloaguiarbr/neurographrag/blob/main/CONTRIBUTING.md)
+
+
+## Core Commands
+### Subcommands grouped by lifecycle
+- `init` initializes the SQLite database and downloads the embedding model
+- `remember` saves a memory with name, type, description, body and optional graph
+- `recall` performs vector KNN similarity search over stored memories
+- `hybrid-search` fuses FTS5 and vector KNN via Reciprocal Rank Fusion
+- `read` `list` `forget` `rename` `edit` `history` `restore` manage memory lifecycle
+- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database
+- `purge` `namespace-detect` handle maintenance and scope resolution
+
+
+## Environment Variables
+### Runtime configuration surface
+- `NEUROGRAPHRAG_DB_PATH` absolute path to the SQLite database file
+- `NEUROGRAPHRAG_CACHE_DIR` directory for embedding model cache files
+- `NEUROGRAPHRAG_LOG_LEVEL` tracing filter level with values `error` through `trace`
+- `NEUROGRAPHRAG_LANG` CLI output language with values `en` or `pt`
+- `NEUROGRAPHRAG_NAMESPACE` namespace override bypassing auto detection
+
+
+## Exit Codes
+### Deterministic status for pipeline routing
+- `0` success `1` validation `2` duplicate `3` conflict `4` not found
+- `5` namespace `6` payload `10` sqlite `11` embedding `12` sqlite-vec
+- `13` batch partial failure `14` filesystem `15` database busy `20` internal
+- `73` memory guard `75` slots busy `77` low RAM
+
+
+## Optional References
+### Supplementary materials for deeper context
+- [CLAUDE guidance](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/CLAUDE.md)
+- [SKILL definitions](https://github.com/daniloaguiarbr/neurographrag/tree/main/skill/neurographrag-en)
+- [crates.io package](https://crates.io/crates/neurographrag)
+- [docs.rs API reference](https://docs.rs/neurographrag)
+
+
+## Stable Facts
+### Identity and version metadata
+- Package name `neurographrag` published on crates.io under MIT OR Apache-2.0
+- Current version 2.0.0 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Repository `https://github.com/daniloaguiarbr/neurographrag` with CI on push
+- Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
+- Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5

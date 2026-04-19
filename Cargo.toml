@@ -1,6 +1,6 @@
 [package]
 name = "neurographrag"
-version = "1.2.1"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -20,9 +20,9 @@ exclude = [
     "logs/",
     "memory/",
     "docs_rules/",
-    "CLAUDE.md",
-    "AGENTS.md",
-    "MEMORY.md",
+    "/CLAUDE.md",
+    "/AGENTS.md",
+    "/MEMORY.md",
     "ralph-loop.local.md",
     "*.profraw",
     "*.profdata",

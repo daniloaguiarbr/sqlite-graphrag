@@ -1,0 +1,102 @@
+[
+  {
+    "query": "como faço para Claude Code lembrar entre sessões?",
+    "should_trigger": true,
+    "reasoning": "Usuário pergunta sobre memória persistente entre sessões de agente — gatilho central."
+  },
+  {
+    "query": "preciso de banco vetorial offline para meu agente em rust",
+    "should_trigger": true,
+    "reasoning": "Menção direta a banco vetorial offline em Rust cai no escopo GraphRAG."
+  },
+  {
+    "query": "qual melhor alternativa ao pinecone para RAG local",
+    "should_trigger": true,
+    "reasoning": "Comparação entre memória SQLite e Pinecone encaixa na missão da skill."
+  },
+  {
+    "query": "configurar memória graphrag para agente no cursor",
+    "should_trigger": true,
+    "reasoning": "Integração Cursor com GraphRAG é caso de uso primário documentado."
+  },
+  {
+    "query": "salvar esta conversa como memória persistente",
+    "should_trigger": true,
+    "reasoning": "Usuário quer memória persistente de conversa — subcomando remember serve."
+  },
+  {
+    "query": "recuperar o que discutimos sobre o bug de auth semana passada",
+    "should_trigger": true,
+    "reasoning": "Intenção de recall ao longo do tempo combina com recall e hybrid-search."
+  },
+  {
+    "query": "busca híbrida combinando embeddings e texto completo",
+    "should_trigger": true,
+    "reasoning": "Menção explícita à fusão híbrida FTS5 e vetor aciona a skill."
+  },
+  {
+    "query": "grafo de entidades para raciocínio multi-hop",
+    "should_trigger": true,
+    "reasoning": "Travessia de grafo de entidades é o Graph do GraphRAG — gatilho primário."
+  },
+  {
+    "query": "fastembed com multilingual-e5 em cli rust",
+    "should_trigger": true,
+    "reasoning": "fastembed e multilingual-e5 são a stack padrão de embedding da skill."
+  },
+  {
+    "query": "camada de memória persistente para gemini cli",
+    "should_trigger": true,
+    "reasoning": "Integração Gemini CLI para memória persistente está na lista documentada."
+  },
+  {
+    "query": "qual a capital da França?",
+    "should_trigger": false,
+    "reasoning": "Pergunta genérica de trivia sem relação com memória de IA ou RAG."
+  },
+  {
+    "query": "me ajude a escrever um script python para parsear csv",
+    "should_trigger": false,
+    "reasoning": "Parsing de CSV em Python está fora do escopo CLI Rust de memória."
+  },
+  {
+    "query": "explique closures em javascript",
+    "should_trigger": false,
+    "reasoning": "Conceito de linguagem JavaScript não tem sobreposição com esta skill."
+  },
+  {
+    "query": "revise meu componente react para performance",
+    "should_trigger": false,
+    "reasoning": "Review de código frontend está explicitamente fora de escopo."
+  },
+  {
+    "query": "como configuro docker compose?",
+    "should_trigger": false,
+    "reasoning": "Orquestração DevOps sem relação com skill de memória ou RAG."
+  },
+  {
+    "query": "debug desse segfault no meu código c++",
+    "should_trigger": false,
+    "reasoning": "Debugging C++ sem relação com CLI de memória ou contexto persistente."
+  },
+  {
+    "query": "qual a melhor forma de ordenar uma lista em java?",
+    "should_trigger": false,
+    "reasoning": "Algoritmo de ordenação Java é programação genérica, não pergunta de memória."
+  },
+  {
+    "query": "crie um regex para validação de email",
+    "should_trigger": false,
+    "reasoning": "Geração de regex sem relação com memória persistente ou busca híbrida."
+  },
+  {
+    "query": "escreva testes para essa função",
+    "should_trigger": false,
+    "reasoning": "Pedido genérico de escrita de testes sem contexto de memória ou RAG."
+  },
+  {
+    "query": "explique fluxo oauth",
+    "should_trigger": false,
+    "reasoning": "Explicação do protocolo OAuth está fora do escopo da skill."
+  }
+]

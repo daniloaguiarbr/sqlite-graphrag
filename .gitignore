@@ -21,9 +21,9 @@ secrets.toml
 # Private development
 .serena/
 .claude/
-CLAUDE.md
-AGENTS.md
-MEMORY.md
+/CLAUDE.md
+/AGENTS.md
+/MEMORY.md
 memory/
 docs_rules/
 ralph-loop.local.md

@@ -366,6 +366,14 @@ fn test_recall_estrutura_json_valida() {
 
     assert!(json.get("query").is_some(), "resposta deve ter campo query");
     assert!(
+        json.get("k").is_some(),
+        "resposta deve ter campo k (v2.0.0+)"
+    );
+    assert!(
+        json["k"].as_u64().unwrap() > 0,
+        "campo k deve ser inteiro positivo"
+    );
+    assert!(
         json.get("direct_matches").is_some(),
         "resposta deve ter campo direct_matches"
     );

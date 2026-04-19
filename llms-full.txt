@@ -283,3 +283,71 @@ RUN cargo install --locked neurographrag
 ### Dual license MIT OR Apache-2.0
 - Licensed under either of Apache License 2.0 or MIT License at your option
 - See `LICENSE-APACHE` and `LICENSE-MIT` in the repository root for full text
+
+
+
+
+# Supplementary documentation index
+
+
+## HOW_TO_USE summary
+### Canonical URL [docs/HOW_TO_USE.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/HOW_TO_USE.md)
+- Step-by-step walkthrough covering installation, first init, first memory and recall
+- Worked examples for every subcommand with expected JSON output shape
+- Workflow patterns covering daily use, backup routines and multi-namespace projects
+- Troubleshooting decision tree for install, runtime and data recovery issues
+- Migration notes from v1.x to v2.0 covering exit code 15 and hybrid-search reshape
+
+
+## CROSS_PLATFORM summary
+### Canonical URL [docs/CROSS_PLATFORM.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/CROSS_PLATFORM.md)
+- XDG Base Directory paths resolved via `directories` crate across Linux, macOS and Windows
+- File permission behavior on Unix sets mode 600 on writes for sensitive files
+- Case sensitivity caveats for macOS volumes colliding with kebab-case memory names
+- Windows path handling notes covering long paths, drive letters and reserved names
+- Musl static builds validated on Alpine containers with `cargo install --locked`
+
+
+## COOKBOOK summary
+### Canonical URL [docs/COOKBOOK.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/COOKBOOK.md)
+- Recipe library organized by goal including ingestion, retrieval, backup and audit
+- Shell pipeline recipes composing `jaq` filters with subcommands for deterministic output
+- Batch workflows covering bulk remember, reindex scheduling and retention windowing
+- Agent orchestration recipes showing parallel invocation respecting four slot limit
+- Migration recipes for moving memories between namespaces and snapshotting for sync
+
+
+## INTEGRATIONS summary
+### Canonical URL [INTEGRATIONS.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/INTEGRATIONS.md)
+- Integration guides for all 21 AI agents and IDEs listed in the superpowers table
+- Example tool definitions for Claude Code, Codex, Gemini CLI and Cursor
+- MCP wrapper template for tools requiring Model Context Protocol bridging
+- Configuration snippets for VS Code tasks, JetBrains external tools and Zed extensions
+- Best practices for subprocess lifetime, timeout handling and exit code routing
+
+
+## AGENT_PROTOCOL summary
+### Canonical URL [docs/AGENT_PROTOCOL.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/AGENT_PROTOCOL.md)
+- Imperative specification of the stdin stdout stderr contract per subcommand
+- JSON schema definitions for every response including `RememberResponse` and `RecallResponse`
+- Exit code matrix binding errors to automated retry, escalate or abort decisions
+- Idempotency rules for `remember` based on `--name` kebab-case uniqueness
+- Concurrency protocol covering slot acquisition, wait timeouts and memory guard behavior
+
+
+## CLAUDE summary
+### Canonical URL [docs/CLAUDE.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/CLAUDE.md)
+- Claude Code specific usage patterns including tool definitions and prompt templates
+- Recommended subprocess invocation with environment variable pass through
+- JSON filtering patterns using `jaq` inside Claude Code bash tool invocations
+- Session memory strategies separating ephemeral context from durable graph memory
+- Error handling guidance mapping exit codes to Claude Code user messages
+
+
+## Stable Identity
+### Facts that remain invariant across doc updates
+- Package `neurographrag` v2.0.0 published on crates.io with MSRV Rust 1.88
+- Repository `https://github.com/daniloaguiarbr/neurographrag` with CI on push and tag
+- License dual `MIT OR Apache-2.0` with individual license files at the repository root
+- Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
+- Storage layer `rusqlite` bundled SQLite plus `sqlite-vec` extension plus FTS5 module

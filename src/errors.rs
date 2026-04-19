@@ -50,9 +50,16 @@ pub enum AppError {
     #[error("sqlite-vec extension failed: {0}")]
     VecExtension(String),
 
-    /// SQLite returned `SQLITE_BUSY` after exhausting retries. Maps to exit code `13`.
+    /// SQLite returned `SQLITE_BUSY` after exhausting retries. Maps to exit code `15` (antes de v2.0.0 era `13`; movido para liberar `13` para BatchPartialFailure conforme PRD).
     #[error("database busy: {0}")]
     DbBusy(String),
+
+    /// Batch operation failed partially — N of M items failed. Maps to exit code `13` (PRD 1822).
+    ///
+    /// Reservado para uso em `import`, `reindex` e batch stdin (BLOCO 3/4). Variante presente
+    /// desde v2.0.0 mesmo que call-sites ainda não existam — mapeamento estável de exit code.
+    #[error("falha parcial em batch: {failed} de {total} itens falharam")]
+    BatchPartialFailure { total: usize, failed: usize },
 
     /// Filesystem I/O error while reading or writing the database or cache. Maps to exit code `14`.
     #[error("IO error: {0}")]
@@ -99,8 +106,9 @@ impl AppError {
     /// The codes follow the contract documented in the README: `1` for
     /// validation, `2` for duplicates, `3` for conflicts, `4` for missing
     /// records, `5` for namespace errors, `6` for limit violations, `10`–`14`
-    /// for infrastructure failures, `20` for internal errors, `75`
-    /// (EX_TEMPFAIL) when the advisory CLI lock is held or all concurrency
+    /// for infrastructure failures, `13` for BatchPartialFailure (PRD 1822),
+    /// `15` for DbBusy (migrated from `13` in v2.0.0), `20` for internal errors,
+    /// `75` (EX_TEMPFAIL) when the advisory CLI lock is held or all concurrency
     /// slots are exhausted, and `77` when available memory is insufficient to
     /// load the embedding model.
     pub fn exit_code(&self) -> i32 {
@@ -114,7 +122,8 @@ impl AppError {
             Self::Database(_) => 10,
             Self::Embedding(_) => 11,
             Self::VecExtension(_) => 12,
-            Self::DbBusy(_) => 13,
+            Self::BatchPartialFailure { .. } => crate::constants::BATCH_PARTIAL_FAILURE_EXIT_CODE,
+            Self::DbBusy(_) => crate::constants::DB_BUSY_EXIT_CODE,
             Self::Io(_) => 14,
             Self::Internal(_) => 20,
             Self::Json(_) => 20,
@@ -183,8 +192,32 @@ mod testes {
     }
 
     #[test]
-    fn exit_code_db_busy_retorna_13() {
-        assert_eq!(AppError::DbBusy("esgotou retries".into()).exit_code(), 13);
+    fn exit_code_db_busy_retorna_15() {
+        assert_eq!(AppError::DbBusy("esgotou retries".into()).exit_code(), 15);
+    }
+
+    #[test]
+    fn exit_code_batch_partial_failure_retorna_13() {
+        assert_eq!(
+            AppError::BatchPartialFailure {
+                total: 10,
+                failed: 3
+            }
+            .exit_code(),
+            13
+        );
+    }
+
+    #[test]
+    fn display_batch_partial_failure_inclui_contagens() {
+        let err = AppError::BatchPartialFailure {
+            total: 50,
+            failed: 7,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("7"));
+        assert!(msg.contains("50"));
+        assert!(msg.contains("falha parcial"));
     }
 
     #[test]

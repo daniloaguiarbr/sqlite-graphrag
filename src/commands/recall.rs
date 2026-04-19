@@ -150,6 +150,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
 
     output::emit_json(&RecallResponse {
         query: args.query,
+        k: args.k,
         direct_matches,
         graph_matches,
     })?;

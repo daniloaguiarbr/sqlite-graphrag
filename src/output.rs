@@ -33,11 +33,13 @@ pub fn emit_progress(msg: &str) {
 pub struct RememberResponse {
     pub memory_id: i64,
     pub name: String,
+    pub namespace: String,
     pub action: String,
     pub version: i64,
     pub entities_persisted: usize,
     pub relationships_persisted: usize,
     pub chunks_created: usize,
+    pub merged_into_memory_id: Option<i64>,
     pub warnings: Vec<String>,
 }
 
@@ -57,6 +59,7 @@ pub struct RecallItem {
 #[derive(Serialize)]
 pub struct RecallResponse {
     pub query: String,
+    pub k: usize,
     pub direct_matches: Vec<RecallItem>,
     pub graph_matches: Vec<RecallItem>,
 }
@@ -120,16 +123,20 @@ mod tests {
         let r = RememberResponse {
             memory_id: 1,
             name: "teste".to_string(),
+            namespace: "ns".to_string(),
             action: "created".to_string(),
             version: 1,
             entities_persisted: 2,
             relationships_persisted: 3,
             chunks_created: 4,
+            merged_into_memory_id: None,
             warnings: vec!["aviso".to_string()],
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("memory_id"));
         assert!(json.contains("aviso"));
+        assert!(json.contains("\"namespace\""));
+        assert!(json.contains("\"merged_into_memory_id\""));
     }
 
     #[test]
@@ -153,12 +160,14 @@ mod tests {
     fn recall_response_serializa_com_listas() {
         let resp = RecallResponse {
             query: "busca".to_string(),
+            k: 10,
             direct_matches: vec![],
             graph_matches: vec![],
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("direct_matches"));
         assert!(json.contains("graph_matches"));
+        assert!(json.contains("\"k\":"));
     }
 
     #[test]

@@ -1,0 +1,102 @@
+[
+  {
+    "query": "how can I make Claude Code remember between sessions?",
+    "should_trigger": true,
+    "reasoning": "User asks about persistent memory across AI agent sessions — core skill trigger."
+  },
+  {
+    "query": "i need offline vector database for my rust agent",
+    "should_trigger": true,
+    "reasoning": "Direct mention of offline vector DB in Rust matches GraphRAG scope."
+  },
+  {
+    "query": "best sqlite alternative to pinecone for local RAG",
+    "should_trigger": true,
+    "reasoning": "Comparison between SQLite-based memory and Pinecone fits skill mission."
+  },
+  {
+    "query": "set up graphrag memory for cursor agent",
+    "should_trigger": true,
+    "reasoning": "Cursor plus GraphRAG integration is a primary documented use case."
+  },
+  {
+    "query": "save this conversation as long-term memory",
+    "should_trigger": true,
+    "reasoning": "User wants persistent memory of a conversation — remember subcommand fits."
+  },
+  {
+    "query": "recall what we discussed about the auth bug last week",
+    "should_trigger": true,
+    "reasoning": "Recall intent across time horizon matches recall and hybrid-search flow."
+  },
+  {
+    "query": "hybrid search combining embeddings and full text",
+    "should_trigger": true,
+    "reasoning": "Explicit mention of hybrid FTS5 and vector fusion triggers the skill."
+  },
+  {
+    "query": "entity graph retrieval for multi-hop reasoning",
+    "should_trigger": true,
+    "reasoning": "Entity graph traversal is the Graph of GraphRAG — primary trigger."
+  },
+  {
+    "query": "fastembed with multilingual-e5 in rust cli",
+    "should_trigger": true,
+    "reasoning": "fastembed and multilingual-e5 are the skill embedding stack by default."
+  },
+  {
+    "query": "persistent memory layer for gemini cli integration",
+    "should_trigger": true,
+    "reasoning": "Gemini CLI integration for persistent memory matches documented agent list."
+  },
+  {
+    "query": "what is the capital of france?",
+    "should_trigger": false,
+    "reasoning": "Generic trivia question unrelated to AI memory or RAG."
+  },
+  {
+    "query": "help me write a python script to parse csv",
+    "should_trigger": false,
+    "reasoning": "Python CSV parsing is outside Rust CLI memory scope."
+  },
+  {
+    "query": "explain closures in javascript",
+    "should_trigger": false,
+    "reasoning": "JavaScript language concept has no overlap with this skill."
+  },
+  {
+    "query": "review my react component for performance",
+    "should_trigger": false,
+    "reasoning": "Frontend code review is explicitly out of scope."
+  },
+  {
+    "query": "how do i set up docker compose?",
+    "should_trigger": false,
+    "reasoning": "DevOps orchestration unrelated to memory or RAG skill."
+  },
+  {
+    "query": "debug this segfault in my c++ code",
+    "should_trigger": false,
+    "reasoning": "C++ debugging unrelated to memory CLI or persistent context."
+  },
+  {
+    "query": "whats the best way to sort a list in java?",
+    "should_trigger": false,
+    "reasoning": "Java sorting algorithm is generic programming, not a memory question."
+  },
+  {
+    "query": "make me a regex for email validation",
+    "should_trigger": false,
+    "reasoning": "Regex generation is unrelated to persistent memory or hybrid search."
+  },
+  {
+    "query": "write tests for this function",
+    "should_trigger": false,
+    "reasoning": "Generic test-writing request without memory or RAG context."
+  },
+  {
+    "query": "explain oauth flow",
+    "should_trigger": false,
+    "reasoning": "OAuth protocol explanation is outside the skill scope."
+  }
+]

@@ -13,6 +13,15 @@ pub struct RenameArgs {
     pub new_name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
+    #[arg(long, value_name = "EPOCH")]
+    pub expected_updated_at: Option<i64>,
+    /// Session ID opcional para rastrear origem da mudança.
+    #[arg(long, value_name = "UUID")]
+    pub session_id: Option<String>,
+    /// Formato da saída.
+    #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
+    pub format: crate::output::OutputFormat,
     #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -29,6 +38,12 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
+    if args.new_name.starts_with("__") {
+        return Err(AppError::Validation(
+            "names and namespaces starting with __ are reserved for internal use".to_string(),
+        ));
+    }
+
     if args.new_name.is_empty() || args.new_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::Validation(format!(
             "new-name must be 1-{MAX_MEMORY_NAME_LEN} chars"
@@ -36,7 +51,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     }
 
     {
-        let slug_re = regex::Regex::new(crate::constants::SLUG_REGEX)
+        let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
         if !slug_re.is_match(&args.new_name) {
             return Err(AppError::Validation(format!(
@@ -49,13 +64,21 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
 
-    let (memory_id, _, _) =
-        memories::find_by_name(&conn, &namespace, &args.name)?.ok_or_else(|| {
+    let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &args.name)?
+        .ok_or_else(|| {
             AppError::NotFound(format!(
                 "memory '{}' not found in namespace '{}'",
                 args.name, namespace
             ))
         })?;
+
+    if let Some(expected) = args.expected_updated_at {
+        if expected != current_updated_at {
+            return Err(AppError::Conflict(format!(
+                "optimistic lock conflict: expected updated_at={expected}, but current is {current_updated_at}"
+            )));
+        }
+    }
 
     let row = memories::read_by_name(&conn, &namespace, &args.name)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("memory not found before rename")))?;
@@ -67,10 +90,23 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-    tx.execute(
-        "UPDATE memories SET name=?2 WHERE id=?1 AND deleted_at IS NULL",
-        rusqlite::params![memory_id, args.new_name],
-    )?;
+    let affected = if let Some(ts) = args.expected_updated_at {
+        tx.execute(
+            "UPDATE memories SET name=?2 WHERE id=?1 AND updated_at=?3 AND deleted_at IS NULL",
+            rusqlite::params![memory_id, args.new_name, ts],
+        )?
+    } else {
+        tx.execute(
+            "UPDATE memories SET name=?2 WHERE id=?1 AND deleted_at IS NULL",
+            rusqlite::params![memory_id, args.new_name],
+        )?
+    };
+
+    if affected == 0 {
+        return Err(AppError::Conflict(
+            "optimistic lock conflict: memory was modified by another process".to_string(),
+        ));
+    }
 
     let next_v = versions::next_version(&tx, memory_id)?;
 
@@ -96,4 +132,56 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod testes {
+    use crate::storage::memories::{insert, NewMemory};
+    use tempfile::TempDir;
+
+    fn setup_db() -> (TempDir, rusqlite::Connection) {
+        crate::storage::connection::register_vec_extension();
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut conn = rusqlite::Connection::open(&db_path).unwrap();
+        crate::migrations::runner().run(&mut conn).unwrap();
+        (dir, conn)
+    }
+
+    fn nova_memoria(name: &str) -> NewMemory {
+        NewMemory {
+            namespace: "global".to_string(),
+            name: name.to_string(),
+            memory_type: "user".to_string(),
+            description: "desc".to_string(),
+            body: "corpo".to_string(),
+            body_hash: format!("hash-{name}"),
+            session_id: None,
+            source: "agent".to_string(),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn rejeita_new_name_com_prefixo_duplo_underscore() {
+        use crate::errors::AppError;
+        let (_dir, conn) = setup_db();
+        insert(&conn, &nova_memoria("mem-teste")).unwrap();
+        drop(conn);
+
+        let err = AppError::Validation(
+            "names and namespaces starting with __ are reserved for internal use".to_string(),
+        );
+        assert!(err.to_string().contains("__"));
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn optimistic_lock_conflict_retorna_exit_3() {
+        use crate::errors::AppError;
+        let err = AppError::Conflict(
+            "optimistic lock conflict: expected updated_at=100, but current is 200".to_string(),
+        );
+        assert_eq!(err.exit_code(), 3);
+    }
 }

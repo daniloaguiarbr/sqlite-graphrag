@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-18
+
+### Breaking
+
+- **Exit code `DbBusy` moved from 13 → 15** to free exit 13 for `BatchPartialFailure` per PRD. Shell scripts that detected `EX_UNAVAILABLE` (13) as DB busy must now check for 15.
+- **`hybrid-search` response JSON shape reshaped** from `{query, combined_rank[], vec_rank[], fts_rank[]}` to `{query, k, results: [{memory_id, name, namespace, type, description, body, combined_score, vec_rank?, fts_rank?}], graph_matches: []}` per PRD lines 771-787. Consumers parsing `combined_rank` must migrate to `results`.
+- **`purge --older-than-seconds` deprecated in favor of `--retention-days`**. The old flag remains as a hidden alias but emits a warning. Will be removed in v3.0.0.
+- **`NAME_SLUG_REGEX` stricter than v1.x `SLUG_REGEX`**: multichar names must start with a letter (PRD requirement). Single-char `[a-z0-9]` still allowed. Existing memories with leading-digit names pass unchanged, but `rename` into legacy-style names will now fail.
+
+### Added
+
+- `AppError::BatchPartialFailure { total, failed }` mapping to exit 13 — reserved for `import`, `reindex` and batch stdin (entering in Tier 3/4).
+- Constants in `src/constants.rs`: `PURGE_RETENTION_DAYS_DEFAULT=90`, `MAX_NAMESPACES_ACTIVE=100`, `EMBEDDING_MAX_TOKENS=512`, `K_GRAPH_MATCHES_LIMIT=20`, `K_LIST_DEFAULT_LIMIT=100`, `K_GRAPH_ENTITIES_DEFAULT_LIMIT=50`, `K_RELATED_DEFAULT_LIMIT=10`, `K_HISTORY_DEFAULT_LIMIT=20`, `WEIGHT_VEC_DEFAULT=1.0`, `WEIGHT_FTS_DEFAULT=1.0`, `TEXT_BODY_PREVIEW_LEN=200`, `ORT_NUM_THREADS_DEFAULT="1"`, `ORT_INTRA_OP_NUM_THREADS_DEFAULT="1"`, `OMP_NUM_THREADS_DEFAULT="1"`, `BATCH_PARTIAL_FAILURE_EXIT_CODE=13`, `DB_BUSY_EXIT_CODE=15`.
+- Flag `--dry-run` and `--retention-days` in `purge`.
+- Fields `namespace` and `merged_into_memory_id: Option<i64>` in `RememberResponse`.
+- Field `k: usize` in `RecallResponse`.
+- Fields `bytes_freed: i64`, `oldest_deleted_at: Option<i64>`, `retention_days_used: u32`, `dry_run: bool` in `PurgeResponse`.
+- Flag `--format` in `hybrid-search` (JSON only; text/markdown reserved for Tier 2).
+- Flag `--expected-updated-at` (optimistic locking) in `rename` and `restore`.
+- Active namespace limit guard (`MAX_NAMESPACES_ACTIVE=100`) in `remember` — returns exit 5 when exceeded.
+
+### Changed
+
+- `SLUG_REGEX` renamed to `NAME_SLUG_REGEX` with PRD-conformant value `r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$"`. Multichar names must start with a letter.
+
+### Fixed
+
+- Prefix `__` explicitly rejected in `rename` (previously only enforced in `remember` via regex side-effect).
+- Constants fantasma na fórmula RRF (`WEIGHT_VEC_DEFAULT`, `WEIGHT_FTS_DEFAULT`) agora declaradas em `constants.rs` — referências do PRD agora mapeiam símbolos reais.
+
+
 ## [1.2.1] - 2026-04-18
 
 ### Fixed

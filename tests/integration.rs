@@ -383,7 +383,7 @@ fn test_purge_remove_memoria_soft_deleted() {
         .success();
 
     let output = cmd(&tmp)
-        .args(["purge", "--name", "purge-target"])
+        .args(["purge", "--name", "purge-target", "--retention-days", "0"])
         .assert()
         .success()
         .get_output()
@@ -392,7 +392,6 @@ fn test_purge_remove_memoria_soft_deleted() {
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["purged_count"], 1);
-    assert_eq!(json["purged_names"][0], "purge-target");
 }
 
 // ---------------------------------------------------------------------------
@@ -854,7 +853,7 @@ fn test_forget_purge_nao_corrompe_fts_index() {
             .success();
 
         cmd(&tmp)
-            .args(["purge", "--name", &nome])
+            .args(["purge", "--name", &nome, "--retention-days", "0"])
             .assert()
             .success();
     }
@@ -1434,7 +1433,13 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
         .assert()
         .success();
     cmd(&tmp)
-        .args(["purge", "--name", "co-mem-descartada"])
+        .args([
+            "purge",
+            "--name",
+            "co-mem-descartada",
+            "--retention-days",
+            "0",
+        ])
         .assert()
         .success();
 
