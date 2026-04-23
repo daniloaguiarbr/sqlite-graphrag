@@ -10,7 +10,7 @@
 - Versão em inglês disponível em [README.md](README.md)
 - Status pré-publicação: o projeto renomeado ainda não está no GitHub, crates.io ou docs.rs
 - Use as instruções do checkout local abaixo até a primeira release pública sair
-- Depois que o repositório e o crate públicos existirem, instale com `cargo install sqlite-graphrag --version 1.0.0 --locked`
+- Depois que o repositório e o crate públicos existirem, instale com `cargo install sqlite-graphrag --version 1.0.1 --locked`
 
 ```bash
 cargo install --path .
@@ -43,6 +43,7 @@ cargo install --path .
 - Nota: a CLI é stateless — cada invocação recarrega o modelo de embeddings (~1s); modo daemon com latência <50ms está planejado para v3.0.0
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin aceita corpos ou payloads JSON para entidades e relacionamentos em lote
+- Payloads de relacionamento usam `strength` em `[0.0, 1.0]`, mapeado para `weight` nas saídas
 - Stderr carrega saída de tracing apenas sob `SQLITE_GRAPHRAG_LOG_LEVEL=debug`
 - Comportamento cross-platform é idêntico em hosts Linux, macOS e Windows
 ### 27 agentes de IA e IDEs suportados de imediato
@@ -93,9 +94,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ### Múltiplos canais de distribuição
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
-- Fórmula Homebrew planejada após a release pública `v1.0.0` sob `brew install sqlite-graphrag`
-- Bucket Scoop planejado após a release pública `v1.0.0` sob `scoop install sqlite-graphrag`
-- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.0`
+- Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
+- Bucket Scoop planejado sob `scoop install sqlite-graphrag`
+- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.1`
 
 
 ## Uso

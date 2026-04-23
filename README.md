@@ -10,7 +10,7 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Pre-publication status: the renamed project is not live yet on GitHub, crates.io, or docs.rs
 - Use the local checkout instructions below until the first public release ships
-- After the public repository and crate exist, install with `cargo install sqlite-graphrag --version 1.0.0 --locked`
+- After the public repository and crate exist, install with `cargo install sqlite-graphrag --version 1.0.1 --locked`
 
 ```bash
 cargo install --path .
@@ -43,6 +43,7 @@ cargo install --path .
 - Note: CLI is stateless — each invocation reloads the embedding model (~1s); daemon mode targeting <50ms latency is planned for v3.0.0
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin accepts bodies or JSON payloads for entities and relationship batches
+- Relationship payloads use `strength` in `[0.0, 1.0]`, mapped to `weight` in outputs
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
 ### 27 AI agents and IDEs supported out of the box
@@ -93,9 +94,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ### Multiple distribution channels
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
-- Homebrew formula planned after the public `v1.0.0` release under `brew install sqlite-graphrag`
-- Scoop bucket planned after the public `v1.0.0` release under `scoop install sqlite-graphrag`
-- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.0`
+- Homebrew formula is planned under `brew install sqlite-graphrag`
+- Scoop bucket is planned under `scoop install sqlite-graphrag`
+- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.1`
 
 
 ## Usage

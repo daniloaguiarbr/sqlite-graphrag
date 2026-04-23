@@ -1,6 +1,7 @@
 use crate::errors::AppError;
 use crate::i18n::erros;
 use crate::output;
+use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use serde::Serialize;
@@ -13,8 +14,8 @@ pub struct VacuumArgs {
     #[arg(long, default_value_t = true)]
     pub checkpoint: bool,
     /// Formato da saída.
-    #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
-    pub format: crate::output::OutputFormat,
+    #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
+    pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
@@ -31,6 +32,7 @@ struct VacuumResponse {
 
 pub fn run(args: VacuumArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    let _ = args.format;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {

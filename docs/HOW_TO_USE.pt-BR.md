@@ -167,40 +167,41 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Todos os aliases resolvem para as mesmas duas variantes internas: inglês e português
 
 ### Flag --json
-- `--json` é aceita por todos os subcomandos como alias no-op para `--format json`
-- Forma canônica é `--format json`; ambas produzem saída idêntica
-- Use `--json` em pipelines pela brevidade; use `--format json` em arquivos de configuração
+- `--json` é aceita por todos os subcomandos como flag ampla de compatibilidade para JSON determinístico no stdout
+- `--format json` é aceita apenas pelos comandos que expõem `--format` no help
+- Use `--json` em pipelines quando quiser uma grafia única que funcione na CLI inteira
+- Use `--format json` apenas nos comandos que anunciam `--format`
 
 ### Flags de Formato de Saída Padronizadas
-- Todos os subcomandos que emitem saída estruturada aceitam TANTO `--json` QUANTO `--format json`
-- Ambas as flags produzem JSON idêntico no stdout; apenas a grafia difere
+- Todos os subcomandos emitem JSON por padrão no stdout
 - `--json` é a forma curta — preferida em one-liners e pipelines de agentes
-- `--format json` é a forma explícita — preferida em arquivos de configuração e documentação
-- Subcomandos que suportam saída JSON:
+- `--format json` é a forma explícita — disponível apenas nos comandos que expõem `--format`
+- Saída humana `text` e `markdown` existe hoje apenas em um subconjunto de comandos
+- Matriz atual de suporte a flags:
 
 | Subcomando | `--json` | `--format json` | Saída padrão |
 |---|---|---|---|
-| `remember` | sim | sim | texto legível |
-| `recall` | sim | sim | texto legível |
-| `read` | sim | sim | texto legível |
-| `list` | sim | sim | texto legível |
-| `forget` | sim | sim | texto legível |
+| `remember` | sim | sim | json |
+| `recall` | sim | sim | json |
+| `read` | sim | não | json |
+| `list` | sim | sim | json |
+| `forget` | sim | não | json |
 | `link` | sim | sim | texto legível |
 | `unlink` | sim | sim | texto legível |
-| `stats` | sim | sim | texto legível |
-| `health` | sim | sim | texto legível |
-| `history` | sim | sim | texto legível |
-| `edit` | sim | sim | texto legível |
-| `rename` | sim | sim | texto legível |
-| `restore` | sim | sim | texto legível |
-| `purge` | sim | sim | texto legível |
+| `stats` | sim | sim | json |
+| `health` | sim | sim | json |
+| `history` | sim | não | json |
+| `edit` | sim | não | json |
+| `rename` | sim | sim | json |
+| `restore` | sim | sim | json |
+| `purge` | sim | não | json |
 | `cleanup-orphans` | sim | sim | texto legível |
-| `optimize` | sim | sim | texto legível |
-| `migrate` | sim | sim | texto legível |
-| `init` | sim | sim | texto legível |
-| `sync-safe-copy` | sim | sim | texto legível |
-| `hybrid-search` | sim | sim | texto legível |
-| `namespace-detect` | sim | sim | texto legível |
+| `optimize` | sim | não | json |
+| `migrate` | sim | não | json |
+| `init` | sim | não | json |
+| `sync-safe-copy` | sim | sim | json |
+| `hybrid-search` | sim | sim | json |
+| `namespace-detect` | sim | não | json |
 
 ```bash
 # Forma curta — preferida em pipelines
@@ -475,8 +476,33 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 por nome duplicado
 - Use `--force-merge` em loops de pipeline idempotentes onde a mesma chave pode aparecer múltiplas vezes
 - `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
+- O campo alias `type` também é aceito como sinônimo de `entity_type`
+- NÃO envie `entity_type` e `type` no mesmo objeto porque o parser trata isso como campo duplicado
 - Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
+- `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`
+- `strength` deve ser número de ponto flutuante no intervalo inclusivo `[0.0, 1.0]`
+- `strength` é mapeado para o campo `weight` nas saídas de relacionamentos e travessia de grafo
+- `relation` em `--relationships-file` DEVE usar os rótulos canônicos persistidos como `uses`, `supports`, `applies_to`, `depends_on` e `tracked_in`
+
+```json
+[
+  { "name": "SQLite", "entity_type": "tool" },
+  { "name": "GraphRAG", "type": "concept" }
+]
+```
+
+```json
+[
+  {
+    "source": "SQLite",
+    "target": "GraphRAG",
+    "relation": "supports",
+    "strength": 0.8,
+    "description": "SQLite suporta GraphRAG local"
+  }
+]
+```
 ```bash
 sqlite-graphrag remember --name notas-config --type project \
   --description "config atualizada" --body "Novo conteúdo do corpo" --force-merge

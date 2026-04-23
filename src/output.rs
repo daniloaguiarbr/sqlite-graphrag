@@ -9,6 +9,12 @@ pub enum OutputFormat {
     Markdown,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Default)]
+pub enum JsonOutputFormat {
+    #[default]
+    Json,
+}
+
 pub fn emit_json<T: Serialize>(value: &T) -> Result<(), AppError> {
     let json = serde_json::to_string_pretty(value)?;
     println!("{json}");

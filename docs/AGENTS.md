@@ -525,10 +525,10 @@ let output = Command::new("sqlite-graphrag")
 
 ## JSON Output Flag
 ### Format — --format json and --json Are Both Accepted
-- All subcommands accept BOTH `--format json` and `--json` — both flags produce identical output
+- Every subcommand accepts `--json` for deterministic JSON stdout
+- Only commands that expose `--format` in their help accept `--format json`
 - `--json` is the short form — preferred in one-liners and agent pipelines
-- `--format json` is the explicit form — preferred in config files and strict validation contexts
-- No subcommand rejects either flag; both are guaranteed aliases as of v2.2.0
+- `--format json` is the explicit form — command-specific, preferred where alternate output modes also exist
 
 
 ## Machine-Readable Schemas

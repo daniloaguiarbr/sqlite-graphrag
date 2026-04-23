@@ -163,40 +163,41 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 - All aliases resolve to the same two internal variants: English and Portuguese
 
 ### JSON Output Flag
-- `--json` is accepted by every subcommand as a no-op alias for `--format json`
-- Canonical form is `--format json`; both forms produce identical output
-- Use `--json` in pipelines for brevity; use `--format json` in config files for clarity
+- `--json` is accepted by every subcommand as the broad compatibility flag for deterministic JSON stdout
+- `--format json` is accepted only by commands that expose `--format` in their help output
+- Use `--json` in pipelines when you want one spelling that works across the whole CLI surface
+- Use `--format json` only on commands that explicitly advertise `--format`
 
 ### Standardized Output Format Flags
-- Every subcommand that emits structured output accepts BOTH `--json` AND `--format json`
-- Both flags produce identical JSON to stdout; only the spelling differs
+- Every subcommand emits JSON by default on stdout
 - `--json` is the short form — preferred in one-liners and agent pipelines
-- `--format json` is the explicit form — preferred in config files and documentation
-- Subcommands that support JSON output:
+- `--format json` is the explicit form — available only on commands that expose `--format`
+- Human-readable `text` and `markdown` are implemented only on a subset of commands
+- Current flag support matrix:
 
 | Subcommand | `--json` | `--format json` | Default output |
 |---|---|---|---|
-| `remember` | yes | yes | human text |
-| `recall` | yes | yes | human text |
-| `read` | yes | yes | human text |
-| `list` | yes | yes | human text |
-| `forget` | yes | yes | human text |
+| `remember` | yes | yes | json |
+| `recall` | yes | yes | json |
+| `read` | yes | no | json |
+| `list` | yes | yes | json |
+| `forget` | yes | no | json |
 | `link` | yes | yes | human text |
 | `unlink` | yes | yes | human text |
-| `stats` | yes | yes | human text |
-| `health` | yes | yes | human text |
-| `history` | yes | yes | human text |
-| `edit` | yes | yes | human text |
-| `rename` | yes | yes | human text |
-| `restore` | yes | yes | human text |
-| `purge` | yes | yes | human text |
+| `stats` | yes | yes | json |
+| `health` | yes | yes | json |
+| `history` | yes | no | json |
+| `edit` | yes | no | json |
+| `rename` | yes | yes | json |
+| `restore` | yes | yes | json |
+| `purge` | yes | no | json |
 | `cleanup-orphans` | yes | yes | human text |
-| `optimize` | yes | yes | human text |
-| `migrate` | yes | yes | human text |
-| `init` | yes | yes | human text |
-| `sync-safe-copy` | yes | yes | human text |
-| `hybrid-search` | yes | yes | human text |
-| `namespace-detect` | yes | yes | human text |
+| `optimize` | yes | no | json |
+| `migrate` | yes | no | json |
+| `init` | yes | no | json |
+| `sync-safe-copy` | yes | yes | json |
+| `hybrid-search` | yes | yes | json |
+| `namespace-detect` | yes | no | json |
 
 ```bash
 # Short form — preferred in pipelines
@@ -476,8 +477,33 @@ sqlite-graphrag remember --name config-notes --type project \
   --description "updated config" --body "New body content" --force-merge
 ```
 - `--entities-file` accepts a JSON file where each object must include an `entity_type` field
+- The alias field `type` is also accepted as a synonym for `entity_type`
+- Do not send both `entity_type` and `type` in the same object because Serde treats that as a duplicate field
 - Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
+- `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`
+- `strength` must be a floating-point number in the inclusive range `[0.0, 1.0]`
+- `strength` is mapped to the stored `weight` field in relationship outputs and graph traversal results
+- `relation` in `--relationships-file` must use the canonical stored labels such as `uses`, `supports`, `applies_to`, `depends_on`, and `tracked_in`
+
+```json
+[
+  { "name": "SQLite", "entity_type": "tool" },
+  { "name": "GraphRAG", "type": "concept" }
+]
+```
+
+```json
+[
+  {
+    "source": "SQLite",
+    "target": "GraphRAG",
+    "relation": "supports",
+    "strength": 0.8,
+    "description": "SQLite supports local GraphRAG retrieval"
+  }
+]
+```
 
 
 ## Integration With AI Agents

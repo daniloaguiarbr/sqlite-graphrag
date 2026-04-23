@@ -1,6 +1,6 @@
 use crate::cli::MemoryType;
 use crate::errors::AppError;
-use crate::output::{self, OutputFormat, RecallItem};
+use crate::output::{self, JsonOutputFormat, RecallItem};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
 use crate::storage::memories;
@@ -28,8 +28,8 @@ pub struct HybridSearchArgs {
     pub max_hops: u32,
     #[arg(long, default_value = "0.3")]
     pub min_weight: f64,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
-    pub format: OutputFormat,
+    #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
+    pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Aceita --json como no-op: output já é JSON por default.
@@ -80,14 +80,7 @@ pub struct HybridSearchResponse {
 
 pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    match args.format {
-        OutputFormat::Text | OutputFormat::Markdown => {
-            return Err(AppError::Validation(
-                "formato text/markdown ainda não implementado para hybrid-search — use --format json ou aguarde Tier 2".into(),
-            ));
-        }
-        OutputFormat::Json => {}
-    }
+    let _ = args.format;
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;

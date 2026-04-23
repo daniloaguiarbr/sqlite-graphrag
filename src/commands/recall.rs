@@ -2,7 +2,7 @@ use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::graph::traverse_from_memories;
 use crate::i18n::erros;
-use crate::output::{self, OutputFormat, RecallItem, RecallResponse};
+use crate::output::{self, JsonOutputFormat, RecallItem, RecallResponse};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
 use crate::storage::entities;
@@ -30,8 +30,8 @@ pub struct RecallArgs {
     /// Default 1.0 (desativado, mantém comportamento v2.0.0 de sempre retornar top-k).
     #[arg(long, default_value = "1.0")]
     pub min_distance: f32,
-    #[arg(long, value_enum, default_value = "json")]
-    pub format: OutputFormat,
+    #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
+    pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Aceita --json como no-op: output já é JSON por default.
@@ -41,6 +41,7 @@ pub struct RecallArgs {
 
 pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
+    let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 

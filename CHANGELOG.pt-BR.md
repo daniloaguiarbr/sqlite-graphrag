@@ -10,6 +10,17 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.1] - 2026-04-23
+
+### Corrigido
+- `--format` foi restringido a `json` nos comandos que não implementam `text` ou `markdown`, evitando que help e parse prometam modos de saída inexistentes
+- `hybrid-search` deixou de aceitar `text` ou `markdown` para falhar apenas em runtime; formatos não suportados agora são rejeitados pelo `clap` no parse dos argumentos
+- Documentação e guias para agentes agora explicam que `--json` é a flag ampla de compatibilidade, enquanto `--format json` é específico por comando
+
+### Adicionado
+- A documentação de payload de `remember` agora explica que `--relationships-file` exige `strength` em `[0.0, 1.0]` e que esse campo é mapeado para `weight` nas saídas do grafo
+- A documentação de payload de `remember` agora explica que `type` é aceito como alias de `entity_type`, mas os dois campos juntos são inválidos
+
 ## [1.0.0] - 2026-04-19
 
 - Primeira release pública sob o nome `sqlite-graphrag`

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-04-23
+
+### Fixed
+- Restrict `--format` to `json` on commands that do not implement `text` or `markdown`, preventing help and parse contracts from promising unsupported output modes
+- `hybrid-search` no longer accepts `text` or `markdown` only to fail later at runtime; unsupported formats are now rejected by `clap` during argument parsing
+- Docs and agent-facing guides now explain that `--json` is the broad compatibility flag while `--format json` is command-specific
+
+### Added
+- `remember` payload docs now explain that `--relationships-file` requires `strength` in `[0.0, 1.0]` and that the field maps to `weight` in graph outputs
+- `remember` payload docs now explain that `type` is accepted as an alias of `entity_type`, but both fields together are invalid
+
 ## [1.0.0] - 2026-04-19
 
 - First public release under the `sqlite-graphrag` name

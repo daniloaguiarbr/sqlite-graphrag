@@ -73,7 +73,7 @@
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 2.0.2 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.1 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

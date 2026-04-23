@@ -1,6 +1,7 @@
 use crate::errors::AppError;
 use crate::i18n::erros;
 use crate::output;
+use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use crate::storage::versions;
@@ -26,8 +27,8 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     )]
     pub expected_updated_at: Option<i64>,
     /// Formato da saída.
-    #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
-    pub format: crate::output::OutputFormat,
+    #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
+    pub format: JsonOutputFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -46,6 +47,7 @@ struct RestoreResponse {
 
 pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
