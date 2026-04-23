@@ -79,7 +79,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 
 
 ### Variants
-- Adicione `parallel -j 4` para respeitar `MAX_CONCURRENT_CLI_INSTANCES` e reduzir wall-clock
+- Mantenha imports de `remember` em modo serial com `--max-concurrency 1`; cada subprocesso pode carregar cerca de 1,1 GB de RSS ONNX na v1.0.3
 - Estenda o one-liner para extrair `--description` do primeiro heading Markdown do arquivo
 
 
@@ -425,30 +425,32 @@ git commit -m "chore: track sqlite-graphrag db via LFS"
 - Receita "Como Prevenir Corrupção Por Dropbox Ou iCloud Com sync-safe-copy"
 
 
-## Como Orquestrar Recall Paralelo Entre Namespaces
+## Como Orquestrar Recall Entre Namespaces Com Segurança
 ### Problem
-- Seu agente multi-projeto roda quatro buscas em série desperdiçando 2 segundos por iteração
-- Seu orquestrador CI dispara um subprocess por namespace e estoura a concorrência segura
+- Seu agente multi-projeto precisa executar um recall por namespace no mesmo host
+- Fan-out paralelo cego pode estourar RAM porque cada subprocesso de `recall` pode carregar o modelo ONNX de forma independente
 
 
 ### Solution
 ```bash
-parallel -j 4 'SQLITE_GRAPHRAG_NAMESPACE={} sqlite-graphrag recall "error rate" --k 5 --json' \
-  ::: project-a project-b project-c project-d
+for ns in project-a project-b project-c project-d; do
+  SQLITE_GRAPHRAG_NAMESPACE="$ns" \
+    sqlite-graphrag --max-concurrency 1 recall "error rate" --k 5 --json
+done
 ```
 
 
 ### Explanation
-- GNU parallel limita a concorrência em 4 batendo com `MAX_CONCURRENT_CLI_INSTANCES` interno
-- Env var `SQLITE_GRAPHRAG_NAMESPACE` escopa cada subprocess ao seu próprio projeto limpo
-- Exit code `75` dispara retry automático já que `parallel` lê exit codes nativamente
-- Quatro documentos JSON caem no stdout para um agregador downstream fundir ranks
-- Poupa 75 por cento do wall-clock contra recall serial entre os mesmos namespaces
+- O loop permanece serial de forma intencional porque `recall` é comando pesado de embedding
+- `--max-concurrency 1` evita oversubscription local durante auditorias, CI e uso em desktop
+- Env var `SQLITE_GRAPHRAG_NAMESPACE` escopa cada subprocesso ao seu próprio projeto limpo
+- Um documento JSON por namespace ainda cai no stdout para um agregador downstream fundir ranks
+- Esse padrão prioriza segurança do host e progresso determinístico em vez de redução agressiva de wall-clock
 
 
 ### Variants
-- Troque `parallel` por `xargs -P 4` se prefere tooling POSIX puro em imagens enxutas
-- Canalize o JSON agregado em um agente RRF que funde ranks cross-namespace juntos
+- Reserve fan-out paralelo para comandos leves como `stats` ou `list`, não para `recall`
+- Só aumente concorrência de comandos pesados depois de medir RSS, observar swap e confirmar que o host permanece estável
 
 
 ### See Also

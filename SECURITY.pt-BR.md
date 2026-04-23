@@ -9,16 +9,15 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Usuários em linhas descontinuadas são FORTEMENTE encorajados a atualizar para uma versão suportada
 - Atualizar cedo reduz janela de exposição e alinha com a política de divulgação coordenada
 
-| Versão  | Status          | Correções de Segurança    |
-| ------- | --------------- | ------------------------- |
-| 2.0.x   | Suportada       | Sim, recebe correções     |
-| 1.x     | Descontinuada   | Apenas questões críticas  |
-| 0.x     | Sem suporte     | Sem correções fornecidas  |
+| Versão  | Status        | Correções de Segurança     |
+| ------- | ------------- | -------------------------- |
+| 1.0.x   | Suportada     | Sim, recebe correções      |
+| 0.x     | Sem suporte   | Sem correções fornecidas   |
 
 
 ## Reportando uma Vulnerabilidade
-- OBRIGATÓRIO reportar questões de segurança por email em daniloaguiarbr@gmail.com enquanto o repositório renomeado ainda não for público
-- Quando o repositório público `sqlite-graphrag` existir, use GitHub Security Advisories lá como canal privado preferencial
+- OBRIGATÓRIO reportar questões de segurança via GitHub Security Advisories no repositório público `sqlite-graphrag` como canal privado preferencial
+- Use o email daniloaguiarbr@gmail.com apenas como fallback quando o reporte privado do GitHub estiver indisponível
 - JAMAIS abra issue pública, pull request ou discussão no GitHub para relatos de segurança
 - Inclua reprodução mínima, versões afetadas e comportamento esperado versus observado
 - Inclua detalhes do ambiente como sistema operacional, arquitetura e versão do rustc
@@ -37,7 +36,7 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Severidade alta (CVSS 7.0 a 8.9) recebe patch em até 14 dias corridos após triagem validada
 - Severidade média (CVSS 4.0 a 6.9) recebe patch em até 30 dias corridos após triagem validada
 - Severidade baixa (CVSS 0.1 a 3.9) recebe patch em até 90 dias corridos após triagem validada
-- Correções liberadas seguem imediatamente com entrada no CHANGELOG e GitHub Security Advisory
+- Correções liberadas seguem imediatamente com entrada no CHANGELOG e GitHub Security Advisory quando a linha afetada ainda estiver suportada
 
 
 ## Política de Divulgação
@@ -64,10 +63,12 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 
 
 ## Melhores Práticas para Usuários
-- SEMPRE instale sqlite-graphrag com `cargo install --path .` para respeitar pins fixos
+- SEMPRE instale releases publicadas com `cargo install sqlite-graphrag --locked`
+- Use `cargo install --path .` apenas quando estiver testando intencionalmente um checkout local não publicado
 - SEMPRE rotacione seus tokens de API do `crates.io` em intervalo regular
 - SEMPRE mantenha sua toolchain rustc atualizada na última release estável compatível com MSRV 1.88
 - SEMPRE revise entradas do CHANGELOG antes de atualizar entre versões majors
 - JAMAIS commite segredos ou tokens no repositório ou em forks derivados
 - JAMAIS desabilite o memory guard em produção via flags não documentadas
+- JAMAIS eleve concorrência de comandos pesados cegamente em hosts com memória restrita; prefira execução serial em auditorias
 - JAMAIS ignore warnings do `cargo audit` sem abrir um advisory de segurança rastreado

@@ -236,16 +236,17 @@ RUN cargo install --path .
 - Recall with `--k 5` completes under 20 milliseconds after model load
 - Hybrid search with RRF completes under 30 milliseconds on warm cache
 - First `init` downloads the quantized model once and caches it locally
-- Embedding model uses approximately 750 MB of RAM per process instance
+- Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.3 RSS calibration
 
 
 ## Safe Parallel Invocation
-### Counting semaphore with four simultaneous slots
-- Each invocation loads `multilingual-e5-small` consuming roughly 750 MB of RAM
-- Up to four instances run in parallel via `MAX_CONCURRENT_CLI_INSTANCES` default
+### Counting semaphore with up to four simultaneous slots
+- Each invocation loads `multilingual-e5-small` consuming roughly 1100 MB of RAM after the v1.0.3 measurement pass
+- `MAX_CONCURRENT_CLI_INSTANCES` remains the hard ceiling at 4 cooperating subprocesses
+- Heavy commands `init`, `remember`, `recall`, and `hybrid-search` are clamped lower dynamically when available RAM cannot sustain the requested parallelism safely
 - Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`
 - A fifth concurrent invocation waits up to 300 seconds then exits with code 75
-- Use `--max-concurrency N` to override the slot limit for the current invocation
+- Use `--max-concurrency N` to request the slot limit for the current invocation; heavy commands may still be reduced automatically
 - Memory guard aborts with exit 77 when less than 2 GB of RAM is available
 - SIGINT and SIGTERM trigger graceful shutdown via `shutdown_requested()` atomic
 
@@ -257,7 +258,7 @@ RUN cargo install --path .
 - First `init` takes roughly one minute while `fastembed` downloads the quantized model
 - Permission denied on Linux means the cache directory lacks write access for your user
 - Namespace detection falls back to `global` when no explicit override is present
-- Parallel invocations beyond four slots receive exit 75 and SHOULD retry with backoff
+- Parallel invocations that exceed the effective safe limit receive exit 75 and SHOULD retry with backoff; during audits start heavy commands with `--max-concurrency 1`
 
 
 ## Compatible Rust Crates

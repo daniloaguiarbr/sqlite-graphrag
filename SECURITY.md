@@ -9,16 +9,15 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - Users on deprecated lines are STRONGLY encouraged to upgrade to a supported release
 - Upgrading early reduces exposure window and aligns with the coordinated disclosure policy
 
-| Version | Status       | Security Patches       |
-| ------- | ------------ | ---------------------- |
-| 2.0.x   | Supported    | Yes, receives fixes    |
-| 1.x     | Deprecated   | Critical issues only   |
-| 0.x     | Unsupported  | No patches provided    |
+| Version | Status      | Security Patches         |
+| ------- | ----------- | ------------------------ |
+| 1.0.x   | Supported   | Yes, receives fixes      |
+| 0.x     | Unsupported | No patches provided      |
 
 
 ## Reporting a Vulnerability
-- OBRIGATÓRIO report security issues by email at daniloaguiarbr@gmail.com while the renamed repository is not public yet
-- Once the public `sqlite-graphrag` repository exists, use GitHub Security Advisories there as the preferred private channel
+- OBRIGATÓRIO report security issues through GitHub Security Advisories in the public `sqlite-graphrag` repository as the preferred private channel
+- Use email at daniloaguiarbr@gmail.com only as fallback when GitHub private reporting is unavailable
 - JAMAIS open a public GitHub issue, pull request, or discussion for security-related reports
 - Include a minimal reproduction, affected versions, and expected versus actual behavior
 - Include your environment details such as OS, architecture, and rustc version
@@ -37,7 +36,7 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - High severity (CVSS 7.0 to 8.9) receives a patch within 14 calendar days of validated triage
 - Medium severity (CVSS 4.0 to 6.9) receives a patch within 30 calendar days of validated triage
 - Low severity (CVSS 0.1 to 3.9) receives a patch within 90 calendar days of validated triage
-- Released fixes follow immediately with a CHANGELOG entry and a GitHub Security Advisory
+- Released fixes follow immediately with a CHANGELOG entry and a GitHub Security Advisory when the affected line is still supported
 
 
 ## Disclosure Policy
@@ -64,10 +63,12 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 
 
 ## Best Practices for Users
-- SEMPRE install sqlite-graphrag with `cargo install --path .` to respect the pinned versions
+- SEMPRE install published releases with `cargo install sqlite-graphrag --locked`
+- Use `cargo install --path .` only when testing an unreleased local checkout intentionally
 - SEMPRE rotate your `crates.io` API tokens on a regular schedule
 - SEMPRE keep your rustc toolchain updated to the latest stable release compatible with MSRV 1.88
 - SEMPRE review CHANGELOG entries before upgrading across major versions
 - JAMAIS commit secrets or tokens to the repository or to derived forks
 - JAMAIS disable the memory guard in production via undocumented flags
+- JAMAIS raise heavy-command concurrency blindly on memory-constrained hosts; prefer serial execution during audits
 - JAMAIS bypass `cargo audit` warnings without opening a tracked security advisory

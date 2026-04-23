@@ -84,6 +84,17 @@
 - Você DEVE preservar formatação, idioma e restrições de escopo do usuário.
 
 
+## Comandos Pesados Seguros Em Memória
+- Agentes DEVEM tratar `init`, `remember`, `recall` e `hybrid-search` como comandos heavy-memory.
+- Agentes DEVEM iniciar auditorias e cargas grandes com `--max-concurrency 1` nesses comandos.
+- Agentes DEVEM aumentar concorrência de comandos pesados apenas após medir RSS e observar swap estável.
+- Agentes DEVEM assumir que cada subprocesso pesado pode carregar sua própria cópia do modelo ONNX.
+- Agentes DEVEM tratar `MAX_CONCURRENT_CLI_INSTANCES` como teto rígido, não como default seguro para qualquer host.
+- Agentes DEVEM esperar redução dinâmica em runtime abaixo da concorrência pedida quando a RAM disponível for insuficiente.
+- Agentes estão PROIBIDOS de elevar `--max-concurrency` cegamente após exit `75`.
+- Agentes estão PROIBIDOS de usar `parallel -j 4` ou `xargs -P 4` em comandos pesados durante auditorias por padrão.
+
+
 ## Build
 - Execute `timeout 300 cargo build --release` para produzir o binário release.
 - Execute `timeout 120 cargo check --all-targets` antes de qualquer rust-analyzer.
@@ -200,6 +211,9 @@
 - Antipadrão 8 faz merge de branch sem executar os dez gates de validação.
 - Antipadrão 9 escreve código de implementação dentro do papel tech-lead.
 - Antipadrão 10 omite `timeout` em comando cargo que pode pendurar em I/O.
+- Antipadrão 11 assume que o modelo ONNX é compartilhado entre subprocessos da CLI.
+- Antipadrão 12 trata exit `75` como motivo para elevar concorrência sem verificar pressão de RAM antes.
+- Antipadrão 13 faz fan-out agressivo de `remember`, `recall` ou `hybrid-search` em host desktop.
 
 
 ## Workflow

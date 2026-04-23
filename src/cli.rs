@@ -244,6 +244,16 @@ impl Cli {
     }
 }
 
+impl Commands {
+    /// Retorna true para subcomandos que carregam o modelo ONNX localmente.
+    pub fn is_embedding_heavy(&self) -> bool {
+        matches!(
+            self,
+            Self::Init(_) | Self::Remember(_) | Self::Recall(_) | Self::HybridSearch(_)
+        )
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize database and download embedding model
@@ -307,6 +317,44 @@ pub enum MemoryType {
     Decision,
     Incident,
     Skill,
+}
+
+#[cfg(test)]
+mod testes_concorrencia_pesada {
+    use super::*;
+
+    #[test]
+    fn command_heavy_detecta_init_e_embeddings() {
+        let init = Cli::try_parse_from(["sqlite-graphrag", "init"]).expect("parse init");
+        assert!(init.command.is_embedding_heavy());
+
+        let remember = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "remember",
+            "--name",
+            "memoria-teste",
+            "--type",
+            "project",
+            "--description",
+            "desc",
+        ])
+        .expect("parse remember");
+        assert!(remember.command.is_embedding_heavy());
+
+        let recall =
+            Cli::try_parse_from(["sqlite-graphrag", "recall", "consulta"]).expect("parse recall");
+        assert!(recall.command.is_embedding_heavy());
+
+        let hybrid = Cli::try_parse_from(["sqlite-graphrag", "hybrid-search", "consulta"])
+            .expect("parse hybrid");
+        assert!(hybrid.command.is_embedding_heavy());
+    }
+
+    #[test]
+    fn command_light_nao_marca_stats() {
+        let stats = Cli::try_parse_from(["sqlite-graphrag", "stats"]).expect("parse stats");
+        assert!(!stats.command.is_embedding_heavy());
+    }
 }
 
 impl MemoryType {

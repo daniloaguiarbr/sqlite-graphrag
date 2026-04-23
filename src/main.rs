@@ -5,10 +5,11 @@ use sqlite_graphrag::{
     cli::Cli,
     commands,
     constants::{
-        CLI_LOCK_DEFAULT_WAIT_SECS, MAX_CONCURRENT_CLI_INSTANCES, MIN_AVAILABLE_MEMORY_MB,
+        CLI_LOCK_DEFAULT_WAIT_SECS, EMBEDDING_LOAD_EXPECTED_RSS_MB, MAX_CONCURRENT_CLI_INSTANCES,
+        MIN_AVAILABLE_MEMORY_MB,
     },
     lock::acquire_cli_slot,
-    memory_guard::check_available_memory,
+    memory_guard::{available_memory_mb, calculate_safe_concurrency, check_available_memory},
     storage::connection::register_vec_extension,
     SHUTDOWN,
 };
@@ -95,20 +96,68 @@ fn main() {
         std::process::exit(2);
     }
 
-    // Verificar disponibilidade de memória antes de carregar o modelo ONNX.
-    if !cli.skip_memory_guard {
-        if let Err(e) = check_available_memory(MIN_AVAILABLE_MEMORY_MB) {
-            eprintln!(
-                "{}: {}",
-                sqlite_graphrag::i18n::prefixo_erro(),
-                e.localized_message()
-            );
-            std::process::exit(e.exit_code());
-        }
-    }
+    let embedding_heavy = cli.command.is_embedding_heavy();
+    let measured_available_mb = if embedding_heavy {
+        let available_mb = if cli.skip_memory_guard {
+            available_memory_mb()
+        } else {
+            match check_available_memory(MIN_AVAILABLE_MEMORY_MB) {
+                Ok(available_mb) => available_mb,
+                Err(e) => {
+                    eprintln!(
+                        "{}: {}",
+                        sqlite_graphrag::i18n::prefixo_erro(),
+                        e.localized_message()
+                    );
+                    std::process::exit(e.exit_code());
+                }
+            }
+        };
+
+        Some(available_mb)
+    } else {
+        None
+    };
 
     // Resolver parâmetros de concorrência com fallback para as constantes canônicas.
-    let max_concurrency = cli.max_concurrency.unwrap_or(MAX_CONCURRENT_CLI_INSTANCES);
+    let requested_concurrency = cli.max_concurrency.unwrap_or(MAX_CONCURRENT_CLI_INSTANCES);
+    let max_concurrency = if embedding_heavy {
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let available_mb = measured_available_mb.expect("embedding-heavy command must measure RAM");
+        let safe_concurrency = calculate_safe_concurrency(
+            available_mb,
+            cpu_count,
+            EMBEDDING_LOAD_EXPECTED_RSS_MB,
+            MAX_CONCURRENT_CLI_INSTANCES,
+        );
+        let effective_concurrency = requested_concurrency.min(safe_concurrency);
+
+        sqlite_graphrag::output::emit_progress_i18n(
+            &format!(
+                "Heavy command detected; available memory: {available_mb} MB; safe concurrency: {safe_concurrency}"
+            ),
+            &format!(
+                "Comando pesado detectado; memória disponível: {available_mb} MB; concorrência segura: {safe_concurrency}"
+            ),
+        );
+
+        if effective_concurrency < requested_concurrency {
+            sqlite_graphrag::output::emit_progress_i18n(
+                &format!(
+                    "Reducing requested concurrency from {requested_concurrency} to {effective_concurrency} to avoid memory oversubscription"
+                ),
+                &format!(
+                    "Reduzindo a concorrência solicitada de {requested_concurrency} para {effective_concurrency} para evitar oversubscription de memória"
+                ),
+            );
+        }
+
+        effective_concurrency
+    } else {
+        requested_concurrency.min(MAX_CONCURRENT_CLI_INSTANCES)
+    };
     let wait_secs = cli.wait_lock.unwrap_or(CLI_LOCK_DEFAULT_WAIT_SECS);
 
     // Adquirir slot no semáforo de contagem. O handle é mantido vivo até o fim de main

@@ -236,16 +236,17 @@ RUN cargo install --path .
 - Recall com `--k 5` completa abaixo de 20 milissegundos após carga do modelo
 - Hybrid search com RRF completa abaixo de 30 milissegundos em cache quente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
-- Modelo de embedding usa aproximadamente 750 MB de RAM por instância de processo
+- Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.3
 
 
 ## Invocação Paralela Segura
-### Semáforo de contagem com quatro slots simultâneos
-- Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 750 MB de RAM
-- Até quatro instâncias executam em paralelo via `MAX_CONCURRENT_CLI_INSTANCES` padrão
+### Semáforo de contagem com até quatro slots simultâneos
+- Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 1100 MB de RAM após a medição da v1.0.3
+- `MAX_CONCURRENT_CLI_INSTANCES` continua sendo o teto rígido de 4 subprocessos cooperantes
+- Comandos pesados `init`, `remember`, `recall` e `hybrid-search` podem ser reduzidos dinamicamente para baixo desse teto quando a RAM disponível não sustenta o paralelismo com segurança
 - Arquivos de lock em `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` usando `flock`
 - Uma quinta invocação aguarda até 300 segundos e então encerra com código 75
-- Use `--max-concurrency N` para ajustar o limite de slots na invocação atual
+- Use `--max-concurrency N` para solicitar o limite de slots na invocação atual; comandos pesados ainda podem ser reduzidos automaticamente
 - Memory guard aborta com saída 77 quando há menos de 2 GB de RAM disponível
 - SIGINT e SIGTERM disparam shutdown graceful via atômica `shutdown_requested()`
 
@@ -257,7 +258,7 @@ RUN cargo install --path .
 - Primeiro `init` leva cerca de um minuto enquanto `fastembed` baixa o modelo quantizado
 - Permissão negada no Linux indica falta de escrita no diretório de cache do usuário
 - Detecção de namespace cai para `global` quando não há override explícito
-- Invocações paralelas acima de quatro slots recebem saída 75 e DEVEM tentar com backoff
+- Invocações paralelas que excedem o limite seguro efetivo recebem saída 75 e DEVEM tentar com backoff; durante auditorias inicie comandos pesados com `--max-concurrency 1`
 
 
 ## Crates Rust Compatíveis

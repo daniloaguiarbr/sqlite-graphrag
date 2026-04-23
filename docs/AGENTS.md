@@ -443,7 +443,7 @@ let output = Command::new("sqlite-graphrag")
 | `12` | `sqlite-vec` extension failed | Reinstall binary with bundled extension |
 | `13` | Batch operation partially failed | Inspect partial results and retry failed items |
 | `15` | Database busy after retries | Wait and retry the operation |
-| `75` | Advisory lock held or all slots full | Wait and retry or raise `--max-concurrency` |
+| `75` | Advisory lock held or all slots full | Wait and retry, or lower pressure on heavy commands instead of raising concurrency blindly |
 | `77` | Low memory threshold tripped | Free RAM before retry |
 
 
@@ -503,7 +503,7 @@ let output = Command::new("sqlite-graphrag")
 ### Ceilings — Enforced By The Binary
 - `EMBEDDING_MAX_TOKENS` equals 512 tokens measured by the model tokenizer
 - `TEXT_BODY_PREVIEW_LEN` equals 200 characters in list and recall snippets
-- `MAX_CONCURRENT_CLI_INSTANCES` equals 4 across cooperating subprocess agents
+- `MAX_CONCURRENT_CLI_INSTANCES` equals the hard ceiling of 4 across cooperating subprocess agents, but heavy commands may clamp lower dynamically from available RAM
 - `CLI_LOCK_DEFAULT_WAIT_SECS` equals 300 seconds before exit code `75`
 - `PURGE_RETENTION_DAYS_DEFAULT` equals 90 days before hard delete becomes allowed
 

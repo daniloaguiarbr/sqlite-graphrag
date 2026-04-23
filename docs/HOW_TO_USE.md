@@ -237,9 +237,12 @@ sqlite-graphrag list | jaq '.items[].updated_at_iso'
 ```
 
 ### Concurrency Cap
-- `--max-concurrency` is capped at `2×nCPUs`; higher values return exit 2
+- `--max-concurrency` is capped at `2×nCPUs`; higher values return exit 2 during argument validation
+- Embedding-heavy commands are clamped further at runtime from available RAM and the per-process RSS budget measured for the ONNX model
+- Treat `init`, `remember`, `recall`, and `hybrid-search` as heavy commands when planning automation or audits
 - Exit code 2 signals invalid argument; reduce the value and retry immediately
-- Default of 4 slots is optimal for most laptops running two to four cores
+- The hard ceiling remains 4 cooperating subprocesses, but the effective safe limit may be lower on the current host
+- During audits start heavy commands with `--max-concurrency 1` and scale only after measuring RSS and swap behavior
 
 ### Help Text Language for Global Flags
 - The global flags `--max-concurrency`, `--wait-lock`, `--lang`, and `--tz` display Portuguese help text in `--help` output
@@ -535,7 +538,8 @@ sqlite-graphrag remember --name config-notes --type project \
 ### Troubleshooting — Five Failures and Their Fixes
 - Error `exit 10` signals database lock, run `sqlite-graphrag vacuum` to checkpoint WAL
 - Error `exit 12` signals `sqlite-vec` load failure, verify SQLite version is 3.40 plus
-- Error `exit 13` signals database busy, lower `--max-concurrency` or raise `--wait-lock`
+- Error `exit 13` signals batch partial failure, inspect partial results and retry only the failed items
+- Error `exit 15` signals database busy after retries, lower write pressure or raise `--wait-lock`
 - Error `exit 75` signals slots exhausted, retry after a short backoff interval
 - Error `exit 77` signals low RAM, free memory before invoking the embedding model again
 

@@ -10,6 +10,17 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.3] - 2026-04-23
+
+### Corrigido
+- Comandos pesados agora calculam concorrência segura dinamicamente a partir da memória disponível, número de CPUs e orçamento de RSS por task antes de adquirir slots da CLI
+- `init`, `remember`, `recall` e `hybrid-search` agora emitem logs defensivos de progresso mostrando a carga pesada detectada e a concorrência segura calculada
+- O runtime agora reduz `--max-concurrency` para o orçamento seguro de memória em comandos pesados, em vez de deixar a heurística documentada sem enforcement
+- O orçamento de RSS usado pela heurística de concorrência agora é calibrado a partir de pico de RSS medido, em vez de uma estimativa histórica mais antiga
+
+### Adicionado
+- Cobertura unitária para classificação de comandos pesados e cálculo de concorrência segura
+
 ## [1.0.2] - 2026-04-23
 
 ### Adicionado

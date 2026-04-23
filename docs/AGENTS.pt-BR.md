@@ -442,7 +442,7 @@ let output = Command::new("sqlite-graphrag")
 | `12` | Extensão `sqlite-vec` falhou | Reinstale o binário com extensão embutida |
 | `13` | Operação em batch parcialmente falhou | Inspecione resultados parciais e repita os itens falhos |
 | `15` | Banco ocupado após tentativas | Aguarde e repita a operação |
-| `75` | Lock advisory ocupado ou todos os slots preenchidos | Aguarde e repita ou eleve `--max-concurrency` |
+| `75` | Lock advisory ocupado ou todos os slots preenchidos | Aguarde e repita, ou reduza a pressão dos comandos pesados em vez de elevar a concorrência cegamente |
 | `77` | Limite de memória baixo acionado | Libere RAM antes de repetir |
 
 
@@ -500,7 +500,7 @@ let output = Command::new("sqlite-graphrag")
 ### Tetos — Aplicados Pelo Binário
 - `EMBEDDING_MAX_TOKENS` vale 512 tokens medidos pelo tokenizador do modelo
 - `TEXT_BODY_PREVIEW_LEN` vale 200 caracteres em snippets de list e recall
-- `MAX_CONCURRENT_CLI_INSTANCES` vale 4 entre agentes subprocess cooperando
+- `MAX_CONCURRENT_CLI_INSTANCES` vale como teto rígido de 4 entre agentes subprocess cooperando, mas comandos pesados podem ser reduzidos dinamicamente pela RAM disponível
 - `CLI_LOCK_DEFAULT_WAIT_SECS` vale 300 segundos antes do exit code `75`
 - `PURGE_RETENTION_DAYS_DEFAULT` vale 90 dias antes do hard delete ficar permitido
 

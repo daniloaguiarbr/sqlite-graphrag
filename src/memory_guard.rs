@@ -13,6 +13,37 @@ use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 use crate::errors::AppError;
 
+/// Retorna a memória disponível atual em MiB.
+pub fn available_memory_mb() -> u64 {
+    let sys =
+        System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
+    let available_bytes = sys.available_memory();
+    available_bytes / (1024 * 1024)
+}
+
+/// Calcula o teto seguro de concorrência para cargas pesadas de embedding.
+///
+/// Fórmula canônica:
+/// `permits = min(cpus, available_memory_mb / ram_por_task_mb) * 0.5`
+///
+/// O resultado é clampado entre `1` e `max_concurrency`.
+pub fn calculate_safe_concurrency(
+    available_mb: u64,
+    cpu_count: usize,
+    ram_per_task_mb: u64,
+    max_concurrency: usize,
+) -> usize {
+    let cpu_count = cpu_count.max(1);
+    let max_concurrency = max_concurrency.max(1);
+    let ram_per_task_mb = ram_per_task_mb.max(1);
+
+    let memory_bound = (available_mb / ram_per_task_mb) as usize;
+    let resource_bound = cpu_count.min(memory_bound).max(1);
+    let safe_with_margin = (resource_bound / 2).max(1);
+
+    safe_with_margin.min(max_concurrency)
+}
+
 /// Verifica se há memória disponível suficiente para iniciar o carregamento do modelo.
 ///
 /// # Parâmetros
@@ -25,11 +56,7 @@ use crate::errors::AppError;
 /// # Retorno
 /// Retorna `Ok(available_mb)` com o valor real de memória disponível em MiB.
 pub fn check_available_memory(min_mb: u64) -> Result<u64, AppError> {
-    let sys =
-        System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
-    let available_bytes = sys.available_memory();
-    let available_mb = available_bytes / (1024 * 1024);
-    drop(sys);
+    let available_mb = available_memory_mb();
 
     if available_mb < min_mb {
         return Err(AppError::LowMemory {
@@ -77,5 +104,23 @@ mod testes {
             }
             outro => panic!("esperado LowMemory, got: {outro:?}"),
         }
+    }
+
+    #[test]
+    fn calculate_safe_concurrency_respeita_metade_da_margem() {
+        let permits = calculate_safe_concurrency(8_000, 8, 1_000, 4);
+        assert_eq!(permits, 4);
+    }
+
+    #[test]
+    fn calculate_safe_concurrency_nunca_retorna_zero() {
+        let permits = calculate_safe_concurrency(100, 1, 10_000, 4);
+        assert_eq!(permits, 1);
+    }
+
+    #[test]
+    fn calculate_safe_concurrency_respeita_teto_maximo() {
+        let permits = calculate_safe_concurrency(128_000, 64, 500, 4);
+        assert_eq!(permits, 4);
     }
 }

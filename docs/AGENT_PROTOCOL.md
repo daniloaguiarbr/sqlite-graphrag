@@ -90,6 +90,17 @@
 - YOU MUST preserve user formatting, language, and scope restrictions intact.
 
 
+## Memory-Safe Heavy Commands
+- Agents MUST treat `init`, `remember`, `recall`, and `hybrid-search` as heavy-memory commands.
+- Agents MUST start audits and large corpus runs with `--max-concurrency 1` on those commands.
+- Agents MUST scale heavy-command concurrency only after measuring RSS and observing stable swap behavior.
+- Agents MUST assume each heavy subprocess may load its own ONNX model copy.
+- Agents MUST treat `MAX_CONCURRENT_CLI_INSTANCES` as a hard ceiling, not as a safe default for every host.
+- Agents MUST expect runtime clamping of heavy commands below the requested concurrency when available RAM is insufficient.
+- Agents are FORBIDDEN from raising `--max-concurrency` blindly after exit `75`.
+- Agents are FORBIDDEN from using `parallel -j 4` or `xargs -P 4` on heavy commands during audits by default.
+
+
 ## Build
 - Execute `timeout 300 cargo build --release` to produce the release binary.
 - Execute `timeout 120 cargo check --all-targets` before any rust-analyzer call.
@@ -206,6 +217,9 @@
 - Antipattern 8 merges a branch without running the ten validation gates.
 - Antipattern 9 writes implementation code inside the tech-lead orchestrator role.
 - Antipattern 10 omits `timeout` on a cargo command that can hang on network I/O.
+- Antipattern 11 assumes the ONNX model is shared across CLI subprocesses.
+- Antipattern 12 treats exit `75` as a reason to raise concurrency without checking RAM pressure first.
+- Antipattern 13 fans out `remember`, `recall`, or `hybrid-search` aggressively on a desktop host.
 
 
 ## Workflow

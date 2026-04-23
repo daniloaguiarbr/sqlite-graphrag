@@ -206,9 +206,12 @@ pub const CLI_LOCK_DEFAULT_WAIT_SECS: u64 = 300;
 /// RSS esperado em MiB de uma única instância com o modelo ONNX carregado via fastembed.
 ///
 /// Usado na fórmula `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
-/// para calcular o número dinâmico de permits. Valor calibrado para
-/// `multilingual-e5-small` com runtime ONNX.
-pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 750;
+/// para calcular o número dinâmico de permits.
+///
+/// Valor calibrado em 2026-04-23 com `/usr/bin/time -v` sobre `sqlite-graphrag v1.0.3`
+/// nos comandos pesados `remember`, `recall` e `hybrid-search`, todos com pico de RSS
+/// próximo de 1.03 GiB por processo. O valor abaixo arredonda para cima com margem defensiva.
+pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 1_100;
 
 /// Process exit code retornado quando memória disponível está abaixo de [`MIN_AVAILABLE_MEMORY_MB`].
 ///

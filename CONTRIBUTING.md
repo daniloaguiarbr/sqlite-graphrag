@@ -12,13 +12,13 @@ Read this document in [Portuguese (pt-BR)](CONTRIBUTING.pt-BR.md).
 
 
 ## Quick Start
-- Use this local checkout until the public `sqlite-graphrag` repository exists
-- The same validation commands apply after the public repository is created
+- Use this repository normally; the public `sqlite-graphrag` repository already exists
+- The same validation commands apply locally and in the public repository workflow
 - No command should print errors on a clean checkout of `main`
 ```bash
-cargo check --all-targets
-cargo nextest run --all-features
-cargo doc --no-deps --all-features
+timeout 120 cargo check --all-targets
+timeout 300 cargo nextest run --all-features
+RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 ```
 
 
@@ -79,6 +79,8 @@ cargo doc --no-deps --all-features
 - Unit tests live inside `#[cfg(test)] mod tests` blocks within the implementation file
 - Integration tests live under `tests/` and SHOULD use `assert_cmd` plus `wiremock` for HTTP mocks
 - A hidden flag `--skip-memory-guard` exists exclusively for tests that do not perform real allocation
+- Treat `init`, `remember`, `recall`, and `hybrid-search` as heavy-memory commands during manual validation
+- Start heavy-command validation with `--max-concurrency 1` and scale only after measuring RSS and swap behavior
 - JAMAIS issue real HTTP requests or touch real filesystem paths outside a `TempDir` in tests
 
 
@@ -109,7 +111,7 @@ cargo doc --no-deps --all-features
 - Maintainers bump `version` in `Cargo.toml` following Semantic Versioning 2.0.0
 - Maintainers update the CHANGELOG moving Unreleased entries under the new version with ISO date
 - Maintainers tag the release commit as `vX.Y.Z` using `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
-- Pushing the tag triggers `.github/workflows/release.yml` which builds and publishes artifacts
+- Pushing the tag triggers `.github/workflows/release.yml` which builds release artifacts and GitHub release assets
 - Final publication to crates.io is done manually with `cargo publish --locked`
 
 

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-04-23
+
+### Fixed
+- Heavy commands now calculate safe concurrency dynamically from available memory, CPU count, and per-task embedding RSS budget before acquiring CLI slots
+- `init`, `remember`, `recall`, and `hybrid-search` now emit defensive progress logs showing detected heavy workload and computed safe concurrency
+- The runtime now clamps `--max-concurrency` down to the safe memory budget for embedding-heavy commands instead of allowing the documented heuristic to remain unenforced
+- The embedding RSS budget used by the concurrency heuristic is now calibrated from measured peak RSS instead of an older historical estimate
+
+### Added
+- Unit coverage for heavy-command classification and safe concurrency calculation
+
 ## [1.0.2] - 2026-04-23
 
 ### Added

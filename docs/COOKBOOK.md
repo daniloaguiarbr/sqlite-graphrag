@@ -79,7 +79,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 
 
 ### Variants
-- Add `parallel -j 4` to respect `MAX_CONCURRENT_CLI_INSTANCES` and cut wall-clock time
+- Keep `remember` imports serial with `--max-concurrency 1`; each subprocess may load roughly 1.1 GB of ONNX RSS in v1.0.3
 - Extend the one-liner to extract `--description` from the first Markdown heading of each file
 
 
@@ -427,30 +427,32 @@ git commit -m "chore: track sqlite-graphrag db via LFS"
 - Recipe "How to prevent Dropbox or iCloud corruption with sync-safe-copy"
 
 
-## How To Orchestrate Parallel Recall Across Namespaces
+## How To Orchestrate Namespace Recall Safely
 ### Problem
-- Your multi-project agent runs four searches serially wasting 2 seconds per iteration
-- Your CI orchestrator spawns one subprocess per namespace and exceeds safe concurrency
+- Your multi-project agent needs one recall per namespace on the same host
+- Blind parallel fan-out can oversubscribe RAM because each `recall` subprocess may load the ONNX model independently
 
 
 ### Solution
 ```bash
-parallel -j 4 'SQLITE_GRAPHRAG_NAMESPACE={} sqlite-graphrag recall "error rate" --k 5 --json' \
-  ::: project-a project-b project-c project-d
+for ns in project-a project-b project-c project-d; do
+  SQLITE_GRAPHRAG_NAMESPACE="$ns" \
+    sqlite-graphrag --max-concurrency 1 recall "error rate" --k 5 --json
+done
 ```
 
 
 ### Explanation
-- GNU parallel caps concurrency at 4 matching the internal `MAX_CONCURRENT_CLI_INSTANCES`
+- The loop stays intentionally serial because `recall` is an embedding-heavy command
+- `--max-concurrency 1` prevents local oversubscription during audits, CI, and desktop use
 - Env var `SQLITE_GRAPHRAG_NAMESPACE` scopes each subprocess to its own project cleanly
-- Exit code `75` triggers automatic retry since `parallel` reads exit codes natively
-- Four JSON documents land in stdout for a downstream aggregator agent to fuse
-- Saves 75 percent wall-clock time versus sequential recall across the same namespaces
+- One JSON document per namespace still lands in stdout for a downstream aggregator agent to fuse
+- This pattern favors host safety and deterministic progress over aggressive wall-clock reduction
 
 
 ### Variants
-- Replace `parallel` with `xargs -P 4` if you prefer POSIX-only tooling on stripped images
-- Pipe the aggregated JSON into an RRF agent that fuses cross-namespace ranks together
+- Keep parallel fan-out for light commands such as `stats` or `list`, not for `recall`
+- Raise concurrency for heavy commands only after measuring RSS, observing swap, and confirming the host remains stable
 
 
 ### See Also

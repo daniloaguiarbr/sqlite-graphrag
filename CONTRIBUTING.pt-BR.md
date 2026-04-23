@@ -12,13 +12,13 @@ Leia este documento em [inglês (EN)](CONTRIBUTING.md).
 
 
 ## Quick Start
-- Use este checkout local até o repositório público `sqlite-graphrag` existir
-- Os mesmos comandos de validação continuam válidos depois que o repositório público for criado
+- Use este repositório normalmente; o repositório público `sqlite-graphrag` já existe
+- Os mesmos comandos de validação valem localmente e no workflow do repositório público
 - Nenhum comando deve imprimir erros em um checkout limpo de `main`
 ```bash
-cargo check --all-targets
-cargo nextest run --all-features
-cargo doc --no-deps --all-features
+timeout 120 cargo check --all-targets
+timeout 300 cargo nextest run --all-features
+RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 ```
 
 
@@ -79,6 +79,8 @@ cargo doc --no-deps --all-features
 - Testes unitários vivem dentro de blocos `#[cfg(test)] mod tests` no próprio arquivo de implementação
 - Testes de integração vivem em `tests/` e DEVEM usar `assert_cmd` mais `wiremock` para mocks HTTP
 - A flag oculta `--skip-memory-guard` existe exclusivamente para testes que não alocam memória real
+- Trate `init`, `remember`, `recall` e `hybrid-search` como comandos heavy-memory durante validação manual
+- Inicie a validação de comandos pesados com `--max-concurrency 1` e só aumente após medir RSS e comportamento de swap
 - JAMAIS emita requisições HTTP reais nem toque caminhos reais fora de um `TempDir` em testes
 
 
@@ -109,7 +111,7 @@ cargo doc --no-deps --all-features
 - Mantenedores ajustam `version` em `Cargo.toml` seguindo Semantic Versioning 2.0.0
 - Mantenedores atualizam o CHANGELOG movendo entradas Unreleased sob a nova versão com data ISO
 - Mantenedores taggeiam o commit de release como `vX.Y.Z` usando `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
-- Empurrar a tag dispara `.github/workflows/release.yml` que constrói e publica artefatos
+- Empurrar a tag dispara `.github/workflows/release.yml` que constrói artefatos de release e assets do GitHub Release
 - Publicação final no crates.io é feita manualmente com `cargo publish --locked`
 
 

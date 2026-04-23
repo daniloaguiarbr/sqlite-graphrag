@@ -241,9 +241,12 @@ sqlite-graphrag list | jaq '.items[].updated_at_iso'
 ```
 
 ### Limite de Concorrência
-- `--max-concurrency` é limitado a `2×nCPUs`; valores maiores retornam exit 2
+- `--max-concurrency` é limitado a `2×nCPUs`; valores maiores retornam exit 2 ainda no parse dos argumentos
+- Comandos pesados de embedding podem ser reduzidos ainda mais em runtime com base na RAM disponível e no orçamento de RSS por processo medido para o modelo ONNX
+- Trate `init`, `remember`, `recall` e `hybrid-search` como comandos pesados ao planejar automação ou auditorias
 - Exit code 2 sinaliza argumento inválido; reduza o valor e repita a invocação
-- Padrão de 4 slots é ótimo para a maioria dos laptops com dois a quatro núcleos
+- O teto rígido continua em 4 subprocessos cooperantes, mas o limite seguro efetivo pode ser menor no host atual
+- Em auditorias inicie comandos pesados com `--max-concurrency 1` e só aumente após medir RSS e swap
 
 ### Idioma dos Textos de Ajuda das Flags Globais
 - As flags globais `--max-concurrency`, `--wait-lock`, `--lang` e `--tz` exibem textos de ajuda em português no output de `--help`
@@ -538,7 +541,8 @@ sqlite-graphrag remember --name notas-config --type project \
 ### Solução de Problemas — Cinco Falhas e Suas Correções
 - Erro `exit 10` sinaliza lock do banco, execute `sqlite-graphrag vacuum` para checkpoint do WAL
 - Erro `exit 12` sinaliza falha ao carregar `sqlite-vec`, verifique se SQLite é versão 3.40 ou superior
-- Erro `exit 13` sinaliza banco ocupado, reduza `--max-concurrency` ou aumente `--wait-lock`
+- Erro `exit 13` sinaliza falha parcial em batch, inspecione os resultados parciais e repita apenas os itens falhos
+- Erro `exit 15` sinaliza banco ocupado após tentativas, reduza a pressão de escrita ou aumente `--wait-lock`
 - Erro `exit 75` sinaliza slots exauridos, repita após breve intervalo de backoff
 - Erro `exit 77` sinaliza RAM baixa, libere memória antes de invocar o modelo novamente
 
