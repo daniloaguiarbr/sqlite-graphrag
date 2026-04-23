@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/vacuum.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/vacuum.schema.json",
   "title": "VacuumResponse",
-  "description": "Response emitted by `neurographrag vacuum` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag vacuum` on stdout as a single JSON line.",
   "type": "object",
   "required": ["db_path", "size_before_bytes", "size_after_bytes", "status", "elapsed_ms"],
   "additionalProperties": false,

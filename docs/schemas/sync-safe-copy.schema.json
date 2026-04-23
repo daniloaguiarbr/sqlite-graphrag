@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/sync-safe-copy.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/sync-safe-copy.schema.json",
   "title": "SyncSafeCopyResponse",
-  "description": "Response emitted by `neurographrag sync-safe-copy` on stdout as a single JSON line. The CLI flag accepts `--dest` (primary), `--to`, and `--output` as aliases for the destination path. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default.",
+  "description": "Response emitted by `sqlite-graphrag sync-safe-copy` on stdout as a single JSON line. The CLI flag accepts `--dest` (primary), `--to`, and `--output` as aliases for the destination path. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default.",
   "type": "object",
   "required": ["source_db_path", "dest_path", "bytes_copied", "status", "elapsed_ms"],
   "additionalProperties": false,

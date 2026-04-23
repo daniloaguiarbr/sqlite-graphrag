@@ -29,7 +29,7 @@ pub fn emit_progress(msg: &str) {
     tracing::info!(message = msg);
 }
 
-/// Emite mensagem de progresso bilíngue respeitando `--lang` ou `NEUROGRAPHRAG_LANG`.
+/// Emite mensagem de progresso bilíngue respeitando `--lang` ou `SQLITE_GRAPHRAG_LANG`.
 /// Uso: `output::emit_progress_i18n("Computing embedding...", "Calculando embedding...")`.
 pub fn emit_progress_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
@@ -47,7 +47,7 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
 /// # Examples
 ///
 /// ```
-/// use neurographrag::output::RememberResponse;
+/// use sqlite_graphrag::output::RememberResponse;
 ///
 /// let resp = RememberResponse {
 ///     memory_id: 1,
@@ -102,7 +102,7 @@ pub struct RememberResponse {
 /// # Examples
 ///
 /// ```
-/// use neurographrag::output::RecallItem;
+/// use sqlite_graphrag::output::RecallItem;
 ///
 /// let item = RecallItem {
 ///     memory_id: 7,

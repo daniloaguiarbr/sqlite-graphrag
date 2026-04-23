@@ -44,6 +44,9 @@ coverage/
 target/llvm-cov/
 
 # Local SQLite databases
+graphrag.sqlite
+graphrag.sqlite-shm
+graphrag.sqlite-wal
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

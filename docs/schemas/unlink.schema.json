@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/unlink.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/unlink.schema.json",
   "title": "UnlinkResponse",
-  "description": "Response emitted by `neurographrag unlink` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag unlink` on stdout as a single JSON line.",
   "type": "object",
   "required": ["action", "relationship_id", "from_name", "to_name", "relation", "namespace", "elapsed_ms"],
   "additionalProperties": false,

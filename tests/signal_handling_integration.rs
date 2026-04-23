@@ -19,7 +19,7 @@ use tempfile::TempDir;
 // ---------------------------------------------------------------------------
 
 fn bin_path() -> PathBuf {
-    assert_cmd::cargo::cargo_bin("neurographrag")
+    assert_cmd::cargo::cargo_bin("sqlite-graphrag")
 }
 
 /// Cria um TempDir isolado e inicializa o banco antes de retornar.
@@ -27,9 +27,9 @@ fn setup_db() -> TempDir {
     let tmp = TempDir::new().expect("TempDir falhou");
     let status = Command::new(bin_path())
         .arg("init")
-        .env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .status()
         .expect("init falhou");
     assert!(status.success(), "init deve ter sucesso: {status:?}");
@@ -37,11 +37,11 @@ fn setup_db() -> TempDir {
 }
 
 /// Constrói um Command para o binário com isolamento completo.
-fn neurographrag_cmd(tmp: &TempDir) -> Command {
+fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
     let mut cmd = Command::new(bin_path());
-    cmd.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    cmd.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     cmd
 }
 
@@ -89,7 +89,7 @@ fn db_integro(tmp: &TempDir) -> bool {
 fn sigint_durante_health_exit_db_integro() {
     let tmp = setup_db();
 
-    let mut child: Child = neurographrag_cmd(&tmp)
+    let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .arg("health")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -127,7 +127,7 @@ fn sigint_durante_health_exit_db_integro() {
 fn sigterm_durante_init_graceful_exit_db_integro() {
     let tmp = TempDir::new().expect("TempDir falhou");
 
-    let mut child: Child = neurographrag_cmd(&tmp)
+    let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .arg("init")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -170,7 +170,7 @@ fn sigterm_apos_remember_nao_corrompe_db() {
     let tmp = setup_db();
 
     // Primeiro remember sem sinal — deve completar normalmente
-    let status = neurographrag_cmd(&tmp)
+    let status = sqlite_graphrag_cmd(&tmp)
         .args([
             "remember",
             "--name",
@@ -193,7 +193,7 @@ fn sigterm_apos_remember_nao_corrompe_db() {
     );
 
     // Segundo remember com SIGTERM durante execução
-    let mut child: Child = neurographrag_cmd(&tmp)
+    let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .args([
             "remember",
             "--name",
@@ -236,7 +236,7 @@ fn sigterm_apos_remember_nao_corrompe_db() {
 fn sigkill_processo_nao_vira_zombie() {
     let tmp = setup_db();
 
-    let mut child: Child = neurographrag_cmd(&tmp)
+    let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .arg("health")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

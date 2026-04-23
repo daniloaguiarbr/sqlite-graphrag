@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/related.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/related.schema.json",
   "title": "RelatedResponse",
-  "description": "Response emitted by `neurographrag related` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 not found.",
+  "description": "Response emitted by `sqlite-graphrag related` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 not found.",
   "$defs": {
     "RelatedMemory": {
       "type": "object",

@@ -1,7 +1,7 @@
 Read this document in [Portuguese (pt-BR)](CONTRIBUTING.pt-BR.md).
 
 
-# Contributing to neurographrag
+# Contributing to sqlite-graphrag
 
 
 ## Welcome
@@ -12,12 +12,10 @@ Read this document in [Portuguese (pt-BR)](CONTRIBUTING.pt-BR.md).
 
 
 ## Quick Start
-- Run the following 5 commands in order after cloning the repository
-- Each command validates a critical layer of the project before you write any code
-- No command should print errors on a clean clone of `main`
+- Use this local checkout until the public `sqlite-graphrag` repository exists
+- The same validation commands apply after the public repository is created
+- No command should print errors on a clean checkout of `main`
 ```bash
-git clone https://github.com/daniloaguiarbr/neurographrag
-cd neurographrag
 cargo check --all-targets
 cargo nextest run --all-features
 cargo doc --no-deps --all-features
@@ -96,7 +94,7 @@ cargo doc --no-deps --all-features
 - Open an issue using the Bug Report template on GitHub
 - Include a minimal reproduction case, ideally under 20 lines of invocation or code
 - Include the output of `cargo --version` and `rustc --version`
-- Include your OS, architecture, SQLite version, and neurographrag version
+- Include your OS, architecture, SQLite version, and sqlite-graphrag version
 - Include the exact command you ran, the observed output, and the expected output
 
 

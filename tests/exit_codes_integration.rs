@@ -3,10 +3,10 @@ use serial_test::serial;
 use tempfile::TempDir;
 
 fn cmd_base(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c
 }
@@ -201,7 +201,7 @@ fn test_exit_04_not_found_forget_inexistente() {
 
 #[test]
 fn test_exit_05_namespace_error_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::NamespaceError("limite excedido".into());
     assert_eq!(err.exit_code(), 5, "NamespaceError deve mapear para exit 5");
 }
@@ -212,7 +212,7 @@ fn test_exit_05_namespace_error_exit_code_correto() {
 
 #[test]
 fn test_exit_06_limit_exceeded_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::LimitExceeded("body excede limite de 20000 chars".into());
     assert_eq!(err.exit_code(), 6, "LimitExceeded deve mapear para exit 6");
 }
@@ -254,10 +254,10 @@ fn test_exit_10_database_arquivo_corrompido() {
 
     std::fs::write(&db_path, b"isto nao e um sqlite valido!!!").unwrap();
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", &db_path);
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", &db_path);
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.args(["health"]);
 
@@ -270,7 +270,7 @@ fn test_exit_10_database_arquivo_corrompido() {
 
 #[test]
 fn test_exit_11_embedding_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::Embedding("falha no modelo de embedding".into());
     assert_eq!(err.exit_code(), 11, "Embedding deve mapear para exit 11");
 }
@@ -281,7 +281,7 @@ fn test_exit_11_embedding_exit_code_correto() {
 
 #[test]
 fn test_exit_12_vec_extension_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::VecExtension("falha na extensao vec".into());
     assert_eq!(err.exit_code(), 12, "VecExtension deve mapear para exit 12");
 }
@@ -292,7 +292,7 @@ fn test_exit_12_vec_extension_exit_code_correto() {
 
 #[test]
 fn test_exit_13_batch_partial_failure_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::BatchPartialFailure {
         total: 10,
         failed: 3,
@@ -320,10 +320,10 @@ fn test_exit_14_io_sem_permissao_escrita() {
 
     let db_path = dir_sem_perm.join("test.sqlite");
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", &db_path);
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", &db_path);
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.args(["init"]);
 
@@ -338,7 +338,7 @@ fn test_exit_14_io_sem_permissao_escrita() {
 
 #[test]
 fn test_exit_15_db_busy_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::DbBusy("retries esgotados".into());
     assert_eq!(err.exit_code(), 15, "DbBusy deve mapear para exit 15");
 }
@@ -349,14 +349,14 @@ fn test_exit_15_db_busy_exit_code_correto() {
 
 #[test]
 fn test_exit_75_lock_busy_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::LockBusy("outra instancia ativa".into());
     assert_eq!(err.exit_code(), 75, "LockBusy deve mapear para exit 75");
 }
 
 #[test]
 fn test_exit_75_all_slots_full_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::AllSlotsFull {
         max: 4,
         waited_secs: 0,
@@ -370,7 +370,7 @@ fn test_exit_75_all_slots_full_exit_code_correto() {
 
 #[test]
 fn test_exit_77_low_memory_exit_code_correto() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::LowMemory {
         available_mb: 512,
         required_mb: 2048,
@@ -380,12 +380,12 @@ fn test_exit_77_low_memory_exit_code_correto() {
 
 #[test]
 fn test_exit_77_low_memory_guard_direto() {
-    use neurographrag::memory_guard::check_available_memory;
+    use sqlite_graphrag::memory_guard::check_available_memory;
     let resultado = check_available_memory(u64::MAX);
     assert!(
         matches!(
             resultado,
-            Err(neurographrag::errors::AppError::LowMemory { .. })
+            Err(sqlite_graphrag::errors::AppError::LowMemory { .. })
         ),
         "check_available_memory com u64::MAX deve retornar LowMemory"
     );
@@ -414,11 +414,11 @@ fn test_exit_00_sucesso_health_apos_init() {
 
 #[test]
 fn test_constantes_exit_codes_alinhadas() {
-    use neurographrag::constants::{
+    use sqlite_graphrag::constants::{
         BATCH_PARTIAL_FAILURE_EXIT_CODE, CLI_LOCK_EXIT_CODE, DB_BUSY_EXIT_CODE,
         LOW_MEMORY_EXIT_CODE,
     };
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
 
     assert_eq!(
         AppError::BatchPartialFailure {
@@ -449,8 +449,8 @@ fn test_constantes_exit_codes_alinhadas() {
 
 #[test]
 fn test_exit_codes_mensagens_nao_vazias_em_todos_idiomas() {
-    use neurographrag::errors::AppError;
-    use neurographrag::i18n::Language;
+    use sqlite_graphrag::errors::AppError;
+    use sqlite_graphrag::i18n::Language;
 
     let variantes: Vec<AppError> = vec![
         AppError::Validation("campo".into()),

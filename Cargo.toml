@@ -1,17 +1,17 @@
 [package]
-name = "neurographrag"
-version = "2.3.0"
+name = "sqlite-graphrag"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/daniloaguiarbr/neurographrag"
-homepage = "https://docs.rs/neurographrag"
-documentation = "https://docs.rs/neurographrag"
+repository = "https://github.com/daniloaguiarbr/sqlite-graphrag"
+homepage = "https://docs.rs/sqlite-graphrag"
+documentation = "https://docs.rs/sqlite-graphrag"
 readme = "README.md"
 keywords = ["graphrag", "sqlite", "llm", "embeddings", "memory"]
 categories = ["command-line-utilities", "database"]
-default-run = "neurographrag"
+default-run = "sqlite-graphrag"
 exclude = [
     ".serena/",
     ".claude/",
@@ -27,13 +27,16 @@ exclude = [
     "*.profraw",
     "*.profdata",
     "*.log",
+    "graphrag.sqlite",
+    "graphrag.sqlite-shm",
+    "graphrag.sqlite-wal",
     "*.sqlite",
     "*.sqlite-shm",
     "*.sqlite-wal",
 ]
 
 [[bin]]
-name = "neurographrag"
+name = "sqlite-graphrag"
 path = "src/main.rs"
 
 [[bench]]

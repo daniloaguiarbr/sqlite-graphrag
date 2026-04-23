@@ -1,26 +1,24 @@
-# neurographrag
+# sqlite-graphrag
 
 27 agentes de IA. Um binário de 25 MB. Zero chamadas à nuvem.
 
-[![Crates.io](https://img.shields.io/crates/v/neurographrag.svg)](https://crates.io/crates/neurographrag)
-[![docs.rs](https://img.shields.io/docsrs/neurographrag)](https://docs.rs/neurographrag)
-[![CI](https://img.shields.io/github/actions/workflow/status/daniloaguiarbr/neurographrag/ci.yml?branch=main)](https://github.com/daniloaguiarbr/neurographrag/actions)
-[![License](https://img.shields.io/crates/l/neurographrag.svg)](LICENSE)
-[![Downloads](https://img.shields.io/crates/d/neurographrag.svg)](https://crates.io/crates/neurographrag)
-[![MSRV](https://img.shields.io/crates/msrv/neurographrag)](https://crates.io/crates/neurographrag)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](LICENSE)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para 27 agentes de IA em um binário Rust de 25 MB
 
 - Versão em inglês disponível em [README.md](README.md)
+- Status pré-publicação: o projeto renomeado ainda não está no GitHub, crates.io ou docs.rs
+- Use as instruções do checkout local abaixo até a primeira release pública sair
+- Depois que o repositório e o crate públicos existirem, instale com `cargo install sqlite-graphrag --version 1.0.0 --locked`
 
 ```bash
-cargo install --locked neurographrag
+cargo install --path .
 ```
 
 
 ## O que é?
-### neurographrag entrega memória durável para agentes de IA
+### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
 - Gera embeddings localmente via `fastembed` com o modelo `multilingual-e5-small`
 - Combina busca textual FTS5 com KNN do `sqlite-vec` em ranqueador híbrido Reciprocal Rank Fusion
@@ -29,7 +27,7 @@ cargo install --locked neurographrag
 - Executa em Linux, macOS e Windows nativamente sem qualquer serviço externo necessário
 
 
-## Por que neurographrag?
+## Por que sqlite-graphrag?
 ### Diferenciais contra stacks RAG em nuvem
 - Arquitetura offline-first elimina custos recorrentes com embeddings OpenAI e Pinecone
 - Armazenamento em arquivo SQLite único substitui clusters Docker de bancos vetoriais
@@ -45,7 +43,7 @@ cargo install --locked neurographrag
 - Nota: a CLI é stateless — cada invocação recarrega o modelo de embeddings (~1s); modo daemon com latência <50ms está planejado para v3.0.0
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin aceita corpos ou payloads JSON para entidades e relacionamentos em lote
-- Stderr carrega saída de tracing apenas sob `NEUROGRAPHRAG_LOG_LEVEL=debug`
+- Stderr carrega saída de tracing apenas sob `SQLITE_GRAPHRAG_LOG_LEVEL=debug`
 - Comportamento cross-platform é idêntico em hosts Linux, macOS e Windows
 ### 27 agentes de IA e IDEs suportados de imediato
 | Agente | Fornecedor | Versão mínima | Padrão de integração |
@@ -82,33 +80,33 @@ cargo install --locked neurographrag
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install --locked neurographrag
-neurographrag init
-neurographrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
-neurographrag recall "graphrag" --k 5 --json
+cargo install --path .
+sqlite-graphrag init
+sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
+sqlite-graphrag recall "graphrag" --k 5 --json
 ```
-- A flag `--locked` reaproveita o `Cargo.lock` publicado com o crate para evitar quebra de MSRV
-- Sem `--locked` o Cargo pode resolver um patch que exija `rustc` mais novo que 1.88
+- Para o checkout local, `cargo install --path .` é suficiente
+- Depois da release pública, prefira `--locked` para preservar o grafo de dependências validado para o MSRV
 
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale do crates.io com `cargo install --locked neurographrag`
-- Compile do código-fonte com `git clone` seguido de `cargo build --release`
-- Fórmula Homebrew planejada para v2.1 sob `brew install neurographrag`
-- Bucket Scoop planejado para v2.1 sob `scoop install neurographrag`
-- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/neurographrag:2.0.0`
+- Instale a partir do checkout local com `cargo install --path .`
+- Compile a partir do checkout local com `cargo build --release`
+- Fórmula Homebrew planejada após a release pública `v1.0.0` sob `brew install sqlite-graphrag`
+- Bucket Scoop planejado após a release pública `v1.0.0` sob `scoop install sqlite-graphrag`
+- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.0`
 
 
 ## Uso
 ### Inicialize o banco de dados
 ```bash
-neurographrag init
-neurographrag init --namespace projeto-foo
+sqlite-graphrag init
+sqlite-graphrag init --namespace projeto-foo
 ```
 ### Grave uma memória com grafo de entidades
 ```bash
-neurographrag remember \
+sqlite-graphrag remember \
   --name testes-integracao-postgres \
   --type feedback \
   --description "prefira Postgres real a mocks SQLite" \
@@ -116,21 +114,21 @@ neurographrag remember \
 ```
 ### Busque memórias por similaridade semântica
 ```bash
-neurographrag recall "testes integração postgres" --k 3 --json
+sqlite-graphrag recall "testes integração postgres" --k 3 --json
 ```
 ### Busca híbrida combinando FTS5 e KNN vetorial
 ```bash
-neurographrag hybrid-search "rollback migração postgres" --k 10 --json
+sqlite-graphrag hybrid-search "rollback migração postgres" --k 10 --json
 ```
 ### Inspecione saúde e estatísticas do banco
 ```bash
-neurographrag health --json
-neurographrag stats --json
+sqlite-graphrag health --json
+sqlite-graphrag stats --json
 ```
 ### Purgue memórias soft-deleted após período de retenção
 ```bash
-neurographrag purge --retention-days 90 --dry-run --json
-neurographrag purge --retention-days 90 --yes
+sqlite-graphrag purge --retention-days 90 --dry-run --json
+sqlite-graphrag purge --retention-days 90 --yes
 ```
 
 
@@ -161,7 +159,7 @@ neurographrag purge --retention-days 90 --yes
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 combinado com vetor via Reciprocal Rank Fusion |
-| `namespace-detect` | `--cwd <caminho>` | Resolve precedência de namespace para invocação |
+| `namespace-detect` | `--namespace <nome>` | Resolve precedência de namespace para invocação |
 ### Manutenção
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
@@ -172,39 +170,41 @@ neurographrag purge --retention-days 90 --yes
 ### Overrides de configuração em runtime
 | Variável | Descrição | Padrão | Exemplo |
 | --- | --- | --- | --- |
-| `NEUROGRAPHRAG_DB_PATH` | Caminho absoluto para o arquivo SQLite | Diretório XDG data | `/dados/graph.sqlite` |
-| `NEUROGRAPHRAG_CACHE_DIR` | Diretório para cache do modelo de embedding | Diretório XDG cache | `~/.cache/neurographrag` |
-| `NEUROGRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
-| `NEUROGRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
-| `NEUROGRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
+| `SQLITE_GRAPHRAG_DB_PATH` | Caminho para override do arquivo SQLite | `./graphrag.sqlite` no diretório da invocação | `/dados/graphrag.sqlite` |
+| `SQLITE_GRAPHRAG_CACHE_DIR` | Diretório de override para cache do modelo e lock files | Diretório XDG cache | `~/.cache/sqlite-graphrag` |
+| `SQLITE_GRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
+| `SQLITE_GRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
+| `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
 
 
 ## Padrões de Integração
 ### Compondo com pipelines e ferramentas Unix
 ```bash
-neurographrag recall "testes auth" --k 5 --json | jaq -r '.results[].name'
+sqlite-graphrag recall "testes auth" --k 5 --json | jaq -r '.results[].name'
 ```
 ### Alimente busca híbrida em endpoint sumarizador
 ```bash
-neurographrag hybrid-search "migração postgres" --k 10 --json \
+sqlite-graphrag hybrid-search "migração postgres" --k 10 --json \
   | jaq -c '.results[] | {name, combined_score}' \
   | xh POST http://localhost:8080/summarize
 ```
 ### Backup com snapshot atômico e compressão
 ```bash
-neurographrag sync-safe-copy --dest /tmp/ng.sqlite
+sqlite-graphrag sync-safe-copy --dest /tmp/ng.sqlite
 ouch compress /tmp/ng.sqlite /tmp/ng-$(date +%Y%m%d).tar.zst
 ```
 ### Exemplo de subprocesso no Claude Code em Node
 ```javascript
 const { spawn } = require('child_process');
-const proc = spawn('neurographrag', ['recall', query, '--k', '5', '--json']);
+const proc = spawn('sqlite-graphrag', ['recall', query, '--k', '5', '--json']);
 ```
 ### Build Docker Alpine para pipelines de CI
 ```dockerfile
 FROM rust:1.88-alpine AS builder
 RUN apk add musl-dev sqlite-dev
-RUN cargo install --locked neurographrag
+WORKDIR /app
+COPY . .
+RUN cargo install --path .
 ```
 
 
@@ -224,9 +224,8 @@ RUN cargo install --locked neurographrag
 | `12` | Extensão `sqlite-vec` falhou ao carregar |
 | `13` | Falha parcial em lote (import, reindex, stdin batch) |
 | `14` | Erro de I/O do sistema de arquivos |
-| `15` | Banco ocupado após tentativas (movido de 13 na v2.0) |
+| `15` | Banco ocupado após tentativas (movido de 13 na linha legada) |
 | `20` | Erro interno ou de serialização JSON |
-| `73` | Memory guard rejeitou condição de baixa RAM |
 | `75` | `EX_TEMPFAIL`: todos os slots de concorrência ocupados |
 | `77` | RAM disponível abaixo do mínimo para carregar o modelo |
 
@@ -244,7 +243,7 @@ RUN cargo install --locked neurographrag
 ### Semáforo de contagem com quatro slots simultâneos
 - Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 750 MB de RAM
 - Até quatro instâncias executam em paralelo via `MAX_CONCURRENT_CLI_INSTANCES` padrão
-- Arquivos de lock em `~/.cache/neurographrag/cli-slot-{1..4}.lock` usando `flock`
+- Arquivos de lock em `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` usando `flock`
 - Uma quinta invocação aguarda até 300 segundos e então encerra com código 75
 - Use `--max-concurrency N` para ajustar o limite de slots na invocação atual
 - Memory guard aborta com saída 77 quando há menos de 2 GB de RAM disponível
@@ -253,15 +252,16 @@ RUN cargo install --locked neurographrag
 
 ## Solução de Problemas
 ### Problemas comuns e correções
-- Banco travado após crash exige `neurographrag vacuum` para fazer checkpoint do WAL
+- O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
+- Banco travado após crash exige `sqlite-graphrag vacuum` para fazer checkpoint do WAL
 - Primeiro `init` leva cerca de um minuto enquanto `fastembed` baixa o modelo quantizado
 - Permissão negada no Linux indica falta de escrita no diretório de cache do usuário
-- Detecção de namespace cai para `global` quando não há marcador `.neurographrag`
+- Detecção de namespace cai para `global` quando não há override explícito
 - Invocações paralelas acima de quatro slots recebem saída 75 e DEVEM tentar com backoff
 
 
 ## Crates Rust Compatíveis
-### Invoque neurographrag de qualquer framework Rust de IA via subprocesso
+### Invoque sqlite-graphrag de qualquer framework Rust de IA via subprocesso
 - Cada crate chama o binário via `std::process::Command` com a flag `--json`
 - Nenhuma memória compartilhada ou FFI necessária: o contrato é JSON puro em stdout
 - Fixe a versão do binário no `Cargo.toml` do workspace para builds reproduzíveis
@@ -270,7 +270,7 @@ RUN cargo install --locked neurographrag
 ### rig-core
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "project goals", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -278,7 +278,7 @@ let out = Command::new("neurographrag")
 ### swarms-rs
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "agent memory", "--k", "10", "--json"])
     .output().unwrap();
 ```
@@ -286,7 +286,7 @@ let out = Command::new("neurographrag")
 ### autoagents
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["remember", "--name", "task-context", "--type", "project",
            "--description", "current sprint goal", "--body", "finish auth module"])
     .output().unwrap();
@@ -295,7 +295,7 @@ let out = Command::new("neurographrag")
 ### graphbit
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "decision log", "--k", "3", "--json"])
     .output().unwrap();
 ```
@@ -303,7 +303,7 @@ let out = Command::new("neurographrag")
 ### agentai
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "previous decisions", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -311,7 +311,7 @@ let out = Command::new("neurographrag")
 ### llm-agent-runtime
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "user preferences", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -319,7 +319,7 @@ let out = Command::new("neurographrag")
 ### anda
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["stats", "--json"])
     .output().unwrap();
 ```
@@ -327,7 +327,7 @@ let out = Command::new("neurographrag")
 ### adk-rust
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "tool outputs", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -335,7 +335,7 @@ let out = Command::new("neurographrag")
 ### rs-graph-llm
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "graph relations", "--k", "10", "--json"])
     .output().unwrap();
 ```
@@ -343,7 +343,7 @@ let out = Command::new("neurographrag")
 ### genai
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "model context", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -351,7 +351,7 @@ let out = Command::new("neurographrag")
 ### liter-llm
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["remember", "--name", "session-notes", "--type", "user",
            "--description", "resumo da sessão", "--body", "discutimos arquitetura"])
     .output().unwrap();
@@ -360,7 +360,7 @@ let out = Command::new("neurographrag")
 ### llm-cascade
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "fallback context", "--k", "3", "--json"])
     .output().unwrap();
 ```
@@ -368,7 +368,7 @@ let out = Command::new("neurographrag")
 ### async-openai
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "system prompt history", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -376,7 +376,7 @@ let out = Command::new("neurographrag")
 ### async-llm
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "chat context", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -384,7 +384,7 @@ let out = Command::new("neurographrag")
 ### anthropic-sdk
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "tool use patterns", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -392,7 +392,7 @@ let out = Command::new("neurographrag")
 ### ollama-rs
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "local model outputs", "--k", "5", "--json"])
     .output().unwrap();
 ```
@@ -400,7 +400,7 @@ let out = Command::new("neurographrag")
 ### mistral-rs
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "inference context", "--k", "10", "--json"])
     .output().unwrap();
 ```
@@ -408,7 +408,7 @@ let out = Command::new("neurographrag")
 ### llama-cpp-rs
 ```rust
 use std::process::Command;
-let out = Command::new("neurographrag")
+let out = Command::new("sqlite-graphrag")
     .args(["recall", "llama session context", "--k", "5", "--json"])
     .output().unwrap();
 ```

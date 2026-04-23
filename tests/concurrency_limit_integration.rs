@@ -1,6 +1,6 @@
-// Testes E2E de limite de concorrência para o semáforo de slots do neurographrag.
+// Testes E2E de limite de concorrência para o semáforo de slots do sqlite-graphrag.
 //
-// ISOLAMENTO: `NEUROGRAPHRAG_CACHE_DIR` aponta para um `TempDir` exclusivo
+// ISOLAMENTO: `SQLITE_GRAPHRAG_CACHE_DIR` aponta para um `TempDir` exclusivo
 // por teste. `#[serial]` é obrigatório em todos os testes para evitar corridas
 // no sistema de arquivos entre testes que usam o mesmo binário compilado.
 //
@@ -22,14 +22,14 @@ use tempfile::TempDir;
 #[serial]
 fn limite_respeitado_sob_carga() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
-    let bin = assert_cmd::cargo::cargo_bin("neurographrag");
+    let bin = assert_cmd::cargo::cargo_bin("sqlite-graphrag");
 
     // Spawna 10 invocações em paralelo usando std::process::Command para
     // controle direto sobre PIDs (assert_cmd não expõe spawn).
     let handles: Vec<_> = (0..10)
         .map(|_| {
             std::process::Command::new(&bin)
-                .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+                .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
                 .args([
                     "--skip-memory-guard",
                     "--max-concurrency",
@@ -71,9 +71,9 @@ fn limite_respeitado_sob_carga() {
 fn max_concurrency_zero_rejeitado_com_exit_2() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -117,9 +117,9 @@ fn todos_slots_ocupados_retornam_75() {
     }
 
     // Invocação com --wait-lock 0 deve falhar imediatamente com exit 75.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -151,9 +151,9 @@ fn skip_memory_guard_bypassa_verificacao_de_ram() {
 
     // Com --skip-memory-guard, o comando deve completar com sucesso mesmo em
     // ambientes onde a RAM disponível poderia causar exit 77.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
         .success();

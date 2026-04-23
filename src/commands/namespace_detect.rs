@@ -10,8 +10,6 @@ pub struct NamespaceDetectArgs {
     /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
-    pub db: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -19,8 +17,6 @@ struct NamespaceDetectResponse {
     namespace: String,
     source: namespace::NamespaceSource,
     cwd: String,
-    project_config_path: String,
-    projects_mapping_path: String,
     /// Tempo total de execução em milissegundos desde início do handler até serialização.
     elapsed_ms: u64,
 }
@@ -33,8 +29,6 @@ pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
         namespace: resolution.namespace,
         source: resolution.source,
         cwd: resolution.cwd,
-        project_config_path: resolution.project_config_path,
-        projects_mapping_path: resolution.projects_mapping_path,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;
     Ok(())
@@ -50,7 +44,7 @@ mod testes {
     #[serial]
     fn namespace_detect_default_retorna_global_via_detect() {
         // Garante que sem flag e sem env, detect_namespace retorna "global"
-        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+        std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
         let resolution = namespace::detect_namespace(None).unwrap();
         assert_eq!(resolution.namespace, "global");
         assert_eq!(resolution.source, NamespaceSource::Default);
@@ -59,22 +53,22 @@ mod testes {
     #[test]
     #[serial]
     fn namespace_detect_explicit_flag_sobrepoe_env() {
-        std::env::set_var("NEUROGRAPHRAG_NAMESPACE", "env-namespace");
+        std::env::set_var("SQLITE_GRAPHRAG_NAMESPACE", "env-namespace");
         let resolution = namespace::detect_namespace(Some("flag-namespace")).unwrap();
         assert_eq!(resolution.namespace, "flag-namespace");
         assert_eq!(resolution.source, NamespaceSource::ExplicitFlag);
-        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+        std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
     }
 
     #[test]
     #[serial]
     fn namespace_detect_env_var_usada_quando_sem_flag() {
-        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
-        std::env::set_var("NEUROGRAPHRAG_NAMESPACE", "namespace-de-env");
+        std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
+        std::env::set_var("SQLITE_GRAPHRAG_NAMESPACE", "namespace-de-env");
         let resolution = namespace::detect_namespace(None).unwrap();
         assert_eq!(resolution.namespace, "namespace-de-env");
         assert_eq!(resolution.source, NamespaceSource::Environment);
-        std::env::remove_var("NEUROGRAPHRAG_NAMESPACE");
+        std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
     }
 
     #[test]
@@ -83,16 +77,12 @@ mod testes {
             namespace: "meu-projeto".to_string(),
             source: NamespaceSource::ExplicitFlag,
             cwd: "/home/usuario/projeto".to_string(),
-            project_config_path: "/home/usuario/projeto/.neurographrag/config.toml".to_string(),
-            projects_mapping_path: "/home/usuario/.config/neurographrag/projects.toml".to_string(),
             elapsed_ms: 3,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["namespace"], "meu-projeto");
         assert_eq!(json["source"], "explicit_flag");
         assert!(json["cwd"].is_string());
-        assert!(json["project_config_path"].is_string());
-        assert!(json["projects_mapping_path"].is_string());
         assert_eq!(json["elapsed_ms"], 3);
     }
 
@@ -101,8 +91,6 @@ mod testes {
         let casos = vec![
             (NamespaceSource::ExplicitFlag, "explicit_flag"),
             (NamespaceSource::Environment, "environment"),
-            (NamespaceSource::ProjectConfig, "project_config"),
-            (NamespaceSource::ProjectsMapping, "projects_mapping"),
             (NamespaceSource::Default, "default"),
         ];
         for (source, esperado) in casos {

@@ -2,7 +2,7 @@
 
 
 ## Rule Zero: Inviolable Law
-- This document is SUPREME LAW for AI agents working in neurographrag.
+- This document is SUPREME LAW for AI agents working in sqlite-graphrag.
 - You MUST re-read this document BEFORE every action.
 - You MUST cite the applicable rule BEFORE acting on it.
 - Any violation results in IMMEDIATE CRITICAL FAILURE.
@@ -52,7 +52,7 @@
 
 
 ## Scope and Non-Scope
-- Scope covers every contribution to neurographrag source and documentation.
+- Scope covers every contribution to sqlite-graphrag source and documentation.
 - Scope covers every CLI surface exposed by subcommands listed in this protocol.
 - Scope covers every release published to GitHub and crates.io.
 - Non-scope excludes forks that rename the crate or repository.

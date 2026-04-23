@@ -262,7 +262,7 @@ mod testes_unitarios {
 
     #[test]
     fn blake3_hash_bytes_tem_32_bytes() {
-        let h = blake3::hash(b"neurographrag");
+        let h = blake3::hash(b"sqlite-graphrag");
         assert_eq!(h.as_bytes().len(), 32);
     }
 

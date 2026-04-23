@@ -51,8 +51,8 @@ Leia este documento em [inglês (EN)](CODE_OF_CONDUCT.md).
 
 ## Aplicação
 - Instâncias de comportamento abusivo, de assédio ou inaceitável podem ser reportadas em privado
-- Reporte questões via GitHub Security Advisories em https://github.com/daniloaguiarbr/neurographrag/security/advisories/new
-- Alternativamente, contate os líderes da comunidade em daniloaguiarbr@gmail.com diretamente
+- Reporte questões por email em daniloaguiarbr@gmail.com enquanto o repositório renomeado ainda não for público
+- Quando o repositório público `sqlite-graphrag` existir, GitHub Security Advisories poderá ser usado como canal privado adicional
 - Todas as reclamações serão revisadas e investigadas pronta e justamente
 - A resposta inicial a cada relato é comprometida em até 48 horas do recebimento
 - Todos os líderes da comunidade são obrigados a respeitar a privacidade e segurança de quem reporta

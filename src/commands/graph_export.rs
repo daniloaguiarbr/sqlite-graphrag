@@ -39,7 +39,7 @@ pub struct GraphArgs {
     pub output: Option<PathBuf>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -57,7 +57,7 @@ pub struct GraphTraverseArgs {
     pub format: GraphExportFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -70,7 +70,7 @@ pub struct GraphStatsArgs {
     pub format: GraphExportFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -89,7 +89,7 @@ pub struct GraphEntitiesArgs {
     pub offset: usize,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -518,7 +518,7 @@ fn sanitize_dot_id(raw: &str) -> String {
 
 fn render_dot(nodes: &[NodeOut], edges: &[EdgeOut]) -> String {
     let mut out = String::new();
-    out.push_str("digraph neurographrag {\n");
+    out.push_str("digraph sqlite-graphrag {\n");
     for node in nodes {
         let node_id = sanitize_dot_id(&node.name);
         let escaped = node.name.replace('"', "\\\"");

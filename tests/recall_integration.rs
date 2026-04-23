@@ -3,10 +3,10 @@ use serial_test::serial;
 use tempfile::TempDir;
 
 fn cmd(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c
 }
 

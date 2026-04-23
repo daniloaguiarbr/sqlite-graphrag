@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/rename.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/rename.schema.json",
   "title": "RenameResponse",
-  "description": "Response emitted by `neurographrag rename` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag rename` on stdout as a single JSON line.",
   "type": "object",
   "required": ["memory_id", "name", "action", "version", "elapsed_ms"],
   "additionalProperties": false,

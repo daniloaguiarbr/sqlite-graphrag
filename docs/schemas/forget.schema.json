@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/forget.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/forget.schema.json",
   "title": "ForgetResponse",
-  "description": "Response emitted by `neurographrag forget` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag forget` on stdout as a single JSON line.",
   "type": "object",
   "required": ["forgotten", "name", "namespace", "elapsed_ms"],
   "additionalProperties": false,

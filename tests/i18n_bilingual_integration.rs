@@ -3,11 +3,11 @@ use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn cmd_lang(tmp: &TempDir, lang: &str) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env_remove("NEUROGRAPHRAG_LANG");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env_remove("SQLITE_GRAPHRAG_LANG");
     c.env_remove("LC_ALL");
     c.env_remove("LANG");
     c.arg("--lang").arg(lang);
@@ -15,33 +15,33 @@ fn cmd_lang(tmp: &TempDir, lang: &str) -> Command {
 }
 
 fn cmd_env_lang(tmp: &TempDir, lang_val: &str) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env("NEUROGRAPHRAG_LANG", lang_val);
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env("SQLITE_GRAPHRAG_LANG", lang_val);
     c.env_remove("LC_ALL");
     c.env_remove("LANG");
     c
 }
 
 fn cmd_no_lang(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env_remove("NEUROGRAPHRAG_LANG");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env_remove("SQLITE_GRAPHRAG_LANG");
     c.env_remove("LC_ALL");
     c.env_remove("LANG");
     c
 }
 
 fn init_db(tmp: &TempDir) {
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .unwrap()
-        .env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .arg("init")
         .assert()
         .success();
@@ -53,8 +53,8 @@ fn init_db(tmp: &TempDir) {
 
 #[test]
 fn paridade_localized_message_todas_variantes_apperror() {
-    use neurographrag::errors::AppError;
-    use neurographrag::i18n::Language;
+    use sqlite_graphrag::errors::AppError;
+    use sqlite_graphrag::i18n::Language;
     use std::io;
 
     let variantes: Vec<AppError> = vec![
@@ -104,8 +104,8 @@ fn paridade_localized_message_todas_variantes_apperror() {
 
 #[test]
 fn localized_message_en_cada_variante_contem_termo_ingles() {
-    use neurographrag::errors::AppError;
-    use neurographrag::i18n::Language;
+    use sqlite_graphrag::errors::AppError;
+    use sqlite_graphrag::i18n::Language;
 
     let casos: Vec<(AppError, &str)> = vec![
         (AppError::Validation("campo".into()), "validation error"),
@@ -137,8 +137,8 @@ fn localized_message_en_cada_variante_contem_termo_ingles() {
 
 #[test]
 fn localized_message_pt_cada_variante_contem_termo_portugues() {
-    use neurographrag::errors::AppError;
-    use neurographrag::i18n::Language;
+    use sqlite_graphrag::errors::AppError;
+    use sqlite_graphrag::i18n::Language;
 
     let casos: Vec<(AppError, &str)> = vec![
         (AppError::Validation("campo".into()), "erro de validação"),
@@ -294,11 +294,11 @@ fn lang_en_body_excede_limite_stderr_ingles() {
 }
 
 // ---------------------------------------------------------------------------
-// Testes E2E via env var NEUROGRAPHRAG_LANG
+// Testes E2E via env var SQLITE_GRAPHRAG_LANG
 // ---------------------------------------------------------------------------
 
 #[test]
-fn env_var_neurographrag_lang_pt_aplica_portugues() {
+fn env_var_sqlite_graphrag_lang_pt_aplica_portugues() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -310,7 +310,7 @@ fn env_var_neurographrag_lang_pt_aplica_portugues() {
 }
 
 #[test]
-fn env_var_neurographrag_lang_en_aplica_ingles() {
+fn env_var_sqlite_graphrag_lang_en_aplica_ingles() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -322,7 +322,7 @@ fn env_var_neurographrag_lang_en_aplica_ingles() {
 }
 
 #[test]
-fn env_var_neurographrag_lang_pt_br_aplica_portugues() {
+fn env_var_sqlite_graphrag_lang_pt_br_aplica_portugues() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -334,7 +334,7 @@ fn env_var_neurographrag_lang_pt_br_aplica_portugues() {
 }
 
 // ---------------------------------------------------------------------------
-// Flag --lang vence env var NEUROGRAPHRAG_LANG
+// Flag --lang vence env var SQLITE_GRAPHRAG_LANG
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -342,11 +342,11 @@ fn flag_lang_en_vence_env_lang_pt() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env("NEUROGRAPHRAG_LANG", "pt");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env("SQLITE_GRAPHRAG_LANG", "pt");
     c.env_remove("LC_ALL");
     c.env_remove("LANG");
     c.arg("--lang").arg("en");
@@ -362,11 +362,11 @@ fn flag_lang_pt_vence_env_lang_en() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env("NEUROGRAPHRAG_LANG", "en");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env("SQLITE_GRAPHRAG_LANG", "en");
     c.env_remove("LC_ALL");
     c.env_remove("LANG");
     c.arg("--lang").arg("pt");
@@ -394,19 +394,19 @@ fn default_sem_lang_e_sem_env_retorna_ingles() {
 }
 
 // ---------------------------------------------------------------------------
-// Locale LC_ALL=pt_BR.UTF-8 sem flag e sem NEUROGRAPHRAG_LANG → Português
+// Locale LC_ALL=pt_BR.UTF-8 sem flag e sem SQLITE_GRAPHRAG_LANG → Português
 // ---------------------------------------------------------------------------
 
 #[test]
-fn locale_ptbr_sem_flag_sem_env_neurographrag_aplica_portugues() {
+fn locale_ptbr_sem_flag_sem_env_sqlite_graphrag_aplica_portugues() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env_remove("NEUROGRAPHRAG_LANG");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env_remove("SQLITE_GRAPHRAG_LANG");
     c.env("LC_ALL", "pt_BR.UTF-8");
     c.args(["read", "--name", "inexistente"]);
 
@@ -464,12 +464,12 @@ fn alias_english_aceito_pela_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let saida = Command::cargo_bin("neurographrag")
+    let saida = Command::cargo_bin("sqlite-graphrag")
         .unwrap()
-        .env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
-        .env_remove("NEUROGRAPHRAG_LANG")
+        .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env_remove("SQLITE_GRAPHRAG_LANG")
         .env_remove("LC_ALL")
         .env_remove("LANG")
         .arg("--lang")
@@ -490,12 +490,12 @@ fn alias_pt_br_aceito_pela_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let saida = Command::cargo_bin("neurographrag")
+    let saida = Command::cargo_bin("sqlite-graphrag")
         .unwrap()
-        .env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
-        .env_remove("NEUROGRAPHRAG_LANG")
+        .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env_remove("SQLITE_GRAPHRAG_LANG")
         .env_remove("LC_ALL")
         .env_remove("LANG")
         .arg("--lang")

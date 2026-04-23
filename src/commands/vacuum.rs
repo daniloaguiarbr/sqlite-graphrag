@@ -15,7 +15,7 @@ pub struct VacuumArgs {
     /// Formato da saída.
     #[arg(long, value_enum, default_value_t = crate::output::OutputFormat::Json)]
     pub format: crate::output::OutputFormat,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -73,7 +73,7 @@ mod testes {
     #[test]
     fn vacuum_response_serializa_todos_campos() {
         let resp = VacuumResponse {
-            db_path: "/home/user/.local/share/neurographrag/db.sqlite".to_string(),
+            db_path: "/home/user/.local/share/sqlite-graphrag/db.sqlite".to_string(),
             size_before_bytes: 32768,
             size_after_bytes: 16384,
             status: "ok".to_string(),
@@ -82,7 +82,7 @@ mod testes {
         let json = serde_json::to_value(&resp).expect("serialização falhou");
         assert_eq!(
             json["db_path"],
-            "/home/user/.local/share/neurographrag/db.sqlite"
+            "/home/user/.local/share/sqlite-graphrag/db.sqlite"
         );
         assert_eq!(json["size_before_bytes"], 32768u64);
         assert_eq!(json["size_after_bytes"], 16384u64);

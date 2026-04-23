@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/graph-traverse.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/graph-traverse.schema.json",
   "title": "GraphTraverseResponse",
-  "description": "Response emitted by `neurographrag graph traverse` on stdout as a single JSON line. BFS traversal from a starting entity up to a configurable depth.",
+  "description": "Response emitted by `sqlite-graphrag graph traverse` on stdout as a single JSON line. BFS traversal from a starting entity up to a configurable depth.",
   "$defs": {
     "TraverseHop": {
       "type": "object",

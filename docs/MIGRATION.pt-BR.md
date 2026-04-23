@@ -1,101 +1,68 @@
-# Guia de Migração — neurographrag
+# Guia de Migração — neurographrag para sqlite-graphrag
 
+- Este guia cobre o rename do legado `neurographrag` para `sqlite-graphrag v1.0.0`
+- O projeto renomeado preserva o mesmo conjunto central de funcionalidades do legado `neurographrag v2.3.0`
+- Até a primeira release pública existir, instale a partir do checkout local
 
-## Migrando de v1.x para v2.x
+## O Que Muda
+- O nome do binário muda de `neurographrag` para `sqlite-graphrag`
+- O nome do package Cargo muda de `neurographrag` para `sqlite-graphrag`
+- O crate path Rust muda de `neurographrag` para `sqlite_graphrag`
+- As variáveis de ambiente mudam de `NEUROGRAPHRAG_*` para `SQLITE_GRAPHRAG_*`
+- O arquivo local padrão do banco passa a ser `./graphrag.sqlite` no diretório da invocação
+- Os diretórios XDG padrão mudam de `neurographrag` para `sqlite-graphrag`
+- O schema do banco continua compatível; o maior risco está em drift de paths, não em migração estrutural
 
-
-### Mudanças Incompatíveis em v2.0.0
-- Flag `--allow-parallel` foi removida sem substituto direto
-- Concorrência agora é controlada exclusivamente via `--max-concurrency` (padrão: 4)
-- Todo script que passa `--allow-parallel` deve remover essa flag antes de atualizar
-- O teto de `--max-concurrency` é `2×nCPUs`; valores acima do teto retornam exit 2
-
-### Mudanças Incompatíveis em v2.0.1
-- Flag `--days` no subcomando `purge` foi substituída por `--retention-days` como nome canônico
-- O alias `--days` permanece disponível em v2.0.1 e posteriores para compatibilidade
-- Scripts usando `--days` continuam funcionando mas devem migrar para `--retention-days`
-- Flag `--to` no subcomando `sync-safe-copy` foi substituída por `--dest` como nome canônico
-
-### Novas Flags Globais em v2.0.1
-- `--lang <en|pt>` seleciona o idioma de saída para mensagens legíveis por humanos no stderr
-- `--tz <IANA>` aplica um fuso horário a todos os campos `*_iso` na saída JSON
-- Ambas as flags são globais e podem ser colocadas antes de qualquer subcomando
-
-### Mudanças de Versão de Schema
-- v2.0.0 introduziu novas colunas; execute `neurographrag migrate` após atualizar o binário
-- `migrate` é idempotente e seguro para executar múltiplas vezes no mesmo banco
-- Execute `neurographrag health --json` para confirmar que `schema_version` corresponde ao valor esperado
-
-
-## Passo a Passo — Atualização de v1.x
-
-### Passo 1 — Instalar o novo binário
+## Migração Passo a Passo
+### Passo 1 — Instalar o binário renomeado
 ```bash
-cargo install neurographrag --version 2.3.0
+cargo install --path .
 ```
+- Depois que a release pública existir, instale com `cargo install sqlite-graphrag --version 1.0.0`
 
-### Passo 2 — Aplicar migrações de schema
+### Passo 2 — Atualizar invocações de comando
 ```bash
-neurographrag migrate
+sqlite-graphrag init
+sqlite-graphrag health --json
+sqlite-graphrag recall "migração postgres" --k 5 --json
 ```
+- Substitua toda chamada `neurographrag ...` em scripts, jobs de CI e aliases locais
 
-### Passo 3 — Atualizar scripts que usam flags removidas
-- Substituir `--allow-parallel` por `--max-concurrency <N>` (ex: `--max-concurrency 4`)
-- Substituir `purge --days N` por `purge --retention-days N`
-- Substituir `sync-safe-copy --to CAMINHO` por `sync-safe-copy --dest CAMINHO`
+### Passo 3 — Atualizar variáveis de ambiente
+| Antiga | Nova |
+| --- | --- |
+| `NEUROGRAPHRAG_DB_PATH` | `SQLITE_GRAPHRAG_DB_PATH` |
+| `NEUROGRAPHRAG_CACHE_DIR` | `SQLITE_GRAPHRAG_CACHE_DIR` |
+| `NEUROGRAPHRAG_NAMESPACE` | `SQLITE_GRAPHRAG_NAMESPACE` |
+| `NEUROGRAPHRAG_LANG` | `SQLITE_GRAPHRAG_LANG` |
+| `NEUROGRAPHRAG_LOG_LEVEL` | `SQLITE_GRAPHRAG_LOG_LEVEL` |
+| `NEUROGRAPHRAG_LOG_FORMAT` | `SQLITE_GRAPHRAG_LOG_FORMAT` |
+| `NEUROGRAPHRAG_DISPLAY_TZ` | `SQLITE_GRAPHRAG_DISPLAY_TZ` |
 
-### Passo 4 — Verificar o banco de dados
+### Passo 4 — Decidir como tratar o path do banco
+- Para continuar usando o banco legado, aponte `SQLITE_GRAPHRAG_DB_PATH` para o path absoluto antigo explicitamente
+- Para começar limpo sob os defaults renomeados, não defina nada e deixe `sqlite-graphrag` criar `./graphrag.sqlite`
+- O config local `.neurographrag/config.toml` deixa de fazer parte do fluxo padrão
+
+### Passo 5 — Verificar a configuração migrada
 ```bash
-neurographrag health --json
-neurographrag stats --json
+sqlite-graphrag health --json
+sqlite-graphrag stats --json
+sqlite-graphrag namespace-detect
 ```
+- Confirme que `schema_version`, namespace resolvido e caminho do banco batem com o esperado
 
-### Passo 5 — Confirmar formato de saída JSON
-- `list --json` agora retorna `{"items": [...]}` (não um array puro)
-- Atualizar pipelines `jaq` de `.[]` para `.items[]` para saída de lista
-- `recall --json` e `hybrid-search --json` retornam `{"results": [...]}`
-- Atualizar pipelines `jaq` de `.[]` para `.results[]` para saída de busca
+## Notas de Compatibilidade
+- Não existe alias de compatibilidade para o nome antigo do binário nesta cópia do repositório
+- Contratos JSON, exit codes e semântica operacional permanecem alinhados ao comportamento legado `v2.3.0`
+- A primeira release pública sob o novo nome é `sqlite-graphrag v1.0.0`
 
-
-## Atualizando de 2.2.x para 2.3.x
-
-
-### O Que Mudou na v2.3.0
-- Sem alterações de schema — `migrate` não é necessário ao atualizar de v2.2.x
-- `recall` agora exige argumento posicional QUERY; a flag `--query` foi removida
-- Flags canônicas do `rename` são `--name`/`--new-name`; aliases `--old`/`--new` permanecem disponíveis
-- `unlink` exige a flag `--relation`; a flag já era obrigatória mas agora é validada no nível do parser
-- Correções de campos de saída: `recall --json` e `hybrid-search --json` retornam array `results`, não `items`
-- Flags globais `--max-concurrency`, `--wait-lock`, `--lang` e `--tz` exibem textos de ajuda em português no output de `--help` — decisão deliberada alinhada ao idioma principal de desenvolvimento
-
-### Passos de Migração Para Usuários de 2.2.x
-- Atualizar scripts usando `recall --query VALOR` para usar `recall VALOR` (argumento posicional)
-- Verificar se pipelines que leem `.items[]` de saída de `recall` ou `hybrid-search` usam `.results[]`
-- Nenhuma migração de banco é necessária; o schema não mudou entre v2.2.x e v2.3.x
-
-
-## Mudanças em Códigos de Saída
-
-| Código | Significado                                      | Desde  |
-|--------|--------------------------------------------------|--------|
-| 13     | Banco de dados ocupado (era 15 na v1.x)          | v2.0.0 |
-| 75     | Semáforo de slots exaurido                       | v1.2.0 |
-| 77     | Guarda de RAM baixa acionada                     | v1.2.0 |
-
-
-## Instruções de Reversão
-
-### Revertendo para v1.x
-- O schema de v2.x é apenas de avanço; não existe downgrade automático
-- Para reverter: restaure a partir de um snapshot de backup anterior à migração
-- Use `sync-safe-copy` para criar um backup ANTES de executar `migrate`
-```bash
-neurographrag sync-safe-copy --dest ~/backup/neurographrag-pre-v2.sqlite
-neurographrag migrate
-```
-
+## Rollback
+- Reinstale ou restaure o binário legado `neurographrag` se precisar reverter imediatamente
+- Restaure as env vars antigas `NEUROGRAPHRAG_*` se necessário
+- Se você alterou paths, reapointe o binário legado para o arquivo de banco anterior antes de retestar
 
 ## Veja Também
-- `CHANGELOG.md` para a lista completa de mudanças por release
-- `docs/HOW_TO_USE.md` para referência atual de flags
-- `docs/COOKBOOK.md` para receitas de pipeline atualizadas
+- `README.md` para o caminho atual de instalação e status pré-publicação
+- `CHANGELOG.md` para a linhagem legada e as notas da release renomeada
+- `docs/HOW_TO_USE.md` para exemplos atuais de comandos

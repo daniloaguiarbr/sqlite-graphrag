@@ -1,4 +1,4 @@
-# neurographrag Cookbook
+# sqlite-graphrag Cookbook
 
 
 > 15 production-grade recipes that save your team hours every single week
@@ -28,9 +28,9 @@
 
 ### Solution
 ```bash
-cargo install --locked neurographrag
-neurographrag init --namespace default
-neurographrag health --json
+cargo install --path .
+sqlite-graphrag init --namespace default
+sqlite-graphrag health --json
 ```
 
 
@@ -43,25 +43,25 @@ neurographrag health --json
 
 
 ### Variants
-- Set `NEUROGRAPHRAG_DB_PATH=/data/team.sqlite` to share a networked file between dev pods
-- Call `neurographrag migrate --json` after bumping versions to apply schema upgrades
+- Set `SQLITE_GRAPHRAG_DB_PATH=/data/team.sqlite` to share a networked file between dev pods
+- Call `sqlite-graphrag migrate --json` after bumping versions to apply schema upgrades
 
 
 ### See Also
-- Recipe "How to integrate neurographrag with Claude Code subprocess loop"
+- Recipe "How to integrate sqlite-graphrag with Claude Code subprocess loop"
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
 ## How To Bulk-Import Knowledge Base Via Stdin Pipeline
 ### Problem
-- Your 2000 Markdown files sit idle because no loader speaks the neurographrag schema
+- Your 2000 Markdown files sit idle because no loader speaks the sqlite-graphrag schema
 - Manual entry burns one entire afternoon per hundred files on simple onboarding
 
 
 ### Solution
 ```bash
 fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
-  neurographrag remember \
+  sqlite-graphrag remember \
     --name "$(basename {} .md)" \
     --type user \
     --description "imported from {}" \
@@ -72,7 +72,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 
 ### Explanation
 - `fd -e md -0` emits null-delimited Markdown paths safe against spaces and quotes
-- `xargs -0 -n 1` invokes `neurographrag remember` once per file without concurrency hazards
+- `xargs -0 -n 1` invokes `sqlite-graphrag remember` once per file without concurrency hazards
 - `--body-stdin` pipes the Markdown body without quoting or shell escape accidents
 - Exit code `2` flags duplicates for you to skip cleanly inside the outer shell
 - Saves 4 hours per thousand files versus hand-crafted CSV loaders
@@ -96,7 +96,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 
 ### Solution
 ```bash
-neurographrag hybrid-search "postgres migration deadlock" \
+sqlite-graphrag hybrid-search "postgres migration deadlock" \
   --k 10 --rrf-k 60 --json
 ```
 
@@ -127,7 +127,7 @@ neurographrag hybrid-search "postgres migration deadlock" \
 
 ### Solution
 ```bash
-neurographrag related authentication-flow --hops 2 --json
+sqlite-graphrag related authentication-flow --hops 2 --json
 ```
 
 
@@ -151,7 +151,7 @@ neurographrag related authentication-flow --hops 2 --json
 - Recipe "How to orchestrate parallel recall across namespaces"
 
 
-## How To Integrate neurographrag With Claude Code Subprocess Loop
+## How To Integrate sqlite-graphrag With Claude Code Subprocess Loop
 ### Problem
 - Claude Code restarts every session and forgets the decisions made five minutes ago
 - Your orchestrator lacks a deterministic memory it can trust between agent iterations
@@ -160,11 +160,11 @@ neurographrag related authentication-flow --hops 2 --json
 ### Solution
 ```bash
 # .claude/hooks/pre-task.sh
-CONTEXT=$(neurographrag recall "$USER_PROMPT" --k 5 --json)
+CONTEXT=$(sqlite-graphrag recall "$USER_PROMPT" --k 5 --json)
 printf 'Relevant memories:\n%s\n' "$CONTEXT"
 
 # .claude/hooks/post-task.sh
-neurographrag remember \
+sqlite-graphrag remember \
   --name "session-$(date +%s)" \
   --type project \
   --description "decision log" \
@@ -187,7 +187,7 @@ neurographrag remember \
 
 ### See Also
 - Recipe "How to integrate with Codex CLI via AGENTS.md"
-- Recipe "How to setup Windsurf or Zed assistant panel with neurographrag"
+- Recipe "How to setup Windsurf or Zed assistant panel with sqlite-graphrag"
 
 
 ## How To Integrate With Codex CLI Via AGENTS.md
@@ -200,8 +200,8 @@ neurographrag remember \
 ```md
 <!-- AGENTS.md at repo root -->
 ## Memory Layer
-- Use `neurographrag recall "<query>" --k 5 --json` to fetch prior decisions
-- Use `neurographrag remember --name "<kebab-name>" --type project --body "<text>"` to persist output
+- Use `sqlite-graphrag recall "<query>" --k 5 --json` to fetch prior decisions
+- Use `sqlite-graphrag remember --name "<kebab-name>" --type project --body "<text>"` to persist output
 - Prefer `hybrid-search` when the query mixes keywords and natural language
 - Respect exit code 75 as retry-later rather than error
 ```
@@ -216,12 +216,12 @@ neurographrag remember \
 
 
 ### Variants
-- Add `NEUROGRAPHRAG_NAMESPACE=$REPO_NAME` to `.envrc` so Codex isolates per-project memory
+- Add `SQLITE_GRAPHRAG_NAMESPACE=$REPO_NAME` to `.envrc` so Codex isolates per-project memory
 - Include a one-liner example under each command to anchor Codex on real usage
 
 
 ### See Also
-- Recipe "How to integrate neurographrag with Claude Code subprocess loop"
+- Recipe "How to integrate sqlite-graphrag with Claude Code subprocess loop"
 - Recipe "How to integrate with Cursor terminal for in-editor memory"
 
 
@@ -235,8 +235,8 @@ neurographrag remember \
 ```jsonc
 // Cursor settings.json snippet
 {
-  "terminal.integrated.env.osx": { "NEUROGRAPHRAG_NAMESPACE": "${workspaceFolderBasename}" },
-  "cursor.ai.rules": "Before answering, run `neurographrag recall \"${selection}\" --k 5 --json` and use hits as context"
+  "terminal.integrated.env.osx": { "SQLITE_GRAPHRAG_NAMESPACE": "${workspaceFolderBasename}" },
+  "cursor.ai.rules": "Before answering, run `sqlite-graphrag recall \"${selection}\" --k 5 --json` and use hits as context"
 }
 ```
 
@@ -255,11 +255,11 @@ neurographrag remember \
 
 
 ### See Also
-- Recipe "How to setup Windsurf or Zed assistant panel with neurographrag"
+- Recipe "How to setup Windsurf or Zed assistant panel with sqlite-graphrag"
 - Recipe "How to integrate with Codex CLI via AGENTS.md"
 
 
-## How To Setup Windsurf Or Zed Assistant Panel With neurographrag
+## How To Setup Windsurf Or Zed Assistant Panel With sqlite-graphrag
 ### Problem
 - Windsurf and Zed assistant panels ship without pluggable memory backends by default
 - Your multi-IDE workflow fragments memory between Cursor Windsurf and Zed silos
@@ -268,7 +268,7 @@ neurographrag remember \
 ### Solution
 ```bash
 # Shared terminal command both IDEs can run
-neurographrag hybrid-search "$EDITOR_CONTEXT" --k 10 --json > /tmp/ng.json
+sqlite-graphrag hybrid-search "$EDITOR_CONTEXT" --k 10 --json > /tmp/ng.json
 ```
 
 
@@ -298,7 +298,7 @@ neurographrag hybrid-search "$EDITOR_CONTEXT" --k 10 --json > /tmp/ng.json
 
 ### Solution
 ```bash
-neurographrag sync-safe-copy --dest ~/Dropbox/neurographrag/snapshot.sqlite
+sqlite-graphrag sync-safe-copy --dest ~/Dropbox/sqlite-graphrag/snapshot.sqlite
 ```
 
 
@@ -329,7 +329,7 @@ neurographrag sync-safe-copy --dest ~/Dropbox/neurographrag/snapshot.sqlite
 ### Solution
 ```yaml
 # .github/workflows/ng-maintenance.yml
-name: neurographrag maintenance
+name: sqlite-graphrag maintenance
 on:
   schedule: [{ cron: "0 3 * * 0" }]
 jobs:
@@ -337,10 +337,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo install --locked neurographrag
-      - run: neurographrag purge --retention-days 30 --yes
-      - run: neurographrag vacuum --json
-      - run: neurographrag optimize --json
+      - run: cargo install --path .
+      - run: sqlite-graphrag purge --retention-days 30 --yes
+      - run: sqlite-graphrag vacuum --json
+      - run: sqlite-graphrag optimize --json
 ```
 
 
@@ -370,7 +370,7 @@ jobs:
 
 ### Solution
 ```bash
-neurographrag list --limit 10000 --json \
+sqlite-graphrag list --limit 10000 --json \
   | jaq -c '.items[]' > memories-$(date +%Y%m%d).ndjson
 ```
 
@@ -404,8 +404,8 @@ neurographrag list --limit 10000 --json \
 git lfs install
 git lfs track "*.sqlite"
 echo "*.sqlite filter=lfs diff=lfs merge=lfs -text" >> .gitattributes
-git add .gitattributes neurographrag.sqlite
-git commit -m "chore: track neurographrag db via LFS"
+git add .gitattributes graphrag.sqlite
+git commit -m "chore: track sqlite-graphrag db via LFS"
 ```
 
 
@@ -435,14 +435,14 @@ git commit -m "chore: track neurographrag db via LFS"
 
 ### Solution
 ```bash
-parallel -j 4 'NEUROGRAPHRAG_NAMESPACE={} neurographrag recall "error rate" --k 5 --json' \
+parallel -j 4 'SQLITE_GRAPHRAG_NAMESPACE={} sqlite-graphrag recall "error rate" --k 5 --json' \
   ::: project-a project-b project-c project-d
 ```
 
 
 ### Explanation
 - GNU parallel caps concurrency at 4 matching the internal `MAX_CONCURRENT_CLI_INSTANCES`
-- Env var `NEUROGRAPHRAG_NAMESPACE` scopes each subprocess to its own project cleanly
+- Env var `SQLITE_GRAPHRAG_NAMESPACE` scopes each subprocess to its own project cleanly
 - Exit code `75` triggers automatic retry since `parallel` reads exit codes natively
 - Four JSON documents land in stdout for a downstream aggregator agent to fuse
 - Saves 75 percent wall-clock time versus sequential recall across the same namespaces
@@ -466,16 +466,16 @@ parallel -j 4 'NEUROGRAPHRAG_NAMESPACE={} neurographrag recall "error rate" --k 
 
 ### Solution
 ```bash
-neurographrag health --json | jaq '{integrity, wal_size_mb, journal_mode}'
-neurographrag stats --json | jaq '{memories, memories_total, entities, entities_total, relationships, relationships_total, edges, chunks_total, avg_body_len, db_size_bytes, db_bytes}'
-NEUROGRAPHRAG_LOG_LEVEL=debug neurographrag recall "slow query" --k 5 --json
+sqlite-graphrag health --json | jaq '{integrity, wal_size_mb, journal_mode}'
+sqlite-graphrag stats --json | jaq '{memories, memories_total, entities, entities_total, relationships, relationships_total, edges, chunks_total, avg_body_len, db_size_bytes, db_bytes}'
+SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
 ```
 
 
 ### Explanation
 - `health` reports `integrity_check`, WAL size and journal mode to spot fragmentation fast
 - `stats` counts rows to reveal which table grew disproportionately since last audit
-- `NEUROGRAPHRAG_LOG_LEVEL=debug` emits timings per SQLite stage to stderr for tracing
+- `SQLITE_GRAPHRAG_LOG_LEVEL=debug` emits timings per SQLite stage to stderr for tracing
 - Comparing current `avg_body_len` to baseline shows if bodies have grown past defaults
 - Saves hours of blind tuning by exposing the exact slow path in three commands total
 
@@ -499,8 +499,8 @@ NEUROGRAPHRAG_LOG_LEVEL=debug neurographrag recall "slow query" --k 5 --json
 ### Solution
 ```bash
 hyperfine --warmup 3 \
-  'neurographrag recall "postgres migration" --k 10 --json > /dev/null' \
-  'neurographrag hybrid-search "postgres migration" --k 10 --json > /dev/null'
+  'sqlite-graphrag recall "postgres migration" --k 10 --json > /dev/null' \
+  'sqlite-graphrag hybrid-search "postgres migration" --k 10 --json > /dev/null'
 ```
 
 
@@ -533,18 +533,18 @@ use std::process::Command;
 use serde_json::Value;
 
 fn remember_agent_context(namespace: &str, content: &str) -> anyhow::Result<()> {
-    let status = Command::new("neurographrag")
+    let status = Command::new("sqlite-graphrag")
         .args(["remember", "--namespace", namespace, content])
         .status()?;
-    anyhow::ensure!(status.success(), "neurographrag remember failed");
+    anyhow::ensure!(status.success(), "sqlite-graphrag remember failed");
     Ok(())
 }
 
 fn recall_agent_context(namespace: &str, query: &str, k: u8) -> anyhow::Result<Vec<String>> {
-    let output = Command::new("neurographrag")
+    let output = Command::new("sqlite-graphrag")
         .args(["recall", "--namespace", namespace, "--k", &k.to_string(), "--json", query])
         .output()?;
-    anyhow::ensure!(output.status.success(), "neurographrag recall failed");
+    anyhow::ensure!(output.status.success(), "sqlite-graphrag recall failed");
     let parsed: Value = serde_json::from_slice(&output.stdout)?;
     let items = parsed["results"]
         .as_array()
@@ -557,7 +557,7 @@ fn recall_agent_context(namespace: &str, query: &str, k: u8) -> anyhow::Result<V
 ```
 
 ### Explanation
-- `Command::new("neurographrag")` shells out to the 25 MB stateless binary with zero FFI cost
+- `Command::new("sqlite-graphrag")` shells out to the 25 MB stateless binary with zero FFI cost
 - `--namespace` scopes memory to the specific rig agent preventing cross-agent contamination
 - `--json` returns structured output that `serde_json` parses without fragile regex parsing
 - `anyhow::ensure!` converts exit-code failures into typed errors your agent can handle
@@ -583,7 +583,7 @@ use std::process::Command;
 
 fn swarm_remember(agent_id: &str, content: &str) -> anyhow::Result<()> {
     let namespace = format!("swarm-{agent_id}");
-    let status = Command::new("neurographrag")
+    let status = Command::new("sqlite-graphrag")
         .args(["remember", "--namespace", &namespace, content])
         .status()?;
     anyhow::ensure!(status.success(), "swarm remember failed for agent {agent_id}");
@@ -594,7 +594,7 @@ fn swarm_recall_all(agent_ids: &[&str], query: &str) -> anyhow::Result<Vec<(Stri
     let mut results = Vec::new();
     for agent_id in agent_ids {
         let namespace = format!("swarm-{agent_id}");
-        let output = Command::new("neurographrag")
+        let output = Command::new("sqlite-graphrag")
             .args(["recall", "--namespace", &namespace, "--k", "5", "--json", query])
             .output()?;
         if output.status.success() {
@@ -628,7 +628,7 @@ fn swarm_recall_all(agent_ids: &[&str], query: &str) -> anyhow::Result<Vec<(Stri
 - Recipe "How to integrate with rig-core for agent memory"
 
 
-## How To Use genai With neurographrag For Universal LLM Memory
+## How To Use genai With sqlite-graphrag For Universal LLM Memory
 ### Problem
 - Switching LLM providers via `genai` resets your agent memory because embeddings differ per vendor
 - Your team wastes 40 minutes per provider migration rebuilding semantic search indexes
@@ -643,7 +643,7 @@ async fn store_llm_turn(
     content: &str,
 ) -> anyhow::Result<()> {
     let entry = format!("[{role}] {content}");
-    let status = Command::new("neurographrag")
+    let status = Command::new("sqlite-graphrag")
         .args(["remember", "--namespace", namespace, &entry])
         .status()?;
     anyhow::ensure!(status.success(), "failed to persist LLM turn");
@@ -655,7 +655,7 @@ async fn retrieve_relevant_context(
     user_query: &str,
     k: u8,
 ) -> anyhow::Result<String> {
-    let output = Command::new("neurographrag")
+    let output = Command::new("sqlite-graphrag")
         .args([
             "hybrid-search",
             "--namespace", namespace,
@@ -678,7 +678,7 @@ async fn retrieve_relevant_context(
 ```
 
 ### Explanation
-- neurographrag stores embeddings using `multilingual-e5-small` independently of any LLM provider
+- sqlite-graphrag stores embeddings using `multilingual-e5-small` independently of any LLM provider
 - Switching from OpenAI to Mistral via `genai` does not invalidate existing memory entries
 - `hybrid-search` combines vector similarity and FTS giving richer context than vector alone
 - Formatting turns as `[role] content` preserves conversation structure in the memory body
@@ -711,7 +711,7 @@ fn persist_cascade_attempt(
 ) -> anyhow::Result<()> {
     let status_label = if success { "SUCCESS" } else { "FAILURE" };
     let entry = format!("[CASCADE:{status_label}:{provider}] prompt={prompt} result={result}");
-    let status = Command::new("neurographrag")
+    let status = Command::new("sqlite-graphrag")
         .args(["remember", "--namespace", namespace, &entry])
         .status()?;
     anyhow::ensure!(status.success(), "failed to persist cascade attempt");
@@ -719,7 +719,7 @@ fn persist_cascade_attempt(
 }
 
 fn load_cascade_history(namespace: &str, prompt: &str) -> anyhow::Result<String> {
-    let output = Command::new("neurographrag")
+    let output = Command::new("sqlite-graphrag")
         .args([
             "recall",
             "--namespace", namespace,
@@ -753,7 +753,7 @@ fn load_cascade_history(namespace: &str, prompt: &str) -> anyhow::Result<String>
 - Filter `FAILURE` entries in the fallback selection to skip proven-failing providers automatically
 
 ### See Also
-- Recipe "How to use genai with neurographrag for universal LLM memory"
+- Recipe "How to use genai with sqlite-graphrag for universal LLM memory"
 - Recipe "How to integrate with rig-core for agent memory"
 
 
@@ -767,7 +767,7 @@ fn load_cascade_history(namespace: &str, prompt: &str) -> anyhow::Result<String>
 use std::process::Command;
 
 fn offline_remember(content: &str) -> anyhow::Result<()> {
-    let status = Command::new("neurographrag")
+    let status = Command::new("sqlite-graphrag")
         .args(["remember", "--namespace", "ollama-local", content])
         .status()?;
     anyhow::ensure!(status.success(), "offline remember failed: exit code nonzero");
@@ -775,7 +775,7 @@ fn offline_remember(content: &str) -> anyhow::Result<()> {
 }
 
 fn offline_recall(query: &str, k: u8) -> anyhow::Result<Vec<String>> {
-    let output = Command::new("neurographrag")
+    let output = Command::new("sqlite-graphrag")
         .args([
             "recall",
             "--namespace", "ollama-local",
@@ -802,15 +802,15 @@ fn build_context_prompt(query: &str, memories: &[String]) -> String {
 ```
 
 ### Explanation
-- neurographrag ships `multilingual-e5-small` ONNX model embedded so zero network calls occur
+- sqlite-graphrag ships `multilingual-e5-small` ONNX model embedded so zero network calls occur
 - The single 25 MB binary writes to a local SQLite file that survives across process restarts
 - `--namespace ollama-local` keeps offline memories isolated from any networked agent namespaces
 - `build_context_prompt` injects recalled memories into the Ollama prompt before each inference
 - Delivers persistent vector memory in fully air-gapped environments with no cloud dependencies
 
 ### Variants
-- Chain `offline_recall` with `neurographrag link` to build a knowledge graph from Ollama outputs
-- Periodically call `neurographrag vacuum` to reclaim SQLite space as the offline database grows
+- Chain `offline_recall` with `sqlite-graphrag link` to build a knowledge graph from Ollama outputs
+- Periodically call `sqlite-graphrag vacuum` to reclaim SQLite space as the offline database grows
 
 ### See Also
 - Recipe "How to bootstrap memory database in 60 seconds"
@@ -826,24 +826,24 @@ fn build_context_prompt(query: &str, memories: &[String]) -> String {
 ### Solution
 ```bash
 # One-off flag: display timestamps in São Paulo timezone
-neurographrag read --name my-note --tz America/Sao_Paulo
+sqlite-graphrag read --name my-note --tz America/Sao_Paulo
 
 # Persistent env var: all commands in this shell session use the given timezone
-export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-neurographrag list --json | jaq '.items[].updated_at_iso'
+export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+sqlite-graphrag list --json | jaq '.items[].updated_at_iso'
 
 # CI pipeline: force UTC explicitly to avoid system timezone surprises
-NEUROGRAPHRAG_DISPLAY_TZ=UTC neurographrag recall "deploy notes" --json
+SQLITE_GRAPHRAG_DISPLAY_TZ=UTC sqlite-graphrag recall "deploy notes" --json
 
 # Extract only the offset portion to verify the timezone is applied
-neurographrag read --name deploy-plan --tz Europe/Berlin --json \
+sqlite-graphrag read --name deploy-plan --tz Europe/Berlin --json \
   | jaq -r '.created_at_iso' \
   | rg '\+\d{2}:\d{2}$'
 ```
 
 ### Explanation
 - Flag `--tz <IANA>` overrides all other settings and applies the given IANA timezone
-- Env var `NEUROGRAPHRAG_DISPLAY_TZ` persists the setting across invocations without the flag
+- Env var `SQLITE_GRAPHRAG_DISPLAY_TZ` persists the setting across invocations without the flag
 - Both fall back to UTC when absent, ensuring backward-compatible deterministic output
 - Only string fields ending in `_iso` are affected; integer fields remain Unix epoch seconds
 - Invalid IANA names cause exit 2 with a `Validation` error message printed to stderr

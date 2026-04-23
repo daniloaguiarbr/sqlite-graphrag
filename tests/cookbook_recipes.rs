@@ -15,14 +15,14 @@ use std::fs;
 use tempfile::TempDir;
 
 fn bin() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_neurographrag"))
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"))
 }
 
 fn cmd(dir: &TempDir) -> Command {
     let mut c = Command::new(bin());
     c.env_clear()
-        .env("NEUROGRAPHRAG_DB_PATH", dir.path().join("ng.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", dir.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_DB_PATH", dir.path().join("ng.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", dir.path().join("cache"))
         .arg("--skip-memory-guard");
     c
 }
@@ -327,7 +327,7 @@ fn recipe_05_pre_post_task_hooks() {
     );
 }
 
-// Recipe 7 — NEUROGRAPHRAG_NAMESPACE env: namespace-detect reporta fonte "environment"
+// Recipe 7 — SQLITE_GRAPHRAG_NAMESPACE env: namespace-detect reporta fonte "environment"
 #[test]
 #[serial]
 fn recipe_07_namespace_env_precedencia() {
@@ -335,9 +335,9 @@ fn recipe_07_namespace_env_precedencia() {
 
     let output = std::process::Command::new(bin())
         .env_clear()
-        .env("NEUROGRAPHRAG_DB_PATH", dir.path().join("ng.sqlite"))
-        .env("NEUROGRAPHRAG_CACHE_DIR", dir.path().join("cache"))
-        .env("NEUROGRAPHRAG_NAMESPACE", "meu-projeto")
+        .env("SQLITE_GRAPHRAG_DB_PATH", dir.path().join("ng.sqlite"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", dir.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_NAMESPACE", "meu-projeto")
         .arg("--skip-memory-guard")
         .args(["namespace-detect", "--json"])
         .output()
@@ -477,8 +477,8 @@ fn recipe_09_sync_safe_copy() {
     // Valida que o snapshot abre corretamente via health
     let health = std::process::Command::new(bin())
         .env_clear()
-        .env("NEUROGRAPHRAG_DB_PATH", &dest)
-        .env("NEUROGRAPHRAG_CACHE_DIR", dir.path().join("cache2"))
+        .env("SQLITE_GRAPHRAG_DB_PATH", &dest)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", dir.path().join("cache2"))
         .arg("--skip-memory-guard")
         .args(["health", "--json"])
         .output()
@@ -699,8 +699,8 @@ fn recipe_13_parallel_namespaces() {
             std::thread::spawn(move || {
                 std::process::Command::new(&bin)
                     .env_clear()
-                    .env("NEUROGRAPHRAG_DB_PATH", &db)
-                    .env("NEUROGRAPHRAG_CACHE_DIR", &cache)
+                    .env("SQLITE_GRAPHRAG_DB_PATH", &db)
+                    .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache)
                     .args([
                         "--skip-memory-guard",
                         "recall",

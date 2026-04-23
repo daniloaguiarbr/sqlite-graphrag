@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/cleanup-orphans.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/cleanup-orphans.schema.json",
   "title": "CleanupOrphansResponse",
-  "description": "Response emitted by `neurographrag cleanup-orphans` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag cleanup-orphans` on stdout as a single JSON line.",
   "type": "object",
   "required": ["orphan_count", "deleted", "dry_run", "namespace", "elapsed_ms"],
   "additionalProperties": false,

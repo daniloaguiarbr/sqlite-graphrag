@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/read.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/read.schema.json",
   "title": "ReadResponse",
-  "description": "Response emitted by `neurographrag read` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag read` on stdout as a single JSON line.",
   "type": "object",
   "required": [
     "id", "memory_id", "namespace", "name", "type", "memory_type",

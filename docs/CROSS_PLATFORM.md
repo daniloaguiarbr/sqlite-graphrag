@@ -24,7 +24,7 @@
 
 ### Bridge — The Command That Takes You There
 ```bash
-cargo install --locked neurographrag
+cargo install --path .
 ```
 
 
@@ -56,14 +56,14 @@ cargo install --locked neurographrag
 - Static musl binary weighs two MB more but drops every runtime shared library dep
 - Choose glibc for desktop workstations where `ldd` reports libraries as expected
 - Choose musl for containers, Lambda functions and any ephemeral execution context
-- Install directly via `cargo install --target x86_64-unknown-linux-musl --locked neurographrag`
+- Build directly from the local checkout via `cargo install --path . --target x86_64-unknown-linux-musl`
 
 ### Container Usage — Alpine Docker in Under 40 MB
 ```dockerfile
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /out/neurographrag /usr/local/bin/neurographrag
-ENTRYPOINT ["neurographrag"]
+COPY --from=builder /out/sqlite-graphrag /usr/local/bin/sqlite-graphrag
+ENTRYPOINT ["sqlite-graphrag"]
 ```
 - Final image weighs 38 MB compressed including the musl binary and CA certificates
 - Multi-stage build pattern keeps Rust toolchain out of the production image layer
@@ -75,9 +75,9 @@ ENTRYPOINT ["neurographrag"]
 ## macOS Notes
 ### Gatekeeper — Signing and Notarization
 - Unsigned binaries downloaded via browser trigger Gatekeeper quarantine on first launch
-- Remove quarantine with `xattr -d com.apple.quarantine /usr/local/bin/neurographrag`
+- Remove quarantine with `xattr -d com.apple.quarantine /usr/local/bin/sqlite-graphrag`
 - Binaries installed via `cargo install` bypass Gatekeeper since they come from rustc
-- Homebrew distribution path ships a signed and notarized binary starting with v2.0.0
+- Homebrew distribution is planned after the public `sqlite-graphrag v1.0.0` release
 - Apple Silicon and Intel Macs run identically fast thanks to the universal2 build
 
 ### Apple Silicon — Native Performance on M1 M2 M3 M4
@@ -92,7 +92,7 @@ ENTRYPOINT ["neurographrag"]
 ### Shell — PowerShell 7 and Windows Terminal
 - PowerShell 7 or later runs every example from the README without modification
 - Windows Terminal renders colored output and progress bars identically to Unix shells
-- Legacy CMD.EXE works but strips ANSI colors unless `NEUROGRAPHRAG_FORCE_COLOR=1` is set
+- Legacy CMD.EXE works but strips ANSI colors unless `SQLITE_GRAPHRAG_FORCE_COLOR=1` is set
 - WSL2 users should prefer the Linux glibc binary for full feature parity with Unix
 - PowerShell ISE does NOT support interactive prompts used during `init` confirmation
 
@@ -100,7 +100,7 @@ ENTRYPOINT ["neurographrag"]
 ```powershell
 chcp 65001
 $env:PYTHONIOENCODING = "utf-8"
-neurographrag remember --name "memória-acentuada" --body "caracteres unicode funcionam"
+sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode funcionam"
 ```
 - Code page 65001 switches the console to UTF-8 encoding for correct character rendering
 - Without UTF-8 the binary still works but stdout prints replacement characters for accents
@@ -122,49 +122,45 @@ neurographrag remember --name "memória-acentuada" --body "caracteres unicode fu
 ### Bash Zsh Fish PowerShell Nushell — All First Class
 ```bash
 # Bash and Zsh share identical syntax for every pipeline in this documentation
-neurographrag recall "query" --json | jaq '.results[].name'
+sqlite-graphrag recall "query" --json | jaq '.results[].name'
 ```
 ```fish
 # Fish uses the same binary invocation with slightly different variable syntax
-neurographrag recall "query" --json | jaq '.results[].name'
+sqlite-graphrag recall "query" --json | jaq '.results[].name'
 ```
 ```powershell
 # PowerShell pipes objects natively but jaq still accepts raw JSON on stdin
-neurographrag recall "query" --json | jaq '.results[].name'
+sqlite-graphrag recall "query" --json | jaq '.results[].name'
 ```
 ```nu
 # Nushell consumes JSON directly into structured tables without external tooling
-neurographrag recall "query" --json | from json | get results | select name
+sqlite-graphrag recall "query" --json | from json | get results | select name
 ```
 - Every shell above reads the same exit codes for identical orchestration semantics
 - JSON output format stays byte-identical across all five shells simplifying pipelines
-- Shell completion scripts ship via `neurographrag completion <shell>` in v2.0.0 onwards
+- Shell completion scripts are supported by the current CLI via `sqlite-graphrag completion <shell>`
 - Environment variable precedence remains identical across all shells tested in CI
 - Signals SIGINT and SIGTERM work identically enabling graceful shutdown universally
 
 
 ## File Paths and XDG
 ### Paths — Directories Crate Handles Every OS
-- Linux config path resolves to `~/.config/neurographrag/config.toml` via XDG spec
-- Linux data path resolves to `~/.local/share/neurographrag/graph.sqlite` via XDG spec
-- macOS paths resolve to `~/Library/Application Support/neurographrag/` per Apple HIG
-- Windows paths resolve to `%APPDATA%\neurographrag\` and `%LOCALAPPDATA%\neurographrag\`
-- Override via `NEUROGRAPHRAG_DB_PATH` takes absolute priority on every operating system
-- Override via `NEUROGRAPHRAG_HOME` sets the root directory overriding XDG defaults
+- Default database path resolves to `./graphrag.sqlite` in the invocation directory
+- macOS paths resolve to `~/Library/Application Support/sqlite-graphrag/` per Apple HIG
+- Windows paths resolve to `%APPDATA%\sqlite-graphrag\` and `%LOCALAPPDATA%\sqlite-graphrag\`
+- Override via `SQLITE_GRAPHRAG_DB_PATH` takes absolute priority on every operating system
 
 ### Environment Variables — Runtime Overrides
 ```bash
-export NEUROGRAPHRAG_DB_PATH="/var/lib/neurographrag/prod.sqlite"
-export NEUROGRAPHRAG_HOME="/opt/neurographrag"
-export NEUROGRAPHRAG_CACHE_DIR="/tmp/neurographrag-cache"
-export NEUROGRAPHRAG_LANG="pt"
-export NEUROGRAPHRAG_LOG_LEVEL="debug"
+export SQLITE_GRAPHRAG_DB_PATH="/var/lib/graphrag.sqlite"
+export SQLITE_GRAPHRAG_CACHE_DIR="/tmp/sqlite-graphrag-cache"
+export SQLITE_GRAPHRAG_LANG="pt"
+export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 ```
-- `NEUROGRAPHRAG_DB_PATH` accepts any absolute path with write access for the user
-- `NEUROGRAPHRAG_HOME` rebases every default path while keeping relative structure intact
-- `NEUROGRAPHRAG_CACHE_DIR` isolates the model cache for container and test scenarios
-- `NEUROGRAPHRAG_LANG` switches CLI output between English and Brazilian Portuguese
-- `NEUROGRAPHRAG_LOG_LEVEL` controls tracing verbosity with `debug` exposing every SQL query
+- `SQLITE_GRAPHRAG_DB_PATH` overrides the default `./graphrag.sqlite` path
+- `SQLITE_GRAPHRAG_CACHE_DIR` isolates model cache and lock files for container and test scenarios
+- `SQLITE_GRAPHRAG_LANG` switches CLI output between English and Brazilian Portuguese
+- `SQLITE_GRAPHRAG_LOG_LEVEL` controls tracing verbosity with `debug` exposing every SQL query
 
 
 ## Performance by Target
@@ -197,7 +193,7 @@ export NEUROGRAPHRAG_LOG_LEVEL="debug"
 - Google Antigravity platform runs the Linux musl binary inside its sandboxed runtime
 - Windsurf from Codeium targets macOS and Windows editor installations predominantly
 - Cursor editor invokes the binary via its terminal across macOS, Linux and Windows
-- Zed editor runs neurographrag as an external tool on macOS and Linux natively
+- Zed editor runs sqlite-graphrag as an external tool on macOS and Linux natively
 - Aider coding agent targets Linux and macOS terminals for git-aware workflows daily
 - Jules from Google Labs runs the Linux glibc binary in CI pipelines predominantly
 - Kilo Code autonomous agent targets macOS developer workflows with native bindings
@@ -206,5 +202,5 @@ export NEUROGRAPHRAG_LOG_LEVEL="debug"
 - Continue open source assistant runs wherever its host editor runs natively supported
 - Factory agent framework prefers Linux containers for reproducible multi-agent scenarios
 - Augment Code assistant targets macOS and Linux engineering environments predominantly
-- JetBrains AI Assistant runs neurographrag alongside IntelliJ IDEA on all three desktop OSes
+- JetBrains AI Assistant runs sqlite-graphrag alongside IntelliJ IDEA on all three desktop OSes
 - OpenRouter proxy executes the Linux binary in Kubernetes clusters and Docker hosts

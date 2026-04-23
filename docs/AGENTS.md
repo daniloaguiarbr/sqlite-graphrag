@@ -1,4 +1,4 @@
-# neurographrag for AI Agents
+# sqlite-graphrag for AI Agents
 
 
 > Persistent memory for 27 AI agents in a single 25 MB Rust binary
@@ -8,10 +8,10 @@
 
 ## The Question No Agent Framework Answers
 ### Open Loop — Why 27 AI Agents Choose This As Their Memory Layer
-- Why do 27 AI agents choose neurographrag as their persistent memory layer?
+- Why do 27 AI agents choose sqlite-graphrag as their persistent memory layer?
 - Three technical reasons: sub-50ms recall, zero cloud dependencies, deterministic JSON
 - Each agent gains persistent memory without spending a single additional token
-- Versus heavy MCPs, neurographrag delivers a deterministic stdin/stdout contract
+- Versus heavy MCPs, sqlite-graphrag delivers a deterministic stdin/stdout contract
 - The secret the frameworks never document sits inside a single portable SQLite file
 
 
@@ -22,6 +22,7 @@
 - Zero runtime dependencies ship in one statically linked binary under 30 MB
 - Stdin accepts structured payloads so your agents never escape shell arguments
 - Cross-platform behavior stays identical on Linux, macOS and Windows out of the box
+- Default behavior always creates or opens `graphrag.sqlite` in the current working directory
 
 
 ## Economy That Converts
@@ -46,94 +47,94 @@
 ### Catalog — 27 Supported Integrations
 | Agent | Vendor | Minimum Version | Integration Type | Example |
 | --- | --- | --- | --- | --- |
-| Claude Code | Anthropic | 1.0+ | Subprocess | `neurographrag recall "query" --json` |
-| Codex CLI | OpenAI | 0.5+ | AGENTS.md + subprocess | `neurographrag remember --name X --type user --description "..." --body "..."` |
-| Gemini CLI | Google | any recent | Subprocess | `neurographrag hybrid-search "query" --json --k 5` |
-| Opencode | open source | any recent | Subprocess | `neurographrag recall "auth flow" --json --k 3` |
-| OpenClaw | community | any recent | Subprocess | `neurographrag list --type user --json` |
-| Paperclip | community | any recent | Subprocess | `neurographrag read --name onboarding-note --json` |
-| VS Code Copilot | Microsoft | 1.90+ | tasks.json | `{"command": "neurographrag", "args": ["recall", "$selection", "--json"]}` |
-| Google Antigravity | Google | any recent | Runner | `neurographrag hybrid-search "prompt" --k 10 --json` |
-| Windsurf | Codeium | any recent | Terminal | `neurographrag recall "refactor plan" --json` |
-| Cursor | Cursor | 0.40+ | Terminal | `neurographrag remember --name cursor-ctx --type project --description "..." --body "..."` |
-| Zed | Zed Industries | any recent | Assistant Panel | `neurographrag recall "open tabs" --json --k 5` |
-| Aider | open source | 0.60+ | Shell | `neurographrag recall "refactor target" --k 5 --json` |
-| Jules | Google Labs | preview | CI automation | `neurographrag stats --json` |
-| Kilo Code | community | any recent | Subprocess | `neurographrag recall "recent tasks" --json` |
-| Roo Code | community | any recent | Subprocess | `neurographrag hybrid-search "repo context" --json` |
-| Cline | community | VS Code ext | Terminal | `neurographrag list --limit 20 --json` |
-| Continue | open source | VS Code or JetBrains ext | Terminal | `neurographrag recall "docstring" --json` |
-| Factory | Factory | any recent | API or subprocess | `neurographrag recall "pr context" --json` |
-| Augment Code | Augment | any recent | IDE | `neurographrag hybrid-search "code review" --json` |
-| JetBrains AI Assistant | JetBrains | 2024.2+ | IDE | `neurographrag recall "stacktrace" --json` |
-| OpenRouter | OpenRouter | any | Router for multi-LLM | `neurographrag recall "routing rule" --json` |
-| Minimax | Minimax | any recent | Subprocess | `neurographrag recall "user preferences" --json --k 5` |
-| Z.ai | Z.ai | any recent | Subprocess | `neurographrag hybrid-search "task context" --json --k 10` |
-| Ollama | Ollama | 0.1+ | Subprocess | `neurographrag remember --name ollama-ctx --type project --description "..." --body "..."` |
-| Hermes Agent | community | any recent | Subprocess | `neurographrag recall "tool call history" --json` |
-| LangChain | LangChain | 0.3+ | Subprocess via tool | `neurographrag hybrid-search "chain context" --json --k 5` |
-| LangGraph | LangChain | 0.2+ | Subprocess via node | `neurographrag recall "graph state" --json --k 3` |
+| Claude Code | Anthropic | 1.0+ | Subprocess | `sqlite-graphrag recall "query" --json` |
+| Codex CLI | OpenAI | 0.5+ | AGENTS.md + subprocess | `sqlite-graphrag remember --name X --type user --description "..." --body "..."` |
+| Gemini CLI | Google | any recent | Subprocess | `sqlite-graphrag hybrid-search "query" --json --k 5` |
+| Opencode | open source | any recent | Subprocess | `sqlite-graphrag recall "auth flow" --json --k 3` |
+| OpenClaw | community | any recent | Subprocess | `sqlite-graphrag list --type user --json` |
+| Paperclip | community | any recent | Subprocess | `sqlite-graphrag read --name onboarding-note --json` |
+| VS Code Copilot | Microsoft | 1.90+ | tasks.json | `{"command": "sqlite-graphrag", "args": ["recall", "$selection", "--json"]}` |
+| Google Antigravity | Google | any recent | Runner | `sqlite-graphrag hybrid-search "prompt" --k 10 --json` |
+| Windsurf | Codeium | any recent | Terminal | `sqlite-graphrag recall "refactor plan" --json` |
+| Cursor | Cursor | 0.40+ | Terminal | `sqlite-graphrag remember --name cursor-ctx --type project --description "..." --body "..."` |
+| Zed | Zed Industries | any recent | Assistant Panel | `sqlite-graphrag recall "open tabs" --json --k 5` |
+| Aider | open source | 0.60+ | Shell | `sqlite-graphrag recall "refactor target" --k 5 --json` |
+| Jules | Google Labs | preview | CI automation | `sqlite-graphrag stats --json` |
+| Kilo Code | community | any recent | Subprocess | `sqlite-graphrag recall "recent tasks" --json` |
+| Roo Code | community | any recent | Subprocess | `sqlite-graphrag hybrid-search "repo context" --json` |
+| Cline | community | VS Code ext | Terminal | `sqlite-graphrag list --limit 20 --json` |
+| Continue | open source | VS Code or JetBrains ext | Terminal | `sqlite-graphrag recall "docstring" --json` |
+| Factory | Factory | any recent | API or subprocess | `sqlite-graphrag recall "pr context" --json` |
+| Augment Code | Augment | any recent | IDE | `sqlite-graphrag hybrid-search "code review" --json` |
+| JetBrains AI Assistant | JetBrains | 2024.2+ | IDE | `sqlite-graphrag recall "stacktrace" --json` |
+| OpenRouter | OpenRouter | any | Router for multi-LLM | `sqlite-graphrag recall "routing rule" --json` |
+| Minimax | Minimax | any recent | Subprocess | `sqlite-graphrag recall "user preferences" --json --k 5` |
+| Z.ai | Z.ai | any recent | Subprocess | `sqlite-graphrag hybrid-search "task context" --json --k 10` |
+| Ollama | Ollama | 0.1+ | Subprocess | `sqlite-graphrag remember --name ollama-ctx --type project --description "..." --body "..."` |
+| Hermes Agent | community | any recent | Subprocess | `sqlite-graphrag recall "tool call history" --json` |
+| LangChain | LangChain | 0.3+ | Subprocess via tool | `sqlite-graphrag hybrid-search "chain context" --json --k 5` |
+| LangGraph | LangChain | 0.2+ | Subprocess via node | `sqlite-graphrag recall "graph state" --json --k 3` |
 
 
 ## Agent Integration Details
 ### Minimax
 - Open-source multimodal agent with video, audio, and text reasoning capabilities
-- Invoke neurographrag as subprocess from within a Minimax tool definition:
+- Invoke sqlite-graphrag as subprocess from within a Minimax tool definition:
 ```bash
-neurographrag recall "user session context" --json --k 5
+sqlite-graphrag recall "user session context" --json --k 5
 ```
 - Output: JSON with `results` array containing `name`, `score`, and `updated_at` fields
 
 ### Z.ai
 - Hosted agent platform with multi-step task planning and tool orchestration
-- Invoke neurographrag to persist inter-session memory across planning cycles:
+- Invoke sqlite-graphrag to persist inter-session memory across planning cycles:
 ```bash
-neurographrag remember --name "task-plan-$(date +%s)" --type project --description "Z.ai task plan" --body "$PLAN"
-neurographrag recall "previous task plan" --json --k 3
+sqlite-graphrag remember --name "task-plan-$(date +%s)" --type project --description "Z.ai task plan" --body "$PLAN"
+sqlite-graphrag recall "previous task plan" --json --k 3
 ```
 - Output: deterministic JSON with `results` sorted by cosine similarity score
 
 ### Ollama
 - Local LLM server running open models on consumer hardware without cloud calls
-- Invoke neurographrag as a tool to give Ollama agents persistent knowledge:
+- Invoke sqlite-graphrag as a tool to give Ollama agents persistent knowledge:
 ```bash
-neurographrag recall "conversation history" --json --k 5
-neurographrag remember --name "ollama-session" --type project --description "Ollama conversation" --body "$CONTEXT"
+sqlite-graphrag recall "conversation history" --json --k 5
+sqlite-graphrag remember --name "ollama-session" --type project --description "Ollama conversation" --body "$CONTEXT"
 ```
 - Output: JSON recall response with `elapsed_ms` under 50 on modern hardware
 
 ### Hermes Agent
 - Community agent framework designed for ReAct-style tool-calling loops
-- Invoke neurographrag at the start of each ReAct cycle to load prior context:
+- Invoke sqlite-graphrag at the start of each ReAct cycle to load prior context:
 ```bash
-neurographrag hybrid-search "tool call results" --json --k 5
+sqlite-graphrag hybrid-search "tool call results" --json --k 5
 ```
 - Output: hybrid-search JSON combining BM25 full-text and cosine vector ranking
 
 ### LangChain
 - Python orchestration framework for LLM chains with tool and retriever abstractions
-- Invoke neurographrag as a custom retriever tool via subprocess from LangChain Python:
+- Invoke sqlite-graphrag as a custom retriever tool via subprocess from LangChain Python:
 ```bash
-neurographrag hybrid-search "chain input query" --json --k 10 --lang en
+sqlite-graphrag hybrid-search "chain input query" --json --k 10 --lang en
 ```
 - Output: JSON `results` array consumable by `json.loads` in the LangChain tool wrapper
 
 ### LangGraph
 - Graph-based state machine framework for multi-agent workflows built on LangChain
-- Invoke neurographrag inside each graph node to persist and recall inter-node state:
+- Invoke sqlite-graphrag inside each graph node to persist and recall inter-node state:
 ```bash
-neurographrag recall "graph node output" --json --k 3
-neurographrag remember --name "node-result-$(date +%s)" --type project --description "LangGraph node output" --body "$OUTPUT"
+sqlite-graphrag recall "graph node output" --json --k 3
+sqlite-graphrag remember --name "node-result-$(date +%s)" --type project --description "LangGraph node output" --body "$OUTPUT"
 ```
 - Output: structured JSON enabling stateful graph traversal across LangGraph runs
 
 
 ## Rust Crate Integrations
-### Agent and LLM Crates — Call neurographrag as a Subprocess
-- Every Rust crate that spawns an LLM agent can call neurographrag via `std::process::Command`
+### Agent and LLM Crates — Call sqlite-graphrag as a Subprocess
+- Every Rust crate that spawns an LLM agent can call sqlite-graphrag via `std::process::Command`
 - Sub-50ms recall on a 10k-entry knowledge graph benchmarked on M1 and x86_64
 - Zero additional tokens: memory lives in SQLite, not inside the context window
-- Each crate gains persistent memory without importing any neurographrag dependency
+- Each crate gains persistent memory without importing any sqlite-graphrag dependency
 
 ### rig-core
 - Modular framework for building LLM pipelines, RAG systems, and autonomous agents
@@ -142,10 +143,10 @@ neurographrag remember --name "node-result-$(date +%s)" --type project --descrip
 [dependencies]
 rig-core = "0.35.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "project context", "--json"])
     .output()?;
 ```
@@ -158,10 +159,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 swarms-rs = "0.2.1"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "swarm task result", "--json", "--k", "5"])
     .output()?;
 ```
@@ -174,10 +175,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 autoagents = "0.3.7"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["remember", "--name", "react-step", "--type", "project", "--description", "autoagents step", "--body", "step output"])
     .output()?;
 ```
@@ -190,10 +191,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 agentai = "0.1.5"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "tool call context", "--json", "--k", "3"])
     .output()?;
 ```
@@ -206,10 +207,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 llm-agent-runtime = "1.74.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "episode context", "--json"])
     .output()?;
 ```
@@ -222,10 +223,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 anda = "0.4.10"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["read", "--name", "anda-agent-state", "--json"])
     .output()?;
 ```
@@ -238,10 +239,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 adk-rust = "0.6.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "agent memory query", "--json", "--k", "10"])
     .output()?;
 ```
@@ -254,14 +255,14 @@ let output = Command::new("neurographrag")
 [dependencies]
 genai = "0.6.0-beta.17"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "llm response cache", "--json"])
     .output()?;
 ```
-- Case: cache expensive genai LLM responses in neurographrag for cross-run reuse
+- Case: cache expensive genai LLM responses in sqlite-graphrag for cross-run reuse
 
 ### liter-llm
 - Universal LLM client supporting 143 plus providers with OpenTelemetry tracing built in
@@ -270,14 +271,14 @@ let output = Command::new("neurographrag")
 [dependencies]
 liter-llm = "1.2.1"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["remember", "--name", "litellm-trace", "--type", "project", "--description", "liter-llm trace", "--body", "trace payload"])
     .output()?;
 ```
-- Case: store OpenTelemetry trace snapshots in neurographrag for agent replay
+- Case: store OpenTelemetry trace snapshots in sqlite-graphrag for agent replay
 
 ### llm-cascade
 - LLM cascade client with automatic failover and circuit breaker across providers
@@ -286,10 +287,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 llm-cascade = "0.1.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "fallback provider result", "--json"])
     .output()?;
 ```
@@ -302,14 +303,14 @@ let output = Command::new("neurographrag")
 [dependencies]
 async-openai = "0.34.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "openai assistant output", "--json", "--k", "5"])
     .output()?;
 ```
-- Case: store assistant thread messages in neurographrag for durable cross-session recall
+- Case: store assistant thread messages in sqlite-graphrag for durable cross-session recall
 
 ### anthropic-sdk
 - Direct Rust client for the Anthropic API including tool use and streaming responses
@@ -318,14 +319,14 @@ let output = Command::new("neurographrag")
 [dependencies]
 anthropic-sdk = "0.1.5"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "claude conversation context", "--json"])
     .output()?;
 ```
-- Case: inject prior Claude conversation turns from neurographrag before each API call
+- Case: inject prior Claude conversation turns from sqlite-graphrag before each API call
 
 ### ollama-rs
 - Idiomatic Rust client for the Ollama local inference server API
@@ -334,10 +335,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 ollama-rs = "0.3.4"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["remember", "--name", "ollama-output", "--type", "project", "--description", "ollama-rs output", "--body", "generated text"])
     .output()?;
 ```
@@ -350,10 +351,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 llama-cpp-rs = "0.3.0"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "on-device inference context", "--json", "--k", "5"])
     .output()?;
 ```
@@ -366,14 +367,14 @@ let output = Command::new("neurographrag")
 [dependencies]
 mistralrs = "0.8.1"
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "mistral inference context", "--json", "--k", "5"])
     .output()?;
 ```
-- Case: inject neurographrag persistent context into mistralrs prompts before local inference
+- Case: inject sqlite-graphrag persistent context into mistralrs prompts before local inference
 
 ### graphbit
 - Graph-based workflow engine for deterministic LLM pipeline orchestration in Rust
@@ -382,10 +383,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 graphbit = { git = "https://github.com/graphbit-rs/graphbit" }
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["recall", "workflow node state", "--json", "--k", "3"])
     .output()?;
 ```
@@ -398,10 +399,10 @@ let output = Command::new("neurographrag")
 [dependencies]
 rs-graph-llm = { git = "https://github.com/rs-graph-llm/rs-graph-llm" }
 ```
-- Integration with neurographrag:
+- Integration with sqlite-graphrag:
 ```rust
 use std::process::Command;
-let output = Command::new("neurographrag")
+let output = Command::new("sqlite-graphrag")
     .args(["hybrid-search", "graph node output", "--json", "--k", "5"])
     .output()?;
 ```
@@ -414,6 +415,7 @@ let output = Command::new("neurographrag")
 - Stdin accepts a raw body when `--body-stdin` is active on `remember` or `edit`
 - Stdin accepts a JSON payload when `--payload-stdin` is active on batch modes
 - Environment variables override defaults without mutating the file database
+- The default database path is always `./graphrag.sqlite` in the invocation directory
 - Language is controlled by `--lang en` or `--lang pt` for deterministic output
 
 
@@ -511,14 +513,14 @@ let output = Command::new("neurographrag")
 - Flag `--lang en` forces English messages regardless of system locale
 - Flag `--lang pt` or `--lang pt-BR` or `--lang portuguese` or `--lang PT` forces Portuguese
 - Short codes `en` and `pt` are the canonical forms; the longer aliases are accepted without error
-- Env `NEUROGRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
+- Env `SQLITE_GRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
 - Missing flag and env falls back to `sys_locale::get_locale()` detection
 - Unknown locales default to English without emitting any warning to stderr
-- Env `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` sets the IANA timezone applied to all `*_iso` fields in JSON output
-- Flag `--tz <IANA>` takes priority over `NEUROGRAPHRAG_DISPLAY_TZ`; both fall back to UTC when absent
+- Env `SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` sets the IANA timezone applied to all `*_iso` fields in JSON output
+- Flag `--tz <IANA>` takes priority over `SQLITE_GRAPHRAG_DISPLAY_TZ`; both fall back to UTC when absent
 - Invalid IANA names cause exit 2 with a `Validation` error message before any command runs
 - Only `*_iso` string fields are affected; integer epoch fields (`created_at`, `updated_at`) remain unchanged
-- Env `NEUROGRAPHRAG_LOG_FORMAT=json` switches tracing output to newline-delimited JSON; default is `pretty`
+- Env `SQLITE_GRAPHRAG_LOG_FORMAT=json` switches tracing output to newline-delimited JSON; default is `pretty`
 
 
 ## JSON Output Flag
@@ -535,7 +537,7 @@ let output = Command::new("neurographrag")
 - Every schema declares `"additionalProperties": false` — unknown keys are contract violations
 - Schemas use `$defs` for shared subtypes (e.g. `RecallItem`, `HealthCheck`)
 - Optional fields are absent from the `required` array and typed with `["T", "null"]` where nullable
-- Validate a live response: `neurographrag stats | jaq --from-file docs/schemas/stats.schema.json`
+- Validate a live response: `sqlite-graphrag stats | jaq --from-file docs/schemas/stats.schema.json`
 - File `docs/schemas/debug-schema.schema.json` covers the hidden `__debug_schema` diagnostic subcommand
 - Schemas are updated on every breaking change and follow the CLI SemVer major version
 
@@ -552,10 +554,10 @@ let output = Command::new("neurographrag")
 ## Get Started In 30 Seconds
 ### Install — One Command Installs The Full Stack
 ```bash
-cargo install --locked neurographrag && neurographrag init
+cargo install --path . && sqlite-graphrag init
 ```
 - Flag `--locked` reuses the shipped `Cargo.lock` to protect MSRV from transitive drift
-- Command `init` creates the SQLite file and downloads the embedding model locally
+- Command `init` creates `graphrag.sqlite` in the current working directory and downloads the embedding model locally
 - First invocation may take one minute while `fastembed` fetches `multilingual-e5-small`
 - Subsequent invocations start cold in under 100 ms on modern consumer hardware
-- Uninstall with `cargo uninstall neurographrag` leaving the database file in place
+- Uninstall with `cargo uninstall sqlite-graphrag` leaving the database file in place

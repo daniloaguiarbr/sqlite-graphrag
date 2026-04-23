@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/edit.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/edit.schema.json",
   "title": "EditResponse",
-  "description": "Response emitted by `neurographrag edit` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag edit` on stdout as a single JSON line.",
   "type": "object",
   "required": ["memory_id", "name", "action", "version", "elapsed_ms"],
   "additionalProperties": false,

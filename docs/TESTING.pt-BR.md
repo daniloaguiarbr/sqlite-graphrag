@@ -100,10 +100,11 @@
 - `RUST_TEST_THREADS=N` — controla o paralelismo do nextest em nível de processo
 - `CARGO_TERM_COLOR=always` — preserva cores nos logs do CI
 - `NEXTEST_PROFILE=ci` — sobrescreve o profile ativo do nextest via ambiente
-### Variáveis Específicas do neurographrag
-- `NEUROGRAPHRAG_HOME=/tmp/test-home` — redireciona o storage XDG para isolamento de testes
-- `NEUROGRAPHRAG_LOG_FORMAT=json` — muda a saída de log para JSON estruturado
-- `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` — sobrescreve o timezone dos timestamps
+### Variáveis Específicas do sqlite-graphrag
+- `SQLITE_GRAPHRAG_DB_PATH=/tmp/test/graphrag.sqlite` — isola o caminho do banco por teste
+- `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` — isola cache do modelo e lock files por teste
+- `SQLITE_GRAPHRAG_LOG_FORMAT=json` — muda a saída de log para JSON estruturado
+- `SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` — sobrescreve o timezone dos timestamps
 
 
 ## Profiles do CI

@@ -3,10 +3,10 @@ use tempfile::TempDir;
 
 /// Cria um Command isolado com db em TempDir dedicado e cache de modelos compartilhado.
 fn cmd(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c
 }
 
@@ -15,12 +15,12 @@ fn init_db(tmp: &TempDir) {
 }
 
 fn isolated_cmd_in(dir: &std::path::Path) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.current_dir(dir);
-    c.env_remove("NEUROGRAPHRAG_NAMESPACE");
-    c.env_remove("NEUROGRAPHRAG_DB_PATH");
-    c.env("NEUROGRAPHRAG_CACHE_DIR", dir.join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    c.env_remove("SQLITE_GRAPHRAG_NAMESPACE");
+    c.env_remove("SQLITE_GRAPHRAG_DB_PATH");
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", dir.join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c
 }
 
@@ -37,6 +37,35 @@ fn test_init_cria_arquivo_sqlite() {
     cmd(&tmp).arg("init").assert().success();
 
     assert!(db_path.exists(), "banco deve existir apos o init");
+}
+
+#[test]
+fn test_init_cria_banco_local_no_diretorio_da_invocacao() {
+    let pasta_a = TempDir::new().unwrap();
+    let pasta_b = TempDir::new().unwrap();
+    let banco_a = pasta_a.path().join("graphrag.sqlite");
+    let banco_b = pasta_b.path().join("graphrag.sqlite");
+
+    assert!(
+        !banco_a.exists(),
+        "banco local nao deve existir antes do init em a"
+    );
+    assert!(
+        !banco_b.exists(),
+        "banco local nao deve existir antes do init em b"
+    );
+
+    isolated_cmd_in(pasta_a.path())
+        .arg("init")
+        .assert()
+        .success();
+    isolated_cmd_in(pasta_b.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(banco_a.exists(), "init deve criar graphrag.sqlite em a");
+    assert!(banco_b.exists(), "init deve criar graphrag.sqlite em b");
 }
 
 #[test]
@@ -443,15 +472,8 @@ fn test_purge_yes_flag_e_noop() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_namespace_detect_ler_config_do_projeto() {
+fn test_namespace_detect_retorna_global_sem_config_local() {
     let tmp = TempDir::new().unwrap();
-    let config_dir = tmp.path().join(".neurographrag");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(
-        config_dir.join("config.toml"),
-        "namespace = \"project-scope\"\n",
-    )
-    .unwrap();
 
     let output = isolated_cmd_in(tmp.path())
         .arg("namespace-detect")
@@ -462,8 +484,8 @@ fn test_namespace_detect_ler_config_do_projeto() {
         .clone();
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(json["namespace"], "project-scope");
-    assert_eq!(json["source"], "project_config");
+    assert_eq!(json["namespace"], "global");
+    assert_eq!(json["source"], "default");
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,7 +1445,7 @@ fn test_graph_export_dot_contem_digraph() {
         .stdout
         .clone();
     let rendered = String::from_utf8(out).unwrap();
-    assert!(rendered.contains("digraph neurographrag"));
+    assert!(rendered.contains("digraph sqlite-graphrag"));
     assert!(rendered.contains("dot_a"));
     assert!(rendered.contains("dot_b"));
     assert!(rendered.contains("uses"));

@@ -116,7 +116,7 @@ impl AppError {
     /// # Examples
     ///
     /// ```
-    /// use neurographrag::errors::AppError;
+    /// use sqlite_graphrag::errors::AppError;
     ///
     /// assert_eq!(AppError::Validation("campo inválido".into()).exit_code(), 1);
     /// assert_eq!(AppError::Duplicate("ns/mem".into()).exit_code(), 2);
@@ -150,7 +150,7 @@ impl AppError {
         }
     }
 
-    /// Retorna a mensagem de erro localizada no idioma ativo (`--lang` / `NEUROGRAPHRAG_LANG`).
+    /// Retorna a mensagem de erro localizada no idioma ativo (`--lang` / `SQLITE_GRAPHRAG_LANG`).
     ///
     /// Em inglês, o texto é idêntico ao `Display` gerado por thiserror.
     /// Em português, os prefixos e mensagens são traduzidos para PT-BR.
@@ -164,8 +164,8 @@ impl AppError {
     /// # Examples
     ///
     /// ```
-    /// use neurographrag::errors::AppError;
-    /// use neurographrag::i18n::Language;
+    /// use sqlite_graphrag::errors::AppError;
+    /// use sqlite_graphrag::i18n::Language;
     ///
     /// let err = AppError::NotFound("mem-xyz".into());
     ///

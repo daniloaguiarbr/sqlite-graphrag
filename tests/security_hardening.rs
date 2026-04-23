@@ -2,10 +2,10 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 fn cmd_base(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c
 }
@@ -23,10 +23,10 @@ fn test_path_traversal_rejeitado_em_db_path() {
     let tmp = TempDir::new().unwrap();
     let traversal = format!("{}/../../../etc/passwd", tmp.path().display());
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", &traversal);
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", &traversal);
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.args(["init"]);
 
@@ -37,10 +37,10 @@ fn test_path_traversal_rejeitado_em_db_path() {
 fn test_path_traversal_duplo_ponto_rejeitado() {
     let tmp = TempDir::new().unwrap();
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", "../../../tmp/malicioso.sqlite");
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", "../../../tmp/malicioso.sqlite");
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.args(["init"]);
 
@@ -49,7 +49,7 @@ fn test_path_traversal_duplo_ponto_rejeitado() {
 
 #[test]
 fn test_path_traversal_validate_path_direto() {
-    use neurographrag::paths::AppPaths;
+    use sqlite_graphrag::paths::AppPaths;
     let resultado = AppPaths::resolve(Some("../../../etc/passwd"));
     assert!(
         resultado.is_err(),
@@ -66,7 +66,8 @@ fn test_path_traversal_validate_path_direto() {
 fn test_path_normal_aceito_por_validate_path() {
     let tmp = TempDir::new().unwrap();
     let caminho_valido = tmp.path().join("valido.sqlite");
-    let resultado = neurographrag::paths::AppPaths::resolve(Some(caminho_valido.to_str().unwrap()));
+    let resultado =
+        sqlite_graphrag::paths::AppPaths::resolve(Some(caminho_valido.to_str().unwrap()));
     assert!(
         resultado.is_ok(),
         "caminho sem .. deve ser aceito, obtido: {resultado:?}"
@@ -88,10 +89,10 @@ fn test_symlink_para_etc_rejeitado() {
 
     // O binário deve rejeitar o caminho atravessado via symlink
     // (validação de .. no caminho OU falha ao tentar abrir /etc/hosts como SQLite)
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", &link_path);
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", &link_path);
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.args(["init"]);
 
@@ -310,12 +311,12 @@ fn test_cli_slot_lock_files_tamanho_pequeno() {
 }
 
 // ---------------------------------------------------------------------------
-// Env var NEUROGRAPHRAG_HOME com traversal rejeitado
+// Caminho explícito do banco com traversal rejeitado
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_cache_dir_sem_traversal_no_override() {
-    use neurographrag::paths::AppPaths;
+    use sqlite_graphrag::paths::AppPaths;
 
     let resultado = AppPaths::resolve(Some("/tmp/teste-seguro/banco.sqlite"));
     assert!(

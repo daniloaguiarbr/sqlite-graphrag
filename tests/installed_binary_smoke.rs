@@ -1,11 +1,11 @@
-/// Suite 10 — Smoke tests contra ~/.cargo/bin/neurographrag (v2.0.4 instalado)
+/// Suite 10 — Smoke tests contra ~/.cargo/bin/sqlite-graphrag (v2.0.4 instalado)
 ///
 /// Testa o happy path de cada um dos 25 subcomandos contra o binário já
 /// instalado. Skippa gracefully se:
-/// - Binário ausente em `~/.cargo/bin/neurographrag`
-/// - Variável `NEUROGRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1` definida
+/// - Binário ausente em `~/.cargo/bin/sqlite-graphrag`
+/// - Variável `SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1` definida
 ///
-/// Cada teste usa TempDir + NEUROGRAPHRAG_DB_PATH isolado.
+/// Cada teste usa TempDir + SQLITE_GRAPHRAG_DB_PATH isolado.
 /// Todos os testes devem retornar exit code 0 e JSON válido no stdout.
 ///
 /// Contratos de API verificados contra v2.0.4:
@@ -28,7 +28,7 @@ use tempfile::TempDir;
 
 fn installed_bin() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let p = PathBuf::from(home).join(".cargo/bin/neurographrag");
+    let p = PathBuf::from(home).join(".cargo/bin/sqlite-graphrag");
     if p.exists() {
         Some(p)
     } else {
@@ -37,14 +37,14 @@ fn installed_bin() -> Option<PathBuf> {
 }
 
 fn skip_if_not_installed() -> PathBuf {
-    if std::env::var("NEUROGRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE").as_deref() == Ok("1") {
-        eprintln!("Suite 10: skipped via NEUROGRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1");
+    if std::env::var("SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE").as_deref() == Ok("1") {
+        eprintln!("Suite 10: skipped via SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1");
         std::process::exit(0);
     }
     match installed_bin() {
         Some(p) => p,
         None => {
-            eprintln!("Suite 10: neurographrag não encontrado em ~/.cargo/bin — skipping");
+            eprintln!("Suite 10: sqlite-graphrag não encontrado em ~/.cargo/bin — skipping");
             std::process::exit(0);
         }
     }
@@ -57,7 +57,7 @@ fn installed_version(bin: &PathBuf) -> String {
         .output()
         .expect("--version falhou");
     let s = String::from_utf8_lossy(&out.stdout);
-    // formato: "neurographrag 2.0.4\n"
+    // formato: "sqlite-graphrag 2.0.4\n"
     s.split_whitespace().nth(1).unwrap_or("0.0.0").to_string()
 }
 
@@ -76,11 +76,11 @@ impl Env {
     fn cmd(&self) -> Command {
         let mut c = Command::new(&self.bin);
         c.env(
-            "NEUROGRAPHRAG_DB_PATH",
+            "SQLITE_GRAPHRAG_DB_PATH",
             self.tmp.path().join("smoke.sqlite"),
         );
-        c.env("NEUROGRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
-        c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+        c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
+        c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
         c.arg("--skip-memory-guard");
         c
     }

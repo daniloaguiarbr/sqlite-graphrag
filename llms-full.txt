@@ -1,19 +1,19 @@
-# neurographrag
+# sqlite-graphrag
 
 
 > Persistent memory for 27 AI agents in a single 25 MB Rust binary
 
-27 AI agents. One 25 MB binary. Zero cloud calls. neurographrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
-- Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/neurographrag/blob/main/README.pt-BR.md)
+- Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 
 ```bash
-cargo install --locked neurographrag
+cargo install --locked sqlite-graphrag
 ```
 
 
 ## What is it?
-### neurographrag delivers durable memory for AI agents
+### sqlite-graphrag delivers durable memory for AI agents
 - Stores memories, entities and relationships inside a single SQLite file under 25 MB
 - Embeds content locally via `fastembed` with the `multilingual-e5-small` model
 - Combines FTS5 full-text search with `sqlite-vec` KNN into a hybrid Reciprocal Rank Fusion ranker
@@ -22,7 +22,7 @@ cargo install --locked neurographrag
 - Runs on Linux, macOS and Windows natively with zero external services required
 
 
-## Why neurographrag?
+## Why sqlite-graphrag?
 ### Differentiators against cloud RAG stacks
 - Offline-first architecture eliminates OpenAI embeddings and Pinecone recurring fees
 - Single-file SQLite storage replaces Docker clusters of vector databases entirely
@@ -46,10 +46,10 @@ cargo install --locked neurographrag
 ## Quick Start
 ### Install and record your first memory in four commands
 ```bash
-cargo install --locked neurographrag
-neurographrag init
-neurographrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
-neurographrag recall "graphrag" --k 5 --json
+cargo install --locked sqlite-graphrag
+sqlite-graphrag init
+sqlite-graphrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
+sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 - The flag `--locked` reuses the `Cargo.lock` shipped with the crate to prevent MSRV breakage
 - Without `--locked` Cargo may resolve a patch release that requires a newer `rustc` than 1.88
@@ -61,7 +61,7 @@ neurographrag recall "graphrag" --k 5 --json
 - Every invocation is stateless with explicit exit codes for routing decisions
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin accepts bodies or JSON payloads for entities and relationship batches
-- Stderr carries tracing output under `NEUROGRAPHRAG_LOG_LEVEL=debug` only
+- Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
 
 
@@ -69,27 +69,27 @@ neurographrag recall "graphrag" --k 5 --json
 ### Catalog — 21 Supported Integrations
 | Agent | Vendor | Minimum Version | Integration Type | Example |
 | --- | --- | --- | --- | --- |
-| Claude Code | Anthropic | 1.0+ | Subprocess | `neurographrag recall "query" --json` |
-| Codex CLI | OpenAI | 0.5+ | AGENTS.md + subprocess | `neurographrag remember --name X --type user --description "..." --body "..."` |
-| Gemini CLI | Google | any recent | Subprocess | `neurographrag hybrid-search "query" --json --k 5` |
-| Opencode | open source | any recent | Subprocess | `neurographrag recall "auth flow" --json --k 3` |
-| OpenClaw | community | any recent | Subprocess | `neurographrag list --type user --json` |
-| Paperclip | community | any recent | Subprocess | `neurographrag read --name onboarding-note --json` |
-| VS Code Copilot | Microsoft | 1.90+ | tasks.json | `{"command": "neurographrag", "args": ["recall", "$selection", "--json"]}` |
-| Google Antigravity | Google | any recent | Runner | `neurographrag hybrid-search "prompt" --k 10 --json` |
-| Windsurf | Codeium | any recent | Terminal | `neurographrag recall "refactor plan" --json` |
-| Cursor | Cursor | 0.40+ | Terminal | `neurographrag remember --name cursor-ctx --type project --description "..." --body "..."` |
-| Zed | Zed Industries | any recent | Assistant Panel | `neurographrag recall "open tabs" --json --k 5` |
-| Aider | open source | 0.60+ | Shell | `neurographrag recall "refactor target" --k 5 --json` |
-| Jules | Google Labs | preview | CI automation | `neurographrag stats --json` |
-| Kilo Code | community | any recent | Subprocess | `neurographrag recall "recent tasks" --json` |
-| Roo Code | community | any recent | Subprocess | `neurographrag hybrid-search "repo context" --json` |
-| Cline | community | VS Code ext | Terminal | `neurographrag list --limit 20 --json` |
-| Continue | open source | VS Code or JetBrains ext | Terminal | `neurographrag recall "docstring" --json` |
-| Factory | Factory | any recent | API or subprocess | `neurographrag recall "pr context" --json` |
-| Augment Code | Augment | any recent | IDE | `neurographrag hybrid-search "code review" --json` |
-| JetBrains AI Assistant | JetBrains | 2024.2+ | IDE | `neurographrag recall "stacktrace" --json` |
-| OpenRouter | OpenRouter | any | Router for multi-LLM | `neurographrag recall "routing rule" --json` |
+| Claude Code | Anthropic | 1.0+ | Subprocess | `sqlite-graphrag recall "query" --json` |
+| Codex CLI | OpenAI | 0.5+ | AGENTS.md + subprocess | `sqlite-graphrag remember --name X --type user --description "..." --body "..."` |
+| Gemini CLI | Google | any recent | Subprocess | `sqlite-graphrag hybrid-search "query" --json --k 5` |
+| Opencode | open source | any recent | Subprocess | `sqlite-graphrag recall "auth flow" --json --k 3` |
+| OpenClaw | community | any recent | Subprocess | `sqlite-graphrag list --type user --json` |
+| Paperclip | community | any recent | Subprocess | `sqlite-graphrag read --name onboarding-note --json` |
+| VS Code Copilot | Microsoft | 1.90+ | tasks.json | `{"command": "sqlite-graphrag", "args": ["recall", "$selection", "--json"]}` |
+| Google Antigravity | Google | any recent | Runner | `sqlite-graphrag hybrid-search "prompt" --k 10 --json` |
+| Windsurf | Codeium | any recent | Terminal | `sqlite-graphrag recall "refactor plan" --json` |
+| Cursor | Cursor | 0.40+ | Terminal | `sqlite-graphrag remember --name cursor-ctx --type project --description "..." --body "..."` |
+| Zed | Zed Industries | any recent | Assistant Panel | `sqlite-graphrag recall "open tabs" --json --k 5` |
+| Aider | open source | 0.60+ | Shell | `sqlite-graphrag recall "refactor target" --k 5 --json` |
+| Jules | Google Labs | preview | CI automation | `sqlite-graphrag stats --json` |
+| Kilo Code | community | any recent | Subprocess | `sqlite-graphrag recall "recent tasks" --json` |
+| Roo Code | community | any recent | Subprocess | `sqlite-graphrag hybrid-search "repo context" --json` |
+| Cline | community | VS Code ext | Terminal | `sqlite-graphrag list --limit 20 --json` |
+| Continue | open source | VS Code or JetBrains ext | Terminal | `sqlite-graphrag recall "docstring" --json` |
+| Factory | Factory | any recent | API or subprocess | `sqlite-graphrag recall "pr context" --json` |
+| Augment Code | Augment | any recent | IDE | `sqlite-graphrag hybrid-search "code review" --json` |
+| JetBrains AI Assistant | JetBrains | 2024.2+ | IDE | `sqlite-graphrag recall "stacktrace" --json` |
+| OpenRouter | OpenRouter | any | Router for multi-LLM | `sqlite-graphrag recall "routing rule" --json` |
 
 
 ## Commands
@@ -122,7 +122,7 @@ neurographrag recall "graphrag" --k 5 --json
 | `link` | `--source`, `--target`, `--relation` | Create a typed edge between two memories |
 | `unlink` | `--source`, `--target`, `--relation` | Remove a typed edge |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
-| `namespace-detect` | `--cwd <path>` | Resolve namespace precedence for invocation |
+| `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
 ### Maintenance
 | Command | Arguments | Description |
 | --- | --- | --- |
@@ -133,39 +133,39 @@ neurographrag recall "graphrag" --k 5 --json
 ### Runtime configuration overrides
 | Variable | Description | Default | Example |
 | --- | --- | --- | --- |
-| `NEUROGRAPHRAG_DB_PATH` | Absolute path to the SQLite database file | XDG data dir | `/data/graph.sqlite` |
-| `NEUROGRAPHRAG_CACHE_DIR` | Directory for embedding model cache | XDG cache dir | `~/.cache/neurographrag` |
-| `NEUROGRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
-| `NEUROGRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
-| `NEUROGRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
+| `SQLITE_GRAPHRAG_DB_PATH` | Path override for the SQLite database file | `./graphrag.sqlite` in the invocation directory | `/data/graphrag.sqlite` |
+| `SQLITE_GRAPHRAG_CACHE_DIR` | Directory for embedding model cache | XDG cache dir | `~/.cache/sqlite-graphrag` |
+| `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
+| `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
+| `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
 
 
 ## Integration Patterns
 ### Compose with Unix pipelines and tools
 ```bash
-neurographrag recall "auth tests" --k 5 --json | jaq -r '.results[].name'
+sqlite-graphrag recall "auth tests" --k 5 --json | jaq -r '.results[].name'
 ```
 ### Feed hybrid search into a summarizer endpoint
 ```bash
-neurographrag hybrid-search "postgres migration" --k 10 --json \
+sqlite-graphrag hybrid-search "postgres migration" --k 10 --json \
   | jaq -c '.results[] | {name, combined_score}' \
   | xh POST http://localhost:8080/summarize
 ```
 ### Backup with atomic snapshot and compression
 ```bash
-neurographrag sync-safe-copy --output /tmp/ng.sqlite
+sqlite-graphrag sync-safe-copy --output /tmp/ng.sqlite
 ouch compress /tmp/ng.sqlite /tmp/ng-$(date +%Y%m%d).tar.zst
 ```
 ### Claude Code subprocess example in Node
 ```javascript
 const { spawn } = require('child_process');
-const proc = spawn('neurographrag', ['recall', query, '--k', '5', '--json']);
+const proc = spawn('sqlite-graphrag', ['recall', query, '--k', '5', '--json']);
 ```
 ### Docker Alpine build for CI pipelines
 ```dockerfile
 FROM rust:1.88-alpine AS builder
 RUN apk add musl-dev sqlite-dev
-RUN cargo install --locked neurographrag
+RUN cargo install --locked sqlite-graphrag
 ```
 
 
@@ -238,7 +238,7 @@ RUN cargo install --locked neurographrag
 ### Counting semaphore with four simultaneous slots
 - Each invocation loads `multilingual-e5-small` consuming roughly 750 MB of RAM
 - Up to four instances run in parallel via `MAX_CONCURRENT_CLI_INSTANCES` default
-- Lock files live at `~/.cache/neurographrag/cli-slot-{1..4}.lock` using `flock`
+- Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`
 - A fifth concurrent invocation waits up to 300 seconds then exits with code 75
 - Use `--max-concurrency N` to override the slot limit for the current invocation
 - Memory guard aborts with exit 77 when less than 2 GB of RAM is available
@@ -273,12 +273,12 @@ RUN cargo install --locked neurographrag
 
 ## Troubleshooting FAQ
 ### Common issues and fixes
-- Database locked after crash requires `neurographrag vacuum` to checkpoint the WAL
+- Database locked after crash requires `sqlite-graphrag vacuum` to checkpoint the WAL
 - First `init` takes roughly one minute while `fastembed` downloads the quantized model
 - Permission denied on Linux means the cache directory lacks write access for your user
-- Namespace detection falls back to `default` when no `.neurographrag` marker exists
+- Namespace detection falls back to `global` when no explicit override is present
 - Parallel invocations beyond four slots receive exit 75 and SHOULD retry with backoff
-- Exit 10 signals database error: run `neurographrag health --json` to inspect integrity
+- Exit 10 signals database error: run `sqlite-graphrag health --json` to inspect integrity
 - Exit 12 signals sqlite-vec load failure: verify SQLite version is 3.40 or newer
 - Exit 77 signals low RAM: free at least 1 GB before invoking the embedding model
 
@@ -294,9 +294,9 @@ RUN cargo install --locked neurographrag
 
 ### First Command in 60 Seconds
 ```bash
-cargo install --locked neurographrag
-neurographrag init
-neurographrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
+cargo install --locked sqlite-graphrag
+sqlite-graphrag init
+sqlite-graphrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
 ```
 - First line downloads, builds and installs the binary into `~/.cargo/bin`
 - Second line creates the SQLite database and downloads the embedding model
@@ -307,7 +307,7 @@ neurographrag remember --name first-note --type user --description "first memory
 ### Advanced Patterns
 #### Hybrid Search With Weighted Fusion
 ```bash
-neurographrag hybrid-search "postgres migration strategy" \
+sqlite-graphrag hybrid-search "postgres migration strategy" \
   --k 20 \
   --rrf-k 60 \
   --weight-vec 0.7 \
@@ -322,8 +322,8 @@ neurographrag hybrid-search "postgres migration strategy" \
 
 #### Graph Traversal for Multi-Hop Recall
 ```bash
-neurographrag link --source auth-design --target jwt-spec --relation depends-on
-neurographrag related auth-design --hops 2 --json \
+sqlite-graphrag link --source auth-design --target jwt-spec --relation depends-on
+sqlite-graphrag related auth-design --hops 2 --json \
   | jaq -r '.nodes[] | select(.depth == 2) | .name'
 ```
 - Two hops surface transitive knowledge invisible to pure vector search methods
@@ -333,8 +333,8 @@ neurographrag related auth-design --hops 2 --json \
 
 #### Snapshot-Safe Sync With Dropbox or iCloud
 ```bash
-neurographrag sync-safe-copy --dest ~/Dropbox/neurographrag.sqlite
-ouch compress ~/Dropbox/neurographrag.sqlite ~/Dropbox/neurographrag-$(date +%Y%m%d).tar.zst
+sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite
+ouch compress ~/Dropbox/graphrag.sqlite ~/Dropbox/graphrag-$(date +%Y%m%d).tar.zst
 ```
 - `sync-safe-copy` checkpoints the WAL and copies a consistent snapshot atomically
 - Dropbox, iCloud and Google Drive NEVER corrupt the active database during sync
@@ -342,7 +342,7 @@ ouch compress ~/Dropbox/neurographrag.sqlite ~/Dropbox/neurographrag-$(date +%Y%
 
 #### Integration With Claude Code Orchestrator
 ```bash
-neurographrag recall "$USER_QUERY" --k 5 --json \
+sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
   | jaq -c '{
       context: [.results[] | {name, body, score}],
       generated_at: now | todate
@@ -356,9 +356,9 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 ## COOKBOOK
 ### Bootstrap Memory Database In 60 Seconds
 ```bash
-cargo install --locked neurographrag
-neurographrag init --namespace default
-neurographrag health --json
+cargo install --locked sqlite-graphrag
+sqlite-graphrag init --namespace default
+sqlite-graphrag health --json
 ```
 - Command `init` creates the SQLite file and downloads `multilingual-e5-small` locally
 - Exit code `0` signals the database is ready for writes and reads from any agent
@@ -368,7 +368,7 @@ neurographrag health --json
 ### Bulk-Import Knowledge Base Via Stdin Pipeline
 ```bash
 fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
-  neurographrag remember \
+  sqlite-graphrag remember \
     --name "$(basename {} .md)" \
     --type user \
     --description "imported from {}" \
@@ -382,7 +382,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 
 ### Combine Vector And FTS Search With Tunable Weights
 ```bash
-neurographrag hybrid-search "authentication jwt" \
+sqlite-graphrag hybrid-search "authentication jwt" \
   --weight-vec 0.7 \
   --weight-fts 0.3 \
   --k 10 \
@@ -396,8 +396,8 @@ neurographrag hybrid-search "authentication jwt" \
 
 ### Purge Soft-Deleted Memories On A Schedule
 ```bash
-neurographrag purge --retention-days 90 --dry-run --json
-neurographrag purge --retention-days 90 --yes
+sqlite-graphrag purge --retention-days 90 --dry-run --json
+sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `--dry-run` shows exactly which memories qualify for hard deletion before committing
 - Run on a weekly cron or GitHub Actions schedule to keep the database lean
@@ -405,7 +405,7 @@ neurographrag purge --retention-days 90 --yes
 
 ### Export Memories To NDJSON For Backup
 ```bash
-neurographrag list --limit 1000 --json \
+sqlite-graphrag list --limit 1000 --json \
   | jaq -c '.[]' \
   > memories-backup-$(date +%Y%m%d).ndjson
 ```
@@ -416,19 +416,19 @@ neurographrag list --limit 1000 --json \
 ## INTEGRATIONS
 ### Claude Code — Subprocess Integration
 ```bash
-neurographrag recall "$USER_PROMPT" --k 5 --json \
+sqlite-graphrag recall "$USER_PROMPT" --k 5 --json \
   | jaq -r '.results[].body' \
   | claude --print "Context: $(cat -) — Answer: $USER_PROMPT"
 ```
 - Add to `.claude/hooks/pre-task.sh` for automatic context injection per session
 - Capture exit code `75` as retry-later to keep the agent alive gracefully
-- Use `NEUROGRAPHRAG_NAMESPACE=$(basename $PWD)` to isolate context per project
+- Use `SQLITE_GRAPHRAG_NAMESPACE=$(basename $PWD)` to isolate context per project
 
 
 ### Codex CLI — AGENTS.md Driven Integration
 ```bash
-neurographrag recall "$QUERY" --k 5 --json
-neurographrag remember --name "codex-$(date +%s)" --type project --description "Codex result" --body "$RESULT"
+sqlite-graphrag recall "$QUERY" --k 5 --json
+sqlite-graphrag remember --name "codex-$(date +%s)" --type project --description "Codex result" --body "$RESULT"
 ```
 - Add the tool definition to your project `AGENTS.md` file for Codex to discover
 - Use `--type project` for Codex-generated memories to filter them separately later
@@ -436,7 +436,7 @@ neurographrag remember --name "codex-$(date +%s)" --type project --description "
 
 ### Gemini CLI — Function Call Integration
 ```bash
-neurographrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
+sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
   | jaq '{results: [.results[] | {name, score, snippet: .body[:200]}]}'
 ```
 - Truncate `.body[:200]` to fit within Gemini function call output size limits
@@ -446,25 +446,25 @@ neurographrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 ```yaml
 - name: Recall project context
   run: |
-    neurographrag recall "build failure patterns" --k 5 --json \
+    sqlite-graphrag recall "build failure patterns" --k 5 --json \
       | jaq -r '.results[].body' > /tmp/context.txt
 ```
-- Install binary with `cargo install --locked neurographrag` in a setup step
-- Set `NEUROGRAPHRAG_DB_PATH` to a path inside the workflow workspace
+- Install binary with `cargo install --locked sqlite-graphrag` in a setup step
+- Run the binary inside the workflow workspace so the default `graphrag.sqlite` stays local to that run
 
 
 ## Language Control
 ### Bilingual Output — One Flag Switches Locale
 - Flag `--lang en` forces English messages regardless of system locale
 - Flag `--lang pt` forces Portuguese messages regardless of system locale
-- Env `NEUROGRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
+- Env `SQLITE_GRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
 - Unknown locales default to English without emitting any warning to stderr
 
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `neurographrag` v2.0.2 published on crates.io with MSRV Rust 1.88
-- Repository `https://github.com/daniloaguiarbr/neurographrag` with CI on push and tag
+- Package `sqlite-graphrag` v2.0.2 published on crates.io with MSRV Rust 1.88
+- Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` bundled SQLite plus `sqlite-vec` extension plus FTS5 module

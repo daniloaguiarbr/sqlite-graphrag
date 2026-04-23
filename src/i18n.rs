@@ -1,12 +1,12 @@
 //! Camada bilíngue de mensagens humanas.
 //!
-//! A CLI usa `--lang en|pt` (flag global) ou `NEUROGRAPHRAG_LANG` (env var) para escolher
+//! A CLI usa `--lang en|pt` (flag global) ou `SQLITE_GRAPHRAG_LANG` (env var) para escolher
 //! o idioma das mensagens stderr de progresso. JSON de stdout é determinístico e idêntico
 //! entre idiomas — apenas strings destinadas a humanos passam pelo módulo.
 //!
 //! Detecção (do mais para o menos prioritário):
 //! 1. Flag `--lang` explícita
-//! 2. Env var `NEUROGRAPHRAG_LANG`
+//! 2. Env var `SQLITE_GRAPHRAG_LANG`
 //! 3. Locale do SO (`LANG`, `LC_ALL`) com prefixo `pt`
 //! 4. Fallback `English`
 
@@ -32,7 +32,7 @@ impl Language {
     }
 
     pub fn from_env_or_locale() -> Self {
-        if let Ok(v) = std::env::var("NEUROGRAPHRAG_LANG") {
+        if let Ok(v) = std::env::var("SQLITE_GRAPHRAG_LANG") {
             let v = v.to_lowercase();
             if v.starts_with("pt") {
                 return Language::Portugues;
@@ -105,10 +105,10 @@ pub mod erros {
     pub fn banco_nao_encontrado(path: &str) -> String {
         match current() {
             Language::English => {
-                format!("database not found at {path}. Run 'neurographrag init' first.")
+                format!("database not found at {path}. Run 'sqlite-graphrag init' first.")
             }
             Language::Portugues => format!(
-                "banco de dados não encontrado em {path}. Execute 'neurographrag init' primeiro."
+                "banco de dados não encontrado em {path}. Execute 'sqlite-graphrag init' primeiro."
             ),
         }
     }
@@ -311,10 +311,10 @@ pub mod validacao {
     pub fn tz_invalido(v: &str) -> String {
         match current() {
             Language::English => format!(
-                "NEUROGRAPHRAG_DISPLAY_TZ invalid: '{v}'; use an IANA name like 'America/Sao_Paulo'"
+                "SQLITE_GRAPHRAG_DISPLAY_TZ invalid: '{v}'; use an IANA name like 'America/Sao_Paulo'"
             ),
             Language::Portugues => format!(
-                "NEUROGRAPHRAG_DISPLAY_TZ inválido: '{v}'; use um nome IANA como 'America/Sao_Paulo'"
+                "SQLITE_GRAPHRAG_DISPLAY_TZ inválido: '{v}'; use um nome IANA como 'America/Sao_Paulo'"
             ),
         }
     }
@@ -376,7 +376,7 @@ mod testes {
     #[test]
     #[serial]
     fn fallback_english_quando_env_ausente() {
-        std::env::remove_var("NEUROGRAPHRAG_LANG");
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "C");
         std::env::set_var("LANG", "C");
         assert_eq!(Language::from_env_or_locale(), Language::English);
@@ -389,9 +389,9 @@ mod testes {
     fn env_pt_seleciona_portugues() {
         std::env::remove_var("LC_ALL");
         std::env::remove_var("LANG");
-        std::env::set_var("NEUROGRAPHRAG_LANG", "pt");
+        std::env::set_var("SQLITE_GRAPHRAG_LANG", "pt");
         assert_eq!(Language::from_env_or_locale(), Language::Portugues);
-        std::env::remove_var("NEUROGRAPHRAG_LANG");
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
     }
 
     #[test]
@@ -399,15 +399,15 @@ mod testes {
     fn env_pt_br_seleciona_portugues() {
         std::env::remove_var("LC_ALL");
         std::env::remove_var("LANG");
-        std::env::set_var("NEUROGRAPHRAG_LANG", "pt-BR");
+        std::env::set_var("SQLITE_GRAPHRAG_LANG", "pt-BR");
         assert_eq!(Language::from_env_or_locale(), Language::Portugues);
-        std::env::remove_var("NEUROGRAPHRAG_LANG");
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
     }
 
     #[test]
     #[serial]
     fn locale_ptbr_utf8_seleciona_portugues() {
-        std::env::remove_var("NEUROGRAPHRAG_LANG");
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "pt_BR.UTF-8");
         assert_eq!(Language::from_env_or_locale(), Language::Portugues);
         std::env::remove_var("LC_ALL");

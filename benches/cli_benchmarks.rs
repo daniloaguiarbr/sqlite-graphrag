@@ -17,33 +17,33 @@ fn cargo_bin_path() -> PathBuf {
     if p.ends_with("deps") {
         p.pop();
     }
-    p.push("neurographrag");
+    p.push("sqlite-graphrag");
     if p.exists() {
         return p;
     }
-    // Fallback: ~/.cargo/bin/neurographrag já instalado
+    // Fallback: ~/.cargo/bin/sqlite-graphrag já instalado
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()));
-    let installed = home.join(".cargo/bin/neurographrag");
+    let installed = home.join(".cargo/bin/sqlite-graphrag");
     if installed.exists() {
         return installed;
     }
-    PathBuf::from("neurographrag")
+    PathBuf::from("sqlite-graphrag")
 }
 
-fn neurographrag_cmd(tmp: &TempDir) -> Command {
+fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
     let mut cmd = Command::new(cargo_bin_path());
-    cmd.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("bench.sqlite"));
-    cmd.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    cmd.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    cmd.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("bench.sqlite"));
+    cmd.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    cmd.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     cmd.arg("--skip-memory-guard");
     cmd
 }
 
 fn init_db(tmp: &TempDir) {
-    let status = neurographrag_cmd(tmp)
+    let status = sqlite_graphrag_cmd(tmp)
         .args(["init"])
         .status()
-        .expect("neurographrag init falhou");
+        .expect("sqlite-graphrag init falhou");
     assert!(status.success(), "init retornou {:?}", status.code());
 }
 
@@ -67,9 +67,9 @@ fn populate_db(tmp: &TempDir, count: usize) {
                 "--body",
                 &body,
             ])
-            .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-            .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path)
-            .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+            .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+            .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path)
+            .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
             .status()
             .expect("remember falhou");
         assert!(
@@ -92,7 +92,7 @@ fn bench_cold_start(c: &mut Criterion) {
             let output = Command::new(&bin)
                 .arg("--help")
                 .output()
-                .expect("neurographrag --help falhou");
+                .expect("sqlite-graphrag --help falhou");
             criterion::black_box(output.status.success());
         });
     });
@@ -124,9 +124,9 @@ fn bench_warm_recall(c: &mut Criterion) {
             for q in &queries {
                 let output = Command::new(&bin)
                     .args(["--skip-memory-guard", "recall", q, "-k", "5"])
-                    .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-                    .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path)
-                    .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+                    .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+                    .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path)
+                    .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
                     .output()
                     .expect("recall falhou");
                 // Aceita 0 (encontrou) ou 4 (not found) como válidos
@@ -160,9 +160,9 @@ fn bench_hybrid_search(c: &mut Criterion) {
                     "-k",
                     "10",
                 ])
-                .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-                .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path)
-                .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+                .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+                .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path)
+                .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
                 .output()
                 .expect("hybrid-search falhou");
             let code = output.status.code().unwrap_or(1);

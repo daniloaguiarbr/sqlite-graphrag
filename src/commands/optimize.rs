@@ -9,7 +9,7 @@ use serde::Serialize;
 pub struct OptimizeArgs {
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -52,13 +52,13 @@ mod testes {
     #[test]
     fn optimize_response_serializa_campos_obrigatorios() {
         let resp = OptimizeResponse {
-            db_path: "/tmp/neurographrag.sqlite".to_string(),
+            db_path: "/tmp/graphrag.sqlite".to_string(),
             status: "ok".to_string(),
             elapsed_ms: 5,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], "ok");
-        assert_eq!(json["db_path"], "/tmp/neurographrag.sqlite");
+        assert_eq!(json["db_path"], "/tmp/graphrag.sqlite");
         assert_eq!(json["elapsed_ms"], 5);
     }
 
@@ -67,7 +67,7 @@ mod testes {
     fn optimize_retorna_not_found_quando_db_ausente() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("inexistente.sqlite");
-        std::env::set_var("NEUROGRAPHRAG_DB_PATH", db_path.to_str().unwrap());
+        std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", db_path.to_str().unwrap());
         std::env::set_var("LOG_LEVEL", "error");
 
         let args = OptimizeArgs {
@@ -80,7 +80,7 @@ mod testes {
             AppError::NotFound(_) => {}
             outro => panic!("esperava NotFound, obteve: {outro:?}"),
         }
-        std::env::remove_var("NEUROGRAPHRAG_DB_PATH");
+        std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
         std::env::remove_var("LOG_LEVEL");
     }
 

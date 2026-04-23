@@ -15,7 +15,7 @@ pub struct SyncSafeCopyArgs {
     /// Formato de saída: "json" ou "text". JSON é sempre emitido no stdout independente do valor.
     #[arg(long, value_parser = ["json", "text"], hide = true)]
     pub format: Option<String>,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
@@ -81,7 +81,7 @@ mod testes {
     #[test]
     fn sync_safe_copy_response_serializa_todos_campos() {
         let resp = SyncSafeCopyResponse {
-            source_db_path: "/home/user/.local/share/neurographrag/db.sqlite".to_string(),
+            source_db_path: "/home/user/.local/share/sqlite-graphrag/db.sqlite".to_string(),
             dest_path: "/tmp/backup.sqlite".to_string(),
             bytes_copied: 16384,
             status: "ok".to_string(),
@@ -90,7 +90,7 @@ mod testes {
         let json = serde_json::to_value(&resp).expect("serialização falhou");
         assert_eq!(
             json["source_db_path"],
-            "/home/user/.local/share/neurographrag/db.sqlite"
+            "/home/user/.local/share/sqlite-graphrag/db.sqlite"
         );
         assert_eq!(json["dest_path"], "/tmp/backup.sqlite");
         assert_eq!(json["bytes_copied"], 16384u64);

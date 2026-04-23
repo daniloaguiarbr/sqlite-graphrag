@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/graph-entities.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/graph-entities.schema.json",
   "title": "GraphEntitiesResponse",
-  "description": "Response emitted by `neurographrag graph entities`. Lists entities stored in the graph with optional filters by namespace and entity_type. Supports pagination via --limit and --offset. The --json flag is a no-op kept for backward compatibility; JSON is always emitted on stdout.",
+  "description": "Response emitted by `sqlite-graphrag graph entities`. Lists entities stored in the graph with optional filters by namespace and entity_type. Supports pagination via --limit and --offset. The --json flag is a no-op kept for backward compatibility; JSON is always emitted on stdout.",
   "type": "object",
   "required": ["items", "total_count", "limit", "offset", "elapsed_ms"],
   "properties": {

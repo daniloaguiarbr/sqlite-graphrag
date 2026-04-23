@@ -1,22 +1,22 @@
-# neurographrag
+# sqlite-graphrag
 
 > Persistent memory for 27 AI agents in a single 25 MB Rust binary
 
-27 AI agents. One 25 MB binary. Zero cloud calls. neurographrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 
 ## Primary Documentation
 ### Canonical English sources for LLM ingestion
-- [README](https://github.com/daniloaguiarbr/neurographrag/blob/main/README.md): full installation, command reference, integration table and FAQ
-- [HOW_TO_USE](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/HOW_TO_USE.md): step-by-step walkthrough from install to first hybrid search in 60 seconds
-- [COOKBOOK](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/COOKBOOK.md): thirty recipes covering ingestion, retrieval, graph traversal, backup and audit
-- [AGENTS](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/AGENTS.md): persuasive guide for AI agent authors: economics, JSON contract, exit code routing
-- [INTEGRATIONS](https://github.com/daniloaguiarbr/neurographrag/blob/main/INTEGRATIONS.md): vendor-specific configuration for all 27 supported agents and IDEs
-- [AGENT_PROTOCOL](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/AGENT_PROTOCOL.md): imperative stdin/stdout spec, JSON schemas and concurrency protocol
-- [CHANGELOG](https://github.com/daniloaguiarbr/neurographrag/blob/main/CHANGELOG.md): full release history with migration notes
-- [CONTRIBUTING](https://github.com/daniloaguiarbr/neurographrag/blob/main/CONTRIBUTING.md): pull request workflow and coding standards
-- [SECURITY](https://github.com/daniloaguiarbr/neurographrag/blob/main/SECURITY.md): responsible disclosure policy and contact channel
-- [CODE_OF_CONDUCT](https://github.com/daniloaguiarbr/neurographrag/blob/main/CODE_OF_CONDUCT.md): community standards
+- [README](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.md): full installation, command reference, integration table and FAQ
+- [HOW_TO_USE](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/HOW_TO_USE.md): step-by-step walkthrough from install to first hybrid search in 60 seconds
+- [COOKBOOK](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/COOKBOOK.md): thirty recipes covering ingestion, retrieval, graph traversal, backup and audit
+- [AGENTS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENTS.md): persuasive guide for AI agent authors: economics, JSON contract, exit code routing
+- [INTEGRATIONS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/INTEGRATIONS.md): vendor-specific configuration for all 27 supported agents and IDEs
+- [AGENT_PROTOCOL](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENT_PROTOCOL.md): imperative stdin/stdout spec, JSON schemas and concurrency protocol
+- [CHANGELOG](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CHANGELOG.md): full release history with migration notes
+- [CONTRIBUTING](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CONTRIBUTING.md): pull request workflow and coding standards
+- [SECURITY](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/SECURITY.md): responsible disclosure policy and contact channel
+- [CODE_OF_CONDUCT](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CODE_OF_CONDUCT.md): community standards
 
 
 ## Core Commands
@@ -28,16 +28,17 @@
 - `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle
 - `link` `unlink` `related` manage typed entity relationships for multi-hop traversal
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database
-- `purge` `namespace-detect` handle maintenance and scope resolution
+- `purge` `namespace-detect` handle maintenance and namespace resolution
 
 
 ## Environment Variables
 ### Runtime configuration surface
-- `NEUROGRAPHRAG_DB_PATH` absolute path to the SQLite database file
-- `NEUROGRAPHRAG_CACHE_DIR` directory for embedding model cache files
-- `NEUROGRAPHRAG_LOG_LEVEL` tracing filter level with values `error` through `trace`
-- `NEUROGRAPHRAG_LANG` CLI output language with values `en` or `pt`
-- `NEUROGRAPHRAG_NAMESPACE` namespace override bypassing auto detection
+- `SQLITE_GRAPHRAG_DB_PATH` explicit override for the SQLite database path
+- Default behavior creates or opens `graphrag.sqlite` in the current working directory
+- `SQLITE_GRAPHRAG_CACHE_DIR` directory for embedding model cache files
+- `SQLITE_GRAPHRAG_LOG_LEVEL` tracing filter level with values `error` through `trace`
+- `SQLITE_GRAPHRAG_LANG` CLI output language with values `en` or `pt`
+- `SQLITE_GRAPHRAG_NAMESPACE` namespace override bypassing auto detection
 
 
 ## Exit Codes
@@ -63,17 +64,17 @@
 
 ## Optional References
 ### Supplementary materials for deeper context
-- [CLAUDE guidance](https://github.com/daniloaguiarbr/neurographrag/blob/main/docs/CLAUDE.md): Claude Code specific invocation patterns and session memory strategies
-- [SKILL definitions](https://github.com/daniloaguiarbr/neurographrag/tree/main/skill/neurographrag-en): pre-built slash-command skills for Claude Code harness
-- [crates.io package](https://crates.io/crates/neurographrag): published binary with semver and MSRV metadata
-- [docs.rs API reference](https://docs.rs/neurographrag): rustdoc for library consumers
+- [CLAUDE guidance](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/CLAUDE.md): Claude Code specific invocation patterns and session memory strategies
+- [SKILL definitions](https://github.com/daniloaguiarbr/sqlite-graphrag/tree/main/skill/sqlite-graphrag-en): pre-built slash-command skills for Claude Code harness
+- [crates.io package](https://crates.io/crates/sqlite-graphrag): published binary with semver and MSRV metadata
+- [docs.rs API reference](https://docs.rs/sqlite-graphrag): rustdoc for library consumers
 
 
 ## Stable Facts
 ### Identity and version metadata
-- Package name `neurographrag` published on crates.io under MIT OR Apache-2.0
+- Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
 - Current version 2.0.2 with MSRV Rust 1.88 declared in `Cargo.toml`
-- Repository `https://github.com/daniloaguiarbr/neurographrag` with CI on push and tag
+- Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module
 - Up to four concurrent instances supported via counting semaphore with `fs4` advisory locks

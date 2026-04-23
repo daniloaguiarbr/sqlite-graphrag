@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/purge.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/purge.schema.json",
   "title": "PurgeResponse",
-  "description": "Response emitted by `neurographrag purge` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag purge` on stdout as a single JSON line.",
   "type": "object",
   "required": ["purged_count", "bytes_freed", "dry_run", "namespace", "elapsed_ms"],
   "additionalProperties": false,

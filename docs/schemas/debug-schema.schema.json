@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/debug-schema.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/debug-schema.schema.json",
   "title": "DebugSchemaResponse",
-  "description": "Response emitted by the hidden `neurographrag __debug_schema` subcommand on stdout as a single JSON line. Intended for diagnostic tooling only. The binary exposes this command as `__debug_schema` (double-underscore prefix) while this schema file uses the kebab-case convention `debug-schema.schema.json`. IMPORTANT: `user_version` is a compile-time constant (SCHEMA_USER_VERSION) that is ONE AHEAD of the applied migrations count; `schema_version` is `MAX(version)` from `refinery_schema_history` (the last applied migration). Both values are logically correct but serve distinct purposes: `user_version` signals the target schema the binary was built for; `schema_version` signals what is actually applied in the database. A healthy database has `user_version = schema_version + 1`.",
+  "description": "Response emitted by the hidden `sqlite-graphrag __debug_schema` subcommand on stdout as a single JSON line. Intended for diagnostic tooling only. The binary exposes this command as `__debug_schema` (double-underscore prefix) while this schema file uses the kebab-case convention `debug-schema.schema.json`. IMPORTANT: `user_version` is a compile-time constant (SCHEMA_USER_VERSION) that is ONE AHEAD of the applied migrations count; `schema_version` is `MAX(version)` from `refinery_schema_history` (the last applied migration). Both values are logically correct but serve distinct purposes: `user_version` signals the target schema the binary was built for; `schema_version` signals what is actually applied in the database. A healthy database has `user_version = schema_version + 1`.",
   "$defs": {
     "SchemaObject": {
       "type": "object",

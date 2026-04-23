@@ -5,7 +5,7 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 
 
 ## Versões Suportadas
-- A tabela abaixo lista quais versões do neurographrag recebem correções de segurança atualmente
+- A tabela abaixo lista quais versões do sqlite-graphrag recebem correções de segurança atualmente
 - Usuários em linhas descontinuadas são FORTEMENTE encorajados a atualizar para uma versão suportada
 - Atualizar cedo reduz janela de exposição e alinha com a política de divulgação coordenada
 
@@ -17,8 +17,8 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 
 
 ## Reportando uma Vulnerabilidade
-- OBRIGATÓRIO reportar questões de segurança via GitHub Security Advisories como canal privado primário
-- Abra um advisory em https://github.com/daniloaguiarbr/neurographrag/security/advisories/new
+- OBRIGATÓRIO reportar questões de segurança por email em daniloaguiarbr@gmail.com enquanto o repositório renomeado ainda não for público
+- Quando o repositório público `sqlite-graphrag` existir, use GitHub Security Advisories lá como canal privado preferencial
 - JAMAIS abra issue pública, pull request ou discussão no GitHub para relatos de segurança
 - Inclua reprodução mínima, versões afetadas e comportamento esperado versus observado
 - Inclua detalhes do ambiente como sistema operacional, arquitetura e versão do rustc
@@ -64,7 +64,7 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 
 
 ## Melhores Práticas para Usuários
-- SEMPRE instale neurographrag com `cargo install --locked neurographrag` para respeitar pins fixos
+- SEMPRE instale sqlite-graphrag com `cargo install --path .` para respeitar pins fixos
 - SEMPRE rotacione seus tokens de API do `crates.io` em intervalo regular
 - SEMPRE mantenha sua toolchain rustc atualizada na última release estável compatível com MSRV 1.88
 - SEMPRE revise entradas do CHANGELOG antes de atualizar entre versões majors

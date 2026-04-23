@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/migrate.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/migrate.schema.json",
   "title": "MigrateResponse",
-  "description": "Response emitted by `neurographrag migrate` on stdout as a single JSON line. Without `--status` returns migration result; with `--status` returns applied migration list.",
+  "description": "Response emitted by `sqlite-graphrag migrate` on stdout as a single JSON line. Without `--status` returns migration result; with `--status` returns applied migration list.",
   "$defs": {
     "MigrationEntry": {
       "type": "object",
@@ -18,7 +18,7 @@
   "oneOf": [
     {
       "title": "MigrateRunResponse",
-      "description": "Emitted when `neurographrag migrate` runs without `--status`.",
+      "description": "Emitted when `sqlite-graphrag migrate` runs without `--status`.",
       "type": "object",
       "required": ["db_path", "schema_version", "status", "elapsed_ms"],
       "additionalProperties": false,
@@ -31,7 +31,7 @@
     },
     {
       "title": "MigrateStatusResponse",
-      "description": "Emitted when `neurographrag migrate --status` is called.",
+      "description": "Emitted when `sqlite-graphrag migrate --status` is called.",
       "type": "object",
       "required": ["db_path", "schema_version", "applied_migrations", "elapsed_ms"],
       "additionalProperties": false,

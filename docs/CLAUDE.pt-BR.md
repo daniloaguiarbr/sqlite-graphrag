@@ -1,8 +1,8 @@
-# CLAUDE.md: Instruções para Claude Code Trabalhando em neurographrag
+# CLAUDE.md: Instruções para Claude Code Trabalhando em sqlite-graphrag
 
 
 ## Regra Zero: Lei Inviolável
-- Este documento é LEI SUPREMA para sessões do Claude Code em neurographrag.
+- Este documento é LEI SUPREMA para sessões do Claude Code em sqlite-graphrag.
 - Você DEVE reler este documento ANTES de CADA ação.
 - Você DEVE citar a regra aplicável ANTES de agir sobre ela.
 - Toda violação resulta em FALHA CRÍTICA IMEDIATA.

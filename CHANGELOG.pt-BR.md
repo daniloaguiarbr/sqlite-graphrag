@@ -10,7 +10,10 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
-## [2.3.0] - 2026-04-19
+## [1.0.0] - 2026-04-19
+
+- Primeira release pública sob o nome `sqlite-graphrag`
+- O conjunto de funcionalidades deriva do legado `neurographrag v2.3.0`
 
 ### Corrigido
 - consulta SQL de graph entities agora usa o nome de coluna correto (NG-V220-01 CRITICAL)
@@ -21,7 +24,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - documentação de forget remove flag --yes inexistente (NV-001)
 - documentação de list referencia campo items correto (NV-006)
 - documentação de related referencia campo results correto (NV-010)
-- MIGRATION.md referencia comando de instalação v2.3.0 (GAP-DOC-01)
+- MIGRATION.md agora documenta a transição de rename e o plano de release `v1.0.0`
 
 ### Adicionado
 - flag obrigatória --relation de unlink documentada (NV-003)
@@ -122,7 +125,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ### Alterado
 - Varredura de docs EN (T9): schemas de recall, hybrid-search, list, health, stats alinhados com saída real do binário; pesos corrigidos 0.6/0.4 → 1.0/1.0; namespace padrão documentado como `global`; alias `--json` no-op documentado; `related` documentado para receber nome da memória e não ID
-- Varredura de docs PT (T10): COOKBOOK.pt-BR.md, CROSS_PLATFORM.pt-BR.md, AGENTS.pt-BR.md, README.pt-BR.md, skill/neurographrag-pt/SKILL.md, llms.pt-BR.txt alinhados espelhando as correções EN do T9
+- Varredura de docs PT (T10): COOKBOOK.pt-BR.md, CROSS_PLATFORM.pt-BR.md, AGENTS.pt-BR.md, README.pt-BR.md, skill/sqlite-graphrag-pt/SKILL.md, llms.pt-BR.txt alinhados espelhando as correções EN do T9
 - 18 arquivos-fonte binário atualizados; 1 arquivo novo criado (src/parsers/mod.rs)
 - 283 testes PASS, zero warnings de clippy, zero erros de check após alterações no binário
 
@@ -160,7 +163,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ### Documentação
 - `27 agentes de IA` padronizado como contagem oficial em todo o projeto
-- Evidência: plano de testes de 2026-04-19 catalogou 31 gaps em `/tmp/neurographrag-testplan-v2.0.2/gaps.md`; v2.0.3 fecha todos os 31
+- Evidência: plano de testes de 2026-04-19 catalogou 31 gaps em `/tmp/sqlite-graphrag-testplan-v2.0.2/gaps.md`; v2.0.3 fecha todos os 31
 - GAP 11 `elapsed_ms` universal em JSON adiado para v2.1.0 (requer captura de processing_time em todos os comandos)
 - GAP P1 latência < 50ms requer modo daemon planejado para v3.0.0
 
@@ -184,7 +187,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - `sync-safe-copy --output` adicionado como alias de `--dest`.
 - `related` agora aceita o nome da memória como argumento posicional.
 - `--json` aceito como no-op em `health`, `stats`, `migrate`, `namespace-detect`.
-- Flag global `--lang en|pt` com fallback via env var `NEUROGRAPHRAG_LANG`.
+- Flag global `--lang en|pt` com fallback via env var `SQLITE_GRAPHRAG_LANG`.
 - Fallback de locale `LC_ALL`/`LANG` usado para mensagens de progresso no stderr.
 - Novo módulo `i18n` com enum `Language` e helpers `init`/`current`/`tr`.
 - Helpers bilíngues adicionados em `output::emit_progress_i18n`.
@@ -281,7 +284,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - Falha de instalação em versões de `rustc` no intervalo `1.88..1.95`.
 - Causada pela dependência transitiva `constant_time_eq 0.4.3` (puxada via `blake3`).
 - Essa dependência elevou seu MSRV para 1.95.0 em uma patch release.
-- `cargo install neurographrag` sem `--locked` agora sucede.
+- `cargo install sqlite-graphrag` sem `--locked` agora sucede.
 - Pin direto `constant_time_eq = "=0.4.2"` força versão compatível com `rust-version = "1.88"`.
 
 ### Alterado
@@ -289,7 +292,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - `Cargo.toml` agora declara pin preventivo explícito `constant_time_eq = "=0.4.2"`.
 - Comentário inline documenta a razão do drift de MSRV.
 - Pin será revisitado quando `rust-version` for elevado para 1.95.
-- Instruções de instalação do `README.md` (EN e PT) atualizadas para `cargo install --locked neurographrag`.
+- Instruções de instalação do `README.md` (EN e PT) atualizadas para `cargo install --locked sqlite-graphrag`.
 - Bullet adicionado explicando a motivação para `--locked`.
 
 ### Adicionado
@@ -378,7 +381,10 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 - MSRV elevado de 1.80 para 1.88 (exigido por dependências transitivas base64ct 1.8.3, ort-sys, time).
 
-[Unreleased]: https://github.com/daniloaguiarbr/neurographrag/compare/v2.1.0...HEAD
+- Os links históricos abaixo continuam apontando para o repositório legado `neurographrag`
+- O projeto renomeado inicia sua linha pública de versões em `sqlite-graphrag v1.0.0`
+
+[Unreleased]: https://github.com/daniloaguiarbr/neurographrag/compare/v2.3.0...HEAD
 [2.1.0]: https://github.com/daniloaguiarbr/neurographrag/releases/tag/v2.1.0
 [2.0.2]: https://github.com/daniloaguiarbr/neurographrag/releases/tag/v2.0.2
 [2.0.1]: https://github.com/daniloaguiarbr/neurographrag/releases/tag/v2.0.1

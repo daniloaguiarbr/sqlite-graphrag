@@ -1,9 +1,9 @@
-//! # neurographrag
+//! # sqlite-graphrag
 //!
 //! Local GraphRAG memory for LLMs in a single SQLite file — zero external
 //! services required.
 //!
-//! `neurographrag` is a CLI-first library that persists memories, entities and
+//! `sqlite-graphrag` is a CLI-first library that persists memories, entities and
 //! typed relationships inside a single SQLite database. It combines FTS5
 //! full-text search with `sqlite-vec` KNN over locally-generated embeddings to
 //! expose a hybrid retrieval ranker tailored for LLM agents.
@@ -13,14 +13,14 @@
 //! Install and initialize once, then save and recall memories:
 //!
 //! ```bash
-//! cargo install neurographrag
-//! neurographrag init
-//! neurographrag remember \
+//! cargo install sqlite-graphrag
+//! sqlite-graphrag init
+//! sqlite-graphrag remember \
 //!     --name onboarding-note \
 //!     --type user \
 //!     --description "first memory" \
 //!     --body "hello graphrag"
-//! neurographrag recall "graphrag" --k 5
+//! sqlite-graphrag recall "graphrag" --k 5
 //! ```
 //!
 //! ## Crate layout
@@ -52,7 +52,7 @@ pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// # Examples
 ///
 /// ```
-/// use neurographrag::shutdown_requested;
+/// use sqlite_graphrag::shutdown_requested;
 ///
 /// // Em condições normais de inicialização o sinal não foi recebido.
 /// assert!(!shutdown_requested());
@@ -60,7 +60,7 @@ pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 ///
 /// ```
 /// use std::sync::atomic::Ordering;
-/// use neurographrag::{SHUTDOWN, shutdown_requested};
+/// use sqlite_graphrag::{SHUTDOWN, shutdown_requested};
 ///
 /// // Simula recebimento de sinal e verifica que a função reflete o estado.
 /// SHUTDOWN.store(true, Ordering::SeqCst);
@@ -75,7 +75,7 @@ pub fn shutdown_requested() -> bool {
 /// Token-aware chunking utilities for bodies that exceed the embedding window.
 pub mod chunking;
 
-/// `clap` definitions for the top-level `neurographrag` binary.
+/// `clap` definitions for the top-level `sqlite-graphrag` binary.
 pub mod cli;
 
 /// Subcommand handlers wired into the `clap` tree from [`cli`].
@@ -93,7 +93,7 @@ pub mod errors;
 /// Graph traversal helpers over the entities and relationships tables.
 pub mod graph;
 
-/// Bilingual message layer for human-facing stderr progress (`--lang en|pt`, `NEUROGRAPHRAG_LANG`).
+/// Bilingual message layer for human-facing stderr progress (`--lang en|pt`, `SQLITE_GRAPHRAG_LANG`).
 pub mod i18n;
 
 /// Semáforo de contagem via lock files para limitar invocações paralelas (veja [`lock::acquire_cli_slot`]).
@@ -111,7 +111,7 @@ pub mod output;
 /// Parser de argumentos dual-format: aceita Unix epoch e RFC 3339.
 pub mod parsers;
 
-/// XDG-aware filesystem paths for the database and cache directories.
+/// Filesystem paths for the project-local database and app support directories.
 pub mod paths;
 
 /// SQLite pragma helpers applied on every connection.
@@ -120,7 +120,7 @@ pub mod pragmas;
 /// Persistence layer: memories, entities, chunks and version history.
 pub mod storage;
 
-/// Fuso horário de exibição para campos `*_iso` (flag `--tz`, env `NEUROGRAPHRAG_DISPLAY_TZ`, fallback UTC).
+/// Fuso horário de exibição para campos `*_iso` (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
 pub mod tz;
 
 mod embedded_migrations {

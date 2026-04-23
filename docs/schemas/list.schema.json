@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/list.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/list.schema.json",
   "title": "ListResponse",
-  "description": "Response emitted by `neurographrag list` on stdout as a single JSON line: an object containing items array and elapsed_ms.",
+  "description": "Response emitted by `sqlite-graphrag list` on stdout as a single JSON line: an object containing items array and elapsed_ms.",
   "type": "object",
   "required": ["items", "elapsed_ms"],
   "additionalProperties": false,

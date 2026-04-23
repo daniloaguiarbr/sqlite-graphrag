@@ -7,15 +7,15 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct InitArgs {
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     #[arg(long)]
     pub model: Option<String>,
     #[arg(long)]
     pub force: bool,
     /// Namespace inicial a resolver. Alinhado à documentação bilíngue que prevê `init --namespace`.
-    /// Se fornecido, escreve `NEUROGRAPHRAG_NAMESPACE` no arquivo `.neurographrag/config.toml`
-    /// do diretório atual; caso contrário, resolve via env ou fallback `global`.
+    /// Se fornecido, sobrepõe `SQLITE_GRAPHRAG_NAMESPACE`; caso contrário, resolve via env
+    /// ou fallback `global`.
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
@@ -74,8 +74,8 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         [],
     )?;
     conn.execute(
-        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('neurographrag_version', ?1)",
-        rusqlite::params![crate::constants::NEUROGRAPHRAG_VERSION],
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('sqlite-graphrag_version', ?1)",
+        rusqlite::params![crate::constants::SQLITE_GRAPHRAG_VERSION],
     )?;
 
     output::emit_progress_i18n(

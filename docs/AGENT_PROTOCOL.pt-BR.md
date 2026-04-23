@@ -2,7 +2,7 @@
 
 
 ## Regra Zero: Lei Inviolável
-- Este documento é LEI SUPREMA para agentes de IA trabalhando em neurographrag.
+- Este documento é LEI SUPREMA para agentes de IA trabalhando em sqlite-graphrag.
 - Você DEVE reler este documento ANTES de CADA ação.
 - Você DEVE citar a regra aplicável ANTES de agir sobre ela.
 - Toda violação resulta em FALHA CRÍTICA IMEDIATA.
@@ -46,7 +46,7 @@
 
 
 ## Escopo e Não-Escopo
-- Escopo cobre CADA contribuição ao código-fonte e documentação de neurographrag.
+- Escopo cobre CADA contribuição ao código-fonte e documentação de sqlite-graphrag.
 - Escopo cobre CADA superfície CLI exposta pelos subcomandos listados aqui.
 - Escopo cobre CADA release publicado em GitHub e crates.io.
 - Não-escopo exclui forks que renomeiam a crate ou o repositório.

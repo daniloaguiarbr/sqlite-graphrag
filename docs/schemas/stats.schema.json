@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/stats.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/stats.schema.json",
   "title": "StatsResponse",
-  "description": "Response emitted by `neurographrag stats` on stdout as a single JSON line. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default. Use `--format table` for human-readable tabular output (non-JSON).",
+  "description": "Response emitted by `sqlite-graphrag stats` on stdout as a single JSON line. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default. Use `--format table` for human-readable tabular output (non-JSON).",
   "type": "object",
   "required": [
     "memories", "memories_total", "entities", "entities_total",

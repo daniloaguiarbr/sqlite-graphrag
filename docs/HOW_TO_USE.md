@@ -1,4 +1,4 @@
-# HOW TO USE neurographrag
+# HOW TO USE sqlite-graphrag
 
 > Ship persistent memory to any AI agent in 60 seconds flat, zero dollars spent
 
@@ -12,7 +12,7 @@
 - How many milliseconds separate your agent from production memory today
 - Why senior engineers in production choose SQLite over Pinecone for LLM memory
 - What changes when embeddings, search and graph live inside a single file
-- Why twenty one AI agents converge on neurographrag as their persistence layer
+- Why twenty one AI agents converge on sqlite-graphrag as their persistence layer
 - This guide answers every question above in under ten minutes of reading
 
 
@@ -39,9 +39,9 @@
 ## First Command in 60 Seconds
 ### Install — Three Shell Lines You Copy Once
 ```bash
-cargo install --locked neurographrag
-neurographrag init
-neurographrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
+cargo install --path .
+sqlite-graphrag init
+sqlite-graphrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
 ```
 - First line downloads, builds and installs the binary into `~/.cargo/bin`
 - Second line creates the SQLite database and downloads the embedding model
@@ -53,13 +53,13 @@ neurographrag remember --name first-note --type user --description "first memory
 ## Core Commands
 ### Lifecycle — Seven Subcommands You Use Daily
 ```bash
-neurographrag init --namespace my-project
-neurographrag remember --name auth-design --type decision --description "auth uses JWT" --body "Rationale documented."
-neurographrag recall "authentication strategy" --k 5 --json
-neurographrag hybrid-search "jwt design" --k 10 --rrf-k 60 --json
-neurographrag read --name auth-design
-neurographrag forget --name auth-design
-neurographrag purge --retention-days 90 --yes
+sqlite-graphrag init --namespace my-project
+sqlite-graphrag remember --name auth-design --type decision --description "auth uses JWT" --body "Rationale documented."
+sqlite-graphrag recall "authentication strategy" --k 5 --json
+sqlite-graphrag hybrid-search "jwt design" --k 10 --rrf-k 60 --json
+sqlite-graphrag read --name auth-design
+sqlite-graphrag forget --name auth-design
+sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
 - `remember` stores content, extracts entities and generates embeddings atomically
@@ -73,7 +73,7 @@ neurographrag purge --retention-days 90 --yes
 ## Advanced Patterns
 ### Recipe One — Hybrid Search With Weighted Fusion
 ```bash
-neurographrag hybrid-search "postgres migration strategy" \
+sqlite-graphrag hybrid-search "postgres migration strategy" \
   --k 20 \
   --rrf-k 60 \
   --weight-vec 0.7 \
@@ -89,9 +89,9 @@ neurographrag hybrid-search "postgres migration strategy" \
 
 ### Recipe Two — Graph Traversal for Multi-Hop Recall
 ```bash
-neurographrag link --source auth-design --target jwt-spec --relation depends-on
-neurographrag link --source jwt-spec --target rfc-7519 --relation references
-neurographrag related auth-design --hops 2 --json \
+sqlite-graphrag link --source auth-design --target jwt-spec --relation depends-on
+sqlite-graphrag link --source jwt-spec --target rfc-7519 --relation references
+sqlite-graphrag related auth-design --hops 2 --json \
   | jaq -r '.nodes[] | select(.depth == 2) | .name'
 ```
 - Two hops surface transitive knowledge invisible to pure vector search methods
@@ -105,7 +105,7 @@ neurographrag related auth-design --hops 2 --json \
 find ./docs -name "*.md" -print0 \
   | xargs -0 -n 1 -P 4 -I {} bash -c '
       name=$(basename {} .md)
-      neurographrag remember \
+      sqlite-graphrag remember \
         --name "doc-${name}" \
         --type reference \
         --description "imported from {}" \
@@ -120,8 +120,8 @@ find ./docs -name "*.md" -print0 \
 
 ### Recipe Four — Snapshot-Safe Sync With Dropbox or iCloud
 ```bash
-neurographrag sync-safe-copy --dest ~/Dropbox/neurographrag.sqlite
-ouch compress ~/Dropbox/neurographrag.sqlite ~/Dropbox/neurographrag-$(date +%Y%m%d).tar.zst
+sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite
+ouch compress ~/Dropbox/graphrag.sqlite ~/Dropbox/graphrag-$(date +%Y%m%d).tar.zst
 ```
 - `sync-safe-copy` checkpoints the WAL and copies a consistent snapshot atomically
 - Dropbox, iCloud and Google Drive NEVER corrupt the active database during sync
@@ -131,7 +131,7 @@ ouch compress ~/Dropbox/neurographrag.sqlite ~/Dropbox/neurographrag-$(date +%Y%
 
 ### Recipe Five — Integration With Claude Code Orchestrator
 ```bash
-neurographrag recall "$USER_QUERY" --k 5 --json \
+sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
   | jaq -c '{
       context: [.results[] | {name, body, score}],
       generated_at: now | todate
@@ -148,7 +148,7 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 ## Configuration and Namespace Notes
 ### Namespace Default
 - Default namespace is `global` when `--namespace` is omitted
-- Configure via `NEUROGRAPHRAG_NAMESPACE` env var to override globally
+- Configure via `SQLITE_GRAPHRAG_NAMESPACE` env var to override globally
 - Use `namespace-detect` to inspect the resolved namespace before running bulk operations
 
 ### Score Semantics
@@ -159,7 +159,7 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 ### Language Flag Aliases
 - `--lang en` forces English output regardless of system locale
 - `--lang pt`, `--lang pt-BR`, `--lang portuguese`, and `--lang PT` all force Portuguese
-- Env var `NEUROGRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
+- Env var `SQLITE_GRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
 - All aliases resolve to the same two internal variants: English and Portuguese
 
 ### JSON Output Flag
@@ -200,38 +200,39 @@ neurographrag recall "$USER_QUERY" --k 5 --json \
 
 ```bash
 # Short form — preferred in pipelines
-neurographrag recall "auth" --json | jaq '.results[].name'
+sqlite-graphrag recall "auth" --json | jaq '.results[].name'
 
 # Explicit form — identical output
-neurographrag recall "auth" --format json | jaq '.results[].name'
+sqlite-graphrag recall "auth" --format json | jaq '.results[].name'
 
 # Both forms accepted in the same pipeline
-neurographrag stats --json && neurographrag health --format json
+sqlite-graphrag stats --json && sqlite-graphrag health --format json
 ```
 
 ### DB Path Discovery
-- All commands accept `--db <PATH>` flag in addition to `NEUROGRAPHRAG_DB_PATH` env var
+- Default behavior always uses `graphrag.sqlite` in the current working directory
+- All commands accept `--db <PATH>` flag in addition to `SQLITE_GRAPHRAG_DB_PATH` env var
 - CLI flag takes precedence over environment variable
-- Use `--db` when operating multiple isolated databases in parallel processes
+- Use `--db` only when you intentionally need a database outside the current directory
 
 ### Log Format
-- `NEUROGRAPHRAG_LOG_FORMAT=json` emits tracing events as newline-delimited JSON to stderr
+- `SQLITE_GRAPHRAG_LOG_FORMAT=json` emits tracing events as newline-delimited JSON to stderr
 - Default value is `pretty`; any value other than `json` falls back to human-readable pretty format
 - Use `json` format when shipping logs to structured aggregators such as Loki or Datadog
 
 ### Display Timezone
-- `NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` applies any IANA timezone to all `*_iso` fields in JSON output
+- `SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` applies any IANA timezone to all `*_iso` fields in JSON output
 - Flag `--tz <IANA>` takes priority over the environment variable; both fall back to UTC when absent
 - Integer epoch fields (`created_at`, `updated_at`) are never affected — only the ISO string companions
 - Invalid IANA names cause exit 2 with a descriptive validation error before the command executes
 - Examples: `America/New_York`, `Europe/Berlin`, `Asia/Tokyo`, `America/Sao_Paulo`
 ```bash
 # One-off with flag
-neurographrag read --name my-note --tz America/Sao_Paulo
+sqlite-graphrag read --name my-note --tz America/Sao_Paulo
 
 # Persistent via env var
-export NEUROGRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-neurographrag list | jaq '.items[].updated_at_iso'
+export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
+sqlite-graphrag list | jaq '.items[].updated_at_iso'
 ```
 
 ### Concurrency Cap
@@ -250,8 +251,8 @@ neurographrag list | jaq '.items[].updated_at_iso'
 - Removes entities that have no memories attached and no graph relationships
 - Run periodically after bulk `forget` operations to keep the entity table lean
 ```bash
-neurographrag cleanup-orphans --dry-run
-neurographrag cleanup-orphans --yes
+sqlite-graphrag cleanup-orphans --dry-run
+sqlite-graphrag cleanup-orphans --yes
 ```
 - Prerequisites: none — works on any initialized database
 - `--dry-run` prints the count of orphan entities without deleting them
@@ -263,9 +264,9 @@ neurographrag cleanup-orphans --yes
 - Alters the body or description of an existing memory in-place creating a new version
 - Use `--expected-updated-at` for optimistic locking in concurrent agent pipelines
 ```bash
-neurographrag edit --name auth-design --body "Updated rationale after RFC review"
-neurographrag edit --name auth-design --description "New short description"
-neurographrag edit --name auth-design \
+sqlite-graphrag edit --name auth-design --body "Updated rationale after RFC review"
+sqlite-graphrag edit --name auth-design --description "New short description"
+sqlite-graphrag edit --name auth-design \
   --body-file ./updated-body.md \
   --expected-updated-at "2026-04-19T12:00:00Z"
 ```
@@ -280,9 +281,9 @@ neurographrag edit --name auth-design \
 - Exports the full entity-relationship snapshot in JSON, DOT or Mermaid format
 - DOT and Mermaid formats enable visualization in Graphviz, VSCode or mermaid.live
 ```bash
-neurographrag graph --format json
-neurographrag graph --format dot --output graph.dot
-neurographrag graph --format mermaid --output graph.mmd
+sqlite-graphrag graph --format json
+sqlite-graphrag graph --format dot --output graph.dot
+sqlite-graphrag graph --format mermaid --output graph.mmd
 ```
 - Prerequisites: at least one `link` or `remember` call must have created entities
 - `--format json` (default) emits `{"nodes": [...], "edges": [...]}` to stdout
@@ -295,8 +296,8 @@ neurographrag graph --format mermaid --output graph.mmd
 - Traverses the entity graph from a starting node up to a given depth
 - Use `--from` to name the root entity and `--depth` to control how many hops to follow
 ```bash
-neurographrag graph traverse --from auth-design --depth 2 --format json
-neurographrag graph traverse --from jwt-spec --depth 1
+sqlite-graphrag graph traverse --from auth-design --depth 2 --format json
+sqlite-graphrag graph traverse --from jwt-spec --depth 1
 ```
 - Prerequisites: the root entity named by `--from` must exist in the graph
 - `--from <NAME>` sets the root entity; the value is the entity name (required)
@@ -309,8 +310,8 @@ neurographrag graph traverse --from jwt-spec --depth 1
 - Returns aggregate statistics about the entity graph in the target namespace
 - Use to inspect graph density and connectivity before running traversals
 ```bash
-neurographrag graph stats --format json
-neurographrag graph stats --namespace my-project
+sqlite-graphrag graph stats --format json
+sqlite-graphrag graph stats --namespace my-project
 ```
 - Prerequisites: at least one entity must exist in the target namespace
 - Output fields: `entity_count`, `relationship_count`, `avg_connections`, `namespace`
@@ -321,10 +322,10 @@ neurographrag graph stats --namespace my-project
 - Lists typed graph entities with optional filters for type, namespace, limit, and offset
 - Use to enumerate all entities the graph knows about before running `traverse` or `link`
 ```bash
-neurographrag graph entities --json
-neurographrag graph entities --entity-type concept --limit 20
-neurographrag graph entities --entity-type person --namespace my-project --json
-neurographrag graph entities --limit 50 --offset 100 --json
+sqlite-graphrag graph entities --json
+sqlite-graphrag graph entities --entity-type concept --limit 20
+sqlite-graphrag graph entities --entity-type person --namespace my-project --json
+sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```
 - Prerequisites: at least one entity must exist — created via `remember` or explicit `link`
 - `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
@@ -338,9 +339,9 @@ neurographrag graph entities --limit 50 --offset 100 --json
 - Runs an integrity check and reports storage statistics for the active database
 - Use in agent startup scripts to detect corrupted databases before processing begins
 ```bash
-neurographrag health
-neurographrag health --json
-neurographrag health --format json
+sqlite-graphrag health
+sqlite-graphrag health --json
+sqlite-graphrag health --format json
 ```
 - Prerequisites: an initialized database must exist
 - Runs `PRAGMA integrity_check` first; returns exit code 10 with `integrity_ok: false` if corruption is detected
@@ -356,7 +357,7 @@ neurographrag health --format json
 - Lists all immutable versions of a named memory in reverse chronological order
 - Use the returned `version` integer with `restore` to roll back to any prior state
 ```bash
-neurographrag history --name auth-design
+sqlite-graphrag history --name auth-design
 ```
 - Prerequisites: the memory must exist and have at least one stored version
 - Output is a JSON array with fields `version`, `updated_at`, and a truncated `body`
@@ -366,22 +367,22 @@ neurographrag history --name auth-design
 
 ### Using namespace-detect
 - Resolves and prints the effective namespace for the current invocation context
-- Use to debug `--namespace`, `NEUROGRAPHRAG_NAMESPACE`, and auto-detect conflicts
+- Use to debug `--namespace`, `SQLITE_GRAPHRAG_NAMESPACE`, and auto-detect conflicts
 ```bash
-neurographrag namespace-detect
-neurographrag namespace-detect --namespace my-project
+sqlite-graphrag namespace-detect
+sqlite-graphrag namespace-detect --namespace my-project
 ```
 - Prerequisites: none — works without a database present
-- Output JSON with fields `namespace`, `source`, `cwd`, `project_config_path`, and `projects_mapping_path`
-- Precedence order: `--namespace` flag > `NEUROGRAPHRAG_NAMESPACE` env > auto-detect
+- Output JSON with fields `namespace`, `source`, `cwd`, and `elapsed_ms`
+- Precedence order: `--namespace` flag > `SQLITE_GRAPHRAG_NAMESPACE` env > auto-detect
 - Exit code 0: resolution succeeded
 
 ### Using __debug_schema
 - Hidden diagnostic subcommand that dumps the full SQLite schema and migration history
 - Use when troubleshooting schema drift between binary versions or after failed migrations
 ```bash
-neurographrag __debug_schema
-neurographrag __debug_schema --db /path/to/custom.db
+sqlite-graphrag __debug_schema
+sqlite-graphrag __debug_schema --db /path/to/custom.db
 ```
 - Prerequisites: an initialized database must exist at the default or specified path
 - Output schema: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`
@@ -393,10 +394,10 @@ neurographrag __debug_schema --db /path/to/custom.db
 
 ### Using rename
 - Renames a memory preserving its full version history and entity graph connections
-- Use `--name`/`--old` and `--new-name`/`--new` interchangeably (aliases from v2.0.1)
+- Use `--name`/`--old` and `--new-name`/`--new` interchangeably; legacy aliases remain supported
 ```bash
-neurographrag rename --name old-name --new-name new-name
-neurographrag rename --old old-name --new new-name
+sqlite-graphrag rename --name old-name --new-name new-name
+sqlite-graphrag rename --old old-name --new new-name
 ```
 - Prerequisites: the source memory must exist; the target name must be available
 - `--expected-updated-at` enables optimistic locking to prevent concurrent rename conflicts
@@ -409,8 +410,8 @@ neurographrag rename --old old-name --new new-name
 - Creates a new version of a memory based on an older version body without overwriting history
 - Use `history` first to discover available version numbers before calling `restore`
 ```bash
-neurographrag history --name auth-design
-neurographrag restore --name auth-design --version 2
+sqlite-graphrag history --name auth-design
+sqlite-graphrag restore --name auth-design --version 2
 ```
 - Prerequisites: the memory must exist and the target version number must be valid
 - Restore does NOT overwrite history — it appends a new version with the old body
@@ -420,10 +421,10 @@ neurographrag restore --name auth-design --version 2
 
 ### Using unlink
 - Removes a specific typed edge between two entities from the graph
-- Use `--from`/`--source` and `--to`/`--target` interchangeably (aliases from v2.0.1)
+- Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
 ```bash
-neurographrag unlink --from auth-design --to jwt-spec --relation depends-on
-neurographrag unlink --source auth-design --target jwt-spec --relation depends-on
+sqlite-graphrag unlink --from auth-design --to jwt-spec --relation depends-on
+sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends-on
 ```
 - Prerequisites: the edge must exist; all three of `--from`, `--to`, and `--relation` are required
 - Valid `--relation` values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
@@ -437,15 +438,15 @@ neurographrag unlink --source auth-design --target jwt-spec --relation depends-o
 - Prerequisite: entities must exist in the graph before creating explicit links
 - The `remember` command auto-extracts entities from the `--body` text during ingestion
 - Create the memories that reference the entities first, then call `link` to type the edges
-- Use `--from`/`--source` and `--to`/`--target` interchangeably (aliases from v2.0.1)
+- Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
 - Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Attempting to link entities whose names do not match a typed node returns exit code 4
 - JSON output: `{action, from, source, to, target, relation, weight, namespace}`
 - Both `from` and `source` carry the same value; both `to` and `target` carry the same value
 ```bash
-neurographrag remember --name auth-design --type decision --description "..." --body "Uses JWT and OAuth2."
-neurographrag remember --name jwt-spec --type reference --description "..." --body "RFC 7519 defines JWT."
-neurographrag link --from auth-design --to jwt-spec --relation depends-on
+sqlite-graphrag remember --name auth-design --type decision --description "..." --body "Uses JWT and OAuth2."
+sqlite-graphrag remember --name jwt-spec --type reference --description "..." --body "RFC 7519 defines JWT."
+sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
 ```
 
 ### Note on forget
@@ -471,7 +472,7 @@ neurographrag link --from auth-design --to jwt-spec --relation depends-on
 - `--force-merge` updates an existing memory body instead of returning exit code 2 on duplicate name
 - Use `--force-merge` in idempotent pipeline loops where the same key may appear multiple times
 ```bash
-neurographrag remember --name config-notes --type project \
+sqlite-graphrag remember --name config-notes --type project \
   --description "updated config" --body "New body content" --force-merge
 ```
 - `--entities-file` accepts a JSON file where each object must include an `entity_type` field
@@ -484,14 +485,14 @@ neurographrag remember --name config-notes --type project \
 - Claude Code from Anthropic consumes JSON via stdin and orchestrates via exit codes
 - Codex from OpenAI reads hybrid-search output to ground generation in local memory
 - Gemini CLI from Google parses `--json` output to inject facts into prompts
-- Opencode open source harness treats neurographrag as a native MCP-style backend
+- Opencode open source harness treats sqlite-graphrag as a native MCP-style backend
 - OpenClaw agent framework uses `recall` as its long-term memory tier natively
 - Paperclip research assistant persists findings across sessions via `remember` atomically
 - VS Code Copilot from Microsoft invokes the CLI through integrated terminal tasks
 - Google Antigravity platform calls the binary inside its sandboxed worker runtime
 - Windsurf from Codeium routes indexed project memories through `hybrid-search` queries
 - Cursor editor hooks `recall` into its chat panel for context-aware completions
-- Zed editor invokes neurographrag as an external tool in its assistant channel
+- Zed editor invokes sqlite-graphrag as an external tool in its assistant channel
 - Aider coding agent queries `related` for multi-hop reasoning over commit history
 - Jules from Google Labs uses exit codes to gate automated pull request reviews
 - Kilo Code autonomous agent delegates long-term memory to the local SQLite file
@@ -500,13 +501,13 @@ neurographrag remember --name config-notes --type project \
 - Continue open source assistant integrates via its custom context provider API
 - Factory agent framework stores decision logs for auditable multi-agent workflows
 - Augment Code assistant hydrates its embeddings cache from `hybrid-search` results
-- JetBrains AI Assistant runs neurographrag as a side process for cross-project memory
+- JetBrains AI Assistant runs sqlite-graphrag as a side process for cross-project memory
 - OpenRouter proxy layer injects retrieved context before forwarding requests upstream
 
 
 ## Common Errors
 ### Troubleshooting — Five Failures and Their Fixes
-- Error `exit 10` signals database lock, run `neurographrag vacuum` to checkpoint WAL
+- Error `exit 10` signals database lock, run `sqlite-graphrag vacuum` to checkpoint WAL
 - Error `exit 12` signals `sqlite-vec` load failure, verify SQLite version is 3.40 plus
 - Error `exit 13` signals database busy, lower `--max-concurrency` or raise `--wait-lock`
 - Error `exit 75` signals slots exhausted, retry after a short backoff interval
@@ -519,4 +520,4 @@ neurographrag remember --name config-notes --type project \
 - Read `INTEGRATIONS.md` for vendor specific configuration of all 27 agents above
 - Read `docs/AGENTS.md` for multi-agent orchestration patterns using Agent Teams
 - Read `docs/CROSS_PLATFORM.md` to understand target binaries across nine platforms
-- Star the repository at github.com/daniloaguiarbr/neurographrag to track releases
+- Star the public repository once `sqlite-graphrag` is published to track releases

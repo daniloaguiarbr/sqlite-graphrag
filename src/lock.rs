@@ -23,17 +23,17 @@ use crate::errors::AppError;
 
 /// Retorna o caminho do arquivo de lock para o slot indicado.
 ///
-/// Honra `NEUROGRAPHRAG_CACHE_DIR` quando definida (útil para testes, containers
+/// Honra `SQLITE_GRAPHRAG_CACHE_DIR` quando definida (útil para testes, containers
 /// e caches em NFS), caindo para o diretório de cache padrão do SO via
 /// `directories::ProjectDirs`. O slot deve ser 1-based.
 fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
-    let cache = if let Some(override_dir) = std::env::var_os("NEUROGRAPHRAG_CACHE_DIR") {
+    let cache = if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {
         PathBuf::from(override_dir)
     } else {
-        let dirs = ProjectDirs::from("", "", "neurographrag").ok_or_else(|| {
+        let dirs = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
             AppError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "não foi possível determinar o diretório de cache para os lock files do neurographrag",
+                "não foi possível determinar o diretório de cache para os lock files do sqlite-graphrag",
             ))
         })?;
         dirs.cache_dir().to_path_buf()

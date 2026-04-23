@@ -1,10 +1,10 @@
 ---
-name: neurographrag
+name: sqlite-graphrag
 description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, recall earlier context, hybrid search, entity graph, SQLite memory, local RAG, offline embeddings, fastembed, sqlite-vec, multilingual-e5, KNN search, memory-safe copy, FTS5 and vec fusion. Auto-invoke even without explicit skill mention whenever user describes problem of agent losing context between sessions or wants offline vector database in Rust. Keywords memory RAG GraphRAG SQLite vector embeddings Claude Codex Cursor Windsurf offline local persistent graph entity.
 ---
 
 
-# neurographrag
+# sqlite-graphrag
 
 
 ## Rule Zero: Inviolable Law
@@ -16,6 +16,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 ## Mission
 - Deliver offline GraphRAG memory in a single portable SQLite file.
+- Default to `graphrag.sqlite` in the current working directory unless override is explicit.
 - Replace Pinecone, Weaviate, and Chroma for local-first AI agent workflows.
 - Combine FTS5 full-text with `sqlite-vec` KNN fusion for hybrid recall.
 - Serve deterministic JSON output so any agent orchestrator parses it safely.
@@ -44,6 +45,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Input `--name <slug>` accepts kebab-case identifier up to 128 characters.
 - Input `--type <kind>` accepts `user`, `feedback`, `project`, or `reference`.
 - Input `--body <text>` accepts raw text or reads stdin when omitted with `-`.
+- Database default is `./graphrag.sqlite` in the invocation directory.
+- Database override happens only through `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`.
 - Input `--lang <en|pt>` selects output language for human-readable messages.
 - Output with `--json` emits `memory_id`, `version`, `namespace`, and `operation`.
 - Output without `--json` emits Markdown blocks under language-aware headings.
@@ -85,29 +88,29 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Exit 5 signals a namespace limit reached; pass `--namespace` explicitly.
 - Exit 13 signals a partial batch failure; inspect `.warnings[]` for details.
 - Exit 15 signals a database busy error; wait and retry with backoff.
-- Exit 73 signals a lock file busy; another process holds the memory lock.
+- Exit 75 signals a lock file busy or slot exhaustion; another process still owns the shared capacity.
 - Exit 75 signals a lock timeout; the previous process never released cleanly.
 - Exit 77 signals a low memory condition; free RAM before retry.
 
 
 ## Workflow
-- Step 1 install with `cargo install neurographrag` and verify `neurographrag --version`.
-- Step 2 initialize with `neurographrag init --namespace default --lang en`.
-- Step 3 store with `neurographrag remember --name ticket-42 --type user --description "ticket context" --body "..."`.
-- Step 4 retrieve with `neurographrag recall "authentication bug" --json --k 5`.
-- Step 5 fuse with `neurographrag hybrid-search "refactor plan" --json --k 8`.
-- Step 6 inspect with `neurographrag list --type user --json --limit 20`.
-- Step 7 clean with `neurographrag purge --older-than 90d --dry-run`.
-- Step 8 validate with `neurographrag health --json` before every CI job.
+- Step 1 install from the local checkout with `cargo install --path .` and verify `sqlite-graphrag --version`.
+- Step 2 initialize with `sqlite-graphrag init --namespace default --lang en`.
+- Step 3 store with `sqlite-graphrag remember --name ticket-42 --type user --description "ticket context" --body "..."`.
+- Step 4 retrieve with `sqlite-graphrag recall "authentication bug" --json --k 5`.
+- Step 5 fuse with `sqlite-graphrag hybrid-search "refactor plan" --json --k 8`.
+- Step 6 inspect with `sqlite-graphrag list --type user --json --limit 20`.
+- Step 7 clean with `sqlite-graphrag purge --retention-days 90 --dry-run`.
+- Step 8 validate with `sqlite-graphrag health --json` before every CI job.
 
 
 ## Examples
 - Example 1 saves a user note from stdin and captures the returned identifier.
-- `echo "Finalize auth refactor by Friday" | neurographrag remember --name auth-reminder --type user --description "auth reminder" --json`
+- `echo "Finalize auth refactor by Friday" | sqlite-graphrag remember --name auth-reminder --type user --description "auth reminder" --json`
 - Example 2 recalls top matches for an auth topic using hybrid retrieval.
-- `neurographrag hybrid-search "auth error 401" --json --k 5`
+- `sqlite-graphrag hybrid-search "auth error 401" --json --k 5`
 - Example 3 checks database integrity before a release pipeline publishes.
-- `neurographrag health --json | jaq '.integrity'`
+- `sqlite-graphrag health --json | jaq '.integrity'`
 
 
 ## Related References

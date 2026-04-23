@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/history.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/history.schema.json",
   "title": "HistoryResponse",
-  "description": "Response emitted by `neurographrag history` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag history` on stdout as a single JSON line.",
   "$defs": {
     "HistoryVersion": {
       "type": "object",

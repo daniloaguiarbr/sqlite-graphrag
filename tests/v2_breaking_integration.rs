@@ -2,10 +2,10 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 fn cmd(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c
 }
 
@@ -86,7 +86,7 @@ fn purge_retention_days_padrao_90() {
     // significa que memórias recém-deletadas NÃO são incluídas no cutoff padrão.
     // Testamos que a constante está correta sem precisar manipular timestamps.
     assert_eq!(
-        neurographrag::constants::PURGE_RETENTION_DAYS_DEFAULT,
+        sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT,
         90,
         "PURGE_RETENTION_DAYS_DEFAULT deve ser 90"
     );
@@ -150,8 +150,10 @@ fn purge_retention_days_padrao_90() {
 
 #[test]
 fn hybrid_search_response_shape_tem_results() {
-    use neurographrag::commands::hybrid_search::{HybridSearchItem, HybridSearchResponse, Weights};
-    use neurographrag::output::RecallItem;
+    use sqlite_graphrag::commands::hybrid_search::{
+        HybridSearchItem, HybridSearchResponse, Weights,
+    };
+    use sqlite_graphrag::output::RecallItem;
     let resp = HybridSearchResponse {
         query: "consulta de teste".to_string(),
         k: 5,
@@ -233,8 +235,8 @@ fn hybrid_search_response_shape_tem_results() {
 
 #[test]
 fn db_busy_exit_code_15() {
-    use neurographrag::constants::DB_BUSY_EXIT_CODE;
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::constants::DB_BUSY_EXIT_CODE;
+    use sqlite_graphrag::errors::AppError;
 
     let err = AppError::DbBusy("esgotou retries após 5 tentativas".into());
     assert_eq!(
@@ -255,8 +257,8 @@ fn db_busy_exit_code_15() {
 
 #[test]
 fn batch_partial_failure_exit_code_13() {
-    use neurographrag::constants::BATCH_PARTIAL_FAILURE_EXIT_CODE;
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::constants::BATCH_PARTIAL_FAILURE_EXIT_CODE;
+    use sqlite_graphrag::errors::AppError;
 
     let err = AppError::BatchPartialFailure {
         total: 100,
@@ -280,8 +282,8 @@ fn batch_partial_failure_exit_code_13() {
 
 #[test]
 fn name_slug_regex_permite_single_digit() {
-    use neurographrag::constants::NAME_SLUG_REGEX;
     use regex::Regex;
+    use sqlite_graphrag::constants::NAME_SLUG_REGEX;
 
     let re = Regex::new(NAME_SLUG_REGEX).unwrap();
 
@@ -297,8 +299,8 @@ fn name_slug_regex_permite_single_digit() {
 
 #[test]
 fn name_slug_regex_rejeita_prefixo_digito_multichar() {
-    use neurographrag::constants::NAME_SLUG_REGEX;
     use regex::Regex;
+    use sqlite_graphrag::constants::NAME_SLUG_REGEX;
 
     let re = Regex::new(NAME_SLUG_REGEX).unwrap();
 

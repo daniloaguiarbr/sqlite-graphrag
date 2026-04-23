@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/remember.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/remember.schema.json",
   "title": "RememberResponse",
-  "description": "Response emitted by `neurographrag remember` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag remember` on stdout as a single JSON line.",
   "type": "object",
   "required": [
     "memory_id", "name", "namespace", "action", "operation", "version",

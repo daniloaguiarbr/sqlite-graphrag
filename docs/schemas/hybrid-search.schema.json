@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/hybrid-search.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/hybrid-search.schema.json",
   "title": "HybridSearchResponse",
-  "description": "Response emitted by `neurographrag hybrid-search` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag hybrid-search` on stdout as a single JSON line.",
   "$defs": {
     "HybridSearchItem": {
       "type": "object",

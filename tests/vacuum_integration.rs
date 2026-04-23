@@ -3,10 +3,10 @@ use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn cmd(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c
 }
 
@@ -21,7 +21,7 @@ fn test_vacuum_falha_sem_init() {
         .arg("vacuum")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("neurographrag init"));
+        .stderr(predicate::str::contains("sqlite-graphrag init"));
 }
 
 #[test]
@@ -90,20 +90,20 @@ fn test_vacuum_via_env_db_path() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("custom.sqlite");
 
-    let mut init_cmd = Command::cargo_bin("neurographrag").unwrap();
+    let mut init_cmd = Command::cargo_bin("sqlite-graphrag").unwrap();
     init_cmd
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .arg("init")
         .assert()
         .success();
 
-    let mut vac_cmd = Command::cargo_bin("neurographrag").unwrap();
+    let mut vac_cmd = Command::cargo_bin("sqlite-graphrag").unwrap();
     vac_cmd
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .arg("vacuum")
         .assert()
         .success();

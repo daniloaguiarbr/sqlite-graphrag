@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/restore.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/restore.schema.json",
   "title": "RestoreResponse",
-  "description": "Response emitted by `neurographrag restore` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag restore` on stdout as a single JSON line.",
   "type": "object",
   "required": ["memory_id", "name", "version", "restored_from", "elapsed_ms"],
   "additionalProperties": false,

@@ -52,7 +52,7 @@ pub enum GraphExportFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "neurographrag")]
+#[command(name = "sqlite-graphrag")]
 #[command(version)]
 #[command(about = "Local GraphRAG memory for LLMs in a single SQLite file")]
 #[command(arg_required_else_help = true)]
@@ -79,7 +79,7 @@ pub struct Cli {
 
     /// Idioma das mensagens humanas (stderr). Aceita `en` ou `pt`.
     ///
-    /// Sem a flag, detecta via env `NEUROGRAPHRAG_LANG` e depois `LC_ALL`/`LANG`.
+    /// Sem a flag, detecta via env `SQLITE_GRAPHRAG_LANG` e depois `LC_ALL`/`LANG`.
     /// JSON de stdout é determinístico e idêntico entre idiomas — apenas
     /// strings destinadas a humanos são afetadas.
     #[arg(long, global = true, value_enum, value_name = "LANG")]
@@ -88,7 +88,7 @@ pub struct Cli {
     /// Fuso horário para campos `*_iso` no JSON de saída (ex: `America/Sao_Paulo`).
     ///
     /// Aceita qualquer nome IANA da IANA Time Zone Database. Sem a flag, usa
-    /// `NEUROGRAPHRAG_DISPLAY_TZ`; se ausente, usa UTC. Não afeta campos epoch inteiros.
+    /// `SQLITE_GRAPHRAG_DISPLAY_TZ`; se ausente, usa UTC. Não afeta campos epoch inteiros.
     #[arg(long, global = true, value_name = "IANA")]
     pub tz: Option<chrono_tz::Tz>,
 

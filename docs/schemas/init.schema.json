@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/init.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/init.schema.json",
   "title": "InitResponse",
-  "description": "Response emitted by `neurographrag init` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag init` on stdout as a single JSON line.",
   "type": "object",
   "required": ["db_path", "schema_version", "model", "dim", "namespace", "status", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "db_path":        { "type": "string", "description": "Absolute path to the SQLite database file." },
+    "db_path":        { "type": "string", "description": "Resolved path to the SQLite database file for this invocation." },
     "schema_version": { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version after migration. Emitted as string by binary." },
     "model":          { "type": "string", "description": "Embedding model name downloaded or reused." },
     "dim":            { "type": "integer", "description": "Embedding vector dimension (e.g. 384)." },

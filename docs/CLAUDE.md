@@ -1,8 +1,8 @@
-# CLAUDE.md: Instructions for Claude Code Working on neurographrag
+# CLAUDE.md: Instructions for Claude Code Working on sqlite-graphrag
 
 
 ## Rule Zero: Inviolable Law
-- This document is SUPREME LAW for Claude Code sessions on neurographrag.
+- This document is SUPREME LAW for Claude Code sessions on sqlite-graphrag.
 - You MUST re-read this document BEFORE every action.
 - You MUST cite the applicable rule BEFORE acting on it.
 - Any violation results in IMMEDIATE CRITICAL FAILURE.

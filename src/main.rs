@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use clap::Parser;
-use neurographrag::{
+use sqlite_graphrag::{
     cli::Cli,
     commands,
     constants::{
@@ -26,9 +26,10 @@ fn main() {
         }
     }
 
-    let log_level = std::env::var("NEUROGRAPHRAG_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string());
+    let log_level =
+        std::env::var("SQLITE_GRAPHRAG_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string());
     let log_format =
-        std::env::var("NEUROGRAPHRAG_LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
+        std::env::var("SQLITE_GRAPHRAG_LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
 
     if log_format == "json" {
         tracing_subscriber::fmt()
@@ -50,35 +51,35 @@ fn main() {
     // A chamada subsequente a init(cli.lang) será silenciosamente ignorada pelo OnceLock.
     {
         let args: Vec<String> = std::env::args().collect();
-        let mut lang_override: Option<neurographrag::i18n::Language> = None;
+        let mut lang_override: Option<sqlite_graphrag::i18n::Language> = None;
         let mut i = 1usize;
         while i < args.len() {
             if args[i] == "--lang" {
                 if let Some(val) = args.get(i + 1) {
-                    lang_override = neurographrag::i18n::Language::from_str_opt(val);
+                    lang_override = sqlite_graphrag::i18n::Language::from_str_opt(val);
                 }
                 i += 2;
             } else if let Some(val) = args[i].strip_prefix("--lang=") {
-                lang_override = neurographrag::i18n::Language::from_str_opt(val);
+                lang_override = sqlite_graphrag::i18n::Language::from_str_opt(val);
                 i += 1;
             } else {
                 i += 1;
             }
         }
-        neurographrag::i18n::init(lang_override);
+        sqlite_graphrag::i18n::init(lang_override);
     }
 
     let cli = Cli::parse();
 
     // Inicializar idioma global ANTES de qualquer emit_progress bilíngue.
     // Esta chamada é no-op se o pre-parse acima já inicializou o OnceLock.
-    neurographrag::i18n::init(cli.lang);
+    sqlite_graphrag::i18n::init(cli.lang);
 
-    // Inicializar fuso de exibição (flag --tz > env NEUROGRAPHRAG_DISPLAY_TZ > UTC).
-    if let Err(e) = neurographrag::tz::init(cli.tz) {
+    // Inicializar fuso de exibição (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
+    if let Err(e) = sqlite_graphrag::tz::init(cli.tz) {
         eprintln!(
             "{}: {}",
-            neurographrag::i18n::prefixo_erro(),
+            sqlite_graphrag::i18n::prefixo_erro(),
             e.localized_message()
         );
         std::process::exit(e.exit_code());
@@ -86,9 +87,9 @@ fn main() {
 
     // Validar flags antes de qualquer inicialização pesada.
     if let Err(msg) = cli.validate_flags() {
-        let prefix = match neurographrag::i18n::current() {
-            neurographrag::i18n::Language::English => "error",
-            neurographrag::i18n::Language::Portugues => "erro",
+        let prefix = match sqlite_graphrag::i18n::current() {
+            sqlite_graphrag::i18n::Language::English => "error",
+            sqlite_graphrag::i18n::Language::Portugues => "erro",
         };
         eprintln!("{prefix}: {msg}");
         std::process::exit(2);
@@ -99,7 +100,7 @@ fn main() {
         if let Err(e) = check_available_memory(MIN_AVAILABLE_MEMORY_MB) {
             eprintln!(
                 "{}: {}",
-                neurographrag::i18n::prefixo_erro(),
+                sqlite_graphrag::i18n::prefixo_erro(),
                 e.localized_message()
             );
             std::process::exit(e.exit_code());
@@ -117,7 +118,7 @@ fn main() {
         Err(e) => {
             eprintln!(
                 "{}: {}",
-                neurographrag::i18n::prefixo_erro(),
+                sqlite_graphrag::i18n::prefixo_erro(),
                 e.localized_message()
             );
             std::process::exit(e.exit_code());
@@ -134,40 +135,42 @@ fn main() {
     }
 
     let result = match cli.command {
-        neurographrag::cli::Commands::Init(args) => commands::init::run(args),
-        neurographrag::cli::Commands::Remember(args) => commands::remember::run(args),
-        neurographrag::cli::Commands::Recall(args) => commands::recall::run(args),
-        neurographrag::cli::Commands::Read(args) => commands::read::run(args),
-        neurographrag::cli::Commands::List(args) => commands::list::run(args),
-        neurographrag::cli::Commands::Forget(args) => commands::forget::run(args),
-        neurographrag::cli::Commands::Purge(args) => commands::purge::run(args),
-        neurographrag::cli::Commands::Rename(args) => commands::rename::run(args),
-        neurographrag::cli::Commands::Edit(args) => commands::edit::run(args),
-        neurographrag::cli::Commands::History(args) => commands::history::run(args),
-        neurographrag::cli::Commands::Restore(args) => commands::restore::run(args),
-        neurographrag::cli::Commands::HybridSearch(args) => commands::hybrid_search::run(args),
-        neurographrag::cli::Commands::Health(args) => commands::health::run(args),
-        neurographrag::cli::Commands::Migrate(args) => commands::migrate::run(args),
-        neurographrag::cli::Commands::NamespaceDetect(args) => {
+        sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
+        sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
+        sqlite_graphrag::cli::Commands::Recall(args) => commands::recall::run(args),
+        sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
+        sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),
+        sqlite_graphrag::cli::Commands::Forget(args) => commands::forget::run(args),
+        sqlite_graphrag::cli::Commands::Purge(args) => commands::purge::run(args),
+        sqlite_graphrag::cli::Commands::Rename(args) => commands::rename::run(args),
+        sqlite_graphrag::cli::Commands::Edit(args) => commands::edit::run(args),
+        sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
+        sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
+        sqlite_graphrag::cli::Commands::HybridSearch(args) => commands::hybrid_search::run(args),
+        sqlite_graphrag::cli::Commands::Health(args) => commands::health::run(args),
+        sqlite_graphrag::cli::Commands::Migrate(args) => commands::migrate::run(args),
+        sqlite_graphrag::cli::Commands::NamespaceDetect(args) => {
             commands::namespace_detect::run(args)
         }
-        neurographrag::cli::Commands::Optimize(args) => commands::optimize::run(args),
-        neurographrag::cli::Commands::Stats(args) => commands::stats::run(args),
-        neurographrag::cli::Commands::SyncSafeCopy(args) => commands::sync_safe_copy::run(args),
-        neurographrag::cli::Commands::Vacuum(args) => commands::vacuum::run(args),
-        neurographrag::cli::Commands::Link(args) => commands::link::run(args),
-        neurographrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
-        neurographrag::cli::Commands::Related(args) => commands::related::run(args),
-        neurographrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
-        neurographrag::cli::Commands::CleanupOrphans(args) => commands::cleanup_orphans::run(args),
-        neurographrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
+        sqlite_graphrag::cli::Commands::Optimize(args) => commands::optimize::run(args),
+        sqlite_graphrag::cli::Commands::Stats(args) => commands::stats::run(args),
+        sqlite_graphrag::cli::Commands::SyncSafeCopy(args) => commands::sync_safe_copy::run(args),
+        sqlite_graphrag::cli::Commands::Vacuum(args) => commands::vacuum::run(args),
+        sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
+        sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
+        sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
+        sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
+        sqlite_graphrag::cli::Commands::CleanupOrphans(args) => {
+            commands::cleanup_orphans::run(args)
+        }
+        sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };
 
     if let Err(e) = result {
         tracing::error!(error = %e);
         eprintln!(
             "{}: {}",
-            neurographrag::i18n::prefixo_erro(),
+            sqlite_graphrag::i18n::prefixo_erro(),
             e.localized_message()
         );
         std::process::exit(e.exit_code());

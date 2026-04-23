@@ -9,7 +9,7 @@ use std::time::Instant;
 
 #[derive(clap::Args)]
 pub struct HealthArgs {
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
     #[arg(long, default_value_t = false)]
@@ -255,7 +255,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             None
         } else {
             Some(format!(
-                "modelo ausente em {}; execute 'neurographrag models download'",
+                "modelo ausente em {}; execute 'sqlite-graphrag models download'",
                 model_dir.display()
             ))
         },

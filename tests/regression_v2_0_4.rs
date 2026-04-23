@@ -14,7 +14,7 @@
 
 #[test]
 fn regression_v2_0_4_exit_13_apenas_batch_partial() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::BatchPartialFailure {
         total: 5,
         failed: 2,
@@ -32,7 +32,7 @@ fn regression_v2_0_4_exit_13_apenas_batch_partial() {
 
 #[test]
 fn regression_v2_0_4_exit_15_db_busy() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::DbBusy("database is locked".into());
     assert_eq!(
         err.exit_code(),
@@ -43,7 +43,7 @@ fn regression_v2_0_4_exit_15_db_busy() {
 
 #[test]
 fn regression_v2_0_4_exit_13_e_15_sao_distintos() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let batch = AppError::BatchPartialFailure {
         total: 3,
         failed: 1,
@@ -62,7 +62,7 @@ fn regression_v2_0_4_exit_13_e_15_sao_distintos() {
 
 #[test]
 fn regression_v2_0_4_exit_75_lock_busy_nao_73() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::LockBusy("outra instância segura o lock".into());
     assert_eq!(err.exit_code(), 75, "LockBusy DEVE usar exit 75 (não 73)");
     assert_ne!(err.exit_code(), 73, "LockBusy NÃO deve usar exit 73");
@@ -70,7 +70,7 @@ fn regression_v2_0_4_exit_75_lock_busy_nao_73() {
 
 #[test]
 fn regression_v2_0_4_exit_75_all_slots_full_nao_73() {
-    use neurographrag::errors::AppError;
+    use sqlite_graphrag::errors::AppError;
     let err = AppError::AllSlotsFull {
         max: 4,
         waited_secs: 30,
@@ -105,7 +105,7 @@ fn regression_v2_0_4_docs_agents_nao_menciona_exit_73() {
 
 #[test]
 fn regression_v2_0_4_purge_retention_days_default_eh_90() {
-    use neurographrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
+    use sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
     assert_eq!(
         PURGE_RETENTION_DAYS_DEFAULT, 90,
         "PURGE_RETENTION_DAYS_DEFAULT DEVE ser 90 — documentação foi corrigida de 30 para 90"
@@ -114,7 +114,7 @@ fn regression_v2_0_4_purge_retention_days_default_eh_90() {
 
 #[test]
 fn regression_v2_0_4_purge_retention_days_nao_eh_30() {
-    use neurographrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
+    use sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
     assert_ne!(
         PURGE_RETENTION_DAYS_DEFAULT, 30,
         "PURGE_RETENTION_DAYS_DEFAULT NÃO deve ser 30 (valor antigo da documentação desatualizada)"

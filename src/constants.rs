@@ -117,7 +117,7 @@ pub const PASSAGE_PREFIX: &str = "passage: ";
 pub const QUERY_PREFIX: &str = "query: ";
 
 /// Crate version string sourced from `CARGO_PKG_VERSION` at build time.
-pub const NEUROGRAPHRAG_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SQLITE_GRAPHRAG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// PRD-canonical regex que valida nomes e namespaces. Permite 1 char `[a-z0-9]`
 /// OU string de 2-80 chars começando com letra e terminando com letra/dígito,

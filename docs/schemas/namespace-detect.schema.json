@@ -1,21 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/namespace-detect.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/namespace-detect.schema.json",
   "title": "NamespaceResolution",
-  "description": "Response emitted by `neurographrag namespace-detect` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error.",
+  "description": "Response emitted by `sqlite-graphrag namespace-detect` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error.",
   "type": "object",
-  "required": ["namespace", "source", "cwd", "project_config_path", "projects_mapping_path", "elapsed_ms"],
+  "required": ["namespace", "source", "cwd", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "namespace":             { "type": "string", "description": "Resolved namespace string." },
     "source":                {
       "type": "string",
-      "enum": ["explicit_flag", "environment", "project_config", "projects_mapping", "default"],
+      "enum": ["explicit_flag", "environment", "default"],
       "description": "How the namespace was resolved."
     },
     "cwd":                   { "type": "string", "description": "Absolute path of the working directory at resolution time." },
-    "project_config_path":   { "type": "string", "description": "Path checked for .neurographrag/config.toml." },
-    "projects_mapping_path": { "type": "string", "description": "Path checked for projects.toml." },
     "elapsed_ms":            { "type": "integer", "minimum": 0, "description": "Wall-clock time in milliseconds." }
   }
 }

@@ -1,12 +1,12 @@
 // Suite 3 — Validação de schema e migrations V001-V005
 //
-// ISOLAMENTO: cada teste usa `NEUROGRAPHRAG_DB_PATH` apontando para um arquivo
+// ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_DB_PATH` apontando para um arquivo
 // SQLite em `TempDir` exclusivo. A introspecção é feita via rusqlite diretamente,
 // sem depender de nenhum output do binário.
 //
 // NOTA: sqlite-vec usa `sqlite3_auto_extension`, que é global ao processo.
 // Para evitar que a extensão seja registrada múltiplas vezes em testes paralelos,
-// TODOS os testes que abrem um banco com sqlite-vec fazem isso via `neurographrag init`
+// TODOS os testes que abrem um banco com sqlite-vec fazem isso via `sqlite-graphrag init`
 // (binário externo), que carrega a extensão no seu próprio processo. Os testes de
 // introspecção pura (sqlite_master, triggers, FTS) abrem o banco via rusqlite após
 // o init para consultar somente — não carregam sqlite-vec no processo de teste.
@@ -24,16 +24,16 @@ use tempfile::TempDir;
 // helpers
 // ---------------------------------------------------------------------------
 
-/// Executa `neurographrag init` em um banco temporário isolado e retorna
+/// Executa `sqlite-graphrag init` em um banco temporário isolado e retorna
 /// o `TempDir` (para manter o banco vivo) e o caminho do arquivo sqlite.
 fn init_db_isolado() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
     let db_path = tmp.path().join("test.sqlite");
 
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
@@ -264,20 +264,20 @@ fn fts5_matching_com_acentos_cafe_cafe() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init do banco
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
     // Inserir memória com texto acentuado
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
-        .env("NEUROGRAPHRAG_NAMESPACE", "global")
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_NAMESPACE", "global")
         .args([
             "--skip-memory-guard",
             "remember",

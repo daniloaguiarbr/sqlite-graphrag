@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiar/neurographrag/schemas/health.schema.json",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/health.schema.json",
   "title": "HealthResponse",
-  "description": "Response emitted by `neurographrag health` on stdout as a single JSON line. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default. Use `--format table` for human-readable tabular output (non-JSON). Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 database not found.",
+  "description": "Response emitted by `sqlite-graphrag health` on stdout as a single JSON line. Accepts `--format json` (or `--json` no-op alias) to explicitly request JSON output; JSON is always emitted by default. Use `--format table` for human-readable tabular output (non-JSON). Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 database not found.",
   "$defs": {
     "HealthCheck": {
       "type": "object",

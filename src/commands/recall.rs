@@ -32,7 +32,7 @@ pub struct RecallArgs {
     pub min_distance: f32,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Aceita --json como no-op: output já é JSON por default.
     #[arg(long, hide = true)]

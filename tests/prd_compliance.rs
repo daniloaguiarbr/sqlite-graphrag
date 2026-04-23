@@ -1,6 +1,6 @@
-// Suite PRD Compliance — 31 testes cobrindo MUST/DEVE do PRD neurographrag v2.1.0
+// Suite PRD Compliance — 31 testes cobrindo MUST/DEVE do PRD sqlite-graphrag v2.1.0
 //
-// Isolamento: cada teste usa TempDir exclusivo + NEUROGRAPHRAG_DB_PATH + NEUROGRAPHRAG_CACHE_DIR
+// Isolamento: cada teste usa TempDir exclusivo + SQLITE_GRAPHRAG_DB_PATH + SQLITE_GRAPHRAG_CACHE_DIR
 // via cmd_base(). --skip-memory-guard evita aborto de RAM em CI.
 // #[serial] em testes que manipulam env vars ou filesystem compartilhado.
 
@@ -15,11 +15,11 @@ use tempfile::TempDir;
 // ---------------------------------------------------------------------------
 
 fn cmd_base(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
-    c.env("NEUROGRAPHRAG_LANG", "en");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env("SQLITE_GRAPHRAG_LANG", "en");
     c.arg("--skip-memory-guard");
     c
 }
@@ -403,10 +403,10 @@ fn prd_cinco_instancias_quinta_retorna_exit_75() {
         .collect();
 
     // 5ª invocação com --wait-lock 0 deve retornar exit 75
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .unwrap()
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
-        .env("NEUROGRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -451,17 +451,17 @@ fn prd_max_body_len_excedido_retorna_exit_6() {
 }
 
 // ---------------------------------------------------------------------------
-// 12 — NEUROGRAPHRAG_NAMESPACE env var funciona como namespace padrão
+// 12 — SQLITE_GRAPHRAG_NAMESPACE env var funciona como namespace padrão
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn prd_neurographrag_namespace_env_funciona() {
+fn prd_sqlite_graphrag_namespace_env_funciona() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
     // Cria memória passando namespace explicitamente (--namespace tem precedência sobre env var)
-    // NEUROGRAPHRAG_NAMESPACE é suportado pela CLI mas o flag --namespace em remember.rs tem
+    // SQLITE_GRAPHRAG_NAMESPACE é suportado pela CLI mas o flag --namespace em remember.rs tem
     // default_value="global" que sempre injeta Some("global") quando não fornecido.
     // O correto é passar --namespace explicitamente para garantir namespace correto.
     cmd_base(&tmp)
@@ -722,7 +722,7 @@ fn prd_graph_json_contem_nodes_e_edges() {
 }
 
 // ---------------------------------------------------------------------------
-// 18 — graph DOT é digraph válido (começa com "digraph neurographrag {")
+// 18 — graph DOT é digraph válido (começa com "digraph sqlite-graphrag {")
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -740,8 +740,8 @@ fn prd_graph_dot_e_digraph_valido() {
 
     let text = String::from_utf8_lossy(&output);
     assert!(
-        text.contains("digraph neurographrag {"),
-        "graph DOT deve começar com 'digraph neurographrag {{', obtido: {text}"
+        text.contains("digraph sqlite-graphrag {"),
+        "graph DOT deve começar com 'digraph sqlite-graphrag {{', obtido: {text}"
     );
 }
 
@@ -905,7 +905,7 @@ fn prd_chmod_600_aplicado_apos_init() {
 }
 
 // ---------------------------------------------------------------------------
-// 25 — path traversal (..) rejeitado em NEUROGRAPHRAG_DB_PATH
+// 25 — path traversal (..) rejeitado em SQLITE_GRAPHRAG_DB_PATH
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -913,10 +913,10 @@ fn prd_chmod_600_aplicado_apos_init() {
 fn prd_path_traversal_rejeitado_em_db_path() {
     let tmp = TempDir::new().unwrap();
 
-    let mut c = Command::cargo_bin("neurographrag").unwrap();
-    c.env("NEUROGRAPHRAG_DB_PATH", "../../../etc/passwd");
-    c.env("NEUROGRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
-    c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env("SQLITE_GRAPHRAG_DB_PATH", "../../../etc/passwd");
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c.arg("init");
 

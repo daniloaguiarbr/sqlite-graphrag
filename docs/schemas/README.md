@@ -4,7 +4,7 @@
 ## English
 ### Purpose
 - Each file in this directory is a JSON Schema Draft 2020-12 document
-- Schemas describe the exact stdout contract of every `neurographrag` subcommand
+- Schemas describe the exact stdout contract of every `sqlite-graphrag` subcommand
 - Agents and parsers MUST validate responses against these schemas before processing
 - All schemas use `"additionalProperties": false` — unexpected keys are contract violations
 ### Schema Files
@@ -39,8 +39,8 @@
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
 ### Usage
-- Validate a `recall` response: `neurographrag recall "query" | jaq --from-file docs/schemas/recall.schema.json`
-- Validate with Python: `jsonschema --instance <(neurographrag stats) docs/schemas/stats.schema.json`
+- Validate a `recall` response: `sqlite-graphrag recall "query" | jaq --from-file docs/schemas/recall.schema.json`
+- Validate with Python: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - The `__debug_schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`__debug_schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
 ### Flag Behavior
 - Schemas describe the OUTPUT JSON contract, not the CLI input shape
@@ -58,7 +58,7 @@
 ## Português Brasileiro
 ### Objetivo
 - Cada arquivo neste diretório é um documento JSON Schema Draft 2020-12
-- Os schemas descrevem o contrato exato de stdout de cada subcomando `neurographrag`
+- Os schemas descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
 - Agentes e parsers DEVEM validar respostas contra estes schemas antes de processar
 - Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
 ### Arquivos de Schema
@@ -71,8 +71,8 @@
 - `__debug_schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 - A flag `--json` em qualquer subcomando é no-op mantida por compatibilidade — JSON é sempre emitido no stdout
 ### Uso
-- Validar resposta do `recall`: `neurographrag recall "consulta" | jaq --from-file docs/schemas/recall.schema.json`
-- Validar com Python: `jsonschema --instance <(neurographrag stats) docs/schemas/stats.schema.json`
+- Validar resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq --from-file docs/schemas/recall.schema.json`
+- Validar com Python: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - O subcomando `__debug_schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`__debug_schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 ### Garantia de Estabilidade
 - Os schemas acompanham a branch `main` e são atualizados a cada breaking change

@@ -19,7 +19,7 @@ use rusqlite::{params, Connection};
 ///
 /// ```
 /// use rusqlite::Connection;
-/// use neurographrag::graph::traverse_from_memories;
+/// use sqlite_graphrag::graph::traverse_from_memories;
 ///
 /// // Lista de sementes vazia retorna imediatamente sem consultar o banco.
 /// let conn = Connection::open_in_memory().unwrap();
@@ -29,7 +29,7 @@ use rusqlite::{params, Connection};
 ///
 /// ```
 /// use rusqlite::Connection;
-/// use neurographrag::graph::traverse_from_memories;
+/// use sqlite_graphrag::graph::traverse_from_memories;
 ///
 /// // max_hops == 0 retorna imediatamente sem traversal.
 /// let conn = Connection::open_in_memory().unwrap();

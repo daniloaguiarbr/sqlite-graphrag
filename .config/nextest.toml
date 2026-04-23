@@ -39,7 +39,7 @@ slow-timeout = { period = "600s", terminate-after = 2 }
 
 [profile.ci.junit]
 path = "junit.xml"
-report-name = "neurographrag-ci"
+report-name = "sqlite-graphrag-ci"
 store-success-output = false
 store-failure-output = true
 

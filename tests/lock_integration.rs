@@ -1,8 +1,8 @@
-// Testes de integração E2E para o semáforo de slots do neurographrag.
+// Testes de integração E2E para o semáforo de slots do sqlite-graphrag.
 //
-// ISOLAMENTO: todos os testes definem `NEUROGRAPHRAG_CACHE_DIR` apontando
+// ISOLAMENTO: todos os testes definem `SQLITE_GRAPHRAG_CACHE_DIR` apontando
 // para um `TempDir` exclusivo, garantindo que os lock files não poluam
-// `~/.cache/neurographrag` nem colidam entre testes.
+// `~/.cache/sqlite-graphrag` nem colidam entre testes.
 //
 // `#[serial]` é obrigatório em todos os testes: embora cada teste use
 // diretório próprio, o binário compilado é compartilhado e o `TempDir` só
@@ -39,17 +39,17 @@ fn slot_liberado_apos_processo_sair() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     // Primeira invocação — deve adquirir e liberar o slot 1.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
         .success();
 
     // Segunda invocação — deve adquirir o slot novamente sem erro.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
         .success();
@@ -59,16 +59,16 @@ fn slot_liberado_apos_processo_sair() {
 // Cenário 2 — arquivo de slot é criado no cache dir configurado
 // ---------------------------------------------------------------------------
 // Confirma que o binário cria `cli-slot-1.lock` no diretório sobrescrito via
-// `NEUROGRAPHRAG_CACHE_DIR`.
+// `SQLITE_GRAPHRAG_CACHE_DIR`.
 
 #[test]
 #[serial]
 fn arquivo_slot_criado_em_cache_dir() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
         .success();
@@ -112,9 +112,9 @@ fn wait_lock_zero_retorna_75_quando_slots_ocupados() {
     }
 
     // Invocação com todos os slots ocupados e --wait-lock 0 → exit 75.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -165,9 +165,9 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Segunda instância deve falhar imediatamente com exit 75.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -223,9 +223,9 @@ fn wait_lock_espera_e_adquire_slot() {
     });
 
     // --wait-lock 10 deve aguardar a liberação e completar com sucesso.
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",

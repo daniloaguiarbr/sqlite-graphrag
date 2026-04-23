@@ -82,8 +82,8 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          bin="neurographrag"
-          pkg_name="neurographrag-${{ github.ref_name }}-${{ matrix.target }}"
+          bin="sqlite-graphrag"
+          pkg_name="sqlite-graphrag-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir -p "$pkg_name"
           cp "target/${{ matrix.target }}/release/$bin" "$pkg_name/"
           cp README.md CHANGELOG.md "$pkg_name/"
@@ -94,8 +94,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          bin="neurographrag.exe"
-          pkg_name="neurographrag-${{ github.ref_name }}-${{ matrix.target }}"
+          bin="sqlite-graphrag.exe"
+          pkg_name="sqlite-graphrag-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir -p "$pkg_name"
           cp "target/${{ matrix.target }}/release/$bin" "$pkg_name/"
           cp README.md CHANGELOG.md "$pkg_name/"
@@ -104,12 +104,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: neurographrag-${{ matrix.target }}
+          name: sqlite-graphrag-${{ matrix.target }}
           path: |
-            neurographrag-*.tar.gz
-            neurographrag-*.tar.gz.sha256
-            neurographrag-*.zip
-            neurographrag-*.zip.sha256
+            sqlite-graphrag-*.tar.gz
+            sqlite-graphrag-*.tar.gz.sha256
+            sqlite-graphrag-*.zip
+            sqlite-graphrag-*.zip.sha256
 
   macos-universal:
     name: macOS Universal Binary
@@ -120,38 +120,38 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: neurographrag-x86_64-apple-darwin
+          name: sqlite-graphrag-x86_64-apple-darwin
           path: x86_64/
 
       - uses: actions/download-artifact@v4
         with:
-          name: neurographrag-aarch64-apple-darwin
+          name: sqlite-graphrag-aarch64-apple-darwin
           path: aarch64/
 
       - name: Extract binaries and lipo
         run: |
           cd x86_64
-          tar xzf neurographrag-*-x86_64-apple-darwin.tar.gz
+          tar xzf sqlite-graphrag-*-x86_64-apple-darwin.tar.gz
           cd ../aarch64
-          tar xzf neurographrag-*-aarch64-apple-darwin.tar.gz
+          tar xzf sqlite-graphrag-*-aarch64-apple-darwin.tar.gz
           cd ..
-          mkdir -p neurographrag-${{ github.ref_name }}-universal-apple-darwin
+          mkdir -p sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin
           lipo -create \
-            x86_64/neurographrag-*/neurographrag \
-            aarch64/neurographrag-*/neurographrag \
-            -output neurographrag-${{ github.ref_name }}-universal-apple-darwin/neurographrag
-          cp README.md CHANGELOG.md neurographrag-${{ github.ref_name }}-universal-apple-darwin/
-          tar czf neurographrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
-            neurographrag-${{ github.ref_name }}-universal-apple-darwin
-          shasum -a 256 neurographrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
-            > neurographrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz.sha256
+            x86_64/sqlite-graphrag-*/sqlite-graphrag \
+            aarch64/sqlite-graphrag-*/sqlite-graphrag \
+            -output sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin/sqlite-graphrag
+          cp README.md CHANGELOG.md sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin/
+          tar czf sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
+            sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin
+          shasum -a 256 sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
+            > sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: neurographrag-universal-apple-darwin
+          name: sqlite-graphrag-universal-apple-darwin
           path: |
-            neurographrag-*-universal-apple-darwin.tar.gz
-            neurographrag-*-universal-apple-darwin.tar.gz.sha256
+            sqlite-graphrag-*-universal-apple-darwin.tar.gz
+            sqlite-graphrag-*-universal-apple-darwin.tar.gz.sha256
 
   publish-github-release:
     name: Publish GitHub Release
@@ -194,11 +194,13 @@ jobs:
             release/*
 
   publish-crates-io:
-    name: Publish to crates.io
+    name: crates.io publish is manual
     needs: publish-github-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+      - run: |
+          echo "crates.io publication is intentionally manual for sqlite-graphrag v1.0.0"
+          echo "run 'cargo login' once locally and then 'cargo publish' when you are ready"

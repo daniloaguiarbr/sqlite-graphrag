@@ -51,8 +51,8 @@ Read this document in [Portuguese (pt-BR)](CODE_OF_CONDUCT.pt-BR.md).
 
 ## Enforcement
 - Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately
-- Report issues via GitHub Security Advisories at https://github.com/daniloaguiarbr/neurographrag/security/advisories/new
-- Alternatively, contact the community leaders at daniloaguiarbr@gmail.com directly
+- Report issues by email at daniloaguiarbr@gmail.com while the renamed repository is not public yet
+- Once the public `sqlite-graphrag` repository exists, GitHub Security Advisories can be used as an additional private channel
 - All complaints will be reviewed and investigated promptly and fairly
 - Initial response to every report is committed within 48 hours of receipt
 - All community leaders are obligated to respect the privacy and security of the reporter

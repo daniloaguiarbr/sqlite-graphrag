@@ -1,6 +1,6 @@
 // Suite 4 — Testes reforçados de lock e concorrência
 //
-// ISOLAMENTO: cada teste usa `NEUROGRAPHRAG_CACHE_DIR` apontando para um
+// ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_CACHE_DIR` apontando para um
 // `TempDir` exclusivo por teste. `#[serial]` é obrigatório em todos os testes
 // para evitar corridas no filesystem entre testes que compartilham o binário.
 //
@@ -61,9 +61,9 @@ fn cinco_instancias_quinta_exit_75() {
     let handles = ocupar_slots(&tmp, 4);
 
     // 5ª invocação com --wait-lock 0 deve falhar com exit 75
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -108,9 +108,9 @@ fn wait_lock_3s_respeitado() {
     });
 
     // --wait-lock 3 deve aguardar a liberação (dentro de 3s) e completar
-    Command::cargo_bin("neurographrag")
-        .expect("binário neurographrag não encontrado")
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binário sqlite-graphrag não encontrado")
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "--max-concurrency",
@@ -137,19 +137,19 @@ fn optimistic_locking_conflito_exit_3() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
     // Inserir memória
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "remember",
@@ -168,10 +168,10 @@ fn optimistic_locking_conflito_exit_3() {
         .success();
 
     // Obter updated_at via read para capturar o timestamp antes de modificar
-    let output_leitura = Command::cargo_bin("neurographrag")
+    let output_leitura = Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "read",
@@ -196,10 +196,10 @@ fn optimistic_locking_conflito_exit_3() {
     let updated_at_stale: i64 = 1;
 
     // Edição com --expected-updated-at stale deve falhar com exit 3 (Conflict)
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
             "edit",
@@ -231,20 +231,20 @@ fn purge_durante_recall_nao_corrompe() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
     // Inserir algumas memórias antigas para que purge tenha algo a fazer
     for i in 0..3 {
-        Command::cargo_bin("neurographrag")
+        Command::cargo_bin("sqlite-graphrag")
             .expect("binário não encontrado")
-            .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-            .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+            .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+            .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
             .args([
                 "--skip-memory-guard",
                 "remember",
@@ -272,7 +272,7 @@ fn purge_durante_recall_nao_corrompe() {
     let barrier_recall = Arc::clone(&barrier);
     let barrier_purge = Arc::clone(&barrier);
 
-    let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_neurographrag"));
+    let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"));
 
     let bin_recall = bin_path.clone();
     let bin_purge = bin_path.clone();
@@ -281,8 +281,8 @@ fn purge_durante_recall_nao_corrompe() {
     let handle_recall = std::thread::spawn(move || {
         barrier_recall.wait();
         std::process::Command::new(&bin_recall)
-            .env("NEUROGRAPHRAG_DB_PATH", &db_path_recall)
-            .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path_recall)
+            .env("SQLITE_GRAPHRAG_DB_PATH", &db_path_recall)
+            .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path_recall)
             .args([
                 "--skip-memory-guard",
                 "recall",
@@ -300,8 +300,8 @@ fn purge_durante_recall_nao_corrompe() {
     let handle_purge = std::thread::spawn(move || {
         barrier_purge.wait();
         std::process::Command::new(&bin_purge)
-            .env("NEUROGRAPHRAG_DB_PATH", &db_path_purge)
-            .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path_purge)
+            .env("SQLITE_GRAPHRAG_DB_PATH", &db_path_purge)
+            .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path_purge)
             .args([
                 "--skip-memory-guard",
                 "purge",
@@ -358,17 +358,17 @@ fn dez_remembers_namespaces_diferentes() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("neurographrag")
+    Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
-        .env("NEUROGRAPHRAG_DB_PATH", &db_path)
-        .env("NEUROGRAPHRAG_CACHE_DIR", tmp.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
     let n_threads = 10;
     let barrier = Arc::new(Barrier::new(n_threads));
-    let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_neurographrag"));
+    let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"));
 
     let handles: Vec<_> = (0..n_threads)
         .map(|i| {
@@ -383,8 +383,8 @@ fn dez_remembers_namespaces_diferentes() {
                 barrier_clone.wait();
 
                 std::process::Command::new(&bin_clone)
-                    .env("NEUROGRAPHRAG_DB_PATH", &db_path_clone)
-                    .env("NEUROGRAPHRAG_CACHE_DIR", &cache_path_clone)
+                    .env("SQLITE_GRAPHRAG_DB_PATH", &db_path_clone)
+                    .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path_clone)
                     .args([
                         "--skip-memory-guard",
                         "remember",

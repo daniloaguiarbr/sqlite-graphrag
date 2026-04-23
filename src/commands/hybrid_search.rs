@@ -30,7 +30,7 @@ pub struct HybridSearchArgs {
     pub min_weight: f64,
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     pub format: OutputFormat,
-    #[arg(long, env = "NEUROGRAPHRAG_DB_PATH")]
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Aceita --json como no-op: output já é JSON por default.
     #[arg(long, hide = true)]

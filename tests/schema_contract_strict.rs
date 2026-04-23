@@ -23,10 +23,13 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("neurographrag").expect("binário não encontrado");
-        c.env("NEUROGRAPHRAG_DB_PATH", self.tmp.path().join("test.sqlite"));
-        c.env("NEUROGRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
-        c.env("NEUROGRAPHRAG_LOG_LEVEL", "error");
+        let mut c = Command::cargo_bin("sqlite-graphrag").expect("binário não encontrado");
+        c.env(
+            "SQLITE_GRAPHRAG_DB_PATH",
+            self.tmp.path().join("test.sqlite"),
+        );
+        c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
+        c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
         c.arg("--skip-memory-guard");
         c
     }
