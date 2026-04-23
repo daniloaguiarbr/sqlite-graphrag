@@ -3,7 +3,10 @@
 
 use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS, EMBEDDING_DIM};
 
-const CHARS_PER_TOKEN: usize = 4;
+// Heurística conservadora para reduzir o risco de subestimar o número real de tokens
+// em Markdown, código e texto multilíngue. Valor anterior 4 chars/token permitia
+// chunks grandes demais para alguns documentos reais.
+const CHARS_PER_TOKEN: usize = 2;
 pub const CHUNK_SIZE_CHARS: usize = CHUNK_SIZE_TOKENS * CHARS_PER_TOKEN;
 pub const CHUNK_OVERLAP_CHARS: usize = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
 
@@ -22,7 +25,7 @@ pub fn needs_chunking(body: &str) -> bool {
 pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     if !needs_chunking(body) {
         return vec![Chunk {
-            token_count_approx: body.len() / CHARS_PER_TOKEN,
+            token_count_approx: body.chars().count() / CHARS_PER_TOKEN,
             text: body.to_string(),
             start_offset: 0,
             end_offset: body.len(),
@@ -33,15 +36,27 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     let mut start = 0usize;
 
     while start < body.len() {
-        let desired_end = (start + CHUNK_SIZE_CHARS).min(body.len());
+        start = next_char_boundary(body, start);
+        let desired_end = previous_char_boundary(body, (start + CHUNK_SIZE_CHARS).min(body.len()));
         let end = if desired_end < body.len() {
             find_split_boundary(body, start, desired_end)
         } else {
             desired_end
         };
 
+        let end = if end <= start {
+            let fallback = previous_char_boundary(body, (start + CHUNK_SIZE_CHARS).min(body.len()));
+            if fallback > start {
+                fallback
+            } else {
+                body.len()
+            }
+        } else {
+            end
+        };
+
         let text = body[start..end].to_string();
-        let token_count_approx = text.len() / CHARS_PER_TOKEN;
+        let token_count_approx = text.chars().count() / CHARS_PER_TOKEN;
         chunks.push(Chunk {
             text,
             start_offset: start,
@@ -52,7 +67,9 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
         if end >= body.len() {
             break;
         }
-        start = end.saturating_sub(CHUNK_OVERLAP_CHARS);
+
+        let next_start = next_char_boundary(body, end.saturating_sub(CHUNK_OVERLAP_CHARS));
+        start = if next_start >= end { end } else { next_start };
     }
 
     chunks
@@ -70,6 +87,22 @@ fn find_split_boundary(body: &str, start: usize, desired_end: usize) -> usize {
         return start + pos + 1;
     }
     desired_end
+}
+
+fn previous_char_boundary(body: &str, mut idx: usize) -> usize {
+    idx = idx.min(body.len());
+    while idx > 0 && !body.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn next_char_boundary(body: &str, mut idx: usize) -> usize {
+    idx = idx.min(body.len());
+    while idx < body.len() && !body.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
 }
 
 pub fn aggregate_embeddings(chunk_embeddings: &[Vec<f32>]) -> Vec<f32> {
@@ -120,6 +153,23 @@ mod tests {
         assert!(needs_chunking(&body));
         let chunks = split_into_chunks(&body);
         assert!(chunks.len() > 1);
+    }
+
+    #[test]
+    fn test_multibyte_body_preserves_progress_and_boundaries() {
+        let body = "ação útil ".repeat(1000);
+        let chunks = split_into_chunks(&body);
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(!chunk.text.is_empty());
+            assert!(body.is_char_boundary(chunk.start_offset));
+            assert!(body.is_char_boundary(chunk.end_offset));
+            assert!(chunk.end_offset > chunk.start_offset);
+        }
+        for pair in chunks.windows(2) {
+            assert!(pair[1].start_offset >= pair[0].start_offset);
+            assert!(pair[1].end_offset > pair[0].start_offset);
+        }
     }
 
     #[test]

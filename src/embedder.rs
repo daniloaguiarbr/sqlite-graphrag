@@ -72,6 +72,26 @@ pub fn embed_passages_batch(
     Ok(results)
 }
 
+/// Embed multiple passages serially.
+///
+/// This path intentionally avoids ONNX batch inference for robustness when
+/// real-world Markdown chunks trigger pathological runtime behavior.
+pub fn embed_passages_serial<'a, I>(
+    embedder: &Mutex<TextEmbedding>,
+    texts: I,
+) -> Result<Vec<Vec<f32>>, AppError>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let iter = texts.into_iter();
+    let (lower, _) = iter.size_hint();
+    let mut results = Vec::with_capacity(lower);
+    for text in iter {
+        results.push(embed_passage(embedder, text)?);
+    }
+    Ok(results)
+}
+
 /// Convert &[f32] to &[u8] for sqlite-vec storage.
 /// # Safety
 /// Safe because f32 has no padding and is well-defined bit pattern.

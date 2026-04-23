@@ -7,6 +7,9 @@ use serde::Serialize;
 pub struct NamespaceDetectArgs {
     #[arg(long)]
     pub namespace: Option<String>,
+    /// Caminho explícito do banco. Aceito como no-op para manter o contrato global.
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
     /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
@@ -23,6 +26,7 @@ struct NamespaceDetectResponse {
 
 pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    let _ = args.db;
     let _ = args.json; // --json é no-op pois output já é JSON por default
     let resolution = namespace::detect_namespace(args.namespace.as_deref())?;
     output::emit_json(&NamespaceDetectResponse {
@@ -38,6 +42,7 @@ pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
 mod testes {
     use super::*;
     use crate::namespace::NamespaceSource;
+    use clap::Parser;
     use serial_test::serial;
 
     #[test]
@@ -99,6 +104,24 @@ mod testes {
                 json, esperado,
                 "NamespaceSource::{source:?} deve serializar como \"{esperado}\""
             );
+        }
+    }
+
+    #[test]
+    fn namespace_detect_aceita_db_como_noop() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "namespace-detect",
+            "--db",
+            "/tmp/graphrag.sqlite",
+        ])
+        .expect("namespace-detect deve aceitar --db como no-op");
+
+        match cli.command {
+            crate::cli::Commands::NamespaceDetect(args) => {
+                assert_eq!(args.db.as_deref(), Some("/tmp/graphrag.sqlite"));
+            }
+            _ => panic!("comando incorreto parseado"),
         }
     }
 }

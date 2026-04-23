@@ -161,6 +161,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         serde_json::json!({})
     };
 
+    let body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
+    let snippet: String = raw_body.chars().take(200).collect();
+
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
 
@@ -183,32 +186,39 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
     }
 
+    let existing_memory = memories::find_by_name(&conn, &namespace, &args.name)?;
+    if existing_memory.is_some() && !args.force_merge {
+        return Err(AppError::Duplicate(erros::memoria_duplicada(
+            &args.name, &namespace,
+        )));
+    }
+
+    let duplicate_hash_id = memories::find_by_hash(&conn, &namespace, &body_hash)?;
+
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
     let embedder = crate::embedder::get_embedder(&paths.models)?;
 
     let chunks_info = chunking::split_into_chunks(&raw_body);
     let chunks_created = chunks_info.len();
 
-    let (body_for_storage, embedding) = if chunks_info.len() == 1 {
-        (
-            raw_body.clone(),
-            crate::embedder::embed_passage(embedder, &raw_body)?,
-        )
+    let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
+
+    let embedding = if chunks_info.len() == 1 {
+        crate::embedder::embed_passage(embedder, &raw_body)?
     } else {
         output::emit_progress_i18n(
             &format!("Embedding {} chunks...", chunks_info.len()),
             &format!("Embedando {} chunks...", chunks_info.len()),
         );
-        let texts: Vec<String> = chunks_info.iter().map(|c| c.text.clone()).collect();
-        let chunk_embeddings = crate::embedder::embed_passages_batch(embedder, &texts)?;
+        let chunk_embeddings = crate::embedder::embed_passages_serial(
+            embedder,
+            chunks_info.iter().map(|c| c.text.as_str()),
+        )?;
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
-        (raw_body.clone(), aggregated)
+        chunk_embeddings_cache = Some(chunk_embeddings);
+        aggregated
     };
-
-    let body_hash = blake3::hash(body_for_storage.as_bytes())
-        .to_hex()
-        .to_string();
-    let snippet: String = body_for_storage.chars().take(200).collect();
+    let body_for_storage = raw_body;
 
     let memory_type = args.r#type.as_str();
     let new_memory = NewMemory {
@@ -216,7 +226,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         name: args.name.clone(),
         memory_type: memory_type.to_string(),
         description: args.description.clone(),
-        body: body_for_storage.clone(),
+        body: body_for_storage,
         body_hash: body_hash.clone(),
         session_id: args.session_id.clone(),
         source: "agent".to_string(),
@@ -225,15 +235,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let mut warnings = Vec::new();
 
-    let (memory_id, action, version) = match memories::find_by_name(&conn, &namespace, &args.name)?
-    {
+    let (memory_id, action, version) = match existing_memory {
         Some((existing_id, _updated_at, _current_version)) => {
-            if !args.force_merge {
-                return Err(AppError::Duplicate(erros::memoria_duplicada(
-                    &args.name, &namespace,
-                )));
-            }
-            if let Some(hash_id) = memories::find_by_hash(&conn, &namespace, &body_hash)? {
+            if let Some(hash_id) = duplicate_hash_id {
                 if hash_id != existing_id {
                     warnings.push(format!(
                         "identical body already exists as memory id {hash_id}"
@@ -255,7 +259,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &args.name,
                 memory_type,
                 &args.description,
-                &body_for_storage,
+                &new_memory.body,
                 &serde_json::to_string(&new_memory.metadata)?,
                 None,
                 "edit",
@@ -273,7 +277,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             (existing_id, "updated".to_string(), next_v)
         }
         None => {
-            if let Some(hash_id) = memories::find_by_hash(&conn, &namespace, &body_hash)? {
+            if let Some(hash_id) = duplicate_hash_id {
                 warnings.push(format!(
                     "identical body already exists as memory id {hash_id}"
                 ));
@@ -287,7 +291,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &args.name,
                 memory_type,
                 &args.description,
-                &body_for_storage,
+                &new_memory.body,
                 &serde_json::to_string(&new_memory.metadata)?,
                 None,
                 "create",
@@ -308,22 +312,13 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     if chunks_info.len() > 1 {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let chunks: Vec<storage_chunks::Chunk> = chunks_info
-            .iter()
-            .enumerate()
-            .map(|(i, c)| storage_chunks::Chunk {
-                memory_id,
-                chunk_idx: i as i32,
-                chunk_text: c.text.clone(),
-                start_offset: c.start_offset as i32,
-                end_offset: c.end_offset as i32,
-                token_count: c.token_count_approx as i32,
-            })
-            .collect();
-        storage_chunks::insert_chunks(&tx, &chunks)?;
+        storage_chunks::insert_chunk_slices(&tx, memory_id, &chunks_info)?;
 
-        let texts: Vec<String> = chunks_info.iter().map(|c| c.text.clone()).collect();
-        let chunk_embeddings = crate::embedder::embed_passages_batch(embedder, &texts)?;
+        let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "chunk embeddings cache missing for multi-chunk remember path"
+            ))
+        })?;
 
         for (i, emb) in chunk_embeddings.iter().enumerate() {
             storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;

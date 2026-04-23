@@ -3617,7 +3617,7 @@ dependencies = [
 
 [[package]]
 name = "sqlite-graphrag"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "assert_cmd",

@@ -33,6 +33,28 @@ pub fn insert_chunks(conn: &Connection, chunks: &[Chunk]) -> Result<(), AppError
     Ok(())
 }
 
+pub fn insert_chunk_slices(
+    conn: &Connection,
+    memory_id: i64,
+    chunks: &[crate::chunking::Chunk],
+) -> Result<(), AppError> {
+    for (chunk_idx, chunk) in chunks.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO memory_chunks (memory_id, chunk_idx, chunk_text, start_offset, end_offset, token_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                memory_id,
+                chunk_idx as i32,
+                chunk.text,
+                chunk.start_offset as i32,
+                chunk.end_offset as i32,
+                chunk.token_count_approx as i32,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn upsert_chunk_vec(
     conn: &Connection,
     _rowid: i64,

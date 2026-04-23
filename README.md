@@ -9,7 +9,8 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
-- Install the current published release with `cargo install sqlite-graphrag --version 1.0.2 --locked`
+- Install the current published release with `cargo install sqlite-graphrag --version 1.0.3 --locked`
+- The next planned release line is `1.0.4`, currently under local validation
 
 ```bash
 cargo install --path .
@@ -21,7 +22,7 @@ cargo install --path .
 - Stores memories, entities and relationships inside a single SQLite file under 25 MB
 - Embeds content locally via `fastembed` with the `multilingual-e5-small` model
 - Combines FTS5 full-text search with `sqlite-vec` KNN into a hybrid Reciprocal Rank Fusion ranker
-- Extracts an entity graph with typed edges for multi-hop recall across memories
+- Stores and traverses an explicit entity graph with typed edges for multi-hop recall across memories
 - Preserves every edit through an immutable version history table for full audit
 - Runs on Linux, macOS and Windows natively with zero external services required
 
@@ -95,7 +96,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
 - Scoop bucket is planned under `scoop install sqlite-graphrag`
-- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.2`
+- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.3`
 
 
 ## Usage
@@ -104,7 +105,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 sqlite-graphrag init
 sqlite-graphrag init --namespace project-foo
 ```
-### Remember a memory with an entity graph
+### Remember a memory with an optional explicit entity graph
 ```bash
 sqlite-graphrag remember \
   --name integration-tests-postgres \
@@ -232,9 +233,9 @@ RUN cargo install --path .
 
 ## Performance
 ### Measured on a 1000-memory database
-- Cold startup under 50 milliseconds on native ARM64 Apple Silicon
-- Recall with `--k 5` completes under 20 milliseconds after model load
-- Hybrid search with RRF completes under 30 milliseconds on warm cache
+- In-process warm-model latency remains far lower than one-shot subprocess latency
+- Stateless CLI invocations typically spend about one second reloading the embedding model per heavy command
+- Warm in-process recall can stay well below the stateless subprocess timing once the model is already resident
 - First `init` downloads the quantized model once and caches it locally
 - Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.3 RSS calibration
 

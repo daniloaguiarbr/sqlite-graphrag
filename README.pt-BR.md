@@ -9,7 +9,8 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.2 --locked`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.3 --locked`
+- A próxima linha de release planejada é `1.0.4`, atualmente em validação local
 
 ```bash
 cargo install --path .
@@ -21,7 +22,7 @@ cargo install --path .
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
 - Gera embeddings localmente via `fastembed` com o modelo `multilingual-e5-small`
 - Combina busca textual FTS5 com KNN do `sqlite-vec` em ranqueador híbrido Reciprocal Rank Fusion
-- Extrai grafo de entidades com arestas tipadas para recuperação multi-hop entre memórias
+- Armazena e percorre um grafo explícito de entidades com arestas tipadas para recuperação multi-hop entre memórias
 - Preserva cada edição em tabela imutável de versões históricas para auditoria completa
 - Executa em Linux, macOS e Windows nativamente sem qualquer serviço externo necessário
 
@@ -95,7 +96,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
 - Bucket Scoop planejado sob `scoop install sqlite-graphrag`
-- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.2`
+- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.3`
 
 
 ## Uso
@@ -104,7 +105,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 sqlite-graphrag init
 sqlite-graphrag init --namespace projeto-foo
 ```
-### Grave uma memória com grafo de entidades
+### Grave uma memória com grafo de entidades explícito opcional
 ```bash
 sqlite-graphrag remember \
   --name testes-integracao-postgres \
@@ -232,9 +233,9 @@ RUN cargo install --path .
 
 ## Desempenho
 ### Medido em banco com 1000 memórias
-- Startup a frio abaixo de 50 milissegundos em Apple Silicon ARM64 nativo
-- Recall com `--k 5` completa abaixo de 20 milissegundos após carga do modelo
-- Hybrid search com RRF completa abaixo de 30 milissegundos em cache quente
+- A latência em processo com modelo já aquecido continua muito menor que a latência da CLI stateless
+- Invocações stateless da CLI tipicamente gastam cerca de um segundo recarregando o modelo em cada comando pesado
+- Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
 - Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.3
 

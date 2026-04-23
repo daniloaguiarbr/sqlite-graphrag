@@ -202,5 +202,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: |
-          echo "crates.io publication is intentionally manual for sqlite-graphrag v1.0.0"
+          echo "crates.io publication is intentionally manual for sqlite-graphrag v1.0.3"
           echo "run 'cargo login' once locally and then 'cargo publish' when you are ready"

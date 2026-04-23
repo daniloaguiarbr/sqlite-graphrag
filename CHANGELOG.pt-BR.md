@@ -10,6 +10,22 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.4] - 2026-04-23
+
+### Corrigido
+- `remember` agora gera embeddings de corpos chunkados em modo serial e reutiliza os mesmos embeddings por chunk para agregação e persistência em `vec_chunks`, evitando o caminho de batch que travava com documentos Markdown reais
+- `remember` agora evita uma `Vec<String>` extra com cópias dos textos dos chunks e também evita reconstruir uma `Vec<storage::chunks::Chunk>` intermediária antes da persistência dos chunks
+- `remember` agora resolve checagens baratas de duplicação antes de qualquer trabalho de embedding e não clona mais o corpo completo desnecessariamente para `NewMemory`
+- `namespace-detect` agora aceita `--db` como no-op para que o contrato público do comando fique alinhado com o restante da superfície da CLI
+- A documentação pública e o texto do workflow de release agora refletem corretamente a linha publicada `1.0.3` e o contrato de grafo explícito
+- O chunking agora usa uma heurística mais conservadora de chars por token e garante progresso seguro em UTF-8, reduzindo o risco de chunks patológicos em entradas Markdown reais
+
+### Causa Raiz
+- Markdown real com estrutura rica em parágrafos podia levar a progressão não monotônica dos chunks com a lógica antiga de overlap
+- O caminho antigo de `remember` também duplicava pressão de memória ao clonar textos de chunks para uma `Vec<String>` dedicada e ao reconstruir structs de chunk com novas `String` owned antes da persistência
+- O caminho antigo de `remember` também gastava trabalho de ONNX antes de resolver condições baratas de duplicação e ainda clonava o corpo completo para `NewMemory` antes do insert ou update
+- A combinação aumentava a pressão do alocador e tornava o caminho pesado de embedding mais vulnerável a crescimento patológico de memória em entradas problemáticas
+
 ## [1.0.3] - 2026-04-23
 
 ### Corrigido

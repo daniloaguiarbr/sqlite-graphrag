@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-04-23
+
+### Fixed
+- `remember` now embeds chunked bodies serially and reuses the same per-chunk embeddings for aggregation and vec-chunk persistence, avoiding the hanging batch path seen on real Markdown documents
+- `remember` now avoids an extra `Vec<String>` clone for chunk texts and avoids building an intermediate `Vec<storage::chunks::Chunk>` copy before chunk persistence
+- `remember` now computes cheap duplicate checks before any embedding work and no longer clones the full body into `NewMemory` unnecessarily
+- `namespace-detect` now accepts `--db` as a no-op so the public command contract matches the rest of the CLI surface
+- Public docs and release workflow text now reflect the published `1.0.3` line and the explicit graph contract more accurately
+- Chunking now uses a more conservative chars-per-token heuristic and guarantees UTF-8-safe forward progress, reducing the risk of pathological chunk sizes on real Markdown inputs
+
+### Root Cause
+- Real-world Markdown with paragraph-heavy structure could drive non-monotonic chunk progression under the old overlap logic
+- The old `remember` path also duplicated memory pressure by cloning chunk texts into a dedicated `Vec<String>` and by rebuilding chunk payload structs with owned `String` copies before persistence
+- The old `remember` path also spent ONNX work before resolving cheap duplicate conditions and cloned the full body into `NewMemory` before insert or update
+- The combination increased allocator pressure and made the heavy embedding path more vulnerable to pathological memory growth on problematic inputs
+
 ## [1.0.3] - 2026-04-23
 
 ### Fixed
