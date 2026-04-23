@@ -4,7 +4,8 @@
 ## English
 ### Purpose
 - Each file in this directory is a JSON Schema Draft 2020-12 document
-- Schemas describe the exact stdout contract of every `sqlite-graphrag` subcommand
+- Output schemas describe the exact stdout contract of every `sqlite-graphrag` subcommand
+- Input schemas describe the accepted JSON payloads for file-driven graph ingestion
 - Agents and parsers MUST validate responses against these schemas before processing
 - All schemas use `"additionalProperties": false` — unexpected keys are contract violations
 ### Schema Files
@@ -38,6 +39,9 @@
 | `graph entities` | `graph-entities.schema.json` |
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
+### Input Payload Schemas
+- `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
+- `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
 ### Usage
 - Validate a `recall` response: `sqlite-graphrag recall "query" | jaq --from-file docs/schemas/recall.schema.json`
 - Validate with Python: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
@@ -58,11 +62,15 @@
 ## Português Brasileiro
 ### Objetivo
 - Cada arquivo neste diretório é um documento JSON Schema Draft 2020-12
-- Os schemas descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
+- Os schemas de saída descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
+- Os schemas de entrada descrevem os payloads JSON aceitos pela ingestão de grafo orientada a arquivo
 - Agentes e parsers DEVEM validar respostas contra estes schemas antes de processar
 - Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
 ### Arquivos de Schema
 - Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
+### Schemas de Payload de Entrada
+- `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
+- `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`
 ### Comportamento de Flags
 - Os schemas descrevem o contrato de OUTPUT JSON, não o formato de entrada CLI
 - Vários subcomandos aceitam múltiplos aliases de flag que produzem a mesma saída

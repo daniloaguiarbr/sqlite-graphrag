@@ -524,11 +524,26 @@ let output = Command::new("sqlite-graphrag")
 
 
 ## JSON Output Flag
-### Format — --format json and --json Are Both Accepted
+### Format — `--json` Is Universal and `--format json` Is Command-Specific
 - Every subcommand accepts `--json` for deterministic JSON stdout
 - Only commands that expose `--format` in their help accept `--format json`
 - `--json` is the short form — preferred in one-liners and agent pipelines
 - `--format json` is the explicit form — command-specific, preferred where alternate output modes also exist
+
+
+## Graph Input Payloads
+### Contract — `remember` Graph Files
+- `--entities-file` accepts a JSON array of entity objects
+- Each entity object MUST include `name` and `entity_type`
+- The alias field `type` is accepted as a synonym for `entity_type`
+- Agents MUST NOT send both `entity_type` and `type` in the same entity object
+- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`
+- `--relationships-file` accepts a JSON array of relationship objects
+- Each relationship object MUST include `source`, `target`, `relation`, and `strength`
+- `strength` MUST be a floating-point number in the inclusive range `[0.0, 1.0]`
+- Stored graph outputs expose this value as `weight`
+- File payloads MUST use canonical stored relation names with underscores such as `applies_to`, `depends_on`, and `tracked_in`
+- CLI flags for `link` and `unlink` use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 
 
 ## Machine-Readable Schemas

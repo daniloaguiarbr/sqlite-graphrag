@@ -165,6 +165,36 @@
 - Pattern 10 writes bilingual fixtures before implementing language-aware code.
 
 
+## Stable Graph Input Contract
+- Agents MUST treat `--entities-file` and `--relationships-file` as JSON array payloads.
+- Entity objects MUST include `name` plus `entity_type` or alias `type`.
+- Agents MUST NOT send both `entity_type` and `type` in the same entity object.
+- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`.
+- Relationship objects MUST include `source`, `target`, `relation`, and `strength`.
+- `strength` MUST be a float in `[0.0, 1.0]`.
+- Relationship payloads MUST use canonical stored relation labels with underscores: `applies_to`, `depends_on`, `tracked_in`.
+- The interactive CLI relation flags on `link` and `unlink` use dashed labels: `applies-to`, `depends-on`, `tracked-in`.
+
+```json
+[
+  { "name": "SQLite", "entity_type": "tool" },
+  { "name": "GraphRAG", "type": "concept" }
+]
+```
+
+```json
+[
+  {
+    "source": "SQLite",
+    "target": "GraphRAG",
+    "relation": "supports",
+    "strength": 0.8,
+    "description": "SQLite supports local GraphRAG retrieval"
+  }
+]
+```
+
+
 ## Antipatterns
 - Antipattern 1 calls `.unwrap()` on a `Result` coming from user input.
 - Antipattern 2 prints debug strings via `println!` and leaves them committed.

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-04-23
+
+### Added
+- Formal input schemas for `remember --entities-file` and `remember --relationships-file`
+- Stable graph input contract in `AGENT_PROTOCOL`, `AGENTS`, `HOW_TO_USE`, and `llms-full.txt`
+- Short graph input contract summary in `llms.txt` and `llms.pt-BR.txt`
+
+### Fixed
+- `AGENTS` headings now describe `--json` as universal and `--format json` as command-specific
+- `HOW_TO_USE` output matrix now reflects the real default output for `link`, `unlink`, and `cleanup-orphans`
+- Public docs no longer present the project as pre-publication
+
 ## [1.0.1] - 2026-04-23
 
 ### Fixed

@@ -41,6 +41,18 @@
 - `SQLITE_GRAPHRAG_NAMESPACE` override de namespace ignorando a detecção automática
 
 
+## Entrada do Grafo
+### Contrato mínimo de payload para `remember`
+- `--entities-file` espera um array JSON de objetos de entidade
+- Cada entidade deve incluir `name` mais `entity_type` ou alias `type`
+- Valores válidos de `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--relationships-file` espera um array JSON de objetos de relacionamento
+- Cada relacionamento deve incluir `source`, `target`, `relation` e `strength`
+- `strength` deve ser float em `[0.0, 1.0]` e é mapeado para `weight` nas saídas do grafo
+- Payloads de arquivo usam relações com underscore como `applies_to`, `depends_on` e `tracked_in`
+- As flags CLI de `link` e `unlink` usam relações com hífen como `applies-to`, `depends-on` e `tracked-in`
+
+
 ## Exit Codes
 ### Status determinístico para roteamento em pipelines
 - `0` sucesso: continue o loop do agente
@@ -73,7 +85,7 @@
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.1 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.2 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5

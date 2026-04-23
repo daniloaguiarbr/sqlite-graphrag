@@ -123,6 +123,36 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | `unlink` | `--source`, `--target`, `--relation` | Remove a typed edge |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
 | `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
+
+### Graph Input Payloads
+- `--entities-file` expects a JSON array of entities
+- Each entity MUST include `name` and `entity_type`; alias `type` is accepted
+- Agents MUST NOT send both `entity_type` and `type` in the same object
+- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--relationships-file` expects a JSON array of relationships
+- Each relationship MUST include `source`, `target`, `relation`, and `strength`
+- `strength` MUST be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
+- File payload relations use underscore labels such as `applies_to`, `depends_on`, and `tracked_in`
+- `link` and `unlink` flags use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
+
+```json
+[
+  { "name": "SQLite", "entity_type": "tool" },
+  { "name": "GraphRAG", "type": "concept" }
+]
+```
+
+```json
+[
+  {
+    "source": "SQLite",
+    "target": "GraphRAG",
+    "relation": "supports",
+    "strength": 0.8,
+    "description": "SQLite supports local GraphRAG retrieval"
+  }
+]
+```
 ### Maintenance
 | Command | Arguments | Description |
 | --- | --- | --- |
@@ -463,7 +493,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.1 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.2 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

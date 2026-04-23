@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/entities-input.schema.json",
+  "title": "RememberEntitiesInput",
+  "description": "JSON array accepted by `sqlite-graphrag remember --entities-file`. Each item must define an entity name and a valid semantic type. The alias field `type` is accepted as a synonym for `entity_type`, but both must not appear together in the same object.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Canonical entity name within the namespace."
+      },
+      "entity_type": {
+        "type": "string",
+        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker"],
+        "description": "Canonical semantic type label for the entity."
+      },
+      "type": {
+        "type": "string",
+        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker"],
+        "description": "Alias accepted by the parser as a synonym for `entity_type`."
+      },
+      "description": {
+        "type": ["string", "null"],
+        "description": "Optional human-readable description of the entity."
+      }
+    },
+    "required": ["name"],
+    "oneOf": [
+      { "required": ["entity_type"] },
+      { "required": ["type"] }
+    ],
+    "examples": [
+      {
+        "name": "SQLite",
+        "entity_type": "tool",
+        "description": "Embedded SQL database"
+      },
+      {
+        "name": "GraphRAG",
+        "type": "concept"
+      }
+    ]
+  }
+}

@@ -520,11 +520,26 @@ let output = Command::new("sqlite-graphrag")
 
 
 ## Flag de Saída JSON
-### Formato — --format json e --json São Ambos Aceitos
+### Formato — `--json` É Universal e `--format json` É Específico por Comando
 - Todos os subcomandos aceitam `--json` para JSON determinístico no stdout
 - Apenas comandos que expõem `--format` no help aceitam `--format json`
 - `--json` é a forma curta — preferida em one-liners e pipelines de agentes
 - `--format json` é a forma explícita — específica por comando, preferida onde também existem outros modos de saída
+
+
+## Payloads de Entrada do Grafo
+### Contrato — Arquivos do `remember`
+- `--entities-file` aceita um array JSON de objetos de entidade
+- Cada objeto de entidade DEVE incluir `name` e `entity_type`
+- O campo alias `type` é aceito como sinônimo de `entity_type`
+- Agentes NÃO DEVEM enviar `entity_type` e `type` no mesmo objeto de entidade
+- Valores válidos para `entity_type` são `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard` e `issue_tracker`
+- `--relationships-file` aceita um array JSON de objetos de relacionamento
+- Cada objeto de relacionamento DEVE incluir `source`, `target`, `relation` e `strength`
+- `strength` DEVE ser número de ponto flutuante no intervalo inclusivo `[0.0, 1.0]`
+- As saídas do grafo expõem esse valor como `weight`
+- Payloads de arquivo DEVEM usar nomes canônicos persistidos com underscore como `applies_to`, `depends_on` e `tracked_in`
+- Flags CLI de `link` e `unlink` usam rótulos com hífen como `applies-to`, `depends-on` e `tracked-in`
 
 
 ## Schemas Legíveis por Máquina

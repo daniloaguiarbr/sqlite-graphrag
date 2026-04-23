@@ -8,9 +8,8 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 > Your AI agents forget everything. Give any LLM agent a memory that survives restarts, cloud outages, and API bills. No cloud. No Python. No embeddings API. Still GraphRAG. This 25 MB binary gives them a brain.
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
-- Pre-publication status: the renamed project is not live yet on GitHub, crates.io, or docs.rs
-- Use the local checkout instructions below until the first public release ships
-- After the public repository and crate exist, install with `cargo install sqlite-graphrag --version 1.0.1 --locked`
+- Public package and repository are live on GitHub and crates.io
+- Install the current published release with `cargo install sqlite-graphrag --version 1.0.2 --locked`
 
 ```bash
 cargo install --path .
@@ -96,7 +95,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
 - Scoop bucket is planned under `scoop install sqlite-graphrag`
-- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.1`
+- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.2`
 
 
 ## Usage

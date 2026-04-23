@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/relationships-input.schema.json",
+  "title": "RememberRelationshipsInput",
+  "description": "JSON array accepted by `sqlite-graphrag remember --relationships-file`. Each relationship must define source, target, canonical relation label, and strength. Stored graph outputs expose `strength` as `weight`.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "source": {
+        "type": "string",
+        "description": "Source entity name."
+      },
+      "target": {
+        "type": "string",
+        "description": "Target entity name."
+      },
+      "relation": {
+        "type": "string",
+        "enum": ["applies_to", "uses", "depends_on", "causes", "fixes", "contradicts", "supports", "follows", "related", "mentions", "replaces", "tracked_in"],
+        "description": "Canonical stored relation label with underscores. CLI flags on `link` and `unlink` use dashed spellings like `applies-to` and `tracked-in` instead."
+      },
+      "strength": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": "Relationship strength in the inclusive range [0.0, 1.0]. Mapped to the `weight` field in graph outputs."
+      },
+      "description": {
+        "type": ["string", "null"],
+        "description": "Optional human-readable description of the relationship."
+      }
+    },
+    "required": ["source", "target", "relation", "strength"],
+    "examples": [
+      {
+        "source": "SQLite",
+        "target": "GraphRAG",
+        "relation": "supports",
+        "strength": 0.8,
+        "description": "SQLite supports local GraphRAG retrieval"
+      }
+    ]
+  }
+}

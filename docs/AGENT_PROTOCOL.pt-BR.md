@@ -159,6 +159,36 @@
 - Padrão 10 escreve fixtures bilíngues antes de implementar código language-aware.
 
 
+## Contrato Estável de Entrada do Grafo
+- Agentes DEVEM tratar `--entities-file` e `--relationships-file` como payloads JSON em array.
+- Objetos de entidade DEVEM incluir `name` mais `entity_type` ou alias `type`.
+- Agentes NÃO DEVEM enviar `entity_type` e `type` no mesmo objeto de entidade.
+- Valores válidos para `entity_type` são `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard` e `issue_tracker`.
+- Objetos de relacionamento DEVEM incluir `source`, `target`, `relation` e `strength`.
+- `strength` DEVE ser float em `[0.0, 1.0]`.
+- Payloads de relacionamento DEVEM usar rótulos canônicos persistidos com underscore: `applies_to`, `depends_on`, `tracked_in`.
+- As flags interativas de `link` e `unlink` usam rótulos com hífen: `applies-to`, `depends-on`, `tracked-in`.
+
+```json
+[
+  { "name": "SQLite", "entity_type": "tool" },
+  { "name": "GraphRAG", "type": "concept" }
+]
+```
+
+```json
+[
+  {
+    "source": "SQLite",
+    "target": "GraphRAG",
+    "relation": "supports",
+    "strength": 0.8,
+    "description": "SQLite suporta GraphRAG local"
+  }
+]
+```
+
+
 ## Antipadrões
 - Antipadrão 1 chama `.unwrap()` em `Result` vindo de input do usuário.
 - Antipadrão 2 imprime strings de debug via `println!` e deixa commitado.

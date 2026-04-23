@@ -182,8 +182,8 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 | `read` | yes | no | json |
 | `list` | yes | yes | json |
 | `forget` | yes | no | json |
-| `link` | yes | yes | human text |
-| `unlink` | yes | yes | human text |
+| `link` | yes | yes | json |
+| `unlink` | yes | yes | json |
 | `stats` | yes | yes | json |
 | `health` | yes | yes | json |
 | `history` | yes | no | json |
@@ -191,7 +191,7 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 | `rename` | yes | yes | json |
 | `restore` | yes | yes | json |
 | `purge` | yes | no | json |
-| `cleanup-orphans` | yes | yes | human text |
+| `cleanup-orphans` | yes | yes | json |
 | `optimize` | yes | no | json |
 | `migrate` | yes | no | json |
 | `init` | yes | no | json |

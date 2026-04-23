@@ -8,9 +8,8 @@
 > Memória persistente para 27 agentes de IA em um binário Rust de 25 MB
 
 - Versão em inglês disponível em [README.md](README.md)
-- Status pré-publicação: o projeto renomeado ainda não está no GitHub, crates.io ou docs.rs
-- Use as instruções do checkout local abaixo até a primeira release pública sair
-- Depois que o repositório e o crate públicos existirem, instale com `cargo install sqlite-graphrag --version 1.0.1 --locked`
+- O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.2 --locked`
 
 ```bash
 cargo install --path .
@@ -96,7 +95,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
 - Bucket Scoop planejado sob `scoop install sqlite-graphrag`
-- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.1`
+- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.2`
 
 
 ## Uso
