@@ -10,6 +10,21 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.8] - 2026-04-24
+
+### Adicionado
+- Auto-start automático do daemon no primeiro comando pesado de embedding quando o socket do daemon está indisponível
+- Serialização de spawn via lock file dedicado do daemon para evitar tempestade de processos
+- Estado persistido de backoff de spawn do daemon para suprimir tentativas repetidas após falhas
+- Novos testes do daemon cobrindo auto-start e restart automático após shutdown
+
+### Alterado
+- Comandos pesados agora tentam usar o daemon, sobem o processo sob demanda e fazem fallback local apenas quando backoff ou falha de spawn exigem isso
+- `sqlite-graphrag daemon` continua disponível para gestão explícita em foreground, mas deixou de ser obrigatório no caminho comum
+
+### Corrigido
+- O maior gap remanescente do daemon na `v1.0.7` foi fechado: o daemon deixou de ser puramente opt-in
+
 ## [1.0.7] - 2026-04-24
 
 ### Corrigido

@@ -58,7 +58,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
-- Every invocation can stay stateless, while heavy embedding commands may also reuse `sqlite-graphrag daemon` when available
+- Every invocation can stay stateless, while heavy embedding commands may also auto-start and reuse `sqlite-graphrag daemon` when needed
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin accepts bodies or JSON payloads for entities and relationship batches
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only

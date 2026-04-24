@@ -9,7 +9,7 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.7 --locked`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.8 --locked`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
@@ -39,8 +39,8 @@ cargo install --path .
 ## Superpoderes para Agentes de IA
 ### Contrato de CLI de primeira classe para orquestração
 - Todo subcomando aceita `--json` produzindo payloads determinísticos em stdout
-- Toda invocação pode continuar stateless, mas comandos pesados de embedding também reutilizam um daemon persistente quando disponível
-- `sqlite-graphrag daemon` mantém o modelo de embeddings residente em processo e reduz cold starts repetidos
+- Toda invocação pode continuar stateless, mas comandos pesados de embedding agora sobem e reutilizam `sqlite-graphrag daemon` automaticamente quando necessário
+- `sqlite-graphrag daemon` continua existindo para controle explícito, mas o caminho comum não exige mais startup manual
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin aceita corpos ou payloads JSON para entidades e relacionamentos em lote
 - Payloads de relacionamento usam `strength` em `[0.0, 1.0]`, mapeado para `weight` nas saídas

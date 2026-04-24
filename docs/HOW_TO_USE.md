@@ -77,9 +77,9 @@ sqlite-graphrag daemon
 sqlite-graphrag daemon --ping
 sqlite-graphrag daemon --stop
 ```
-- Start `sqlite-graphrag daemon` once to keep the embedding model resident in process
 - `init`, `remember`, `recall`, and `hybrid-search` automatically try the daemon first
-- If the daemon is unavailable, those commands fall back to the current local path without failing
+- If the daemon is unavailable, those commands auto-start it on demand before falling back locally
+- Manual `sqlite-graphrag daemon` startup is now optional and useful mainly for explicit supervision or debugging
 - Use `--ping` to confirm the daemon is alive and inspect handled embedding request counts
 - Use `--stop` for a graceful shutdown after long-running batch or agent sessions
 

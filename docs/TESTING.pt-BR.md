@@ -76,7 +76,7 @@
 ## Testes do Daemon
 ### Valide Explicitamente O Reuso Do Processo Persistente
 - Execute `cargo test --all-features --test daemon_integration -- --nocapture` para validar o daemon ponta a ponta
-- A suíte do daemon prova `ping`, `shutdown` e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`
+- A suíte do daemon prova `ping`, `shutdown`, auto-start, restart após stop e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`
 - Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` para isolar o socket do daemon e o cache do modelo por execução
 - Se um teste do daemon travar, execute `sqlite-graphrag daemon --stop` com o mesmo cache dir antes de tentar de novo
 

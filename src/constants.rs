@@ -140,6 +140,21 @@ pub const DAEMON_PING_TIMEOUT_MS: u64 = 10;
 /// Idle duration in seconds before the daemon shuts itself down.
 pub const DAEMON_IDLE_SHUTDOWN_SECS: u64 = 600;
 
+/// Tempo máximo de espera para o daemon ficar saudável após auto-start.
+pub const DAEMON_AUTO_START_MAX_WAIT_MS: u64 = 5_000;
+
+/// Intervalo inicial de polling para verificar se o daemon ficou saudável.
+pub const DAEMON_AUTO_START_INITIAL_BACKOFF_MS: u64 = 50;
+
+/// Teto do backoff entre tentativas automáticas de spawn do daemon.
+pub const DAEMON_AUTO_START_MAX_BACKOFF_MS: u64 = 30_000;
+
+/// Backoff base usado após falhas de spawn/health do daemon.
+pub const DAEMON_SPAWN_BACKOFF_BASE_MS: u64 = 500;
+
+/// Tempo máximo de espera para obter o lock de spawn do daemon.
+pub const DAEMON_SPAWN_LOCK_WAIT_MS: u64 = 2_000;
+
 /// Prefix prepended to bodies before embedding as required by E5 models.
 pub const PASSAGE_PREFIX: &str = "passage: ";
 

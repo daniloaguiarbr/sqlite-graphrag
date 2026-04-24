@@ -56,6 +56,21 @@ fn start_daemon(cache_dir: &PathBuf) -> std::process::Child {
         .expect("spawn do daemon falhou")
 }
 
+fn run_heavy_command(
+    cache_dir: &PathBuf,
+    db_path: &PathBuf,
+    args: &[&str],
+) -> std::process::Output {
+    Command::new(cargo_bin("sqlite-graphrag"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", cache_dir)
+        .env("SQLITE_GRAPHRAG_DB_PATH", db_path)
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .arg("--skip-memory-guard")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn daemon_ping_and_stop_roundtrip() {
     let tmp = TempDir::new().unwrap();
@@ -170,4 +185,75 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
     let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
     assert!(stop.status.success());
     wait_child_exit(&mut child);
+}
+
+#[test]
+fn init_autospawns_daemon_when_missing() {
+    let tmp = TempDir::new().unwrap();
+    let cache_dir = tmp.path().join("cache");
+    let db_path = tmp.path().join("graphrag.sqlite");
+
+    let init = run_heavy_command(&cache_dir, &db_path, &["init"]);
+    assert!(
+        init.status.success(),
+        "init falhou: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let ping = ping_until_ready(&cache_dir);
+    assert_eq!(ping["status"], "ok");
+    assert!(ping["handled_embed_requests"].as_u64().unwrap() >= 1);
+
+    let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
+    assert!(stop.status.success(), "stop falhou: {stop:?}");
+}
+
+#[test]
+fn daemon_respawns_automatically_after_stop() {
+    let tmp = TempDir::new().unwrap();
+    let cache_dir = tmp.path().join("cache");
+    let db_path = tmp.path().join("graphrag.sqlite");
+
+    let init = run_heavy_command(&cache_dir, &db_path, &["init"]);
+    assert!(
+        init.status.success(),
+        "init falhou: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let first_ping = ping_until_ready(&cache_dir);
+    let first_pid = first_ping["pid"].as_u64().unwrap();
+
+    let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
+    assert!(stop.status.success(), "stop falhou: {stop:?}");
+
+    let stopped_ping = run_with_env(&cache_dir, &["daemon", "--ping"]);
+    assert!(
+        !stopped_ping.status.success(),
+        "daemon ainda respondeu a ping apos stop"
+    );
+
+    let recall = run_heavy_command(
+        &cache_dir,
+        &db_path,
+        &["recall", "autospawn", "--json", "--k", "3"],
+    );
+    assert!(
+        recall.status.success(),
+        "recall falhou: {}",
+        String::from_utf8_lossy(&recall.stderr)
+    );
+
+    let second_ping = ping_until_ready(&cache_dir);
+    let second_pid = second_ping["pid"].as_u64().unwrap();
+    assert_ne!(
+        first_pid, second_pid,
+        "daemon nao reiniciou com novo processo apos stop"
+    );
+
+    let stop_again = run_with_env(&cache_dir, &["daemon", "--stop"]);
+    assert!(
+        stop_again.status.success(),
+        "stop final falhou: {stop_again:?}"
+    );
 }

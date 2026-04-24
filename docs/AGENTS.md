@@ -21,7 +21,7 @@
 - Exit codes follow `sysexits.h` so your retry logic works without string matching
 - Zero runtime dependencies ship in one statically linked binary under 30 MB
 - Stdin accepts structured payloads so your agents never escape shell arguments
-- Heavy embedding commands can reuse `sqlite-graphrag daemon` instead of paying cold-start on every loop
+- Heavy embedding commands can auto-start and reuse `sqlite-graphrag daemon` instead of paying cold-start on every loop
 - Cross-platform behavior stays identical on Linux, macOS and Windows out of the box
 - Default behavior always creates or opens `graphrag.sqlite` in the current working directory
 
