@@ -70,7 +70,9 @@
 - O script usa por padrão o `sqlite-graphrag` instalado no `PATH`
 - Sobrescreva a binária com `BIN=./target/debug/sqlite-graphrag` para comparar mudanças locais com a build publicada
 - O script usa `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
-- O script inicializa um banco temporário isolado e executa casos conhecidos de sucesso, limiar, falha e caso sintético
+- O script inicializa um banco temporário isolado e um cache de modelo isolado para o daemon
+- O script tenta executar `daemon --stop` ao sair para evitar deixar um processo residente com o modelo carregado
+- O script executa casos conhecidos de sucesso, limiar, falha e caso sintético
 
 
 ## Testes do Daemon
@@ -79,6 +81,7 @@
 - A suíte do daemon prova `ping`, `shutdown`, auto-start, restart após stop e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`
 - Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` para isolar o socket do daemon e o cache do modelo por execução
 - Se um teste do daemon travar, execute `sqlite-graphrag daemon --stop` com o mesmo cache dir antes de tentar de novo
+- A flag oculta de testes `--skip-memory-guard` agora desabilita auto-start do daemon por padrão, exceto quando `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1` estiver definido
 
 
 ## Testes de Concorrência Loom

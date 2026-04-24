@@ -10,6 +10,18 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.9] - 2026-04-24
+
+### Corrigido
+- `--skip-memory-guard` agora desabilita auto-start do daemon por padrão, evitando que subprocessos de teste e auditoria deixem daemons residentes sem opt-in explícito
+- O daemon agora se encerra quando seu diretório de controle desaparece, evitando que execuções baseadas em `TempDir` deixem processos órfãos
+- `installed_binary_smoke` agora desabilita explicitamente o auto-start do daemon para a binária instalada
+- `audit-remember-safely.sh` agora isola `SQLITE_GRAPHRAG_CACHE_DIR` e executa `daemon --stop` no encerramento, evitando vazamento de processos após auditorias
+
+### Adicionado
+- Novo teste de regressão do daemon provando que `--skip-memory-guard` não auto-sobe o daemon sem opt-in explícito
+- Novo teste de regressão do daemon provando que o processo se encerra quando o diretório temporário de cache/controle desaparece
+
 ## [1.0.8] - 2026-04-24
 
 ### Adicionado

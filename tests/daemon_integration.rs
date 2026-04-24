@@ -10,6 +10,7 @@ fn run_with_env(cache_dir: &PathBuf, args: &[&str]) -> std::process::Output {
     Command::new(cargo_bin("sqlite-graphrag"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", cache_dir)
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART", "1")
         .args(args)
         .output()
         .expect("subprocesso sqlite-graphrag falhou")
@@ -47,6 +48,7 @@ fn start_daemon(cache_dir: &PathBuf) -> std::process::Child {
     Command::new(cargo_bin("sqlite-graphrag"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", cache_dir)
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART", "1")
         .arg("daemon")
         .arg("--idle-shutdown-secs")
         .arg("300")
@@ -65,6 +67,7 @@ fn run_heavy_command(
         .env("SQLITE_GRAPHRAG_CACHE_DIR", cache_dir)
         .env("SQLITE_GRAPHRAG_DB_PATH", db_path)
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART", "1")
         .arg("--skip-memory-guard")
         .args(args)
         .output()
@@ -256,4 +259,50 @@ fn daemon_respawns_automatically_after_stop() {
         stop_again.status.success(),
         "stop final falhou: {stop_again:?}"
     );
+}
+
+#[test]
+fn skip_memory_guard_nao_autostarta_daemon_sem_force() {
+    let tmp = TempDir::new().unwrap();
+    let cache_dir = tmp.path().join("cache");
+    let db_path = tmp.path().join("graphrag.sqlite");
+
+    let init = Command::new(cargo_bin("sqlite-graphrag"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_dir)
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .arg("--skip-memory-guard")
+        .arg("init")
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "init sem auto-start falhou: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let ping = Command::new(cargo_bin("sqlite-graphrag"))
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_dir)
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .arg("daemon")
+        .arg("--ping")
+        .output()
+        .unwrap();
+    assert!(
+        !ping.status.success(),
+        "daemon nao deveria auto-subir com --skip-memory-guard sem force"
+    );
+}
+
+#[test]
+fn daemon_encerra_quando_cache_dir_some() {
+    let tmp = TempDir::new().unwrap();
+    let cache_dir = tmp.path().join("cache");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let mut child = start_daemon(&cache_dir);
+
+    let _ = ping_until_ready(&cache_dir);
+
+    std::fs::remove_dir_all(tmp.path()).unwrap();
+    wait_child_exit(&mut child);
 }

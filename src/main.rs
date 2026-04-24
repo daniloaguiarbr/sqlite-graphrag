@@ -72,6 +72,19 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // `--skip-memory-guard` é um escape hatch de testes. Sem esta proteção, suites que
+    // usam `TempDir` exclusivos acabam auto-subindo múltiplos daemons com o modelo ONNX
+    // carregado, inflando o RSS do host durante a execução dos testes. A força pode ser
+    // religada explicitamente por `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1`.
+    if cli.skip_memory_guard
+        && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").is_none()
+        && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_CHILD").is_none()
+    {
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
+        }
+    }
+
     // Inicializar idioma global ANTES de qualquer emit_progress bilíngue.
     // Esta chamada é no-op se o pre-parse acima já inicializou o OnceLock.
     sqlite_graphrag::i18n::init(cli.lang);

@@ -80,6 +80,7 @@ impl Env {
             self.tmp.path().join("smoke.sqlite"),
         );
         c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
+        c.env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
         c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
         c.arg("--skip-memory-guard");
         c

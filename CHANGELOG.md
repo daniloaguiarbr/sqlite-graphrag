@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-04-24
+
+### Fixed
+- `--skip-memory-guard` now disables daemon auto-start by default so test and audit subprocesses do not leak resident embedding daemons unless they explicitly opt back in
+- The daemon now shuts itself down when its control directory disappears, preventing tempdir-based test runs from leaving orphan processes behind
+- `installed_binary_smoke` now disables daemon auto-start explicitly for the installed binary path
+- `audit-remember-safely.sh` now isolates `SQLITE_GRAPHRAG_CACHE_DIR` and stops the daemon on exit, avoiding resident process leaks after audits
+
+### Added
+- New daemon regression test proving `--skip-memory-guard` does not auto-start the daemon unless forced
+- New daemon regression test proving the daemon exits when the temp cache/control directory disappears
+
 ## [1.0.8] - 2026-04-24
 
 ### Added

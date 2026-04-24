@@ -180,6 +180,11 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
             break;
         }
 
+        if !daemon_control_dir(models_dir).exists() {
+            tracing::info!("daemon control directory disappeared; shutting down");
+            break;
+        }
+
         match listener.accept() {
             Ok(stream) => {
                 last_activity = Instant::now();
@@ -360,7 +365,7 @@ fn request_or_autostart(
 }
 
 fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
-    if let Some(_) = try_ping(models_dir)? {
+    if (try_ping(models_dir)?).is_some() {
         clear_spawn_backoff_state(models_dir).ok();
         return Ok(true);
     }
@@ -375,7 +380,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
         None => return wait_for_daemon_ready(models_dir),
     };
 
-    if let Some(_) = try_ping(models_dir)? {
+    if (try_ping(models_dir)?).is_some() {
         clear_spawn_backoff_state(models_dir).ok();
         drop(spawn_lock);
         return Ok(true);
@@ -427,7 +432,7 @@ fn wait_for_daemon_ready(models_dir: &Path) -> Result<bool, AppError> {
     let mut sleep_ms = DAEMON_AUTO_START_INITIAL_BACKOFF_MS.max(DAEMON_PING_TIMEOUT_MS);
 
     while Instant::now() < deadline {
-        if let Some(_) = try_ping(models_dir)? {
+        if (try_ping(models_dir)?).is_some() {
             return Ok(true);
         }
         thread::sleep(Duration::from_millis(sleep_ms));
@@ -439,7 +444,8 @@ fn wait_for_daemon_ready(models_dir: &Path) -> Result<bool, AppError> {
 
 fn autostart_disabled() -> bool {
     std::env::var("SQLITE_GRAPHRAG_DAEMON_CHILD").as_deref() == Ok("1")
-        || std::env::var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART").as_deref() == Ok("1")
+        || std::env::var("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").as_deref() != Ok("1")
+            && std::env::var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART").as_deref() == Ok("1")
 }
 
 fn daemon_control_dir(models_dir: &Path) -> PathBuf {
@@ -531,6 +537,19 @@ fn now_epoch_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn to_local_socket_name(name: &str) -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    if let Ok(ns_name) = name.to_string().to_ns_name::<GenericNamespaced>() {
+        return Ok(ns_name);
+    }
+
+    let path = if cfg!(unix) {
+        format!("/tmp/{name}.sock")
+    } else {
+        format!(r"\\.\pipe\{name}")
+    };
+    path.to_fs_name::<GenericFilePath>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,17 +579,4 @@ mod tests {
         let models_dir = base.join("models");
         assert_eq!(daemon_control_dir(&models_dir), base);
     }
-}
-
-fn to_local_socket_name(name: &str) -> std::io::Result<interprocess::local_socket::Name<'static>> {
-    if let Ok(ns_name) = name.to_string().to_ns_name::<GenericNamespaced>() {
-        return Ok(ns_name);
-    }
-
-    let path = if cfg!(unix) {
-        format!("/tmp/{name}.sock")
-    } else {
-        format!(r"\\.\pipe\{name}")
-    };
-    path.to_fs_name::<GenericFilePath>()
 }
