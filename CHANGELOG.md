@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-04-24
+
+### Fixed
+- Integration docs no longer claim the project runs "without daemons" now that `sqlite-graphrag daemon` exists
+- Agent-facing docs now describe heavy-command reuse of the persistent daemon instead of a purely stateless-only model
+- HOW_TO_USE now documents `sqlite-graphrag daemon`, `--ping`, `--stop`, and the automatic fallback path in heavy commands
+- TESTING now documents the daemon integration test suite and basic daemon recovery workflow
+
 ## [1.0.6] - 2026-04-24
 
 ### Added

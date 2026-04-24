@@ -9,7 +9,7 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.6 --locked`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.7 --locked`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash

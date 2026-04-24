@@ -9,7 +9,7 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
-- Install the current published release with `cargo install sqlite-graphrag --version 1.0.6 --locked`
+- Install the current published release with `cargo install sqlite-graphrag --version 1.0.7 --locked`
 - Build directly from the local checkout with `cargo install --path .`
 
 ```bash

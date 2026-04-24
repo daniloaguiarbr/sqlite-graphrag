@@ -10,6 +10,14 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.7] - 2026-04-24
+
+### Corrigido
+- A documentação de integrações não afirma mais que o projeto roda "sem daemons" agora que `sqlite-graphrag daemon` existe
+- A documentação voltada a agentes agora descreve o reuso do daemon persistente nos comandos pesados em vez de um modelo puramente stateless
+- HOW_TO_USE agora documenta `sqlite-graphrag daemon`, `--ping`, `--stop` e o caminho de fallback automático nos comandos pesados
+- TESTING agora documenta a suíte de integração do daemon e o fluxo básico de recuperação do daemon
+
 ## [1.0.6] - 2026-04-24
 
 ### Adicionado
