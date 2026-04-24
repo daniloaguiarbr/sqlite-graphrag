@@ -334,7 +334,7 @@
 ## Jenkins
 ### CI/CD — Jenkins 2.400+
 - Receita pronta para colar em stage de Jenkinsfile, zero custo, funciona em ambientes air-gapped
-- Enquanto MCPs exigem servidor dedicado, sqlite-graphrag instala via cargo e roda sem daemons
+- Enquanto MCPs exigem servidor dedicado, sqlite-graphrag instala via cargo e pode rodar só como subprocesso ou ativar `sqlite-graphrag daemon` para menor latência
 - Propósito é integrar backups sqlite-graphrag em pipelines Jenkins self-hosted para ambientes regulados
 - Use stage em Jenkinsfile rodando `cargo install --path .` e comandos operacionais
 - Versão mínima exige Jenkins 2.400 ou posterior para pipeline declarative e gerência de agent estáveis

@@ -21,6 +21,7 @@
 - Exit codes seguem `sysexits.h` para sua lógica de retry funcionar sem casar string
 - Zero dependências de runtime entregam um binário estático com menos de 30 MB
 - Stdin aceita payloads estruturados para seus agentes jamais escaparem argumentos shell
+- Comandos pesados de embedding podem reutilizar `sqlite-graphrag daemon` em vez de pagar cold-start em cada loop
 - Comportamento cross-platform permanece idêntico em Linux macOS e Windows desde o início
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 

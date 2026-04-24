@@ -70,6 +70,20 @@ sqlite-graphrag purge --retention-days 90 --yes
 - `purge` apaga permanentemente memórias removidas há mais de N dias de retenção
 
 
+## Daemon Persistente
+### Reuse O Modelo De Embeddings Entre Comandos Pesados
+```bash
+sqlite-graphrag daemon
+sqlite-graphrag daemon --ping
+sqlite-graphrag daemon --stop
+```
+- Inicie `sqlite-graphrag daemon` uma vez para manter o modelo de embeddings residente em processo
+- `init`, `remember`, `recall` e `hybrid-search` tentam usar o daemon automaticamente primeiro
+- Se o daemon não estiver disponível, esses comandos fazem fallback para o caminho local atual sem falhar
+- Use `--ping` para confirmar que o daemon está vivo e inspecionar o contador de requests de embedding atendidos
+- Use `--stop` para shutdown gracioso após sessões longas de agentes ou ingestão em lote
+
+
 ## Padrões Avançados
 ### Receita Um — Busca Híbrida Com Fusão Ponderada
 ```bash

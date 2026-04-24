@@ -48,7 +48,7 @@
 ## Claude Code
 ### Anthropic Agent — Subprocess Integration
 - Recipe ready to copy into `.claude/hooks/`, zero cloud cost, memory stays on your machine
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to persist context across Claude Code sessions without external memory services
 - Use `sqlite-graphrag recall "$USER_PROMPT" --k 5 --json` in a pre-task hook to inject context
 - Minimum version requires Claude Code 1.0 or later for stable `.claude/hooks/` directory support
@@ -59,7 +59,7 @@
 ## Codex CLI
 ### OpenAI Agent — AGENTS.md Driven Subprocess
 - Recipe ready to paste into `AGENTS.md` at repo root, zero cloud cost to activate
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to expose the memory contract through the native `AGENTS.md` convention
 - Use `sqlite-graphrag recall "<query>" --k 5 --json` documented inside `AGENTS.md` at repo root
 - Minimum version requires Codex CLI 0.5 or later for deterministic AGENTS.md parsing rules
@@ -70,7 +70,7 @@
 ## Gemini CLI
 ### Google Agent — Subprocess With JSON Contract
 - Recipe ready to copy into your Gemini CLI config, zero cloud cost, runs fully local
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to inject memory into Gemini 2.5 Pro prompts during long coding sessions
 - Use `sqlite-graphrag hybrid-search "query" --k 5 --json` for recall with mixed keyword intent
 - Minimum version supports any recent Gemini CLI release with subprocess invocation enabled
@@ -81,7 +81,7 @@
 ## Opencode
 ### Community Agent — Subprocess Integration
 - Recipe ready to copy into the Opencode plugin hook, zero cloud cost, runs as subprocess
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to persist multi-turn context in the open source Opencode orchestration loop
 - Use `sqlite-graphrag recall "$query" --json` as part of the Opencode pre-generation pipeline
 - Minimum version supports any recent Opencode release exposing a plugin subprocess hook
@@ -92,7 +92,7 @@
 ## OpenClaw
 ### Community Agent — Subprocess Driver
 - Recipe ready to drop into OpenClaw startup, zero cloud cost, memory is fully local
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to inject persistent memory into OpenClaw agent loops without plugin rebuild
 - Use `sqlite-graphrag list --type user --json` to fetch seed context at the start of a run
 - Minimum version supports any recent OpenClaw release able to shell out to CLI binaries
@@ -103,7 +103,7 @@
 ## Paperclip
 ### Community Agent — Subprocess Client
 - Recipe ready to paste into Paperclip hook config, zero cloud cost, all memory stays local
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to persist cross-session memory in the Paperclip autonomous developer agent
 - Use `sqlite-graphrag read --name onboarding-note --json` to seed the session with prior notes
 - Minimum version supports any recent Paperclip release that can spawn child subprocess calls
@@ -114,7 +114,7 @@
 ## VS Code Copilot
 ### Microsoft Agent — tasks.json Integration
 - Recipe ready to paste into tasks.json, zero cloud cost, recall fires from inside the editor
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to surface relevant memory from a selection inside VS Code Copilot chat panels
 - Use the example tasks.json entry that calls `sqlite-graphrag recall "$selection" --json`
 - Minimum version requires VS Code 1.90 or later for the latest tasks.json variable substitutions
@@ -125,7 +125,7 @@
 ## Google Antigravity
 ### Google Agent — Runner Integration
 - Recipe ready to register as an Antigravity runner, zero cloud cost, binary is self-contained
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to run sqlite-graphrag as a first-class runner inside Antigravity pipelines at scale
 - Use `sqlite-graphrag hybrid-search "$PROMPT" --json --k 10` as the retrieval step in a runner
 - Minimum version supports any recent Antigravity release that accepts arbitrary runner binaries
@@ -136,7 +136,7 @@
 ## Windsurf
 ### Codeium Agent — Terminal Integration
 - Recipe ready to paste into a Windsurf Run task binding, zero cloud cost to activate recall
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to expose memory recall to Windsurf assistant panels via terminal task invocation
 - Use `sqlite-graphrag recall "$EDITOR_CONTEXT" --json` mapped to a Windsurf Run task binding
 - Minimum version supports any recent Windsurf release with terminal task execution enabled
@@ -147,7 +147,7 @@
 ## Cursor
 ### Cursor Agent — Terminal Integration
 - Recipe ready to drop into `.cursorrules` or a terminal binding, zero cloud cost, memory is local
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to pair Cursor AI with a local memory backend that survives editor restarts
 - Use `sqlite-graphrag remember --name cursor-ctx --type agent --body "$SELECTION"` from a key binding
 - Minimum version requires Cursor 0.40 or later for stable AI rules and terminal env override
@@ -158,7 +158,7 @@
 ## Zed
 ### Zed Industries Agent — Assistant Panel Integration
 - Recipe ready to add as a Zed task profile, zero cloud cost, runs from the built-in terminal
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to wire memory recall into the Zed assistant panel without custom extensions
 - Use `sqlite-graphrag recall "open tabs" --json --k 5` as a terminal command available to Zed
 - Minimum version supports any recent Zed release with the assistant panel and terminal tasks
@@ -169,7 +169,7 @@
 ## Aider
 ### Open Source Agent — Shell Integration
 - Recipe ready to paste into your shell alias before `aider`, zero cloud cost, zero config server
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to augment Aider pair programming with durable memory across git repositories
 - Use `sqlite-graphrag recall "refactor target" --k 5 --json` invoked before each Aider prompt
 - Minimum version requires Aider 0.60 or later for stable subprocess and hook invocation
@@ -180,7 +180,7 @@
 ## Jules
 ### Google Labs Agent — CI Automation
 - Recipe ready to add as a Jules CI step, zero cloud cost, binary installs in seconds via cargo
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to run memory maintenance inside Jules preview automation pipelines automatically
 - Use `sqlite-graphrag stats --json` as a CI step to monitor memory growth week over week
 - Minimum version is the current Jules preview release available via Google Labs early access
@@ -191,7 +191,7 @@
 ## Kilo Code
 ### Community Agent — Subprocess Integration
 - Recipe ready to paste into Kilo Code startup hook, zero cloud cost, memory is a local file
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to expose a persistent memory layer to the Kilo Code autonomous engineering agent
 - Use `sqlite-graphrag recall "recent tasks" --json` at the start of every Kilo Code agent run
 - Minimum version supports any recent Kilo Code release capable of spawning child processes
@@ -202,7 +202,7 @@
 ## Roo Code
 ### Community Agent — Subprocess Integration
 - Recipe ready to wire into Roo Code hook lifecycle, zero cloud cost, all data is local SQLite
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to inject memory into Roo Code agent prompts for deeper repository understanding
 - Use `sqlite-graphrag hybrid-search "repo context" --json` for recall across mixed query types
 - Minimum version supports any recent Roo Code release with hook capabilities for subprocess
@@ -213,7 +213,7 @@
 ## Cline
 ### Community VS Code Extension — Terminal Integration
 - Recipe ready to register as a Cline terminal tool, zero cloud cost, memory persists locally
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to give Cline persistent memory across VS Code sessions without cloud services
 - Use `sqlite-graphrag list --limit 20 --json` as a seed step at Cline conversation startup
 - Minimum version supports the current Cline VS Code extension release in the marketplace
@@ -224,7 +224,7 @@
 ## Continue
 ### Open Source Agent — IDE Terminal Integration
 - Recipe ready to paste into Continue custom commands config, zero cloud cost, no server needed
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to surface sqlite-graphrag memory inside Continue chat panels in VS Code or JetBrains
 - Use `sqlite-graphrag recall "docstring" --json` from a Continue custom command registration
 - Minimum version supports any recent Continue extension release in VS Code or JetBrains stores
@@ -235,7 +235,7 @@
 ## Factory
 ### Factory Agent — API Or Subprocess
 - Recipe ready to add to the Factory droid tool config, zero cloud cost, binary is self-contained
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to integrate sqlite-graphrag with Factory autonomous development droids in production
 - Use `sqlite-graphrag recall "pr context" --json` during the Factory droid plan preparation phase
 - Minimum version supports any recent Factory release with subprocess or API tool integration
@@ -246,7 +246,7 @@
 ## Augment Code
 ### Augment Agent — IDE Integration
 - Recipe ready to wire into Augment IDE tool registration, zero cloud cost, runs as subprocess
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to feed Augment Code review agents with persistent cross-repository memory state
 - Use `sqlite-graphrag hybrid-search "code review" --json` inside Augment IDE review preparation
 - Minimum version supports any recent Augment Code release with terminal and subprocess hooks
@@ -257,7 +257,7 @@
 ## JetBrains AI Assistant
 ### JetBrains Agent — IDE Integration
 - Recipe ready to register as a JetBrains external tool, zero cloud cost, recall takes milliseconds
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to add sqlite-graphrag memory to JetBrains AI Assistant across IntelliJ PyCharm WebStorm
 - Use `sqlite-graphrag recall "$SELECTION" --json` registered as a JetBrains external tool runner
 - Minimum version requires JetBrains AI Assistant 2024.2 or later for modern tool registration
@@ -268,7 +268,7 @@
 ## OpenRouter
 ### Multi-LLM Router — Any Version Supported
 - Recipe ready to add as a preamble to any OpenRouter pipeline, zero cloud cost, memory stays local
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to share a common memory backend across every OpenRouter-hosted LLM in a pipeline
 - Use `sqlite-graphrag recall "routing rule" --json` as a preamble step before any routed request
 - Minimum version supports any OpenRouter API release since memory remains local and independent
@@ -279,7 +279,7 @@
 ## POSIX Shells
 ### Bash Zsh Fish PowerShell — Any Version
 - Recipe ready to paste into any shell alias or script, zero cloud cost, pipes work out of the box
-- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess with no extra process
+- While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to compose sqlite-graphrag with classic Unix and Windows shell pipelines seamlessly
 - Use `sqlite-graphrag recall "$query" --json | jaq '.hits[].name'` in any POSIX-compatible shell
 - Minimum version supports any recent Bash Zsh Fish or PowerShell 7 release
@@ -334,7 +334,7 @@
 ## Jenkins
 ### CI/CD — Jenkins 2.400+
 - Recipe ready to paste into a Jenkinsfile stage, zero cloud cost, works in air-gapped environments
-- While MCPs require a dedicated server, sqlite-graphrag installs via cargo and runs without daemons
+- While MCPs require a dedicated server, sqlite-graphrag installs via cargo and can stay subprocess-only or enable `sqlite-graphrag daemon` for lower latency
 - Purpose is to integrate sqlite-graphrag backups into self-hosted Jenkins pipelines for regulated environments
 - Use a Jenkinsfile stage running `cargo install --path .` and the operational commands
 - Minimum version requires Jenkins 2.400 or later for stable pipeline and agent management features
