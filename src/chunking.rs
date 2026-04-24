@@ -12,7 +12,6 @@ pub const CHUNK_OVERLAP_CHARS: usize = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    pub text: String,
     pub start_offset: usize,
     pub end_offset: usize,
     pub token_count_approx: usize,
@@ -26,7 +25,6 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     if !needs_chunking(body) {
         return vec![Chunk {
             token_count_approx: body.chars().count() / CHARS_PER_TOKEN,
-            text: body.to_string(),
             start_offset: 0,
             end_offset: body.len(),
         }];
@@ -55,10 +53,8 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
             end
         };
 
-        let text = body[start..end].to_string();
-        let token_count_approx = text.chars().count() / CHARS_PER_TOKEN;
+        let token_count_approx = body[start..end].chars().count() / CHARS_PER_TOKEN;
         chunks.push(Chunk {
-            text,
             start_offset: start,
             end_offset: end,
             token_count_approx,
@@ -73,6 +69,10 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     }
 
     chunks
+}
+
+pub fn chunk_text<'a>(body: &'a str, chunk: &Chunk) -> &'a str {
+    &body[chunk.start_offset..chunk.end_offset]
 }
 
 fn find_split_boundary(body: &str, start: usize, desired_end: usize) -> usize {
@@ -144,7 +144,7 @@ mod tests {
         assert!(!needs_chunking(body));
         let chunks = split_into_chunks(body);
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].text, body);
+        assert_eq!(chunk_text(body, &chunks[0]), body);
     }
 
     #[test]
@@ -153,6 +153,7 @@ mod tests {
         assert!(needs_chunking(&body));
         let chunks = split_into_chunks(&body);
         assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|c| !chunk_text(&body, c).is_empty()));
     }
 
     #[test]
@@ -161,7 +162,7 @@ mod tests {
         let chunks = split_into_chunks(&body);
         assert!(chunks.len() > 1);
         for chunk in &chunks {
-            assert!(!chunk.text.is_empty());
+            assert!(!chunk_text(&body, chunk).is_empty());
             assert!(body.is_char_boundary(chunk.start_offset));
             assert!(body.is_char_boundary(chunk.end_offset));
             assert!(chunk.end_offset > chunk.start_offset);

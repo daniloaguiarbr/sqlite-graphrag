@@ -1,6 +1,9 @@
-use crate::constants::{EMBEDDING_DIM, FASTEMBED_BATCH_SIZE, PASSAGE_PREFIX, QUERY_PREFIX};
+use crate::constants::{
+    EMBEDDING_DIM, EMBEDDING_MAX_TOKENS, FASTEMBED_BATCH_SIZE, PASSAGE_PREFIX, QUERY_PREFIX,
+};
 use crate::errors::AppError;
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel, ExecutionProviderDispatch, TextEmbedding, TextInitOptions};
+use ort::execution_providers::CPU;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
@@ -12,8 +15,16 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     if let Some(m) = EMBEDDER.get() {
         return Ok(m);
     }
+
+    // Desabilita arena allocator da EP CPU para reduzir retenção agressiva de memória
+    // entre inferências repetidas com shapes variáveis. O fastembed já desliga
+    // memory pattern em alguns cenários, mas não desliga a CPU arena por padrão.
+    let cpu_ep: ExecutionProviderDispatch = CPU::default().with_arena_allocator(false).build();
+
     let model = TextEmbedding::try_new(
-        InitOptions::new(EmbeddingModel::MultilingualE5Small)
+        TextInitOptions::new(EmbeddingModel::MultilingualE5Small)
+            .with_execution_providers(vec![cpu_ep])
+            .with_max_length(EMBEDDING_MAX_TOKENS)
             .with_show_download_progress(true)
             .with_cache_dir(models_dir.to_path_buf()),
     )

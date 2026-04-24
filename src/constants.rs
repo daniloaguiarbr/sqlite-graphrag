@@ -104,6 +104,24 @@ pub const CHUNK_SIZE_TOKENS: usize = 400;
 /// Token overlap between consecutive chunks.
 pub const CHUNK_OVERLAP_TOKENS: usize = 50;
 
+/// Guard operacional explícito para documentos multi-chunk no `remember`.
+///
+/// Enquanto o bug crítico de crescimento explosivo de memória não for totalmente eliminado,
+/// documentos que geram mais de 6 chunks são rejeitados antes do embedding.
+///
+/// Limite calibrado a partir da auditoria segura da `v1.0.4` publicada sob `MemoryMax=4G`:
+/// documentos com 6 chunks passaram, enquanto documentos moderados que implicaram 7+ chunks
+/// ainda acionaram OOM no caminho de `remember`.
+pub const REMEMBER_MAX_SAFE_MULTI_CHUNKS: usize = 6;
+
+/// Guard operacional temporário por tamanho do body quando `remember` entra no caminho multi-chunk.
+///
+/// A auditoria segura da `v1.0.4` e da `v1.0.5` mostrou que documentos reais densos já
+/// estouravam OOM entre `4141` bytes (passou) e `4540` bytes (falhou) sob `MemoryMax=4G`.
+/// Até a causa raiz final ser eliminada, corpos multi-chunk acima deste valor são rejeitados
+/// antes de qualquer trabalho ONNX.
+pub const REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES: usize = 4_500;
+
 /// Timeout in milliseconds for a single ping probe against the daemon socket.
 pub const DAEMON_PING_TIMEOUT_MS: u64 = 10;
 

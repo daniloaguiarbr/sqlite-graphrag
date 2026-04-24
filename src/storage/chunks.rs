@@ -36,6 +36,7 @@ pub fn insert_chunks(conn: &Connection, chunks: &[Chunk]) -> Result<(), AppError
 pub fn insert_chunk_slices(
     conn: &Connection,
     memory_id: i64,
+    body: &str,
     chunks: &[crate::chunking::Chunk],
 ) -> Result<(), AppError> {
     for (chunk_idx, chunk) in chunks.iter().enumerate() {
@@ -45,7 +46,7 @@ pub fn insert_chunk_slices(
             params![
                 memory_id,
                 chunk_idx as i32,
-                chunk.text,
+                crate::chunking::chunk_text(body, chunk),
                 chunk.start_offset as i32,
                 chunk.end_offset as i32,
                 chunk.token_count_approx as i32,

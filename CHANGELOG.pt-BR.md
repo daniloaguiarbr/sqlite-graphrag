@@ -10,6 +10,29 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.5] - 2026-04-24
+
+### Corrigido
+- `chunking::Chunk` deixou de armazenar corpos owned dos chunks, então o `remember` multi-chunk evita duplicar o corpo inteiro em memória dentro de cada chunk
+- A persistência dos chunks agora insere slices de texto diretamente a partir do body armazenado, em vez de alocar outra coleção intermediária owned
+- A documentação pública agora descreve corretamente `1.0.4` como release publicada atual e `1.0.5` como próxima linha local
+- `remember` agora emite instrumentação de memória por etapa e rejeita documentos que excedem o limite operacional explícito atual de multi-chunk antes de iniciar trabalho ONNX
+- O limite operacional explícito de multi-chunk foi reduzido de 8 para 6 após a auditoria segura em cgroup mostrar OOM ainda presente em entradas moderadas com 7 chunks sob `MemoryMax=4G`
+- `remember` agora também rejeita corpos multi-chunk densos acima de `4500` bytes antes de iniciar trabalho ONNX, com base na janela de OOM observada na auditoria segura em cgroup
+- O embedder agora força `max_length = 512` explicitamente e desabilita a CPU memory arena do ONNX Runtime para reduzir retenção de memória entre inferências repetidas com shapes variáveis
+
+### Causa Raiz
+- O desenho anterior ainda duplicava o body por meio de `Vec<Chunk>` carregando `String` owned para cada chunk
+- Essa duplicação ampliava a pressão do alocador exatamente no caminho multi-chunk já tensionado pela inferência ONNX
+- A ausência de um guard operacional explícito também permitia que entradas Markdown moderadas alcançassem o caminho pesado de embedding multi-chunk sem parada de segurança antecipada
+- A auditoria segura subsequente mostrou que até alguns documentos com 7 chunks permaneciam inseguros dentro de um cgroup de `4G`, justificando um teto temporário mais estrito
+- A auditoria segura subsequente também mostrou que alguns documentos densos entre `4540` e `4792` bytes ainda disparavam OOM abaixo do teto por chunks, justificando um guard temporário adicional por tamanho do body
+- A documentação oficial do ONNX Runtime confirma que `enable_cpu_mem_arena = true` é o padrão, que desligá-lo reduz consumo de memória e que o custo pode ser maior latência
+- A API da crate `ort` também documenta que `memory_pattern` deve ser desabilitado quando o tamanho da entrada varia, o que combina com o caminho de `remember` sob inferência repetida e shapes efetivos variáveis
+- A inspeção do `fastembed 5.13.2` mostrou que o caminho CPU não desabilita a CPU memory arena do ONNX Runtime por padrão e só desabilita `memory_pattern` automaticamente no caminho DirectML
+- A inspeção dos metadados do tokenizer de `multilingual-e5-small` confirmou que o teto real do modelo é `512`, então forçar `max_length = 512` alinha o projeto ao modelo em vez de depender de um default genérico da biblioteca
+- A retenção da arena CPU passa, portanto, a ser tratada como causa fortemente sustentada e tecnicamente coerente, mas ainda não como causa única completamente provada em todos os casos patológicos
+
 ## [1.0.4] - 2026-04-23
 
 ### Corrigido

@@ -104,14 +104,32 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     let mut raw_body = if let Some(b) = args.body {
+        if b.len() > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
+            return Err(AppError::LimitExceeded(format!(
+                "documento tem {} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember",
+                b.len()
+            )));
+        }
         b
     } else if let Some(path) = args.body_file {
+        let file_len = std::fs::metadata(&path).map_err(AppError::Io)?.len() as usize;
+        if file_len > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
+            return Err(AppError::LimitExceeded(format!(
+                "arquivo tem {file_len} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember"
+            )));
+        }
         std::fs::read_to_string(&path).map_err(AppError::Io)?
     } else if args.body_stdin || args.graph_stdin {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
             .map_err(AppError::Io)?;
+        if buf.len() > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
+            return Err(AppError::LimitExceeded(format!(
+                "entrada stdin tem {} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember",
+                buf.len()
+            )));
+        }
         buf
     } else {
         String::new()
@@ -195,11 +213,52 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let duplicate_hash_id = memories::find_by_hash(&conn, &namespace, &body_hash)?;
 
-    output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
-    let embedder = crate::embedder::get_embedder(&paths.models)?;
+    output::emit_progress_i18n(
+        &format!(
+            "Remember stage: validated input; available memory {} MB",
+            crate::memory_guard::available_memory_mb()
+        ),
+        &format!(
+            "Etapa remember: entrada validada; memória disponível {} MB",
+            crate::memory_guard::available_memory_mb()
+        ),
+    );
 
     let chunks_info = chunking::split_into_chunks(&raw_body);
     let chunks_created = chunks_info.len();
+
+    output::emit_progress_i18n(
+        &format!(
+            "Remember stage: chunking produced {} chunks; process RSS {} MB",
+            chunks_created,
+            crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+        ),
+        &format!(
+            "Etapa remember: chunking gerou {} chunks; RSS do processo {} MB",
+            chunks_created,
+            crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+        ),
+    );
+
+    if chunks_created > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS {
+        return Err(AppError::LimitExceeded(format!(
+            "documento gera {chunks_created} chunks; limite operacional seguro atual é {} chunks; divida o documento antes de usar remember",
+            crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS
+        )));
+    }
+
+    if chunks_created > 1
+        && raw_body.len() > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES
+    {
+        return Err(AppError::LimitExceeded(format!(
+            "documento multi-chunk tem {} bytes; limite operacional seguro atual é {} bytes; reduza ou divida o documento antes de usar remember",
+            raw_body.len(),
+            crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES
+        )));
+    }
+
+    output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
+    let embedder = crate::embedder::get_embedder(&paths.models)?;
 
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
@@ -212,8 +271,20 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         );
         let chunk_embeddings = crate::embedder::embed_passages_serial(
             embedder,
-            chunks_info.iter().map(|c| c.text.as_str()),
+            chunks_info
+                .iter()
+                .map(|c| chunking::chunk_text(&raw_body, c)),
         )?;
+        output::emit_progress_i18n(
+            &format!(
+                "Remember stage: chunk embeddings complete; process RSS {} MB",
+                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+            ),
+            &format!(
+                "Etapa remember: embeddings dos chunks concluídos; RSS do processo {} MB",
+                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+            ),
+        );
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
         chunk_embeddings_cache = Some(chunk_embeddings);
         aggregated
@@ -312,7 +383,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     if chunks_info.len() > 1 {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        storage_chunks::insert_chunk_slices(&tx, memory_id, &chunks_info)?;
+        storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
 
         let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
@@ -324,6 +395,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
         }
         tx.commit()?;
+        output::emit_progress_i18n(
+            &format!(
+                "Remember stage: persisted chunk vectors; process RSS {} MB",
+                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+            ),
+            &format!(
+                "Etapa remember: vetores de chunks persistidos; RSS do processo {} MB",
+                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+            ),
+        );
     }
 
     let mut entities_persisted = 0usize;

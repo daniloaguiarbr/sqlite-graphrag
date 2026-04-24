@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-04-24
+
+### Fixed
+- `chunking::Chunk` no longer stores owned chunk bodies, so multi-chunk `remember` avoids duplicating the full body across every chunk in memory
+- Chunk persistence now inserts text slices directly from the stored body instead of allocating another owned chunk collection
+- Public docs now correctly describe `1.0.4` as the current published release and `1.0.5` as the next local line
+- `remember` now emits stage-by-stage memory instrumentation and rejects documents that exceed the current explicit safe multi-chunk limit before ONNX work begins
+- The explicit safe multi-chunk limit was tightened from 8 to 6 after a cgroup-isolated audit showed OOM persisting on moderate 7-chunk inputs under `MemoryMax=4G`
+- `remember` now also rejects dense multi-chunk bodies above `4500` bytes before ONNX work starts, based on the observed OOM threshold window from the safe cgroup audit
+- The embedder now forces `max_length = 512` explicitly and disables the CPU execution provider arena allocator to reduce retained memory across repeated variable-shape inference calls
+
+### Root Cause
+- The previous design still duplicated the body through `Vec<Chunk>` values carrying owned `String` payloads for each chunk
+- That duplication amplified allocator pressure exactly in the multi-chunk path already stressed by ONNX inference
+- The absence of an explicit operational guard also allowed moderate Markdown inputs to reach the heavy multi-chunk embedding path without an early safety stop
+- Follow-up safe auditing showed that even some 7-chunk documents remained unsafe under a `4G` cgroup, justifying a stricter temporary ceiling
+- Follow-up safe auditing also showed that some dense documents in the `4540` to `4792` byte range still triggered OOM below the chunk ceiling, justifying an additional temporary size guard
+- Official ONNX Runtime guidance confirms that `enable_cpu_mem_arena = true` is the default, that disabling it reduces memory consumption, and that the trade-off is potentially higher latency
+- The `ort` API also documents disabling `memory_pattern` when input size varies, which matches the `remember` path with repeated chunk inference and variable effective shapes
+- Inspection of `fastembed 5.13.2` showed that the CPU path does not disable the ONNX Runtime CPU memory arena by default and only disables `memory_pattern` automatically in the DirectML path
+- Inspection of the `multilingual-e5-small` tokenizer metadata confirmed that the real model ceiling is `512`, so explicitly forcing `max_length = 512` matches the model instead of relying on a generic library default
+- The retained CPU arena is therefore treated as a strongly supported and technically coherent cause, but not yet as the single fully proven cause in every pathological case
+
 ## [1.0.4] - 2026-04-23
 
 ### Fixed

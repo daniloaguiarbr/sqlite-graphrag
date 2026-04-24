@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -55,6 +55,7 @@ path = "tests/loom_lock_slots.rs"
 rusqlite = { version = "0.32", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
 sqlite-vec = "0.1.6"
 fastembed = "5"
+ort = "=2.0.0-rc.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

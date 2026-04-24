@@ -9,7 +9,10 @@
 //! abortando com [`crate::errors::AppError::LowMemory`] (exit 77) quando o piso
 //! configurado não é atingido.
 
-use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{
+    get_current_pid, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
+    UpdateKind,
+};
 
 use crate::errors::AppError;
 
@@ -19,6 +22,21 @@ pub fn available_memory_mb() -> u64 {
         System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
     let available_bytes = sys.available_memory();
     available_bytes / (1024 * 1024)
+}
+
+/// Retorna o RSS atual do processo em MiB quando disponível.
+pub fn current_process_memory_mb() -> Option<u64> {
+    let pid = get_current_pid().ok()?;
+    let mut sys =
+        System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::new()
+            .with_memory()
+            .with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    sys.process(pid).map(|p| p.memory() / (1024 * 1024))
 }
 
 /// Calcula o teto seguro de concorrência para cargas pesadas de embedding.
@@ -122,5 +140,11 @@ mod testes {
     fn calculate_safe_concurrency_respeita_teto_maximo() {
         let permits = calculate_safe_concurrency(128_000, 64, 500, 4);
         assert_eq!(permits, 4);
+    }
+
+    #[test]
+    fn current_process_memory_mb_retorna_algum_valor() {
+        let rss = current_process_memory_mb();
+        assert!(rss.is_some());
     }
 }
