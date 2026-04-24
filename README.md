@@ -10,6 +10,7 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
 - Install the current published release with `cargo install sqlite-graphrag --version 1.0.5 --locked`
+- The next planned release line is `1.0.6`, currently under local validation
 - Build directly from the local checkout with `cargo install --path .`
 
 ```bash
@@ -39,8 +40,8 @@ cargo install --path .
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
-- Every invocation is stateless with explicit exit codes for routing decisions
-- Note: CLI is stateless — each invocation reloads the embedding model (~1s); daemon mode targeting <50ms latency is planned for v3.0.0
+- Every invocation can stay stateless, but heavy embedding commands also reuse a persistent daemon when available
+- `sqlite-graphrag daemon` keeps the embedding model resident in process and cuts repeated cold starts
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin accepts bodies or JSON payloads for entities and relationship batches
 - Relationship payloads use `strength` in `[0.0, 1.0]`, mapped to `weight` in outputs

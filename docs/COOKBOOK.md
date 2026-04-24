@@ -7,8 +7,8 @@
 
 
 ## Latency Note
-- The CLI is stateless: each invocation loads the embedding model (approximately 1 second)
-- For production workflows requiring latency below 50 ms, use daemon mode (planned for v3.0.0)
+- The CLI can run stateless, but `sqlite-graphrag daemon` keeps the embedding model resident for repeated heavy commands
+- For production workflows requiring lower latency, start `sqlite-graphrag daemon` once and let `init`, `remember`, `recall`, and `hybrid-search` reuse it automatically
 - Current single-shot `recall` takes approximately 1 second on modern hardware
 - Batch pipelines amortize this cost by invoking the binary once per document in parallel
 

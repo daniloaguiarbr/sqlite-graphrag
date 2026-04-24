@@ -64,6 +64,15 @@
 - NEVER run the `heavy` profile on a thermally throttled machine
 
 
+## Safe Remember Audit
+### Reproduce Installed-Binary Behavior Under cgroup Limits
+- Use `bash scripts/audit-remember-safely.sh <corpus-dir>` to audit `remember` safely against a real corpus
+- The script defaults to the installed `sqlite-graphrag` in `PATH`
+- Override the binary with `BIN=./target/debug/sqlite-graphrag` to compare local changes against the published build
+- The script uses `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
+- The script initializes an isolated temp database and runs known pass, threshold, fail, and synthetic cases
+
+
 ## Loom Concurrency Tests
 ### How Loom Works
 - Loom runs each test many times permuting thread interleavings

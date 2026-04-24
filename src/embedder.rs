@@ -1,5 +1,6 @@
 use crate::constants::{
     EMBEDDING_DIM, EMBEDDING_MAX_TOKENS, FASTEMBED_BATCH_SIZE, PASSAGE_PREFIX, QUERY_PREFIX,
+    REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS, REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS,
 };
 use crate::errors::AppError;
 use fastembed::{EmbeddingModel, ExecutionProviderDispatch, TextEmbedding, TextInitOptions};
@@ -65,7 +66,8 @@ pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f3
 
 pub fn embed_passages_batch(
     embedder: &Mutex<TextEmbedding>,
-    texts: &[String],
+    texts: &[&str],
+    batch_size: usize,
 ) -> Result<Vec<Vec<f32>>, AppError> {
     let prefixed: Vec<String> = texts
         .iter()
@@ -75,11 +77,43 @@ pub fn embed_passages_batch(
     let results = embedder
         .lock()
         .map_err(|e| AppError::Embedding(format!("lock poisoned: {e}")))?
-        .embed(strs, Some(FASTEMBED_BATCH_SIZE))
+        .embed(strs, Some(batch_size.min(FASTEMBED_BATCH_SIZE)))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     for emb in &results {
         assert_eq!(emb.len(), EMBEDDING_DIM, "unexpected embedding dimension");
     }
+    Ok(results)
+}
+
+pub fn controlled_batch_count(token_counts: &[usize]) -> usize {
+    plan_controlled_batches(token_counts).len()
+}
+
+pub fn embed_passages_controlled(
+    embedder: &Mutex<TextEmbedding>,
+    texts: &[&str],
+    token_counts: &[usize],
+) -> Result<Vec<Vec<f32>>, AppError> {
+    if texts.len() != token_counts.len() {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "texts/token_counts length mismatch in controlled embedding"
+        )));
+    }
+
+    let mut results = Vec::with_capacity(texts.len());
+    for (start, end) in plan_controlled_batches(token_counts) {
+        if end - start == 1 {
+            results.push(embed_passage(embedder, texts[start])?);
+            continue;
+        }
+
+        results.extend(embed_passages_batch(
+            embedder,
+            &texts[start..end],
+            end - start,
+        )?);
+    }
+
     Ok(results)
 }
 
@@ -101,6 +135,31 @@ where
         results.push(embed_passage(embedder, text)?);
     }
     Ok(results)
+}
+
+fn plan_controlled_batches(token_counts: &[usize]) -> Vec<(usize, usize)> {
+    let mut batches = Vec::new();
+    let mut start = 0usize;
+
+    while start < token_counts.len() {
+        let mut end = start + 1;
+        let mut max_tokens = token_counts[start].max(1);
+
+        while end < token_counts.len() && end - start < REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS {
+            let candidate_max = max_tokens.max(token_counts[end].max(1));
+            let candidate_len = end + 1 - start;
+            if candidate_max * candidate_len > REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS {
+                break;
+            }
+            max_tokens = candidate_max;
+            end += 1;
+        }
+
+        batches.push((start, end));
+        start = end;
+    }
+
+    batches
 }
 
 /// Convert &[f32] to &[u8] for sqlite-vec storage.
@@ -200,11 +259,24 @@ mod testes {
     fn embed_passages_batch_retorna_um_vetor_por_texto() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
-        let textos = vec!["primeiro".to_string(), "segundo".to_string()];
-        let results = embed_passages_batch(embedder, &textos).unwrap();
+        let textos = ["primeiro", "segundo"];
+        let results = embed_passages_batch(embedder, &textos, 2).unwrap();
         assert_eq!(results.len(), 2);
         for emb in &results {
             assert_eq!(emb.len(), EMBEDDING_DIM);
         }
+    }
+
+    #[test]
+    fn controlled_batch_plan_respeita_orcamento() {
+        assert_eq!(
+            plan_controlled_batches(&[100, 100, 100, 100, 300, 300]),
+            vec![(0, 4), (4, 5), (5, 6)]
+        );
+    }
+
+    #[test]
+    fn controlled_batch_count_retorna_um_para_chunk_unico() {
+        assert_eq!(controlled_batch_count(&[350]), 1);
     }
 }

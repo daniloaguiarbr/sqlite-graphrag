@@ -1,4 +1,5 @@
 pub mod cleanup_orphans;
+pub mod daemon;
 pub mod debug_schema;
 pub mod edit;
 pub mod forget;

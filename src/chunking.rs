@@ -71,6 +71,53 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     chunks
 }
 
+pub fn split_into_chunks_by_token_offsets(
+    body: &str,
+    token_offsets: &[(usize, usize)],
+) -> Vec<Chunk> {
+    if token_offsets.len() <= CHUNK_SIZE_TOKENS {
+        return vec![Chunk {
+            token_count_approx: token_offsets.len(),
+            start_offset: 0,
+            end_offset: body.len(),
+        }];
+    }
+
+    let mut chunks = Vec::new();
+    let mut start_token = 0usize;
+
+    while start_token < token_offsets.len() {
+        let end_token = (start_token + CHUNK_SIZE_TOKENS).min(token_offsets.len());
+
+        chunks.push(Chunk {
+            start_offset: if start_token == 0 {
+                0
+            } else {
+                token_offsets[start_token].0
+            },
+            end_offset: if end_token == token_offsets.len() {
+                body.len()
+            } else {
+                token_offsets[end_token - 1].1
+            },
+            token_count_approx: end_token - start_token,
+        });
+
+        if end_token == token_offsets.len() {
+            break;
+        }
+
+        let next_start = end_token.saturating_sub(CHUNK_OVERLAP_TOKENS);
+        start_token = if next_start <= start_token {
+            end_token
+        } else {
+            next_start
+        };
+    }
+
+    chunks
+}
+
 pub fn chunk_text<'a>(body: &'a str, chunk: &Chunk) -> &'a str {
     &body[chunk.start_offset..chunk.end_offset]
 }
@@ -154,6 +201,38 @@ mod tests {
         let chunks = split_into_chunks(&body);
         assert!(chunks.len() > 1);
         assert!(chunks.iter().all(|c| !chunk_text(&body, c).is_empty()));
+    }
+
+    #[test]
+    fn split_by_token_offsets_respeita_limite_e_overlap() {
+        let body = "ab".repeat(460);
+        let offsets: Vec<(usize, usize)> = (0..460)
+            .map(|i| {
+                let start = i * 2;
+                (start, start + 2)
+            })
+            .collect();
+
+        let chunks = split_into_chunks_by_token_offsets(&body, &offsets);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].token_count_approx, CHUNK_SIZE_TOKENS);
+        assert_eq!(chunks[1].token_count_approx, 110);
+        assert_eq!(chunks[0].start_offset, 0);
+        assert_eq!(
+            chunks[1].start_offset,
+            offsets[CHUNK_SIZE_TOKENS - CHUNK_OVERLAP_TOKENS].0
+        );
+    }
+
+    #[test]
+    fn split_by_token_offsets_retorna_um_chunk_quando_cabe() {
+        let body = "texto curto";
+        let offsets = vec![(0, 5), (6, 11)];
+        let chunks = split_into_chunks_by_token_offsets(body, &offsets);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].start_offset, 0);
+        assert_eq!(chunks[0].end_offset, body.len());
+        assert_eq!(chunks[0].token_count_approx, 2);
     }
 
     #[test]

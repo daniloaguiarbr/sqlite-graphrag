@@ -252,12 +252,18 @@ impl Commands {
             Self::Init(_) | Self::Remember(_) | Self::Recall(_) | Self::HybridSearch(_)
         )
     }
+
+    pub fn uses_cli_slot(&self) -> bool {
+        !matches!(self, Self::Daemon(_))
+    }
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize database and download embedding model
     Init(init::InitArgs),
+    /// Run or control the persistent embedding daemon
+    Daemon(daemon::DaemonArgs),
     /// Save a memory with optional entity graph
     Remember(remember::RememberArgs),
     /// Search memories semantically

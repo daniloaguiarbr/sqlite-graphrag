@@ -49,8 +49,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         "Computing query embedding...",
         "Calculando embedding da consulta...",
     );
-    let embedder = crate::embedder::get_embedder(&paths.models)?;
-    let embedding = crate::embedder::embed_query(embedder, &args.query)?;
+    let embedding = crate::daemon::embed_query_or_local(&paths.models, &args.query)?;
 
     let conn = open_ro(&paths.db)?;
 

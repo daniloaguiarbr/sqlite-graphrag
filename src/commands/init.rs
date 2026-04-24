@@ -83,8 +83,7 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         "Inicializando modelo de embedding (pode baixar na primeira execução)...",
     );
 
-    let embedder = crate::embedder::get_embedder(&paths.models)?;
-    let test_emb = crate::embedder::embed_passage(embedder, "smoke test")?;
+    let test_emb = crate::daemon::embed_passage_or_local(&paths.models, "smoke test")?;
 
     output::emit_json(&InitResponse {
         db_path: paths.db.display().to_string(),

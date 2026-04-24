@@ -122,6 +122,18 @@ pub const REMEMBER_MAX_SAFE_MULTI_CHUNKS: usize = 6;
 /// antes de qualquer trabalho ONNX.
 pub const REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES: usize = 4_500;
 
+/// Teto de chunks por micro-batch controlado no `remember`.
+///
+/// O runtime do `fastembed` usa padding `BatchLongest`, então batches muito grandes amplificam
+/// o custo do maior chunk. Este teto mantém batches pequenos mesmo quando os chunks são curtos.
+pub const REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS: usize = 4;
+
+/// Orçamento máximo de tokens preenchidos por micro-batch controlado no `remember`.
+///
+/// O orçamento usa `max_tokens_no_batch * tamanho_do_batch`, aproximando o custo real do
+/// padding `BatchLongest`. Valores acima disso voltam para batches menores ou serialização.
+pub const REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS: usize = 512;
+
 /// Timeout in milliseconds for a single ping probe against the daemon socket.
 pub const DAEMON_PING_TIMEOUT_MS: u64 = 10;
 

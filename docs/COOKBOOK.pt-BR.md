@@ -7,8 +7,8 @@
 
 
 ## Nota de Latência
-- O CLI é stateless: cada invocação carrega o modelo de embeddings (aproximadamente 1 segundo)
-- Para fluxos de produção que exigem latência abaixo de 50 ms, use o modo daemon (previsto para v3.0.0)
+- O CLI pode rodar de forma stateless, mas `sqlite-graphrag daemon` mantém o modelo de embeddings residente para comandos pesados repetidos
+- Para fluxos de produção com menor latência, inicie `sqlite-graphrag daemon` uma vez e deixe `init`, `remember`, `recall` e `hybrid-search` reutilizarem esse processo automaticamente
 - O `recall` single-shot atual leva aproximadamente 1 segundo em hardware moderno
 - Pipelines em lote amortizam esse custo invocando o binário uma vez por documento em paralelo
 

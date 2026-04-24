@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-04-24
+
+### Added
+- New `daemon` subcommand to keep the embedding model loaded in a persistent IPC process
+- New local-socket JSON protocol for `ping`, `shutdown`, `embed_passage`, `embed_query`, and controlled batch passage embeddings
+- New daemon integration test suite proving `init`, `remember`, `recall`, and `hybrid-search` increment the daemon embed counter when the daemon is available
+- New `scripts/audit-remember-safely.sh` helper to audit installed or local binaries under cgroup memory limits
+
+### Changed
+- `init`, `remember`, `recall`, and `hybrid-search` now try the persistent daemon first and fall back to the current local path when the daemon is unavailable
+- `remember` now uses the real `multilingual-e5-small` tokenizer before embedding, replacing the old char-based chunk approximation on the hot path
+- Multi-chunk embedding in `remember` now uses controlled micro-batching based on padded-token budget instead of all-or-nothing serial chunk embedding
+- `remember --type` help now makes explicit that it targets `memories.type`, not graph `entity_type`
+
+### Fixed
+- The safe remember audit script now uses a unique temporary work directory per run and validates the database with `health` after `init`
+- Token-heavy but byte-dense synthetic inputs below the byte guard no longer over-fragment into artificial 7-chunk failures in the local improved build
+
 ## [1.0.5] - 2026-04-24
 
 ### Fixed

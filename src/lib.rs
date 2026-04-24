@@ -84,6 +84,9 @@ pub mod commands;
 /// Compile-time constants: embedding dimensions, limits and thresholds.
 pub mod constants;
 
+/// Daemon IPC for persistent embedding model reuse across CLI invocations.
+pub mod daemon;
+
 /// Local embedding generation backed by `fastembed`.
 pub mod embedder;
 
@@ -122,6 +125,9 @@ pub mod storage;
 
 /// Fuso horário de exibição para campos `*_iso` (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
 pub mod tz;
+
+/// Tokenizer real do modelo de embeddings para contagem e chunking por tokens reais.
+pub mod tokenizer;
 
 mod embedded_migrations {
     use refinery::embed_migrations;

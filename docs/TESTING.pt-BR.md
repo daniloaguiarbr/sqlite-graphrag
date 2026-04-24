@@ -64,6 +64,15 @@
 - NUNCA execute o profile `heavy` em máquina com throttling térmico ativo
 
 
+## Auditoria Segura do Remember
+### Reproduza o Comportamento da Binária Instalada com Limites de cgroup
+- Use `bash scripts/audit-remember-safely.sh <diretorio-do-corpus>` para auditar o `remember` com segurança contra um corpus real
+- O script usa por padrão o `sqlite-graphrag` instalado no `PATH`
+- Sobrescreva a binária com `BIN=./target/debug/sqlite-graphrag` para comparar mudanças locais com a build publicada
+- O script usa `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
+- O script inicializa um banco temporário isolado e executa casos conhecidos de sucesso, limiar, falha e caso sintético
+
+
 ## Testes de Concorrência Loom
 ### Como o Loom Funciona
 - O loom executa cada teste múltiplas vezes permutando os entrelaçamentos de threads

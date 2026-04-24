@@ -162,16 +162,20 @@ fn main() {
 
     // Adquirir slot no semáforo de contagem. O handle é mantido vivo até o fim de main
     // para que o flock seja liberado automaticamente ao fechar o descritor.
-    let (_lock_handle, _slot) = match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!(
-                "{}: {}",
-                sqlite_graphrag::i18n::prefixo_erro(),
-                e.localized_message()
-            );
-            std::process::exit(e.exit_code());
-        }
+    let _slot_guard = if cli.command.uses_cli_slot() {
+        Some(match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!(
+                    "{}: {}",
+                    sqlite_graphrag::i18n::prefixo_erro(),
+                    e.localized_message()
+                );
+                std::process::exit(e.exit_code());
+            }
+        })
+    } else {
+        None
     };
 
     // Registrar handler para SIGINT / SIGTERM / SIGHUP (via feature "termination").
@@ -185,6 +189,7 @@ fn main() {
 
     let result = match cli.command {
         sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
+        sqlite_graphrag::cli::Commands::Daemon(args) => commands::daemon::run(args),
         sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
         sqlite_graphrag::cli::Commands::Recall(args) => commands::recall::run(args),
         sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),

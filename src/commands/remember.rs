@@ -16,7 +16,11 @@ use std::io::Read as _;
 pub struct RememberArgs {
     #[arg(long)]
     pub name: String,
-    #[arg(long, value_enum)]
+    #[arg(
+        long,
+        value_enum,
+        long_help = "Memory kind stored in `memories.type`. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill."
+    )]
     pub r#type: MemoryType,
     #[arg(long)]
     pub description: String,
@@ -224,17 +228,21 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         ),
     );
 
-    let chunks_info = chunking::split_into_chunks(&raw_body);
+    let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
+    let model_max_length = crate::tokenizer::get_model_max_length(&paths.models)?;
+    let total_passage_tokens = crate::tokenizer::count_passage_tokens(tokenizer, &raw_body)?;
+    let token_offsets = crate::tokenizer::passage_token_offsets(tokenizer, &raw_body)?;
+    let chunks_info = chunking::split_into_chunks_by_token_offsets(&raw_body, &token_offsets);
     let chunks_created = chunks_info.len();
 
     output::emit_progress_i18n(
         &format!(
-            "Remember stage: chunking produced {} chunks; process RSS {} MB",
+            "Remember stage: tokenizer counted {total_passage_tokens} passage tokens (model max {model_max_length}); chunking produced {} chunks; process RSS {} MB",
             chunks_created,
             crate::memory_guard::current_process_memory_mb().unwrap_or(0)
         ),
         &format!(
-            "Etapa remember: chunking gerou {} chunks; RSS do processo {} MB",
+            "Etapa remember: tokenizer contou {total_passage_tokens} tokens de passagem (máximo do modelo {model_max_length}); chunking gerou {} chunks; RSS do processo {} MB",
             chunks_created,
             crate::memory_guard::current_process_memory_mb().unwrap_or(0)
         ),
@@ -258,22 +266,36 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
-    let embedder = crate::embedder::get_embedder(&paths.models)?;
-
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
     let embedding = if chunks_info.len() == 1 {
-        crate::embedder::embed_passage(embedder, &raw_body)?
+        crate::daemon::embed_passage_or_local(&paths.models, &raw_body)?
     } else {
+        let chunk_texts: Vec<&str> = chunks_info
+            .iter()
+            .map(|c| chunking::chunk_text(&raw_body, c))
+            .collect();
+        let chunk_token_counts: Vec<usize> = chunk_texts
+            .iter()
+            .map(|text| crate::tokenizer::count_passage_tokens(tokenizer, text))
+            .collect::<Result<_, _>>()?;
+        let controlled_batches = crate::embedder::controlled_batch_count(&chunk_token_counts);
         output::emit_progress_i18n(
-            &format!("Embedding {} chunks...", chunks_info.len()),
-            &format!("Embedando {} chunks...", chunks_info.len()),
+            &format!(
+                "Embedding {} chunks across {} controlled batches...",
+                chunks_info.len(),
+                controlled_batches
+            ),
+            &format!(
+                "Embedando {} chunks em {} batches controlados...",
+                chunks_info.len(),
+                controlled_batches
+            ),
         );
-        let chunk_embeddings = crate::embedder::embed_passages_serial(
-            embedder,
-            chunks_info
-                .iter()
-                .map(|c| chunking::chunk_text(&raw_body, c)),
+        let chunk_embeddings = crate::daemon::embed_passages_controlled_or_local(
+            &paths.models,
+            &chunk_texts,
+            &chunk_token_counts,
         )?;
         output::emit_progress_i18n(
             &format!(
@@ -418,7 +440,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 Some(desc) => format!("{} {}", entity.name, desc),
                 None => entity.name.clone(),
             };
-            let entity_embedding = crate::embedder::embed_passage(embedder, &entity_text)?;
+            let entity_embedding =
+                crate::daemon::embed_passage_or_local(&paths.models, &entity_text)?;
             entities::upsert_entity_vec(
                 &tx,
                 entity_id,
