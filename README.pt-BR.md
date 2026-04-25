@@ -191,6 +191,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
+| `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 
 ## Padrões de Integração
@@ -272,6 +273,8 @@ RUN cargo install --path .
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 - Banco travado após crash exige `sqlite-graphrag vacuum` para fazer checkpoint do WAL
 - Primeiro `init` leva cerca de um minuto enquanto `fastembed` baixa o modelo quantizado
+- Em `aarch64-unknown-linux-gnu`, comandos pesados de embedding resolvem `libonnxruntime.so` a partir de `ORT_DYLIB_PATH`, do diretório do executável, de `./lib/` e depois do diretório de cache de modelos
+- Se comandos de embedding falharem no ARM64 GNU, aponte `ORT_DYLIB_PATH` para a `libonnxruntime.so` exata distribuída junto da binária
 - Permissão negada no Linux indica falta de escrita no diretório de cache do usuário
 - Detecção de namespace cai para `global` quando não há override explícito
 - Invocações paralelas que excedem o limite seguro efetivo recebem saída 75 e DEVEM tentar com backoff; durante auditorias inicie comandos pesados com `--max-concurrency 1`

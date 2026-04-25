@@ -31,13 +31,12 @@ cargo install --path .
 
 
 ## Matriz de Suporte
-### Targets — Nove Combinações Que Publicamos e Testamos
+### Targets — Oito Combinações Que Publicamos e Testamos
 | Target | Sistema Operacional | Arquitetura | Tamanho do Binário | Startup |
 | --- | --- | --- | --- | --- |
 | x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
 | x86_64-unknown-linux-musl | Alpine musl | x86_64 | ~27 MB | <50ms |
 | aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
-| aarch64-unknown-linux-musl | Alpine musl | aarch64 | ~26 MB | <60ms |
 | aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
 | x86_64-apple-darwin | macOS | Intel | ~23 MB | <30ms |
 | x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
@@ -48,7 +47,12 @@ cargo install --path .
 - Cada linha acima recebe smoke tests automatizados em CI a cada commit empurrado
 - Manifesto SHA256SUMS acompanha cada binário para verificação de integridade imediata
 - Símbolos de debug são entregues como artefatos `.dSYM` ou `.pdb` separados sob demanda
-- Cross-compilação usa `cross` em hosts Linux para células musl e aarch64 da matriz
+- Cross-compilação usa `cross` em hosts Linux para células musl e Linux aarch64 da matriz
+
+### ARM64 GNU — Contrato da Biblioteca Compartilhada do ONNX Runtime
+- `aarch64-unknown-linux-gnu` usa carregamento dinâmico do ONNX Runtime em vez de bundling por linkedição
+- Distribua `libonnxruntime.so` ao lado da binária, em `./lib/`, ou configure `ORT_DYLIB_PATH` explicitamente
+- Isso evita falhas de link específicas do target ao usar arquivos pré-compilados do ONNX Runtime durante a cross-compilação
 
 
 ## Notas Para Linux

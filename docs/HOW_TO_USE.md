@@ -230,6 +230,13 @@ sqlite-graphrag stats --json && sqlite-graphrag health --format json
 - CLI flag takes precedence over environment variable
 - Use `--db` only when you intentionally need a database outside the current directory
 
+### ARM64 GNU ONNX Runtime Contract
+- On `aarch64-unknown-linux-gnu`, embedding-heavy commands use `ort/load-dynamic` instead of link-time ONNX Runtime linkage
+- The binary searches `libonnxruntime.so` in this order: `ORT_DYLIB_PATH`, executable directory, `./lib/` beside the executable, then the model cache directory
+- If none of those paths contain the library, process startup still succeeds but the first embedding operation fails when `ort` cannot load the runtime
+- Ship `libonnxruntime.so` beside the binary or export `ORT_DYLIB_PATH` explicitly in service units and CI jobs
+- This contract applies to `init`, `remember`, `recall`, and `hybrid-search` on ARM64 GNU builds
+
 ### Log Format
 - `SQLITE_GRAPHRAG_LOG_FORMAT=json` emits tracing events as newline-delimited JSON to stderr
 - Default value is `pretty`; any value other than `json` falls back to human-readable pretty format

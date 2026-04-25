@@ -191,6 +191,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
+| `ORT_DYLIB_PATH` | Explicit path to `libonnxruntime.so` for ARM64 GNU dynamic loading | auto-discovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 
 ## Integration Patterns
@@ -272,6 +273,8 @@ RUN cargo install --path .
 - Default behavior always creates or opens `graphrag.sqlite` in the current working directory
 - Database locked after crash requires `sqlite-graphrag vacuum` to checkpoint the WAL
 - First `init` takes roughly one minute while `fastembed` downloads the quantized model
+- On `aarch64-unknown-linux-gnu`, embedding-heavy commands resolve `libonnxruntime.so` from `ORT_DYLIB_PATH`, the executable directory, `./lib/`, then the model cache directory
+- If ARM64 GNU embedding commands fail at startup, point `ORT_DYLIB_PATH` to the exact `libonnxruntime.so` shipped with the binary
 - Permission denied on Linux means the cache directory lacks write access for your user
 - Namespace detection falls back to `global` when no explicit override is present
 - Parallel invocations that exceed the effective safe limit receive exit 75 and SHOULD retry with backoff; during audits start heavy commands with `--max-concurrency 1`

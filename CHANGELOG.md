@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-04-25
+
+### Fixed
+- `aarch64-unknown-linux-gnu` now builds through a target-specific `load-dynamic` ONNX Runtime strategy instead of failing at link time on prebuilt ORT archives
+- The ARM64 GNU runtime contract for `libonnxruntime.so` is now documented explicitly across release and agent-facing docs
+- The release workflow now targets the official GitHub-hosted Windows ARM64 runner for `aarch64-pc-windows-msvc` instead of an incompatible x64 runner
+
 ## [1.0.11] - 2026-04-25
 
 ### Fixed

@@ -17,6 +17,8 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
         return Ok(m);
     }
 
+    maybe_init_dynamic_ort(models_dir)?;
+
     // Desabilita arena allocator da EP CPU para reduzir retenção agressiva de memória
     // entre inferências repetidas com shapes variáveis. O fastembed já desliga
     // memory pattern em alguns cenários, mas não desliga a CPU arena por padrão.
@@ -33,6 +35,45 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     // If another thread raced and won, discard our instance and return theirs.
     let _ = EMBEDDER.set(Mutex::new(model));
     Ok(EMBEDDER.get().expect("just set above"))
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+fn maybe_init_dynamic_ort(models_dir: &Path) -> Result<(), AppError> {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = std::env::var("ORT_DYLIB_PATH") {
+        if !path.is_empty() {
+            candidates.push(std::path::PathBuf::from(path));
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("libonnxruntime.so"));
+            candidates.push(dir.join("lib").join("libonnxruntime.so"));
+        }
+    }
+
+    candidates.push(models_dir.join("libonnxruntime.so"));
+
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+
+        std::env::set_var("ORT_DYLIB_PATH", &path);
+        let _ = ort::init_from(&path)
+            .map_err(|e| AppError::Embedding(e.to_string()))?
+            .commit();
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))]
+fn maybe_init_dynamic_ort(_models_dir: &Path) -> Result<(), AppError> {
+    Ok(())
 }
 
 pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {

@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.11"
+version = "1.0.12"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -58,9 +58,6 @@ path = "tests/loom_lock_slots.rs"
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
 sqlite-vec = "0.1.6"
-fastembed = "5"
-ort = "=2.0.0-rc.11"
-huggingface-hub = { package = "hf-hub", version = "0.4" }
 tokenizers = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
@@ -91,6 +88,16 @@ ctrlc = { version = "3.4", features = ["termination"] }
 # sem --locked resolve 0.4.3 e quebra a instalação em toolchains 1.88..1.94.
 # Reavaliar quando CI passar em 1.95 e `rust-version` avançar para 1.95.
 constant_time_eq = "=0.4.2"
+
+[target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
+fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
+huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
+fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
+huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
 
 [dev-dependencies]
 assert_cmd = "2"

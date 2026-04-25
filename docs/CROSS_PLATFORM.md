@@ -29,13 +29,12 @@ cargo install --path .
 
 
 ## Support Matrix
-### Targets — Nine Combinations We Ship and Test
+### Targets — Eight Combinations We Ship and Test
 | Target | OS | Architecture | Binary Size | Startup |
 | --- | --- | --- | --- | --- |
 | x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
 | x86_64-unknown-linux-musl | Alpine musl | x86_64 | ~27 MB | <50ms |
 | aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
-| aarch64-unknown-linux-musl | Alpine musl | aarch64 | ~26 MB | <60ms |
 | aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
 | x86_64-apple-darwin | macOS | Intel | ~23 MB | <30ms |
 | x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
@@ -46,7 +45,12 @@ cargo install --path .
 - Every row above receives automated smoke tests in CI on every pushed commit
 - SHA256SUMS manifest ships alongside every binary for integrity verification
 - Debug symbols ship as separate `.dSYM` or `.pdb` artifacts on request
-- Cross-compilation uses `cross` on Linux hosts for musl and aarch64 matrix cells
+- Cross-compilation uses `cross` on Linux hosts for musl and aarch64 Linux matrix cells
+
+### ARM64 GNU — Shared ONNX Runtime Contract
+- `aarch64-unknown-linux-gnu` uses dynamic ONNX Runtime loading instead of link-time bundling
+- Ship `libonnxruntime.so` next to the binary, inside `./lib/`, or set `ORT_DYLIB_PATH` explicitly
+- This avoids target-specific link failures from prebuilt ONNX Runtime archives during cross-compilation
 
 
 ## Linux Notes

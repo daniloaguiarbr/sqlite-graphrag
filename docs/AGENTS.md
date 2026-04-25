@@ -524,6 +524,14 @@ let output = Command::new("sqlite-graphrag")
 - Env `SQLITE_GRAPHRAG_LOG_FORMAT=json` switches tracing output to newline-delimited JSON; default is `pretty`
 
 
+## ARM64 GNU Runtime Contract
+### Dynamic ONNX Runtime Loading — What Agents MUST Provide
+- On `aarch64-unknown-linux-gnu`, embedding commands do NOT rely on link-time ONNX Runtime linkage
+- Agents MUST make `libonnxruntime.so` reachable through `ORT_DYLIB_PATH`, the executable directory, `./lib/`, or the model cache directory
+- Heavy commands affected are `init`, `remember`, `recall`, and `hybrid-search`
+- If the shared library is absent, the first embedding operation fails at runtime even though the binary itself starts correctly
+
+
 ## JSON Output Flag
 ### Format — `--json` Is Universal and `--format json` Is Command-Specific
 - Every subcommand accepts `--json` for deterministic JSON stdout
