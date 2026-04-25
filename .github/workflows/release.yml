@@ -29,15 +29,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             use-cross: false
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            use-cross: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             use-cross: true
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-            use-cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
             use-cross: false
@@ -114,51 +108,9 @@ jobs:
             sqlite-graphrag-*.zip
             sqlite-graphrag-*.zip.sha256
 
-  macos-universal:
-    name: macOS Universal Binary
-    needs: build-matrix
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: sqlite-graphrag-x86_64-apple-darwin
-          path: x86_64/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: sqlite-graphrag-aarch64-apple-darwin
-          path: aarch64/
-
-      - name: Extract binaries and lipo
-        run: |
-          cd x86_64
-          tar xzf sqlite-graphrag-*-x86_64-apple-darwin.tar.gz
-          cd ../aarch64
-          tar xzf sqlite-graphrag-*-aarch64-apple-darwin.tar.gz
-          cd ..
-          mkdir -p sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin
-          lipo -create \
-            x86_64/sqlite-graphrag-*/sqlite-graphrag \
-            aarch64/sqlite-graphrag-*/sqlite-graphrag \
-            -output sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin/sqlite-graphrag
-          cp README.md CHANGELOG.md sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin/
-          tar czf sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
-            sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin
-          shasum -a 256 sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz \
-            > sqlite-graphrag-${{ github.ref_name }}-universal-apple-darwin.tar.gz.sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sqlite-graphrag-universal-apple-darwin
-          path: |
-            sqlite-graphrag-*-universal-apple-darwin.tar.gz
-            sqlite-graphrag-*-universal-apple-darwin.tar.gz.sha256
-
   publish-github-release:
     name: Publish GitHub Release
-    needs: [build-matrix, macos-universal]
+    needs: build-matrix
     runs-on: ubuntu-latest
     permissions:
       contents: write

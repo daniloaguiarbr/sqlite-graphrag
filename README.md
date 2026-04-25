@@ -98,8 +98,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Installation
 ### Multiple distribution channels
-- Install the published release with `cargo install sqlite-graphrag --version 1.0.13 --locked`
-- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.13 --locked --force`
+- Install the published release with `cargo install sqlite-graphrag --version 1.0.14 --locked`
+- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.14 --locked --force`
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
@@ -285,7 +285,7 @@ RUN cargo install --path .
 - Each crate calls the binary through `std::process::Command` with `--json` flag
 - No shared memory or FFI required: the contract is pure stdout JSON
 - Pin the binary version in your `Cargo.toml` workspace for reproducible builds
-- All 18 crates below work identically on Linux, macOS and Windows
+- All 18 crates below work identically on Linux, Apple Silicon macOS and Windows
 
 ### rig-core
 ```rust

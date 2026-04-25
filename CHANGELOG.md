@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.14] - 2026-04-25
+
+### Fixed
+- The official release matrix now excludes `x86_64-apple-darwin` and `x86_64-unknown-linux-musl`, which the current `ort` dependency chain does not sustain through prebuilt ONNX Runtime binaries in this project configuration
+- The release workflow no longer tries to assemble a macOS universal binary from an unsupported Intel artifact
+- Release and cross-platform docs now describe only the targets the project can ship consistently without a custom ONNX Runtime build
+
 ## [1.0.13] - 2026-04-25
 
 ### Fixed

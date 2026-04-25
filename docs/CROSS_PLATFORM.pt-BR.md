@@ -31,23 +31,25 @@ cargo install --path .
 
 
 ## Matriz de Suporte
-### Targets — Oito Combinações Que Publicamos e Testamos
+### Targets — Cinco Combinações Que Publicamos e Testamos
 | Target | Sistema Operacional | Arquitetura | Tamanho do Binário | Startup |
 | --- | --- | --- | --- | --- |
 | x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
-| x86_64-unknown-linux-musl | Alpine musl | x86_64 | ~27 MB | <50ms |
 | aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
 | aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
-| x86_64-apple-darwin | macOS | Intel | ~23 MB | <30ms |
 | x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
 | aarch64-pc-windows-msvc | Windows | ARM64 | ~27 MB | <80ms |
-| universal2-apple-darwin | macOS | Intel mais Apple Silicon | ~44 MB | <30ms |
 
 - Cada linha acima recebe asset de release vinculado a cada tag publicada no GitHub
 - Cada linha acima recebe smoke tests automatizados em CI a cada commit empurrado
 - Manifesto SHA256SUMS acompanha cada binário para verificação de integridade imediata
 - Símbolos de debug são entregues como artefatos `.dSYM` ou `.pdb` separados sob demanda
-- Cross-compilação usa `cross` em hosts Linux para células musl e Linux aarch64 da matriz
+- Cross-compilação usa `cross` em hosts Linux para a célula `aarch64-unknown-linux-gnu` da matriz
+
+### Targets de Release Não Suportados — Por Que Foram Excluídos
+- `x86_64-apple-darwin` foi excluído porque as releases atuais de `ort` não fornecem um caminho compatível de ONNX Runtime pré-compilado para macOS Intel nesta configuração do projeto
+- `x86_64-unknown-linux-musl` foi excluído porque as releases atuais de `ort` não fornecem um caminho suportado de ONNX Runtime pré-compilado para musl nesta configuração do projeto
+- Reintroduzir qualquer um desses targets agora EXIGE build custom do ONNX Runtime ou outra estratégia de backend
 
 ### ARM64 GNU — Contrato da Biblioteca Compartilhada do ONNX Runtime
 - `aarch64-unknown-linux-gnu` usa carregamento dinâmico do ONNX Runtime em vez de bundling por linkedição

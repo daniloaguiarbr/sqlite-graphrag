@@ -29,23 +29,25 @@ cargo install --path .
 
 
 ## Support Matrix
-### Targets — Eight Combinations We Ship and Test
+### Targets — Five Combinations We Ship and Test
 | Target | OS | Architecture | Binary Size | Startup |
 | --- | --- | --- | --- | --- |
 | x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
-| x86_64-unknown-linux-musl | Alpine musl | x86_64 | ~27 MB | <50ms |
 | aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
 | aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
-| x86_64-apple-darwin | macOS | Intel | ~23 MB | <30ms |
 | x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
 | aarch64-pc-windows-msvc | Windows | ARM64 | ~27 MB | <80ms |
-| universal2-apple-darwin | macOS | Intel + Apple Silicon | ~44 MB | <30ms |
 
 - Every row above gets a release asset attached to each GitHub release tag
 - Every row above receives automated smoke tests in CI on every pushed commit
 - SHA256SUMS manifest ships alongside every binary for integrity verification
 - Debug symbols ship as separate `.dSYM` or `.pdb` artifacts on request
-- Cross-compilation uses `cross` on Linux hosts for musl and aarch64 Linux matrix cells
+- Cross-compilation uses `cross` on Linux hosts for the `aarch64-unknown-linux-gnu` matrix cell
+
+### Unsupported Release Targets — Why They Are Excluded
+- `x86_64-apple-darwin` is excluded because current `ort` releases no longer provide a compatible prebuilt ONNX Runtime path for Intel macOS in this project configuration
+- `x86_64-unknown-linux-musl` is excluded because current `ort` releases do not provide a supported prebuilt ONNX Runtime path for musl in this project configuration
+- Reintroducing either target now REQUIRES a custom ONNX Runtime build or a different backend strategy
 
 ### ARM64 GNU — Shared ONNX Runtime Contract
 - `aarch64-unknown-linux-gnu` uses dynamic ONNX Runtime loading instead of link-time bundling
