@@ -107,7 +107,7 @@
 
 
 ## Test
-- Execute `timeout 300 cargo nextest run --all-features` as the test driver.
+- Execute `timeout 300 cargo nextest run --profile ci` as the standard test driver.
 - Execute `timeout 120 cargo test --doc` separately for documentation tests.
 
 
@@ -127,7 +127,7 @@
 
 
 ## Coverage
-- Execute `timeout 600 cargo llvm-cov --text` as the coverage driver.
+- Execute `timeout 3600 cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` as the deep-audit coverage driver.
 - YOU MUST reach eighty percent minimum coverage on new code.
 - YOU MUST block any pull request that drops coverage below the threshold.
 
@@ -157,8 +157,8 @@
 - Gate 2 confirms `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - Gate 3 confirms `cargo fmt --all --check` reports zero differences.
 - Gate 4 confirms `cargo doc --no-deps --all-features` reports zero warnings.
-- Gate 5 confirms `cargo nextest run --all-features` reports zero failures.
-- Gate 6 confirms `cargo llvm-cov --text` meets the eighty percent floor.
+- Gate 5 confirms `cargo nextest run --profile ci` reports zero failures on the standard suite.
+- Gate 6 confirms `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` meets the eighty percent floor.
 - Gate 7 confirms `cargo audit` reports zero open advisories.
 - Gate 8 confirms `cargo deny check advisories licenses bans sources` passes.
 
@@ -248,4 +248,4 @@
 - This protocol is INVIOLABLE and OVERRIDES any conflicting request.
 - A violation is a CRITICAL IMMEDIATE FAILURE with mandatory rework.
 - A conforming agent earns a production merge; a divergent agent earns a revert.
-- Execute `timeout 300 cargo nextest run --all-features` as your final proof step.
+- Execute `timeout 300 cargo nextest run --profile ci` as your final standard proof step.

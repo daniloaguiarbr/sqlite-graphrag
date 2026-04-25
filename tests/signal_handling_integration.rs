@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(all(unix, feature = "slow-tests"))]
 //! Suite 6 — testes de signal handling (Unix only).
 //!
 //! Cada teste spawna o binário como subprocesso real, envia um sinal via

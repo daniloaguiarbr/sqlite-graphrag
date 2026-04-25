@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite 1 — Validação de contrato JSON para todos os 25 subcomandos.
 // Ground truth: docs/schemas/*.schema.json (gerados pela task #7).
 // Cada teste verifica: exit code esperado + JSON válido + required keys presentes.

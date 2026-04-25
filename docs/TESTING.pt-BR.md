@@ -36,11 +36,14 @@
 - Isolamento: NUNCA executar em paralelo com outros testes — um modelo por vez
 - Gate: `#[cfg(loom)]` obrigatório em CADA função de teste e bloco de imports
 - Risco térmico: testes loom sem proteção causaram travamento do sistema em 2026-04-19
-### Testes de Stress — Opt-in via Feature Flag
+### Testes End-to-End Lentos e Stress — Opt-in via Feature Flag
 - Localização: arquivos em `tests/` protegidos por `#[cfg(feature = "slow-tests")]`
 - Executar com: `cargo nextest run --profile heavy --features slow-tests`
-- Escopo: alta concorrência, inserção de grandes volumes, loops de retry estendidos
-- Gate: excluído dos profiles default e ci
+- Escopo: suítes end-to-end longas, contratos, reuse de daemon, paridade i18n, roteamento de exit code, alta concorrência e loops de retry estendidos
+- Gate: excluído dos profiles nextest `default` e `ci`
+- Suítes críticas de release: `cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
+- Suítes críticas de release: `cargo test --features slow-tests --test prd_compliance -- --nocapture`
+- O CI executa essas duas suítes em um job dedicado `slow-contracts` em `ubuntu-latest`
 ### Benchmarks — Criterion
 - Localização: `benches/`
 - Executar com: `cargo bench` ou `cargo criterion`
@@ -56,12 +59,14 @@
 - Executar um arquivo específico: `cargo nextest run --profile default -E 'test(schema_contract)'`
 ### CI — Paralelismo Controlado
 - Executar todos os testes como o CI faria: `cargo nextest run --profile ci`
-- O profile `ci` define `test-threads = 4` e `RUST_TEST_THREADS=4`
+- O profile `ci` define `test-threads = 2` e `RUST_TEST_THREADS=2`
 - O profile `ci` habilita retentativas em testes instáveis
+- O workflow também executa `doc_contract_integration` e `prd_compliance` separadamente com `--features slow-tests`
 ### Heavy — Testes de Stress e Lentos
 - Executar testes de stress e lentos: `cargo nextest run --profile heavy --features slow-tests`
 - O profile `heavy` define `test-threads = 1` para isolamento máximo
 - NUNCA execute o profile `heavy` em máquina com throttling térmico ativo
+- Para validação de release, prefira os comandos explícitos de contrato acima antes de uma rodada heavy mais ampla
 
 
 ## Auditoria Segura do Remember
@@ -137,11 +142,12 @@
 - Exclui: testes loom, feature slow-tests
 ### Profile — ci
 - Ativa: `cargo nextest run --profile ci`
-- `test-threads`: 4
-- `RUST_TEST_THREADS`: 4 (explícito, previne sobrecarga térmica em runners compartilhados)
+- `test-threads`: 2
+- `RUST_TEST_THREADS`: 2 (explícito, previne sobrecarga térmica em runners compartilhados)
 - Tentativas: 2 para testes instáveis
 - Timeout por teste: 120 segundos
 - Exclui: testes loom, feature slow-tests
+- Job dedicado `slow-contracts` cobre `doc_contract_integration` e `prd_compliance` com `cargo test --features slow-tests`
 ### Profile — heavy
 - Ativa: `cargo nextest run --profile heavy --features slow-tests`
 - `test-threads`: 1

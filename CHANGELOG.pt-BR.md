@@ -10,6 +10,17 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.10] - 2026-04-24
+
+### Alterado
+- O `--help` da CLI agora é consistentemente inglês por padrão no output estático do clap, enquanto `--lang` continua controlando apenas mensagens humanas de runtime
+- A documentação de release agora deixa explícitos o upgrade com `cargo install ... --force` e a verificação da versão ativa com `sqlite-graphrag --version`
+- A documentação de testes agora separa a cobertura padrão do nextest das suítes críticas de contrato em `slow-tests`
+
+### Adicionado
+- Novo job de CI `slow-contracts` executa `doc_contract_integration` e `prd_compliance` com `--features slow-tests`
+- `installed_binary_smoke` agora exige por padrão paridade de versão entre a binária instalada e o workspace atual, com escape hatch explícito para auditorias legadas deliberadas
+
 ## [1.0.9] - 2026-04-24
 
 ### Corrigido

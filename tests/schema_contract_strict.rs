@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite 8 — Validação estrita de contrato JSON Schema para todos os 25 subcomandos.
 // Cada teste executa o binário, captura stdout, parseia como JSON e valida contra
 // docs/schemas/<cmd>.schema.json usando o crate jsonschema::Validator.

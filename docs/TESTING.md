@@ -36,11 +36,14 @@
 - Isolation: MUST NOT run in parallel with any other test — one model at a time
 - Gate: `#[cfg(loom)]` required on EVERY test function and import block
 - Thermal risk: unguarded loom tests triggered system freeze on 2026-04-19
-### Stress Tests — Opt-in via Feature Flag
+### Slow End-to-End and Stress Tests — Opt-in via Feature Flag
 - Location: `tests/` files guarded by `#[cfg(feature = "slow-tests")]`
 - Run with: `cargo nextest run --profile heavy --features slow-tests`
-- Scope: high-concurrency load, large dataset insertion, extended retry loops
-- Gate: excluded from default and ci profiles
+- Scope: long-running end-to-end smoke suites, contract suites, daemon reuse, i18n parity, exit-code routing, high-concurrency load, and extended retry loops
+- Gate: excluded from the default and `ci` nextest profiles
+- Critical release suites: `cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
+- Critical release suites: `cargo test --features slow-tests --test prd_compliance -- --nocapture`
+- CI runs those two contract suites in a dedicated `slow-contracts` job on `ubuntu-latest`
 ### Benchmarks — Criterion
 - Location: `benches/`
 - Run with: `cargo bench` or `cargo criterion`
@@ -56,12 +59,14 @@
 - Run a specific file: `cargo nextest run --profile default -E 'test(schema_contract)'`
 ### CI — Constrained Parallelism
 - Run all tests as CI would: `cargo nextest run --profile ci`
-- The `ci` profile sets `test-threads = 4` and `RUST_TEST_THREADS=4`
+- The `ci` profile sets `test-threads = 2` and `RUST_TEST_THREADS=2`
 - The `ci` profile enables retries on flaky tests
+- The workflow also runs `doc_contract_integration` and `prd_compliance` separately with `--features slow-tests`
 ### Heavy — Stress and Slow Tests
 - Run stress and slow tests: `cargo nextest run --profile heavy --features slow-tests`
 - The `heavy` profile sets `test-threads = 1` for maximum isolation
 - NEVER run the `heavy` profile on a thermally throttled machine
+- For release validation, prefer the explicit contract commands above before broader heavy runs
 
 
 ## Safe Remember Audit
@@ -137,11 +142,12 @@
 - Excludes: loom tests, slow-tests feature
 ### Profile — ci
 - Activates: `cargo nextest run --profile ci`
-- `test-threads`: 4
-- `RUST_TEST_THREADS`: 4 (explicit, prevents thermal overload on shared runners)
+- `test-threads`: 2
+- `RUST_TEST_THREADS`: 2 (explicit, prevents thermal overload on shared runners)
 - Retries: 2 for flaky tests
 - Timeout per test: 120 seconds
 - Excludes: loom tests, slow-tests feature
+- Dedicated CI job `slow-contracts` covers `doc_contract_integration` and `prd_compliance` with `cargo test --features slow-tests`
 ### Profile — heavy
 - Activates: `cargo nextest run --profile heavy --features slow-tests`
 - `test-threads`: 1

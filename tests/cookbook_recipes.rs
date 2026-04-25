@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite 11 — testes das receitas documentadas em docs/COOKBOOK.md
 //
 // Cada teste valida que o comportamento real do CLI corresponde ao documentado.

@@ -17,7 +17,7 @@ Read this document in [Portuguese (pt-BR)](CONTRIBUTING.pt-BR.md).
 - No command should print errors on a clean checkout of `main`
 ```bash
 timeout 120 cargo check --all-targets
-timeout 300 cargo nextest run --all-features
+timeout 300 cargo nextest run --profile ci
 RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 ```
 
@@ -67,15 +67,17 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo fmt --all --check` passes with zero diffs
 - [ ] `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"` runs clean
-- [ ] `cargo nextest run --all-features` runs every test to success
-- [ ] `cargo llvm-cov --text` keeps coverage at or above the 80 percent minimum
+- [ ] `cargo nextest run --profile ci` runs the standard suite to success
+- [ ] `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` keeps coverage at or above the 80 percent minimum
 - [ ] `cargo audit` reports zero vulnerabilities
 - [ ] `cargo deny check advisories licenses bans sources` passes with zero violations
 
 
 ## Testing
-- Run the full test suite with `cargo nextest run --all-features` for a fast runner with isolation
-- Measure coverage with `cargo llvm-cov --text` and keep coverage at or above 80 percent
+- Run the standard suite with `cargo nextest run --profile ci` for the fast CI-aligned runner
+- Run the slow suite separately with `cargo nextest run --profile heavy --features slow-tests`
+- Measure full-audit coverage with `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only`
+- Keep the full-audit coverage floor at or above 80 percent
 - Unit tests live inside `#[cfg(test)] mod tests` blocks within the implementation file
 - Integration tests live under `tests/` and SHOULD use `assert_cmd` plus `wiremock` for HTTP mocks
 - A hidden flag `--skip-memory-guard` exists exclusively for tests that do not perform real allocation

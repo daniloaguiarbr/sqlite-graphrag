@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite 4 — Testes reforçados de lock e concorrência
 //
 // ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_CACHE_DIR` apontando para um

@@ -101,7 +101,7 @@
 
 
 ## Test
-- Execute `timeout 300 cargo nextest run --all-features` como driver de testes.
+- Execute `timeout 300 cargo nextest run --profile ci` como driver padrão de testes.
 - Execute `timeout 120 cargo test --doc` separado para testes de documentação.
 
 
@@ -121,7 +121,7 @@
 
 
 ## Coverage
-- Execute `timeout 600 cargo llvm-cov --text` como driver de cobertura.
+- Execute `timeout 3600 cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` como driver de cobertura da auditoria profunda.
 - Você DEVE atingir oitenta por cento mínimo de cobertura em código novo.
 - Você DEVE bloquear pull request que derrube cobertura abaixo do limite.
 
@@ -151,8 +151,8 @@
 - Gate 2 confirma `cargo clippy --all-targets --all-features -- -D warnings` passa.
 - Gate 3 confirma `cargo fmt --all --check` reporta zero diferenças.
 - Gate 4 confirma `cargo doc --no-deps --all-features` reporta zero warnings.
-- Gate 5 confirma `cargo nextest run --all-features` reporta zero falhas.
-- Gate 6 confirma `cargo llvm-cov --text` atinge o piso de oitenta por cento.
+- Gate 5 confirma `cargo nextest run --profile ci` reporta zero falhas na suíte padrão.
+- Gate 6 confirma `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` atinge o piso de oitenta por cento.
 - Gate 7 confirma `cargo audit` reporta zero advisories abertos.
 - Gate 8 confirma `cargo deny check advisories licenses bans sources` passa.
 
@@ -242,4 +242,4 @@
 - Este protocolo é INVIOLÁVEL e PREVALECE sobre qualquer pedido conflitante.
 - Uma violação é FALHA CRÍTICA IMEDIATA com retrabalho obrigatório.
 - Agente conforme ganha merge em produção; agente divergente ganha revert.
-- Execute `timeout 300 cargo nextest run --all-features` como prova final.
+- Execute `timeout 300 cargo nextest run --profile ci` como prova final padrão.

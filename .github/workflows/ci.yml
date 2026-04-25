@@ -65,7 +65,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "=== Test attempt $attempt ==="
-            if cargo nextest run --profile ci --all-features; then
+            if cargo nextest run --profile ci; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then exit 1; fi
@@ -77,6 +77,30 @@ jobs:
           RUST_TEST_THREADS: "2"
           RUSTFLAGS: -D warnings
         run: cargo test --doc --all-features
+
+  slow-contracts:
+    name: Slow Contract Suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache fastembed ONNX models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/fastembed
+            ~/Library/Caches/fastembed
+            ~\AppData\Local\fastembed\Cache
+          key: fastembed-model-multilingual-e5-small-${{ runner.os }}
+      - name: Run slow JSON contract suite
+        env:
+          RUST_TEST_THREADS: "1"
+        run: timeout 5400 cargo test --features slow-tests --test doc_contract_integration -- --nocapture
+      - name: Run slow PRD compliance suite
+        env:
+          RUST_TEST_THREADS: "1"
+        run: timeout 5400 cargo test --features slow-tests --test prd_compliance -- --nocapture
 
   doc:
     name: Documentation
@@ -134,7 +158,7 @@ jobs:
       - name: Coverage with nextest
         env:
           RUST_TEST_THREADS: "2"
-        run: cargo llvm-cov nextest --profile ci --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --profile heavy --features slow-tests --lcov --output-path lcov.info
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov

@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite PRD Compliance — 31 testes cobrindo MUST/DEVE do PRD sqlite-graphrag v2.1.0
 //
 // Isolamento: cada teste usa TempDir exclusivo + SQLITE_GRAPHRAG_DB_PATH + SQLITE_GRAPHRAG_CACHE_DIR

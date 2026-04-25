@@ -128,8 +128,8 @@
 - Gate 2 exige `timeout 180 cargo clippy --all-targets --all-features -- -D warnings` passar.
 - Gate 3 exige `timeout 60 cargo fmt --all --check` reportar zero diferenças.
 - Gate 4 exige `RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features` passar.
-- Gate 5 exige `timeout 300 cargo nextest run --all-features` reportar zero falhas.
-- Gate 6 exige `timeout 600 cargo llvm-cov --text` em oitenta por cento mínimo.
+- Gate 5 exige `timeout 300 cargo nextest run --profile ci` reportar zero falhas na suíte padrão.
+- Gate 6 exige `timeout 3600 cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` em oitenta por cento mínimo.
 - Gate 7 exige `timeout 120 cargo audit` reportar zero advisories abertos.
 - Gate 8 exige `timeout 120 cargo deny check advisories licenses bans sources` passar.
 - Gate 9 exige `timeout 120 cargo publish --dry-run --allow-dirty` ter sucesso.
@@ -201,5 +201,5 @@
 ## Lembrete Final
 - Este documento é INVIOLÁVEL e PREVALECE sobre preferência casual do usuário.
 - Uma violação é FALHA CRÍTICA IMEDIATA que demanda retrabalho.
-- Você DEVE confirmar `timeout 300 cargo nextest run --all-features` antes do merge.
+- Você DEVE confirmar `timeout 300 cargo nextest run --profile ci` antes do merge.
 - Você DEVE persistir decisões da sessão na memória antes de declarar pronto.

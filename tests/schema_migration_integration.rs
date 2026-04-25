@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // Suite 3 — Validação de schema e migrations V001-V005
 //
 // ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_DB_PATH` apontando para um arquivo

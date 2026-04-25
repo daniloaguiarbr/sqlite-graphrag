@@ -57,17 +57,17 @@ pub enum GraphExportFormat {
 #[command(about = "Local GraphRAG memory for LLMs in a single SQLite file")]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
-    /// Número máximo de invocações CLI simultâneas permitidas (default: 4).
+    /// Maximum number of simultaneous CLI invocations allowed (default: 4).
     ///
-    /// Limita o semáforo de contagem de slots de concorrência. O valor é restrito
-    /// ao intervalo [1, 2×nCPUs]. Valores acima do teto são rejeitados com exit 2.
+    /// Caps the counting semaphore used for CLI concurrency slots. The value must
+    /// stay within [1, 2×nCPUs]. Values above the ceiling are rejected with exit 2.
     #[arg(long, global = true, value_name = "N")]
     pub max_concurrency: Option<usize>,
 
-    /// Aguardar até SECONDS por um slot livre antes de desistir (exit 75).
+    /// Wait up to SECONDS for a free concurrency slot before giving up (exit 75).
     ///
-    /// Útil em pipelines de agentes que fazem retry: a instância faz polling a
-    /// cada 500 ms até o timeout ou um slot abrir. Default: 300s (5 minutos).
+    /// Useful in retrying agent pipelines: the process polls every 500 ms until a
+    /// slot opens or the timeout expires. Default: 300s (5 minutes).
     #[arg(long, global = true, value_name = "SECONDS")]
     pub wait_lock: Option<u64>,
 
@@ -77,18 +77,19 @@ pub struct Cli {
     #[arg(long, global = true, hide = true, default_value_t = false)]
     pub skip_memory_guard: bool,
 
-    /// Idioma das mensagens humanas (stderr). Aceita `en` ou `pt`.
+    /// Language for human-facing stderr messages. Accepts `en` or `pt`.
     ///
-    /// Sem a flag, detecta via env `SQLITE_GRAPHRAG_LANG` e depois `LC_ALL`/`LANG`.
-    /// JSON de stdout é determinístico e idêntico entre idiomas — apenas
-    /// strings destinadas a humanos são afetadas.
+    /// Without the flag, detection falls back to `SQLITE_GRAPHRAG_LANG` and then
+    /// `LC_ALL`/`LANG`. JSON stdout stays deterministic and identical across
+    /// languages; only human-facing strings are affected.
     #[arg(long, global = true, value_enum, value_name = "LANG")]
     pub lang: Option<crate::i18n::Language>,
 
-    /// Fuso horário para campos `*_iso` no JSON de saída (ex: `America/Sao_Paulo`).
+    /// Time zone for `*_iso` fields in JSON output (for example `America/Sao_Paulo`).
     ///
-    /// Aceita qualquer nome IANA da IANA Time Zone Database. Sem a flag, usa
-    /// `SQLITE_GRAPHRAG_DISPLAY_TZ`; se ausente, usa UTC. Não afeta campos epoch inteiros.
+    /// Accepts any IANA time zone name. Without the flag, it falls back to
+    /// `SQLITE_GRAPHRAG_DISPLAY_TZ`; if unset, UTC is used. Integer epoch fields
+    /// are not affected.
     #[arg(long, global = true, value_name = "IANA")]
     pub tz: Option<chrono_tz::Tz>,
 

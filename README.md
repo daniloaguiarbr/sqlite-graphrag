@@ -9,11 +9,15 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
-- Install the current published release with `cargo install sqlite-graphrag --version 1.0.9 --locked`
+- Install the current published release with `cargo install sqlite-graphrag --version 1.0.10 --locked`
+- Upgrade an existing published install with `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
+- Verify the active binary with `sqlite-graphrag --version`
+- Release-grade validation includes the `slow-tests` contract suites documented in `docs/TESTING.md`
 - Build directly from the local checkout with `cargo install --path .`
 
 ```bash
-cargo install --path .
+cargo install sqlite-graphrag --version 1.0.10 --locked --force
+sqlite-graphrag --version
 ```
 
 
@@ -45,6 +49,7 @@ cargo install --path .
 - Stdin accepts bodies or JSON payloads for entities and relationship batches
 - Relationship payloads use `strength` in `[0.0, 1.0]`, mapped to `weight` in outputs
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
+- `--help` is English-first by design; use `--lang` for human-facing runtime messages, not static clap help text
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
 ### 27 AI agents and IDEs supported out of the box
 | Agent | Vendor | Minimum version | Integration pattern |
@@ -81,22 +86,25 @@ cargo install --path .
 ## Quick Start
 ### Install and record your first memory in four commands
 ```bash
-cargo install --path .
+cargo install sqlite-graphrag --version 1.0.10 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 - For the local checkout, `cargo install --path .` is enough
+- Re-run `sqlite-graphrag --version` after any upgrade to confirm the active binary
 - After the public release, prefer `--locked` to preserve the tested MSRV dependency graph
 
 
 ## Installation
 ### Multiple distribution channels
+- Install the published release with `cargo install sqlite-graphrag --version 1.0.10 --locked`
+- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
 - Scoop bucket is planned under `scoop install sqlite-graphrag`
-- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.3`
+- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:<version>`
 
 
 ## Usage
@@ -138,6 +146,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Initialize database and download embedding model |
+| `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs` | Run or control the persistent embedding daemon |
 | `health` | `--json` | Show database integrity and pragma status |
 | `stats` | `--json` | Count memories, entities and relationships |
 | `migrate` | `--json` | Apply pending schema migrations via `refinery` |
@@ -161,10 +170,15 @@ sqlite-graphrag purge --retention-days 90 --yes
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
 | `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
+| `link` | `--from`, `--to`, `--relation`, `--weight` | Create an explicit relationship between two entities |
+| `unlink` | `--relationship-id` | Remove a specific relationship between two entities |
+| `related` | `--name`, `--k`, `--hops` | Traverse graph-connected memories from a seed memory |
+| `graph` | `--format`, `--output` | Export a graph snapshot in `json`, `dot` or `mermaid` |
 ### Maintenance
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
+| `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entities that have no memories and no relationships |
 
 
 ## Environment Variables

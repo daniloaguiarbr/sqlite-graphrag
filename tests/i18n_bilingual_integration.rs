@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;

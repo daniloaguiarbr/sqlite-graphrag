@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-04-24
+
+### Changed
+- CLI `--help` is now consistently English-first for static clap output, while `--lang` remains the control for human-facing runtime messages
+- Release documentation now makes upgrade and active-version verification explicit with `cargo install ... --force` and `sqlite-graphrag --version`
+- Testing documentation now distinguishes default nextest coverage from the release-critical `slow-tests` contract suites
+
+### Added
+- New CI job `slow-contracts` runs `doc_contract_integration` and `prd_compliance` with `--features slow-tests`
+- `installed_binary_smoke` now enforces installed-binary version parity with the current workspace by default, with an explicit escape hatch for deliberate legacy audits
+
 ## [1.0.9] - 2026-04-24
 
 ### Fixed

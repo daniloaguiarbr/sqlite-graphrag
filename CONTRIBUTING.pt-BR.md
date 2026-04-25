@@ -17,7 +17,7 @@ Leia este documento em [inglês (EN)](CONTRIBUTING.md).
 - Nenhum comando deve imprimir erros em um checkout limpo de `main`
 ```bash
 timeout 120 cargo check --all-targets
-timeout 300 cargo nextest run --all-features
+timeout 300 cargo nextest run --profile ci
 RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 ```
 
@@ -67,15 +67,17 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passa com zero warnings
 - [ ] `cargo fmt --all --check` passa com zero diferenças
 - [ ] `cargo doc --no-deps --all-features` com `RUSTDOCFLAGS="-D warnings"` executa limpo
-- [ ] `cargo nextest run --all-features` executa todos os testes com sucesso
-- [ ] `cargo llvm-cov --text` mantém cobertura no mínimo 80 por cento
+- [ ] `cargo nextest run --profile ci` executa a suíte padrão com sucesso
+- [ ] `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` mantém cobertura no mínimo 80 por cento
 - [ ] `cargo audit` reporta zero vulnerabilidades
 - [ ] `cargo deny check advisories licenses bans sources` passa com zero violações
 
 
 ## Testes
-- Execute a suíte completa com `cargo nextest run --all-features` para runner rápido com isolamento
-- Meça cobertura com `cargo llvm-cov --text` e mantenha cobertura em 80 por cento ou acima
+- Execute a suíte padrão com `cargo nextest run --profile ci` para o runner rápido alinhado ao CI
+- Execute a suíte lenta separadamente com `cargo nextest run --profile heavy --features slow-tests`
+- Meça a cobertura de auditoria profunda com `cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only`
+- Mantenha o piso da cobertura de auditoria profunda em 80 por cento ou acima
 - Testes unitários vivem dentro de blocos `#[cfg(test)] mod tests` no próprio arquivo de implementação
 - Testes de integração vivem em `tests/` e DEVEM usar `assert_cmd` mais `wiremock` para mocks HTTP
 - A flag oculta `--skip-memory-guard` existe exclusivamente para testes que não alocam memória real

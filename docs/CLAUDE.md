@@ -128,8 +128,8 @@
 - Gate 2 requires `timeout 180 cargo clippy --all-targets --all-features -- -D warnings` to pass.
 - Gate 3 requires `timeout 60 cargo fmt --all --check` to report zero differences.
 - Gate 4 requires `RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features` to pass.
-- Gate 5 requires `timeout 300 cargo nextest run --all-features` to report zero failures.
-- Gate 6 requires `timeout 600 cargo llvm-cov --text` at eighty percent minimum.
+- Gate 5 requires `timeout 300 cargo nextest run --profile ci` to report zero failures on the standard suite.
+- Gate 6 requires `timeout 3600 cargo llvm-cov nextest --profile heavy --features slow-tests --summary-only` at eighty percent minimum.
 - Gate 7 requires `timeout 120 cargo audit` to report zero open advisories.
 - Gate 8 requires `timeout 120 cargo deny check advisories licenses bans sources` to pass.
 - Gate 9 requires `timeout 120 cargo publish --dry-run --allow-dirty` to succeed.
@@ -202,5 +202,5 @@
 ## Final Reminder
 - This document is INVIOLABLE and OVERRIDES any casual user preference.
 - A violation is a CRITICAL IMMEDIATE FAILURE that demands rework.
-- YOU MUST confirm `timeout 300 cargo nextest run --all-features` before every merge.
+- YOU MUST confirm `timeout 300 cargo nextest run --profile ci` before every merge.
 - YOU MUST persist session decisions to memory before claiming the task is done.

@@ -1,4 +1,6 @@
-/// Suite 10 — Smoke tests contra ~/.cargo/bin/sqlite-graphrag (v2.0.4 instalado)
+#![cfg(feature = "slow-tests")]
+
+/// Suite 10 — Smoke tests contra ~/.cargo/bin/sqlite-graphrag publicado
 ///
 /// Testa o happy path de cada um dos 25 subcomandos contra o binário já
 /// instalado. Skippa gracefully se:
@@ -8,7 +10,13 @@
 /// Cada teste usa TempDir + SQLITE_GRAPHRAG_DB_PATH isolado.
 /// Todos os testes devem retornar exit code 0 e JSON válido no stdout.
 ///
-/// Contratos de API verificados contra v2.0.4:
+/// Por padrão, a suíte exige que o binário instalado corresponda ao
+/// `CARGO_PKG_VERSION` do workspace atual. Isso evita falso positivo quando o
+/// código local evolui, mas `~/.cargo/bin/sqlite-graphrag` continua desatualizado.
+/// Use `SQLITE_GRAPHRAG_ALLOW_INSTALLED_VERSION_MISMATCH=1` para auditar um
+/// binário legado deliberadamente.
+///
+/// Contratos de API validados nesta suíte:
 /// - `init`     → {status: "ok", db_path, schema_version, ...}
 /// - `remember` → {memory_id, name, action: "created", ...}   (sem `status`)
 /// - `forget`   → {forgotten: true, name, namespace}          (sem `status`)
@@ -17,7 +25,7 @@
 /// - `list`     → array JSON direto na raiz                   (não {memories:[]})
 /// - `link`     → {action: "created", from, to, relation, ...}
 /// - `unlink`   → {action: "deleted", relationship_id, ...}
-/// - `__debug_schema` não existe em v2.0.4 — smoke_25 skippa gracefully
+/// - `__debug_schema` é testado quando o binário instalado o suporta
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -50,15 +58,43 @@ fn skip_if_not_installed() -> PathBuf {
     }
 }
 
-/// Retorna a versão do binário instalado como string, ex: "2.0.4"
+/// Retorna a versão do binário instalado como string, ex: "1.0.10"
 fn installed_version(bin: &PathBuf) -> String {
     let out = Command::new(bin)
         .arg("--version")
         .output()
         .expect("--version falhou");
     let s = String::from_utf8_lossy(&out.stdout);
-    // formato: "sqlite-graphrag 2.0.4\n"
+    // formato: "sqlite-graphrag 1.0.10\n"
     s.split_whitespace().nth(1).unwrap_or("0.0.0").to_string()
+}
+
+fn expected_installed_version() -> String {
+    std::env::var("SQLITE_GRAPHRAG_EXPECT_INSTALLED_VERSION")
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
+fn allow_installed_version_mismatch() -> bool {
+    std::env::var("SQLITE_GRAPHRAG_ALLOW_INSTALLED_VERSION_MISMATCH").as_deref() == Ok("1")
+}
+
+fn assert_expected_installed_version(bin: &PathBuf) {
+    let actual = installed_version(bin);
+    let expected = expected_installed_version();
+    if actual == expected {
+        return;
+    }
+
+    if allow_installed_version_mismatch() {
+        eprintln!(
+            "Suite 10: version mismatch allowed explicitly: installed v{actual}, expected v{expected}"
+        );
+        return;
+    }
+
+    panic!(
+        "Suite 10: installed binary version mismatch: ~/.cargo/bin/sqlite-graphrag is v{actual}, but this workspace expects v{expected}. Reinstall with `cargo install sqlite-graphrag --version {expected} --locked --force` or set SQLITE_GRAPHRAG_ALLOW_INSTALLED_VERSION_MISMATCH=1 for deliberate legacy audits."
+    );
 }
 
 struct Env {
@@ -69,6 +105,7 @@ struct Env {
 impl Env {
     fn new() -> Self {
         let bin = skip_if_not_installed();
+        assert_expected_installed_version(&bin);
         let tmp = TempDir::new().expect("TempDir falhou");
         Self { bin, tmp }
     }
@@ -754,9 +791,9 @@ fn smoke_24_cleanup_orphans() {
 // ---------------------------------------------------------------------------
 // Suite 10 — Smoke #25: __debug_schema
 //
-// __debug_schema foi adicionado em v2.0.5 (task #6).
-// Se o binário instalado for v2.0.4 ou anterior, este teste skippa
-// gracefully sem falhar.
+// Alguns binários legados não expõem `__debug_schema`.
+// Quando a suíte está rodando deliberadamente contra um binário antigo,
+// este teste skippa sem falhar.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -764,28 +801,28 @@ fn smoke_25_debug_schema() {
     let env = Env::new();
     env.init();
 
-    let version = installed_version(&env.bin);
-    // Parseia major.minor.patch para comparação semântica
-    let parts: Vec<u64> = version.split('.').map(|s| s.parse().unwrap_or(0)).collect();
-    let semver = (
-        parts.first().copied().unwrap_or(0),
-        parts.get(1).copied().unwrap_or(0),
-        parts.get(2).copied().unwrap_or(0),
-    );
-
-    // __debug_schema só existe a partir de v2.0.5
-    if semver < (2, 0, 5) {
-        eprintln!(
-            "Suite 10 smoke_25: binário instalado é v{version} (< 2.0.5) — __debug_schema inexistente, skip graceful"
-        );
-        return;
-    }
-
     let out = env
         .cmd()
         .arg("__debug_schema")
         .output()
         .expect("__debug_schema falhou");
+
+    if !out.status.success() {
+        let err = stderr(&out);
+        if allow_installed_version_mismatch()
+            && (err.contains("unrecognized subcommand")
+                || err.contains("unexpected argument")
+                || err.contains("unknown subcommand"))
+        {
+            eprintln!(
+                "Suite 10 smoke_25: installed legacy binary does not expose __debug_schema — skip graceful"
+            );
+            return;
+        }
+
+        panic!("__debug_schema falhou: {err}");
+    }
+
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(

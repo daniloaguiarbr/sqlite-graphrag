@@ -9,11 +9,15 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.9 --locked`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.10 --locked`
+- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
+- Verifique o binário ativo com `sqlite-graphrag --version`
+- A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
-cargo install --path .
+cargo install sqlite-graphrag --version 1.0.10 --locked --force
+sqlite-graphrag --version
 ```
 
 
@@ -45,6 +49,7 @@ cargo install --path .
 - Stdin aceita corpos ou payloads JSON para entidades e relacionamentos em lote
 - Payloads de relacionamento usam `strength` em `[0.0, 1.0]`, mapeado para `weight` nas saídas
 - Stderr carrega saída de tracing apenas sob `SQLITE_GRAPHRAG_LOG_LEVEL=debug`
+- `--help` é inglês por padrão; use `--lang` para mensagens humanas de runtime, não para o help estático do clap
 - Comportamento cross-platform é idêntico em hosts Linux, macOS e Windows
 ### 27 agentes de IA e IDEs suportados de imediato
 | Agente | Fornecedor | Versão mínima | Padrão de integração |
@@ -81,22 +86,25 @@ cargo install --path .
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install --path .
+cargo install sqlite-graphrag --version 1.0.10 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 - Para o checkout local, `cargo install --path .` é suficiente
+- Reexecute `sqlite-graphrag --version` após qualquer upgrade para confirmar o binário ativo
 - Depois da release pública, prefira `--locked` para preservar o grafo de dependências validado para o MSRV
 
 
 ## Instalação
 ### Múltiplos canais de distribuição
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.10 --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
 - Bucket Scoop planejado sob `scoop install sqlite-graphrag`
-- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:1.0.3`
+- Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:<version>`
 
 
 ## Uso
@@ -138,6 +146,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Inicializa banco e baixa modelo de embedding |
+| `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs` | Executa ou controla o daemon persistente de embeddings |
 | `health` | `--json` | Exibe integridade e status dos pragmas |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |
@@ -161,10 +170,15 @@ sqlite-graphrag purge --retention-days 90 --yes
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 combinado com vetor via Reciprocal Rank Fusion |
 | `namespace-detect` | `--namespace <nome>` | Resolve precedência de namespace para invocação |
+| `link` | `--from`, `--to`, `--relation`, `--weight` | Cria relacionamento explícito entre duas entidades |
+| `unlink` | `--relationship-id` | Remove um relacionamento específico entre duas entidades |
+| `related` | `--name`, `--k`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
+| `graph` | `--format`, `--output` | Exporta snapshot do grafo em `json`, `dot` ou `mermaid` |
 ### Manutenção
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Apaga permanentemente memórias soft-deleted |
+| `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entidades sem memórias e sem relacionamentos |
 
 
 ## Variáveis de Ambiente
