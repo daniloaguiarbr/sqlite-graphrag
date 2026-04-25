@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-04-25
+
+### Fixed
+- `x86_64-apple-darwin` now builds on an explicit Intel macOS runner instead of failing on an Apple Silicon host that lacks a compatible prebuilt ORT path for this target
+- `x86_64-unknown-linux-musl` now builds through `cross`, providing the musl C++ toolchain required by `esaxx-rs`
+- The ARM64 GNU dynamic ONNX Runtime contract and the Windows ARM64 runner requirement are now captured in the release candidate that will validate the full matrix
+
 ## [1.0.12] - 2026-04-25
 
 ### Fixed
