@@ -549,7 +549,7 @@ let output = Command::new("sqlite-graphrag")
 - Todo schema declara `"additionalProperties": false` — chaves desconhecidas são violações de contrato
 - Schemas usam `$defs` para subtipos compartilhados (ex: `RecallItem`, `HealthCheck`)
 - Campos opcionais ficam fora do array `required` e são tipados com `["T", "null"]` quando anuláveis
-- Validar resposta em tempo real: `sqlite-graphrag stats | jaq --from-file docs/schemas/stats.schema.json`
+- Validar resposta em tempo real com um validador JSON Schema real: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - O arquivo `docs/schemas/debug-schema.schema.json` cobre o subcomando diagnóstico oculto `__debug_schema`
 - Schemas são atualizados a cada breaking change e seguem a versão major SemVer da CLI
 

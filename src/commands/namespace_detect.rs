@@ -7,10 +7,10 @@ use serde::Serialize;
 pub struct NamespaceDetectArgs {
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Caminho explícito do banco. Aceito como no-op para manter o contrato global.
+    /// Explicit database path. Accepted as a no-op to preserve the global contract.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
+    /// Explicit JSON flag. Accepted as a no-op because output is already JSON by default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }

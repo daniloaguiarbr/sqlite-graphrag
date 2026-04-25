@@ -9,10 +9,10 @@ use serde::Serialize;
 pub struct MigrateArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
+    /// Explicit JSON flag. Accepted as a no-op because output is already JSON by default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
-    /// Exibir migrações já aplicadas sem aplicar novas.
+    /// Show already applied migrations without applying new ones.
     #[arg(long, default_value_t = false)]
     pub status: bool,
 }

@@ -7,12 +7,12 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct SyncSafeCopyArgs {
-    /// Caminho do arquivo snapshot. Aceita aliases `--to` e `--output` para compatibilidade com doc bilíngue.
+    /// Snapshot destination path. Also accepts the aliases `--to` and `--output`.
     #[arg(long, alias = "to", alias = "output")]
     pub dest: std::path::PathBuf,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    /// Formato de saída: "json" ou "text". JSON é sempre emitido no stdout independente do valor.
+    /// Output format: `json` or `text`. JSON is always emitted on stdout regardless of the value.
     #[arg(long, value_parser = ["json", "text"], hide = true)]
     pub format: Option<String>,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]

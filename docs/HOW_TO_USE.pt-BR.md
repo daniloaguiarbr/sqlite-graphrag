@@ -263,9 +263,9 @@ sqlite-graphrag list | jaq '.items[].updated_at_iso'
 - Em auditorias inicie comandos pesados com `--max-concurrency 1` e só aumente após medir RSS e swap
 
 ### Idioma dos Textos de Ajuda das Flags Globais
-- As flags globais `--max-concurrency`, `--wait-lock`, `--lang` e `--tz` exibem textos de ajuda em português no output de `--help`
-- Decisão deliberada: doc comments do clap são escritos em português para alinhar com o idioma principal de desenvolvimento
-- O contrato JSON de saída e todos os nomes de flags são neutros ao idioma e idênticos independente de `--lang`
+- As flags globais `--max-concurrency`, `--wait-lock`, `--lang` e `--tz` exibem textos de ajuda em inglês no output de `--help`
+- Isso é deliberado: o help do clap fica estático e consistente entre screenshots, docs e transcrições de shell
+- A flag `--lang` altera apenas mensagens humanas de runtime em stderr; o JSON stdout e o help do clap permanecem determinísticos
 
 
 ## Referência — Subcomandos Não Cobertos no Início Rápido
@@ -318,13 +318,14 @@ sqlite-graphrag graph --format mermaid --output grafo.mmd
 - Percorre o grafo de entidades a partir de um nó inicial até a profundidade indicada
 - Use `--from` para nomear a entidade raiz e `--depth` para controlar quantos hops seguir
 ```bash
-sqlite-graphrag graph traverse --from design-auth --depth 2 --format json
-sqlite-graphrag graph traverse --from spec-jwt --depth 1
+sqlite-graphrag graph traverse --from AuthDecision --depth 2 --format json
+sqlite-graphrag graph traverse --from JwtSpec --depth 1
 ```
 - Pré-requisitos: a entidade raiz informada em `--from` deve existir no grafo
 - `--from <NOME>` define a entidade raiz pelo nome (obrigatório)
 - `--depth <N>` controla a distância máxima de hop a partir da raiz (padrão: 2)
-- Schema de saída: `{"nodes": [...], "edges": [...]}` idêntico ao formato de exportação completa
+- Schema de saída: `{"from": "...", "namespace": "...", "depth": N, "hops": [...], "elapsed_ms": N}`
+- Cada hop carrega `entity`, `relation`, `direction`, `weight` e `depth`
 - Exit code 0: travessia concluída
 - Exit code 4: entidade raiz não encontrada
 
@@ -336,8 +337,9 @@ sqlite-graphrag graph stats --format json
 sqlite-graphrag graph stats --namespace meu-projeto
 ```
 - Pré-requisitos: ao menos uma entidade deve existir no namespace de destino
-- Campos de saída: `entity_count`, `relationship_count`, `avg_connections`, `namespace`
+- Campos de saída: `namespace`, `node_count`, `edge_count`, `avg_degree`, `max_degree`, `elapsed_ms`
 - `--format json` (padrão) emite o objeto de estatísticas no stdout
+- `--format text` emite uma linha compacta legível por humano
 - Exit code 0: estatísticas retornadas
 
 #### Usando graph entities
@@ -367,10 +369,10 @@ sqlite-graphrag health --format json
 ```
 - Pré-requisitos: um banco inicializado deve existir
 - Executa `PRAGMA integrity_check` primeiro; retorna exit code 10 com `integrity_ok: false` se corrupção for detectada
-- Schema de saída: `{"total_memories": N, "active_memories": N, "soft_deleted": N, "total_namespaces": N, "db_size_bytes": N, "journal_mode": "wal", "wal_size_mb": N.N, "checks": ["integrity_check: ok"], "elapsed_ms": N, "integrity_ok": true}`
+- Schema de saída: `{"status":"ok","integrity":"ok","integrity_ok":true,"schema_ok":true,"counts":{"memories":N,"entities":N,"relationships":N,"vec_memories":N},"db_path":"...","db_size_bytes":N,"schema_version":N,"wal_size_mb":N.N,"journal_mode":"wal","checks":[{"name":"integrity","ok":true}],"elapsed_ms":N}`
 - `journal_mode` reporta o modo de journaling do SQLite (`wal` ou `delete`)
 - `wal_size_mb` reporta o tamanho atual do arquivo WAL em megabytes (0.0 quando não está em modo WAL)
-- `checks` é um array de strings diagnósticas emitidas pelo `PRAGMA integrity_check`
+- `checks` é um array de objetos diagnósticos com `name` e `ok`
 - `integrity_ok` é `true` quando `integrity_check` retorna `"ok"` e `false` caso contrário
 - Exit code 0: banco está íntegro
 - Exit code 10: verificação de integridade falhou — trate como banco corrompido

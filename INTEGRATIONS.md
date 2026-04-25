@@ -20,7 +20,7 @@
 | VS Code Copilot | AI Agent | 1.90+ | tasks.json | https://code.visualstudio.com/docs/copilot |
 | Google Antigravity | AI Agent | any recent | `sqlite-graphrag hybrid-search "prompt" --json` | Google Antigravity docs |
 | Windsurf | AI Agent | any recent | `sqlite-graphrag recall "refactor plan" --json` | https://windsurf.com/docs |
-| Cursor | AI Agent | 0.40+ | `sqlite-graphrag remember --name cursor-ctx --type agent --body "..."` | https://cursor.com/docs |
+| Cursor | AI Agent | 0.40+ | `sqlite-graphrag remember --name cursor-ctx --type project --body "..."` | https://cursor.com/docs |
 | Zed | AI Agent | any recent | `sqlite-graphrag recall "open tabs" --json` | https://zed.dev/docs |
 | Aider | AI Agent | 0.60+ | `sqlite-graphrag recall "refactor" --k 5 --json` | https://aider.chat |
 | Jules | AI Agent | preview | `sqlite-graphrag stats --json` | https://jules.google |
@@ -149,7 +149,7 @@
 - Recipe ready to drop into `.cursorrules` or a terminal binding, zero cloud cost, memory is local
 - While MCPs require a dedicated server, sqlite-graphrag runs as a subprocess by default and can optionally reuse `sqlite-graphrag daemon` for heavy embedding commands
 - Purpose is to pair Cursor AI with a local memory backend that survives editor restarts
-- Use `sqlite-graphrag remember --name cursor-ctx --type agent --body "$SELECTION"` from a key binding
+- Use `sqlite-graphrag remember --name cursor-ctx --type project --body "$SELECTION"` from a key binding
 - Minimum version requires Cursor 0.40 or later for stable AI rules and terminal env override
 - Official docs live at https://cursor.com/docs covering AI rules and terminal integration patterns
 - Golden tip is to set `SQLITE_GRAPHRAG_NAMESPACE=${workspaceFolderBasename}` per project workspace

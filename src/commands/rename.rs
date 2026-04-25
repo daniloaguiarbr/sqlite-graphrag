@@ -9,10 +9,10 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct RenameArgs {
-    /// Nome atual da memória. Aceita alias `--old` para compatibilidade com doc bilíngue.
+    /// Current memory name. Also accepts the alias `--old`.
     #[arg(long, alias = "old")]
     pub name: String,
-    /// Novo nome da memória. Aceita alias `--new` para compatibilidade com doc bilíngue.
+    /// New memory name. Also accepts the alias `--new`.
     #[arg(long, alias = "new")]
     pub new_name: String,
     #[arg(long, default_value = "global")]
@@ -26,10 +26,10 @@ pub struct RenameArgs {
 Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     )]
     pub expected_updated_at: Option<i64>,
-    /// Session ID opcional para rastrear origem da mudança.
+    /// Optional session ID used to trace the origin of the change.
     #[arg(long, value_name = "UUID")]
     pub session_id: Option<String>,
-    /// Formato da saída.
+    /// Output format.
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]

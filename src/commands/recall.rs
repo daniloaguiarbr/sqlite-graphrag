@@ -25,16 +25,16 @@ pub struct RecallArgs {
     pub max_hops: u32,
     #[arg(long, default_value = "0.3")]
     pub min_weight: f64,
-    /// Filtrar resultados por distance máxima. Se todos os matches tiverem distance > min_distance,
-    /// comando sai com exit 4 (not found) conforme contrato documentado em AGENT_PROTOCOL.md.
-    /// Default 1.0 (desativado, mantém comportamento v2.0.0 de sempre retornar top-k).
+    /// Filter results by maximum distance. If all matches exceed `min_distance`,
+    /// the command exits with code 4 (`not found`) per the documented public contract.
+    /// Default `1.0` disables the filter and preserves the top-k behavior.
     #[arg(long, default_value = "1.0")]
     pub min_distance: f32,
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    /// Aceita --json como no-op: output já é JSON por default.
+    /// Accept `--json` as a no-op because output is already JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
 }

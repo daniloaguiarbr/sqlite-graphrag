@@ -71,6 +71,82 @@ fn test_init_cria_banco_local_no_diretorio_da_invocacao() {
 }
 
 #[test]
+fn test_crud_usa_graphrag_sqlite_no_diretorio_da_invocacao() {
+    let pasta = TempDir::new().unwrap();
+    let banco = pasta.path().join("graphrag.sqlite");
+
+    assert!(
+        !banco.exists(),
+        "banco local nao deve existir antes do init no diretorio da invocacao"
+    );
+
+    isolated_cmd_in(pasta.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(
+        banco.exists(),
+        "init deve criar graphrag.sqlite no diretorio da invocacao"
+    );
+
+    isolated_cmd_in(pasta.path())
+        .args([
+            "remember",
+            "--name",
+            "memoria-cwd",
+            "--type",
+            "user",
+            "--description",
+            "crud cwd",
+            "--body",
+            "conteudo salvo no banco local da pasta atual",
+        ])
+        .assert()
+        .success();
+
+    let read_output = isolated_cmd_in(pasta.path())
+        .args(["read", "--name", "memoria-cwd"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let read_json: serde_json::Value = serde_json::from_slice(&read_output).unwrap();
+    assert_eq!(read_json["name"], "memoria-cwd");
+    assert_eq!(read_json["description"], "crud cwd");
+
+    let list_output = isolated_cmd_in(pasta.path())
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_output).unwrap();
+    let itens = list_json["items"].as_array().unwrap();
+    assert!(
+        itens.iter().any(|item| item["name"] == "memoria-cwd"),
+        "list deve ler a memoria persistida em ./graphrag.sqlite"
+    );
+
+    isolated_cmd_in(pasta.path())
+        .args(["forget", "--name", "memoria-cwd"])
+        .assert()
+        .success();
+
+    let purge_output = isolated_cmd_in(pasta.path())
+        .args(["purge", "--retention-days", "0", "--yes"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let purge_json: serde_json::Value = serde_json::from_slice(&purge_output).unwrap();
+    assert_eq!(purge_json["purged_count"], 1);
+}
+
+#[test]
 fn test_init_retorna_json_com_status_ok() {
     let tmp = TempDir::new().unwrap();
     let output = cmd(&tmp)

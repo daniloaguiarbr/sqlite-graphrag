@@ -43,8 +43,8 @@
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
 ### Usage
-- Validate a `recall` response: `sqlite-graphrag recall "query" | jaq --from-file docs/schemas/recall.schema.json`
-- Validate with Python: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
+- Inspect a `recall` response shape quickly: `sqlite-graphrag recall "query" | jaq '.'`
+- Validate with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - The `__debug_schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`__debug_schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
 ### Flag Behavior
 - Schemas describe the OUTPUT JSON contract, not the CLI input shape
@@ -79,8 +79,8 @@
 - `__debug_schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 - A flag `--json` em qualquer subcomando é no-op mantida por compatibilidade — JSON é sempre emitido no stdout
 ### Uso
-- Validar resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq --from-file docs/schemas/recall.schema.json`
-- Validar com Python: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
+- Inspecionar rapidamente o shape da resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq '.'`
+- Validar com um validador JSON Schema real: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - O subcomando `__debug_schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`__debug_schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 ### Garantia de Estabilidade
 - Os schemas acompanham a branch `main` e são atualizados a cada breaking change

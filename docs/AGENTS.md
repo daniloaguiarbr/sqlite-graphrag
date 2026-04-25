@@ -553,7 +553,7 @@ let output = Command::new("sqlite-graphrag")
 - Every schema declares `"additionalProperties": false` — unknown keys are contract violations
 - Schemas use `$defs` for shared subtypes (e.g. `RecallItem`, `HealthCheck`)
 - Optional fields are absent from the `required` array and typed with `["T", "null"]` where nullable
-- Validate a live response: `sqlite-graphrag stats | jaq --from-file docs/schemas/stats.schema.json`
+- Validate a live response with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - File `docs/schemas/debug-schema.schema.json` covers the hidden `__debug_schema` diagnostic subcommand
 - Schemas are updated on every breaking change and follow the CLI SemVer major version
 

@@ -262,8 +262,8 @@ fn contract_04_stats() {
 
 // ---------------------------------------------------------------------------
 // 05 — list
-// Schema documenta array puro; código v2.0.5 emite {elapsed_ms, items:[...]}.
-// Aceita ambas as formas para robustez.
+// O contrato publico atual exige objeto com {elapsed_ms, items:[...]}.
+// Aceitar array root aqui enfraquece a deteccao de regressao documental.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -277,16 +277,11 @@ fn contract_05_list() {
     assert!(out.status.success());
     let json = Env::parse_stdout(&out);
 
-    // Localiza o array de itens (root array OU wrapper com "items")
-    let items: &Value = if json.is_array() {
-        &json
-    } else if let Some(items) = json.get("items") {
-        items
-    } else {
-        panic!("list: esperado array ou {{items:[...]}}, recebido: {json}");
-    };
+    let items = json
+        .get("items")
+        .unwrap_or_else(|| panic!("list: esperado objeto com {{items:[...]}}, recebido: {json}"));
 
-    assert!(items.is_array(), "list: 'items' não é array: {items}");
+    assert!(items.is_array(), "list: 'items' nao e array: {items}");
     let arr = items.as_array().unwrap();
     if !arr.is_empty() {
         assert_array_items_have_keys(
@@ -750,8 +745,8 @@ fn contract_16_unlink() {
 
 // ---------------------------------------------------------------------------
 // 17 — related
-// Schema documenta array puro; código v2.0.5 emite {elapsed_ms, results:[...]}.
-// Aceita ambas as formas para robustez.
+// O contrato publico atual exige objeto com {elapsed_ms, results:[...]}.
+// Aceitar array root aqui enfraquece a deteccao de regressao documental.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -790,17 +785,12 @@ fn contract_17_related() {
 
     if code == 0 {
         let json = Env::parse_stdout(&out);
-        // Localiza o array de resultados (root array OU wrapper com "results")
-        let results: &Value = if json.is_array() {
-            &json
-        } else if let Some(r) = json.get("results") {
-            r
-        } else {
-            panic!("related: esperado array ou {{results:[...]}}, recebido: {json}");
-        };
+        let results = json.get("results").unwrap_or_else(|| {
+            panic!("related: esperado objeto com {{results:[...]}}, recebido: {json}")
+        });
         assert!(
             results.is_array(),
-            "related: 'results' não é array: {results}"
+            "related: 'results' nao e array: {results}"
         );
         let arr = results.as_array().unwrap();
         if !arr.is_empty() {

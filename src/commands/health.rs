@@ -11,10 +11,10 @@ use std::time::Instant;
 pub struct HealthArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    /// Flag explícita de saída JSON. Aceita como no-op pois o output já é JSON por default.
+    /// Explicit JSON flag. Accepted as a no-op because output is already JSON by default.
     #[arg(long, default_value_t = false)]
     pub json: bool,
-    /// Formato de saída: "json" ou "text". JSON é sempre emitido no stdout independente do valor.
+    /// Output format: `json` or `text`. JSON is always emitted on stdout regardless of the value.
     #[arg(long, value_parser = ["json", "text"], hide = true)]
     pub format: Option<String>,
 }

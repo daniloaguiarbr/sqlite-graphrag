@@ -134,7 +134,7 @@ sqlite-graphrag related authentication-flow --hops 2 --json
 ### Explanation
 - `related` takes a MEMORY name (kebab-case slug), not an entity name
 - The positional argument must match a name stored via `remember` in the same namespace
-- `related` walks typed edges stored in `entity_edges` with user-controlled hop count
+- `related` walks typed graph relationships between entities with user-controlled hop count
 - `--hops 2` includes friends-of-friends memories linked through shared entities
 - JSON output reports the traversal path so the LLM can reason about relation chains
 - Saves re-embedding cost since graph expansion runs as SQLite graph walk not KNN
@@ -475,7 +475,7 @@ SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
 
 
 ### Explanation
-- `health` reports `integrity_check`, WAL size and journal mode to spot fragmentation fast
+- `health` reports `integrity`, WAL size and journal mode to spot fragmentation fast
 - `stats` counts rows to reveal which table grew disproportionately since last audit
 - `SQLITE_GRAPHRAG_LOG_LEVEL=debug` emits timings per SQLite stage to stderr for tracing
 - Comparing current `avg_body_len` to baseline shows if bodies have grown past defaults
@@ -535,8 +535,21 @@ use std::process::Command;
 use serde_json::Value;
 
 fn remember_agent_context(namespace: &str, content: &str) -> anyhow::Result<()> {
+    let name = format!(
+        "rig-context-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
     let status = Command::new("sqlite-graphrag")
-        .args(["remember", "--namespace", namespace, content])
+        .args([
+            "remember",
+            "--namespace", namespace,
+            "--name", &name,
+            "--type", "project",
+            "--description", "rig-core agent context",
+            "--body", content,
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "sqlite-graphrag remember failed");
     Ok(())
@@ -552,7 +565,7 @@ fn recall_agent_context(namespace: &str, query: &str, k: u8) -> anyhow::Result<V
         .as_array()
         .unwrap_or(&vec![])
         .iter()
-        .filter_map(|v| v["body"].as_str().map(str::to_owned))
+        .filter_map(|v| v["snippet"].as_str().map(str::to_owned))
         .collect();
     Ok(items)
 }
@@ -585,8 +598,21 @@ use std::process::Command;
 
 fn swarm_remember(agent_id: &str, content: &str) -> anyhow::Result<()> {
     let namespace = format!("swarm-{agent_id}");
+    let name = format!(
+        "swarm-note-{agent_id}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
     let status = Command::new("sqlite-graphrag")
-        .args(["remember", "--namespace", &namespace, content])
+        .args([
+            "remember",
+            "--namespace", &namespace,
+            "--name", &name,
+            "--type", "project",
+            "--description", "swarm agent note",
+            "--body", content,
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "swarm remember failed for agent {agent_id}");
     Ok(())
@@ -603,8 +629,8 @@ fn swarm_recall_all(agent_ids: &[&str], query: &str) -> anyhow::Result<Vec<(Stri
             let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
             if let Some(items) = parsed["results"].as_array() {
                 for item in items {
-                    if let Some(body) = item["body"].as_str() {
-                        results.push((agent_id.to_string(), body.to_owned()));
+                    if let Some(snippet) = item["snippet"].as_str() {
+                        results.push((agent_id.to_string(), snippet.to_owned()));
                     }
                 }
             }
@@ -645,8 +671,21 @@ async fn store_llm_turn(
     content: &str,
 ) -> anyhow::Result<()> {
     let entry = format!("[{role}] {content}");
+    let name = format!(
+        "llm-turn-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
     let status = Command::new("sqlite-graphrag")
-        .args(["remember", "--namespace", namespace, &entry])
+        .args([
+            "remember",
+            "--namespace", namespace,
+            "--name", &name,
+            "--type", "project",
+            "--description", "LLM conversation turn",
+            "--body", &entry,
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "failed to persist LLM turn");
     Ok(())
@@ -713,8 +752,21 @@ fn persist_cascade_attempt(
 ) -> anyhow::Result<()> {
     let status_label = if success { "SUCCESS" } else { "FAILURE" };
     let entry = format!("[CASCADE:{status_label}:{provider}] prompt={prompt} result={result}");
+    let name = format!(
+        "cascade-attempt-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
     let status = Command::new("sqlite-graphrag")
-        .args(["remember", "--namespace", namespace, &entry])
+        .args([
+            "remember",
+            "--namespace", namespace,
+            "--name", &name,
+            "--type", "project",
+            "--description", "llm-cascade attempt log",
+            "--body", &entry,
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "failed to persist cascade attempt");
     Ok(())
@@ -736,7 +788,7 @@ fn load_cascade_history(namespace: &str, prompt: &str) -> anyhow::Result<String>
         .as_array()
         .unwrap_or(&vec![])
         .iter()
-        .filter_map(|v| v["body"].as_str())
+        .filter_map(|v| v["snippet"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
     Ok(history)
@@ -769,8 +821,21 @@ fn load_cascade_history(namespace: &str, prompt: &str) -> anyhow::Result<String>
 use std::process::Command;
 
 fn offline_remember(content: &str) -> anyhow::Result<()> {
+    let name = format!(
+        "ollama-turn-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
     let status = Command::new("sqlite-graphrag")
-        .args(["remember", "--namespace", "ollama-local", content])
+        .args([
+            "remember",
+            "--namespace", "ollama-local",
+            "--name", &name,
+            "--type", "project",
+            "--description", "offline ollama context",
+            "--body", content,
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "offline remember failed: exit code nonzero");
     Ok(())
@@ -792,7 +857,7 @@ fn offline_recall(query: &str, k: u8) -> anyhow::Result<Vec<String>> {
         .as_array()
         .unwrap_or(&vec![])
         .iter()
-        .filter_map(|v| v["body"].as_str().map(str::to_owned))
+        .filter_map(|v| v["snippet"].as_str().map(str::to_owned))
         .collect();
     Ok(items)
 }

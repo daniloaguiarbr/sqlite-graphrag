@@ -579,8 +579,7 @@ fn recipe_10_purge_vacuum_optimize() {
 }
 
 // Recipe 11 — NDJSON export via list: list retorna objeto com chave items (não array root)
-// NOTA: O COOKBOOK documenta `jaq -c '.[]'` mas o JSON real tem `{"items": [...]}`.
-// Este teste valida o comportamento REAL e detecta o drift se a doc for corrigida.
+// O COOKBOOK público já documenta `jaq -c '.items[]'` e este teste blinda esse contrato.
 #[test]
 #[serial]
 fn recipe_11_ndjson_list() {

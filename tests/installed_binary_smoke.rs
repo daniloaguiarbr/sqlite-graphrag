@@ -7,7 +7,9 @@
 /// - Binário ausente em `~/.cargo/bin/sqlite-graphrag`
 /// - Variável `SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1` definida
 ///
-/// Cada teste usa TempDir + SQLITE_GRAPHRAG_DB_PATH isolado.
+/// Cada teste usa TempDir isolado.
+/// A maioria usa `SQLITE_GRAPHRAG_DB_PATH` explícito e o smoke final também valida
+/// o fallback padrão para `./graphrag.sqlite` no diretório da invocação.
 /// Todos os testes devem retornar exit code 0 e JSON válido no stdout.
 ///
 /// Por padrão, a suíte exige que o binário instalado corresponda ao
@@ -22,7 +24,7 @@
 /// - `forget`   → {forgotten: true, name, namespace}          (sem `status`)
 /// - `rename`   → {memory_id, name, version}                  (sem `status`)
 /// - `edit`     → {memory_id, name, action: "updated", ...}   (sem `status`)
-/// - `list`     → array JSON direto na raiz                   (não {memories:[]})
+/// - `list`     → {items:[...], elapsed_ms}                   (não array root)
 /// - `link`     → {action: "created", from, to, relation, ...}
 /// - `unlink`   → {action: "deleted", relationship_id, ...}
 /// - `__debug_schema` é testado quando o binário instalado o suporta
@@ -116,6 +118,17 @@ impl Env {
             "SQLITE_GRAPHRAG_DB_PATH",
             self.tmp.path().join("smoke.sqlite"),
         );
+        c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
+        c.env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
+        c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+        c.arg("--skip-memory-guard");
+        c
+    }
+
+    fn cmd_default_db_in_tmp_dir(&self) -> Command {
+        let mut c = Command::new(&self.bin);
+        c.current_dir(self.tmp.path());
+        c.env_remove("SQLITE_GRAPHRAG_DB_PATH");
         c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
         c.env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
         c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -828,5 +841,83 @@ fn smoke_25_debug_schema() {
     assert!(
         json["objects"].is_array() || json["migrations"].is_array(),
         "__debug_schema deve retornar informações de schema: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Suite 10 — Smoke #26: contrato do banco default no diretório atual
+// ---------------------------------------------------------------------------
+
+#[test]
+fn smoke_26_default_db_in_current_dir() {
+    let env = Env::new();
+    let db_path = env.tmp.path().join("graphrag.sqlite");
+
+    assert!(
+        !db_path.exists(),
+        "smoke_26: banco default nao deve existir antes do init"
+    );
+
+    let init_out = env
+        .cmd_default_db_in_tmp_dir()
+        .arg("init")
+        .output()
+        .expect("init cwd falhou");
+    assert_json_stdout(&init_out);
+    let init_json: serde_json::Value = serde_json::from_slice(&init_out.stdout).unwrap();
+
+    assert!(
+        db_path.exists(),
+        "smoke_26: init deve criar graphrag.sqlite no diretorio atual"
+    );
+    assert_eq!(
+        init_json["db_path"],
+        db_path.display().to_string(),
+        "smoke_26: init deve reportar o path default no cwd"
+    );
+
+    let remember_out = env
+        .cmd_default_db_in_tmp_dir()
+        .args([
+            "remember",
+            "--name",
+            "smoke-cwd-default",
+            "--type",
+            "user",
+            "--description",
+            "smoke cwd default",
+            "--body",
+            "memoria persistida no banco default do diretorio atual",
+        ])
+        .output()
+        .expect("remember cwd falhou");
+    assert_json_stdout(&remember_out);
+
+    let read_out = env
+        .cmd_default_db_in_tmp_dir()
+        .args(["read", "--name", "smoke-cwd-default"])
+        .output()
+        .expect("read cwd falhou");
+    assert_json_stdout(&read_out);
+    let read_json: serde_json::Value = serde_json::from_slice(&read_out.stdout).unwrap();
+    assert_eq!(
+        read_json["name"],
+        "smoke-cwd-default",
+        "smoke_26: read deve enxergar memoria salva no banco default"
+    );
+
+    let list_out = env
+        .cmd_default_db_in_tmp_dir()
+        .args(["list", "--limit", "10"])
+        .output()
+        .expect("list cwd falhou");
+    assert_json_stdout(&list_out);
+    let list_json: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
+    let items = list_json["items"]
+        .as_array()
+        .expect("smoke_26: list deve retornar objeto com campo items");
+    assert!(
+        items.iter().any(|item| item["name"] == "smoke-cwd-default"),
+        "smoke_26: list deve enxergar memoria salva em ./graphrag.sqlite"
     );
 }

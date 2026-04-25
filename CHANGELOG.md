@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-04-25
+
+### Fixed
+- Installed-binary smoke coverage now includes the public fallback contract for `./graphrag.sqlite` in the invocation directory, closing a release-audit blind spot
+- Contract tests now require the current wrapper shapes for `list` (`items`) and `related` (`results`) instead of silently accepting legacy root arrays
+- `graph traverse` and `graph stats` now expose only the formats they actually support, preventing misleading help output and invalid documented invocations
+- Less-central subcommand help text is now consistently English-first across the audited public CLI surface
+- `COOKBOOK`, `AGENTS`, `INTEGRATIONS`, schema guidance, and graph/health examples are now aligned with the real payloads and valid command forms shipped by the binary
+
 ## [1.0.10] - 2026-04-24
 
 ### Changed

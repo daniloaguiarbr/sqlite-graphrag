@@ -259,9 +259,9 @@ sqlite-graphrag list | jaq '.items[].updated_at_iso'
 - During audits start heavy commands with `--max-concurrency 1` and scale only after measuring RSS and swap behavior
 
 ### Help Text Language for Global Flags
-- The global flags `--max-concurrency`, `--wait-lock`, `--lang`, and `--tz` display Portuguese help text in `--help` output
-- This is a deliberate choice: clap doc comments are written in Portuguese to match the primary development language
-- The JSON output contract and all flag names are language-neutral and identical regardless of `--lang`
+- The global flags `--max-concurrency`, `--wait-lock`, `--lang`, and `--tz` display English help text in `--help` output
+- This is deliberate: clap help stays static and consistent across screenshots, docs, and shell transcripts
+- Flag `--lang` changes only human-facing runtime stderr messages; JSON stdout and clap help stay deterministic
 
 
 ## Reference — Subcommands Not Covered in Quick Start
@@ -314,13 +314,14 @@ sqlite-graphrag graph --format mermaid --output graph.mmd
 - Traverses the entity graph from a starting node up to a given depth
 - Use `--from` to name the root entity and `--depth` to control how many hops to follow
 ```bash
-sqlite-graphrag graph traverse --from auth-design --depth 2 --format json
-sqlite-graphrag graph traverse --from jwt-spec --depth 1
+sqlite-graphrag graph traverse --from AuthDecision --depth 2 --format json
+sqlite-graphrag graph traverse --from JwtSpec --depth 1
 ```
 - Prerequisites: the root entity named by `--from` must exist in the graph
 - `--from <NAME>` sets the root entity; the value is the entity name (required)
 - `--depth <N>` controls maximum hop distance from the root (default: 2)
-- Output schema: `{"nodes": [...], "edges": [...]}` identical to the full export format
+- Output schema: `{"from": "...", "namespace": "...", "depth": N, "hops": [...], "elapsed_ms": N}`
+- Each hop carries `entity`, `relation`, `direction`, `weight`, and `depth`
 - Exit code 0: traversal succeeded
 - Exit code 4: root entity not found
 
@@ -332,8 +333,9 @@ sqlite-graphrag graph stats --format json
 sqlite-graphrag graph stats --namespace my-project
 ```
 - Prerequisites: at least one entity must exist in the target namespace
-- Output fields: `entity_count`, `relationship_count`, `avg_connections`, `namespace`
+- Output fields: `namespace`, `node_count`, `edge_count`, `avg_degree`, `max_degree`, `elapsed_ms`
 - `--format json` (default) emits the stats object to stdout
+- `--format text` emits a compact human-readable summary line
 - Exit code 0: stats returned
 
 #### Using graph entities
@@ -363,10 +365,10 @@ sqlite-graphrag health --format json
 ```
 - Prerequisites: an initialized database must exist
 - Runs `PRAGMA integrity_check` first; returns exit code 10 with `integrity_ok: false` if corruption is detected
-- Output schema: `{"total_memories": N, "active_memories": N, "soft_deleted": N, "total_namespaces": N, "db_size_bytes": N, "journal_mode": "wal", "wal_size_mb": N.N, "checks": ["integrity_check: ok"], "elapsed_ms": N, "integrity_ok": true}`
+- Output schema: `{"status":"ok","integrity":"ok","integrity_ok":true,"schema_ok":true,"counts":{"memories":N,"entities":N,"relationships":N,"vec_memories":N},"db_path":"...","db_size_bytes":N,"schema_version":N,"wal_size_mb":N.N,"journal_mode":"wal","checks":[{"name":"integrity","ok":true}],"elapsed_ms":N}`
 - `journal_mode` reports the SQLite journaling mode (`wal` or `delete`)
 - `wal_size_mb` reports the current WAL file size in megabytes (0.0 when not in WAL mode)
-- `checks` is an array of diagnostic strings emitted by `PRAGMA integrity_check`
+- `checks` is an array of diagnostic objects with `name` and `ok`
 - `integrity_ok` is `true` when `integrity_check` returns `"ok"` and `false` otherwise
 - Exit code 0: database is healthy
 - Exit code 10: integrity check failed — treat as corrupted database

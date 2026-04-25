@@ -98,8 +98,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.10 --locked`
-- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.11 --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.11 --locked --force`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
@@ -113,6 +113,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 sqlite-graphrag init
 sqlite-graphrag init --namespace projeto-foo
 ```
+- Sem `--db` ou `SQLITE_GRAPHRAG_DB_PATH`, todo comando CRUD nessa pasta usa `./graphrag.sqlite`
 ### Grave uma memória com grafo de entidades explícito opcional
 ```bash
 sqlite-graphrag remember \

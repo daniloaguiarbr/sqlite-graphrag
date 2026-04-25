@@ -10,10 +10,10 @@ use serde::Serialize;
 pub struct VacuumArgs {
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    /// Executar WAL checkpoint antes e depois do VACUUM (padrão: true).
+    /// Run a WAL checkpoint before and after `VACUUM`.
     #[arg(long, default_value_t = true)]
     pub checkpoint: bool,
-    /// Formato da saída.
+    /// Output format.
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]

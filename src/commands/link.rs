@@ -10,10 +10,10 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct LinkArgs {
-    /// Entidade de origem. Aceita alias `--source` para compatibilidade com doc bilíngue.
+    /// Source entity. Also accepts the alias `--source`.
     #[arg(long, alias = "source")]
     pub from: String,
-    /// Entidade de destino. Aceita alias `--target` para compatibilidade com doc bilíngue.
+    /// Target entity. Also accepts the alias `--target`.
     #[arg(long, alias = "target")]
     pub to: String,
     #[arg(long, value_enum)]

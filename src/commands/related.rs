@@ -17,13 +17,13 @@ type Neighbour = (i64, String, String, String, f64);
 
 #[derive(clap::Args)]
 pub struct RelatedArgs {
-    /// Nome da memória (posicional). Alternativa a `--name` para compatibilidade com doc bilíngue.
+    /// Memory name as a positional argument. Alternative to `--name`.
     #[arg(value_name = "NAME", conflicts_with = "name")]
     pub name_positional: Option<String>,
-    /// Nome da memória (flag). Obrigatório se posicional não fornecido.
+    /// Memory name as a flag. Required when the positional form is absent.
     #[arg(long)]
     pub name: Option<String>,
-    /// Número máximo de hops no grafo. Aceita alias `--hops` para compatibilidade com doc bilíngue.
+    /// Maximum graph hop count. Also accepts the alias `--hops`.
     #[arg(long, alias = "hops", default_value_t = DEFAULT_MAX_HOPS)]
     pub max_hops: u32,
     #[arg(long, value_enum)]

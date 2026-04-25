@@ -26,7 +26,7 @@ pub struct RestoreArgs {
 Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     )]
     pub expected_updated_at: Option<i64>,
-    /// Formato da saída.
+    /// Output format.
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]

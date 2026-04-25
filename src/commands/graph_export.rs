@@ -11,8 +11,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-/// Sub-subcomandos opcionais. Quando ausente, o comportamento padrão exporta
-/// o snapshot completo de entidades (compatível com versões anteriores).
+/// Optional nested subcommands. When absent, the default behavior exports
+/// the full entity snapshot for backward compatibility.
 #[derive(clap::Subcommand)]
 pub enum GraphSubcommand {
     /// Traverse relationships from a starting entity using BFS
@@ -23,18 +23,29 @@ pub enum GraphSubcommand {
     Entities(GraphEntitiesArgs),
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphTraverseFormat {
+    Json,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphStatsFormat {
+    Json,
+    Text,
+}
+
 #[derive(clap::Args)]
 pub struct GraphArgs {
-    /// Subcomando opcional; sem subcomando exporta snapshot de entidades.
+    /// Optional subcommand; without one, export the full entity snapshot.
     #[command(subcommand)]
     pub subcommand: Option<GraphSubcommand>,
-    /// Filtra por namespace (padrão: todos).
+    /// Filter by namespace. Defaults to all namespaces.
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Formato de saída do snapshot.
+    /// Snapshot output format.
     #[arg(long, value_enum, default_value = "json")]
     pub format: GraphExportFormat,
-    /// Caminho de arquivo para gravar a saída (em vez de stdout).
+    /// File path to write output instead of stdout.
     #[arg(long)]
     pub output: Option<PathBuf>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
@@ -45,16 +56,16 @@ pub struct GraphArgs {
 
 #[derive(clap::Args)]
 pub struct GraphTraverseArgs {
-    /// Nome da entidade de origem para a travessia
+    /// Root entity name for the traversal.
     #[arg(long)]
     pub from: String,
-    /// Profundidade máxima de travessia (default: 2)
+    /// Maximum traversal depth.
     #[arg(long, default_value_t = 2u32)]
     pub depth: u32,
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
-    pub format: GraphExportFormat,
+    pub format: GraphTraverseFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -65,9 +76,9 @@ pub struct GraphTraverseArgs {
 pub struct GraphStatsArgs {
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Formato de saída (json ou text).
+    /// Output format for the stats response.
     #[arg(long, value_enum, default_value = "json")]
-    pub format: GraphExportFormat,
+    pub format: GraphStatsFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -78,13 +89,13 @@ pub struct GraphStatsArgs {
 pub struct GraphEntitiesArgs {
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Filtrar por tipo de entidade (ex: person, concept, agent).
+    /// Filter by entity type, for example `person`, `concept`, or `agent`.
     #[arg(long)]
     pub entity_type: Option<String>,
-    /// Número máximo de resultados a retornar.
+    /// Maximum number of results to return.
     #[arg(long, default_value_t = crate::constants::K_GRAPH_ENTITIES_DEFAULT_LIMIT)]
     pub limit: usize,
-    /// Número de resultados a pular (paginação).
+    /// Number of results to skip for pagination.
     #[arg(long, default_value_t = 0usize)]
     pub offset: usize,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
@@ -254,6 +265,7 @@ fn run_entities_snapshot(
 
 fn run_traverse(args: GraphTraverseArgs) -> Result<(), AppError> {
     let inicio = Instant::now();
+    let _ = args.format;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
@@ -382,8 +394,8 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
     };
 
     match args.format {
-        GraphExportFormat::Json => output::emit_json(&resp)?,
-        GraphExportFormat::Dot | GraphExportFormat::Mermaid => {
+        GraphStatsFormat::Json => output::emit_json(&resp)?,
+        GraphStatsFormat::Text => {
             output::emit_text(&format!(
                 "nodes={} edges={} avg_degree={:.2} max_degree={} namespace={}",
                 resp.node_count,
@@ -566,6 +578,8 @@ fn render_mermaid(nodes: &[NodeOut], edges: &[EdgeOut]) -> String {
 #[cfg(test)]
 mod testes {
     use super::*;
+    use crate::cli::{Cli, Commands};
+    use clap::Parser;
 
     fn cria_node(kind: &str) -> NodeOut {
         NodeOut {
@@ -692,5 +706,56 @@ mod testes {
         assert_eq!(json["entity_type"], "concept");
         assert_eq!(json["namespace"], "project-a");
         assert_eq!(json["created_at"], "2026-04-19T12:00:00Z");
+    }
+
+    #[test]
+    fn graph_traverse_cli_rejeita_format_dot() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "traverse",
+            "--from",
+            "AuthDecision",
+            "--format",
+            "dot",
+        ]);
+        assert!(parsed.is_err(), "graph traverse nao deve aceitar format=dot");
+    }
+
+    #[test]
+    fn graph_stats_cli_aceita_format_text() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "stats",
+            "--format",
+            "text",
+        ])
+        .expect("graph stats --format text deve ser aceito");
+
+        match parsed.command {
+            Commands::Graph(args) => match args.subcommand {
+                Some(GraphSubcommand::Stats(stats)) => {
+                    assert_eq!(stats.format, GraphStatsFormat::Text);
+                }
+                _ => panic!("subcomando inesperado"),
+            },
+            _ => panic!("comando inesperado"),
+        }
+    }
+
+    #[test]
+    fn graph_stats_cli_rejeita_format_mermaid() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "stats",
+            "--format",
+            "mermaid",
+        ]);
+        assert!(
+            parsed.is_err(),
+            "graph stats nao deve aceitar format=mermaid"
+        );
     }
 }
