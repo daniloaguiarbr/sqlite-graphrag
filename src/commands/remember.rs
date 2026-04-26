@@ -175,16 +175,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     // Auto-normalizar para kebab-case antes de validar (P2-H).
+    // v1.0.20: também faz trim de hífens em borda (incluindo trailing) para evitar rejeição
+    // após truncamento por filename longo terminando em hífen.
     let normalized_name = {
-        let n = args.name.to_lowercase().replace(['_', ' '], "-");
-        if n != args.name {
+        let lower = args.name.to_lowercase().replace(['_', ' '], "-");
+        let trimmed = lower.trim_matches('-').to_string();
+        if trimmed != args.name {
             tracing::warn!(
                 original = %args.name,
-                normalized = %n,
+                normalized = %trimmed,
                 "name auto-normalized to kebab-case"
             );
         }
-        n
+        trimmed
     };
 
     if normalized_name.is_empty() || normalized_name.len() > MAX_MEMORY_NAME_LEN {
@@ -281,10 +284,11 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
 
+    // v1.0.20: usar .trim().is_empty() para rejeitar bodies que são apenas whitespace.
     if !args.skip_extraction
         && !entities_provided_externally
         && graph.entities.is_empty()
-        && !raw_body.is_empty()
+        && !raw_body.trim().is_empty()
     {
         match crate::extraction::extract_graph_auto(&raw_body, &paths) {
             Ok(extracted) => {

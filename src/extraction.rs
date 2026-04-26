@@ -26,6 +26,46 @@ static REGEX_URL: OnceLock<Regex> = OnceLock::new();
 static REGEX_UUID: OnceLock<Regex> = OnceLock::new();
 static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
 
+// v1.0.20: stopwords para filtrar palavras-regra PT-BR/EN comuns capturadas como ALL_CAPS.
+// Sem este filtro, corpus técnico em PT-BR contendo regras formatadas em CAPS (NUNCA, PROIBIDO, DEVE)
+// gerava ~70% de "entidades" lixo. Mantemos identificadores tipo MAX_RETRY (com underscore).
+const ALL_CAPS_STOPWORDS: &[&str] = &[
+    "NUNCA",
+    "SEMPRE",
+    "PROIBIDO",
+    "OBRIGATÓRIO",
+    "DEVE",
+    "JAMAIS",
+    "USAR",
+    "EVITAR",
+    "TODOS",
+    "TODAS",
+    "VOCÊ",
+    "ESTA",
+    "ESTE",
+    "ESSE",
+    "ESSA",
+    "PADRÃO",
+    "REGRAS",
+    "CRÍTICO",
+    "FALHA",
+    "NEVER",
+    "ALWAYS",
+    "FORBIDDEN",
+    "REQUIRED",
+    "MUST",
+    "SHOULD",
+    "SHALL",
+    "TODO",
+    "FIXME",
+    "HACK",
+    "BUG",
+    "NOTE",
+    "WARNING",
+    "CRITICAL",
+    "ERROR",
+];
+
 fn regex_email() -> &'static Regex {
     REGEX_EMAIL
         .get_or_init(|| Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap())
@@ -108,10 +148,15 @@ impl BertNerModel {
         };
         let bert = BertModel::load(vb.pp("bert"), &bert_cfg).context("carregando BertModel")?;
 
-        let weight = Tensor::zeros((num_labels, hidden_size), DType::F32, &device)
-            .context("criando peso do classificador")?;
-        let bias = Tensor::zeros(num_labels, DType::F32, &device)
-            .context("criando bias do classificador")?;
+        // v1.0.20 fix P0 secundário: carregar classifier head do safetensors em vez de zeros.
+        // Em v1.0.19 usávamos Tensor::zeros, o que produzia argmax constante e inferência degenerada.
+        let cls_vb = vb.pp("classifier");
+        let weight = cls_vb
+            .get((num_labels, hidden_size), "weight")
+            .context("carregando classifier.weight do safetensors")?;
+        let bias = cls_vb
+            .get(num_labels, "bias")
+            .context("carregando classifier.bias do safetensors")?;
         let classifier = Linear::new(weight, Some(bias));
 
         Ok(Self {
@@ -210,19 +255,21 @@ fn ensure_model_files(paths: &AppPaths) -> Result<PathBuf> {
     let api = huggingface_hub::api::sync::Api::new().context("criando cliente HF Hub")?;
     let repo = api.model(MODEL_ID.to_string());
 
-    for filename in &[
-        "model.safetensors",
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
+    // v1.0.20 fix P0 primário: tokenizer.json no repo Davlan está apenas em onnx/tokenizer.json.
+    // Em v1.0.19 buscávamos da raiz e recebíamos 404, caindo em graceful degradation 100% das vezes.
+    // Mapeamos (remote_path, local_filename) para baixar do subfolder mantendo nome plano local.
+    for (remote, local) in &[
+        ("model.safetensors", "model.safetensors"),
+        ("config.json", "config.json"),
+        ("onnx/tokenizer.json", "tokenizer.json"),
+        ("tokenizer_config.json", "tokenizer_config.json"),
     ] {
-        let dest = dir.join(filename);
+        let dest = dir.join(local);
         if !dest.exists() {
             let src = repo
-                .get(filename)
-                .with_context(|| format!("baixando {filename} do HF Hub"))?;
-            std::fs::copy(&src, &dest)
-                .with_context(|| format!("copiando {filename} para cache"))?;
+                .get(remote)
+                .with_context(|| format!("baixando {remote} do HF Hub"))?;
+            std::fs::copy(&src, &dest).with_context(|| format!("copiando {local} para cache"))?;
         }
     }
 
@@ -252,7 +299,8 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     };
 
     for m in regex_email().find_iter(body) {
-        add(&mut entities, &mut seen, m.as_str(), "person");
+        // v1.0.20: email é "concept" (regex sozinho não distingue pessoa de mailing list/role).
+        add(&mut entities, &mut seen, m.as_str(), "concept");
     }
     for m in regex_url().find_iter(body) {
         add(&mut entities, &mut seen, m.as_str(), "concept");
@@ -261,7 +309,13 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
     for m in regex_all_caps().find_iter(body) {
-        add(&mut entities, &mut seen, m.as_str(), "concept");
+        let candidate = m.as_str();
+        // v1.0.20: aceita identificadores com underscore (MAX_RETRY) ou que NÃO sejam stopwords PT/EN.
+        let is_identifier = candidate.contains('_');
+        let is_stopword = ALL_CAPS_STOPWORDS.contains(&candidate);
+        if is_identifier || !is_stopword {
+            add(&mut entities, &mut seen, candidate, "concept");
+        }
     }
 
     entities
@@ -353,13 +407,12 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
     let mut rels: Vec<NewRelationship> = Vec::new();
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
 
+    let mut hit_cap = false;
     'outer: for i in 0..n {
-        let count = rels.len();
-        if count >= MAX_RELS {
+        if rels.len() >= MAX_RELS {
+            hit_cap = true;
             break;
         }
-        let added_for_this = rels.len() - count.min(rels.len());
-        let _ = added_for_this;
 
         let mut for_entity = 0usize;
         for j in (i + 1)..n {
@@ -367,6 +420,7 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
                 break;
             }
             if rels.len() >= MAX_RELS {
+                hit_cap = true;
                 break 'outer;
             }
 
@@ -388,6 +442,14 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
             });
             for_entity += 1;
         }
+    }
+
+    // v1.0.20: avisar quando relacionamentos foram truncados antes de cobrir todos os pares possíveis.
+    if hit_cap {
+        tracing::warn!(
+            "relacionamentos truncados em {MAX_RELS} (com {n} entidades, máx teórico era ~{}× combinações)",
+            n.saturating_sub(1)
+        );
     }
 
     rels
@@ -456,15 +518,25 @@ fn merge_and_deduplicate(
 ) -> Vec<ExtractedEntity> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result: Vec<ExtractedEntity> = Vec::new();
+    let mut truncated = false;
 
+    let total_input = regex_ents.len() + ner_ents.len();
     for ent in regex_ents.into_iter().chain(ner_ents) {
         let key = ent.name.to_lowercase();
         if seen.insert(key) {
             result.push(ent);
         }
         if result.len() >= MAX_ENTS {
+            truncated = true;
             break;
         }
+    }
+
+    // v1.0.20: avisar quando truncamento silencioso descarta entidades acima do MAX_ENTS.
+    if truncated {
+        tracing::warn!(
+            "extração truncada em {MAX_ENTS} entidades (entrada tinha {total_input} candidatos antes da deduplicação)"
+        );
     }
 
     result
@@ -534,9 +606,44 @@ mod tests {
     #[test]
     fn regex_email_captura_endereco() {
         let ents = apply_regex_prefilter("contato: fulano@empresa.com.br para mais info");
+        // v1.0.20: emails são classificados como "concept" (regex sozinho não distingue pessoa de role).
         assert!(ents
             .iter()
-            .any(|e| e.name == "fulano@empresa.com.br" && e.entity_type == "person"));
+            .any(|e| e.name == "fulano@empresa.com.br" && e.entity_type == "concept"));
+    }
+
+    #[test]
+    fn regex_all_caps_filtra_palavra_regra_pt() {
+        // v1.0.20 fix P1: NUNCA, PROIBIDO, DEVE não devem virar "entidades".
+        let ents = apply_regex_prefilter("NUNCA fazer isso. PROIBIDO usar X. DEVE seguir Y.");
+        assert!(
+            !ents.iter().any(|e| e.name == "NUNCA"),
+            "NUNCA deveria ser filtrado como stopword"
+        );
+        assert!(
+            !ents.iter().any(|e| e.name == "PROIBIDO"),
+            "PROIBIDO deveria ser filtrado"
+        );
+        assert!(
+            !ents.iter().any(|e| e.name == "DEVE"),
+            "DEVE deveria ser filtrado"
+        );
+    }
+
+    #[test]
+    fn regex_all_caps_aceita_constante_com_underscore() {
+        // Constantes técnicas tipo MAX_RETRY, TIMEOUT_MS sempre devem ser aceitas.
+        let ents = apply_regex_prefilter("configure MAX_RETRY=3 e API_TIMEOUT=30");
+        assert!(ents.iter().any(|e| e.name == "MAX_RETRY"));
+        assert!(ents.iter().any(|e| e.name == "API_TIMEOUT"));
+    }
+
+    #[test]
+    fn regex_all_caps_aceita_acronimo_dominio() {
+        // Acrônimos legítimos (não-stopword) devem passar: OPENAI, NVIDIA, GOOGLE.
+        let ents = apply_regex_prefilter("OPENAI lançou GPT-5 com NVIDIA H100");
+        assert!(ents.iter().any(|e| e.name == "OPENAI"));
+        assert!(ents.iter().any(|e| e.name == "NVIDIA"));
     }
 
     #[test]

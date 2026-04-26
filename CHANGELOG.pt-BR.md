@@ -10,6 +10,24 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.20] - 2026-04-26
+
+### Corrigido
+- Carregamento do modelo BERT NER agora baixa `tokenizer.json` do subdiretório `onnx/` do repositório `Davlan/bert-base-multilingual-cased-ner-hrl` no HuggingFace, onde o arquivo está de fato publicado. A v1.0.19 tentava baixar da raiz do repositório e recebia 404 em toda ingestão, caindo silenciosamente em graceful degradation só com regex (correção P0 primária em `src/extraction.rs::ensure_model_files`).
+- Pesos da classifier head do BERT NER agora são carregados do arquivo safetensors via `VarBuilder::pp("classifier").get(...)` tanto para `weight` quanto para `bias`. A v1.0.19 inicializava com `Tensor::zeros`, o que produziria argmax constante em todos os tokens e tornaria toda predição degenerada mesmo após o fix do tokenizer. Este segundo P0 estava mascarado pelo primeiro e foi descoberto durante o planejamento emergencial (correção P0 secundária em `src/extraction.rs::BertNerModel::load`).
+- Prefilter regex de identificadores ALL_CAPS agora filtra palavras-regra do português (`NUNCA`, `SEMPRE`, `PROIBIDO`, `OBRIGATÓRIO`, `DEVE`, `JAMAIS`, etc.) e equivalentes em inglês (`NEVER`, `ALWAYS`, `MUST`, `TODO`, `FIXME`, etc.), preservando identificadores com underscore como `MAX_RETRY` e acrônimos como `OPENAI`. Na v1.0.19 contra corpus técnico em PT-BR, 70% das top entidades eram ruído de palavras-regra (correção P1).
+- Tipo de entidade para email mudou de `person` para `concept` porque regex sozinho não distingue indivíduos de endereços de role ou lista (correção P2).
+- `merge_and_deduplicate` agora emite `tracing::warn!` quando a contagem de entidades é truncada em `MAX_ENTS=30`, expondo o cap antes silencioso (correção P2).
+- `build_relationships` agora emite `tracing::warn!` quando o cap de relacionamentos `MAX_RELS=50` é atingido, complementando o aviso de entidades (correção P2).
+- `remember` agora trata bodies só com whitespace (`\n\t  `) como vazios para skip de auto-extração, já que `.is_empty()` sozinho deixava whitespace puro passar (correção P3 em `src/commands/remember.rs`).
+- Normalização kebab-case de `remember` e `rename` agora aplica `trim_matches('-')` para remover hífens em bordas, corrigindo rejeição de inputs como `my-name-` truncados por limites de comprimento de filename (correção P3 em `src/commands/remember.rs` e `src/commands/rename.rs`).
+
+### Adicionado
+- 4 testes unitários novos em `src/extraction.rs` cobrindo o stopword filter (`regex_all_caps_filtra_palavra_regra_pt`), aceitação de identificador com underscore (`regex_all_caps_aceita_constante_com_underscore`), aceitação de acrônimo de domínio (`regex_all_caps_aceita_acronimo_dominio`) e a reclassificação email→concept (`regex_email_captura_endereco`).
+
+### Modificado
+- `Cargo.toml` versão bumped de `1.0.19` para `1.0.20`.
+
 ## [1.0.19] - 2026-04-26
 
 ### Adicionado

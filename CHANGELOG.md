@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-04-26
+
+### Fixed
+- BERT NER model loading now downloads `tokenizer.json` from the `onnx/` subfolder of the `Davlan/bert-base-multilingual-cased-ner-hrl` HuggingFace repository, where it is actually published. v1.0.19 attempted to download from the repository root and got 404 on every ingestion, falling silently into regex-only graceful degradation (P0 primary fix in `src/extraction.rs::ensure_model_files`).
+- BERT NER classifier head weights are now loaded from the safetensors file via `VarBuilder::pp("classifier").get(...)` for both `weight` and `bias`. v1.0.19 initialized them with `Tensor::zeros`, which produced a constant argmax across all tokens and would have made every prediction degenerate even after fixing the tokenizer 404. This second P0 was masked downstream by the first and discovered during emergency planning (P0 secondary fix in `src/extraction.rs::BertNerModel::load`).
+- Regex prefilter for ALL_CAPS identifiers now filters Portuguese rule keywords (`NUNCA`, `SEMPRE`, `PROIBIDO`, `OBRIGATÓRIO`, `DEVE`, `JAMAIS`, etc.) and English equivalents (`NEVER`, `ALWAYS`, `MUST`, `TODO`, `FIXME`, etc.), preserving identifiers with underscores like `MAX_RETRY` and acronyms like `OPENAI`. In v1.0.19 against technical Portuguese corpora 70% of top entities were rule-keyword noise (P1 fix).
+- Email entity type changed from `person` to `concept` because regex alone cannot distinguish individuals from role/list addresses (P2 fix).
+- `merge_and_deduplicate` now emits `tracing::warn!` when entity count is truncated to `MAX_ENTS=30`, exposing the previously silent cap (P2 fix).
+- `build_relationships` now emits `tracing::warn!` when the relationship cap `MAX_RELS=50` is hit, complementing the entity warning (P2 fix).
+- `remember` now treats whitespace-only bodies (`\n\t  `) as empty for auto-extraction skipping, since `.is_empty()` alone passed pure whitespace through (P3 fix in `src/commands/remember.rs`).
+- `remember` and `rename` kebab-case normalization now applies `trim_matches('-')` to strip leading and trailing hyphens, fixing rejection of inputs like `my-name-` truncated by filename length limits (P3 fix in `src/commands/remember.rs` and `src/commands/rename.rs`).
+
+### Added
+- 4 new unit tests in `src/extraction.rs` covering the stopword filter (`regex_all_caps_filtra_palavra_regra_pt`), constant identifier acceptance (`regex_all_caps_aceita_constante_com_underscore`), domain acronym acceptance (`regex_all_caps_aceita_acronimo_dominio`), and the email→concept reclassification (`regex_email_captura_endereco`).
+
+### Changed
+- `Cargo.toml` version bumped from `1.0.19` to `1.0.20`.
+
 ## [1.0.19] - 2026-04-26
 
 ### Added

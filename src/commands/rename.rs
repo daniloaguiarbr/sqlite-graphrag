@@ -55,16 +55,18 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
+    // v1.0.20: trim_matches('-') também remove hífens trailing/leading.
     let normalized_new_name = {
-        let n = args.new_name.to_lowercase().replace(['_', ' '], "-");
-        if n != args.new_name {
+        let lower = args.new_name.to_lowercase().replace(['_', ' '], "-");
+        let trimmed = lower.trim_matches('-').to_string();
+        if trimmed != args.new_name {
             tracing::warn!(
                 original = %args.new_name,
-                normalized = %n,
+                normalized = %trimmed,
                 "new_name auto-normalized to kebab-case"
             );
         }
-        n
+        trimmed
     };
 
     if normalized_new_name.starts_with("__") {
