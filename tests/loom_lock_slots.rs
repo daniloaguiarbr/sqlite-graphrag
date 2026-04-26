@@ -9,14 +9,14 @@
 //!
 //! Execute com:
 //! ```text
-//! RUSTFLAGS="--cfg loom" cargo nextest run --profile heavy -E 'test(/^loom_/)'
+//! RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo nextest run --profile heavy -E 'test(/^loom_/)'
 //! ```
 //! Ou via script: `bash scripts/test-loom.sh`
 //!
 //! NÃO execute com `cargo test` sem `--test-threads=1` — loom em paralelo
 //! pode saturar a CPU e causar livelock térmico (incidente 2026-04-19).
 
-#![cfg(loom)]
+#![cfg(sqlite_graphrag_loom)]
 
 use loom::sync::atomic::{AtomicUsize, Ordering};
 use loom::sync::Arc;

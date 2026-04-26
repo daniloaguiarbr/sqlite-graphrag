@@ -56,7 +56,7 @@ jobs:
             ~\AppData\Local\fastembed\Cache
           key: fastembed-model-multilingual-e5-small-${{ runner.os }}
       - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+        run: cargo install cargo-nextest --version 0.9.114 --locked
       - name: Run tests with nextest (retry on network flake)
         shell: bash
         env:
@@ -153,7 +153,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-nextest and llvm-cov
         run: |
-          cargo install cargo-nextest --locked
+          cargo install cargo-nextest --version 0.9.114 --locked
           cargo install cargo-llvm-cov --locked
       - name: Coverage with nextest
         env:
@@ -192,7 +192,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run loom tests
         env:
-          RUSTFLAGS: "--cfg loom"
+          RUSTFLAGS: "--cfg sqlite_graphrag_loom"
           LOOM_MAX_PREEMPTIONS: "2"
           LOOM_MAX_BRANCHES: "500"
           RUST_TEST_THREADS: "1"

@@ -111,8 +111,8 @@ mockall = "0.13"
 wiremock = "0.6"
 libc = "0.2"
 jsonschema = "0.29"
-[target.'cfg(loom)'.dev-dependencies]
-# Só compila quando RUSTFLAGS="--cfg loom" é passado — previne livelock térmico.
+[target.'cfg(sqlite_graphrag_loom)'.dev-dependencies]
+# Só compila quando RUSTFLAGS="--cfg sqlite_graphrag_loom" é passado — previne livelock térmico.
 # Incidente 2026-04-19: loom ativado sem gate saturou i9-14900KF em Tjmax 100°C.
 loom = "0.7"
 
@@ -130,4 +130,4 @@ slow-tests = []
 opt-level = 1
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)'] }

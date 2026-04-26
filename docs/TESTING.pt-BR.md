@@ -8,11 +8,11 @@
 ### O Incidente de Livelock Térmico — 2026-04-19
 - Em 2026-04-19 às 11:37:40, o Intel i9-14900KF do desenvolvedor atingiu Tjmax 100°C
 - A temperatura do VRM chegou a 99°C e o sistema exigiu reset forçado após 3 minutos e 11 segundos
-- Causa raiz: `tests/loom_lock_slots.rs` executava sem gate `#[cfg(loom)]`
+- Causa raiz: `tests/loom_lock_slots.rs` executava sem gate `#[cfg(sqlite_graphrag_loom)]`
 - O agendador do loom é intensivo por design — ele explora todas as permutações de threads
 - Executar modelos loom sem isolamento causa runaway térmico em CPUs de alto núcleo
 - Foi o terceiro incidente em sete dias causado pelo mesmo arquivo de testes sem proteção
-- TODOS os testes loom DEVEM ter gate `#[cfg(loom)]` e ser serializados com `#[serial(loom_model)]`
+- TODOS os testes loom DEVEM ter gate `#[cfg(sqlite_graphrag_loom)]` e ser serializados com `#[serial(loom_model)]`
 - NUNCA execute testes loom dentro da invocação padrão `cargo nextest run`
 
 
@@ -34,7 +34,7 @@
 - Executar com: `/usr/bin/timeout 3900 bash scripts/test-loom.sh` ou o job CI `loom`
 - Escopo: teste de permutação do semáforo de lock slots
 - Isolamento: NUNCA executar em paralelo com outros testes — um modelo por vez
-- Gate: `#[cfg(loom)]` obrigatório em CADA função de teste e bloco de imports
+- Gate: `#[cfg(sqlite_graphrag_loom)]` obrigatório em CADA função de teste e bloco de imports
 - Risco térmico: testes loom sem proteção causaram travamento do sistema em 2026-04-19
 ### Testes End-to-End Lentos e Stress — Opt-in via Feature Flag
 - Localização: arquivos em `tests/` protegidos por `#[cfg(feature = "slow-tests")]`
@@ -98,13 +98,13 @@
 - NUNCA execute testes loom junto com outros testes no mesmo processo
 ### Executar Testes Loom Localmente
 - Use o script canônico: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
-- O script define `RUSTFLAGS="--cfg loom"` e `RUST_TEST_THREADS=1`
+- O script define `RUSTFLAGS="--cfg sqlite_graphrag_loom"` e `RUST_TEST_THREADS=1`
 - O script define `LOOM_MAX_PREEMPTIONS=2` para iteração local mais rápida
 - Execute somente no modo release: `--release` é obrigatório para velocidade aceitável
 - Monitore a temperatura da CPU antes e durante a execução
 ### Executar Testes Loom Individualmente
-- Compilar primeiro: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg loom" cargo build --release --tests`
-- Executar modelo único: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
+- Compilar primeiro: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo build --release --tests`
+- Executar modelo único: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
 - Limite menor para iteração local: `LOOM_MAX_PREEMPTIONS=2`
 - Limite maior para rigor no CI: `LOOM_MAX_PREEMPTIONS=3`
 ### Checkpoint e Retomada
@@ -115,7 +115,7 @@
 
 ## Variáveis de Ambiente
 ### Variáveis do Loom — Definir Antes de Executar `scripts/test-loom.sh`
-- `RUSTFLAGS="--cfg loom"` — habilita o gate de feature do loom, OBRIGATÓRIO para todos os testes loom
+- `RUSTFLAGS="--cfg sqlite_graphrag_loom"` — habilita o gate local do projeto para loom, OBRIGATÓRIO para todos os testes loom
 - `LOOM_MAX_PREEMPTIONS=2` — limita a profundidade de preempção por modelo (local: 2, CI: 2)
 - `LOOM_MAX_BRANCHES=500` — limita o fator de ramificação por execução (padrão CI: 500)
 - `LOOM_LOG=1` — habilita rastreamento detalhado de execução do loom no stderr
@@ -158,8 +158,8 @@
 - Exclui: testes loom (sempre separados)
 ### Job CI Loom — Etapa Separada no Workflow
 - Ativa: job chamado `loom` em `ci.yml`
-- Ambiente: `RUSTFLAGS="--cfg loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
-- Executa: `/usr/bin/timeout 3600 cargo nextest run --release -E 'test(loom)'`
+- Ambiente: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
+- Executa: `/usr/bin/timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1`
 - NUNCA deve ser mesclado com as execuções dos profiles default ou ci
 
 

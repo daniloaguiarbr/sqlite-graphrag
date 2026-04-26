@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CI now pins `cargo-nextest` to `0.9.114`, the newest release compatible with MSRV Rust 1.88.
+- Loom tests now use the project-local `sqlite_graphrag_loom` cfg gate so Tokio dependencies are not compiled under upstream `cfg(loom)`.
+
 ## [1.0.17] - 2026-04-26
 
 ### Changed

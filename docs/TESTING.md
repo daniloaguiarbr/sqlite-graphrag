@@ -8,11 +8,11 @@
 ### The Thermal Livelock Incident — 2026-04-19
 - On 2026-04-19 at 11:37:40, the developer's Intel i9-14900KF reached Tjmax 100°C
 - VRM temperature hit 99°C and the system required a hard reset after 3 minutes 11 seconds
-- Root cause: `tests/loom_lock_slots.rs` ran without a `#[cfg(loom)]` gate
+- Root cause: `tests/loom_lock_slots.rs` ran without a `#[cfg(sqlite_graphrag_loom)]` gate
 - The loom scheduler is CPU-intensive by design — it explores all thread permutations
 - Running loom models without isolation causes thermal runaway on high-core-count CPUs
 - This was the third incident in seven days caused by the same unguarded test file
-- EVERY loom test MUST be gated with `#[cfg(loom)]` and serialized with `#[serial(loom_model)]`
+- EVERY loom test MUST be gated with `#[cfg(sqlite_graphrag_loom)]` and serialized with `#[serial(loom_model)]`
 - NEVER run loom tests inside the default `cargo nextest run` invocation
 
 
@@ -34,7 +34,7 @@
 - Run with: `/usr/bin/timeout 3900 bash scripts/test-loom.sh` or the CI `loom` job
 - Scope: lock-slot semaphore permutation testing
 - Isolation: MUST NOT run in parallel with any other test — one model at a time
-- Gate: `#[cfg(loom)]` required on EVERY test function and import block
+- Gate: `#[cfg(sqlite_graphrag_loom)]` required on EVERY test function and import block
 - Thermal risk: unguarded loom tests triggered system freeze on 2026-04-19
 ### Slow End-to-End and Stress Tests — Opt-in via Feature Flag
 - Location: `tests/` files guarded by `#[cfg(feature = "slow-tests")]`
@@ -98,13 +98,13 @@
 - NEVER run loom tests alongside other tests on the same process
 ### Running Loom Tests Locally
 - Use the canonical script: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
-- The script sets `RUSTFLAGS="--cfg loom"` and `RUST_TEST_THREADS=1`
+- The script sets `RUSTFLAGS="--cfg sqlite_graphrag_loom"` and `RUST_TEST_THREADS=1`
 - The script sets `LOOM_MAX_PREEMPTIONS=2` for faster local iteration
 - Run in release mode only: `--release` is mandatory for acceptable speed
 - Monitor CPU temperature before and during the run
 ### Running Individual Loom Tests
-- Build first: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg loom" cargo build --release --tests`
-- Run single model: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
+- Build first: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo build --release --tests`
+- Run single model: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
 - Set lower preemption bound for local iteration: `LOOM_MAX_PREEMPTIONS=2`
 - Set higher bound for CI thoroughness: `LOOM_MAX_PREEMPTIONS=3`
 ### Checkpoint and Resume
@@ -115,7 +115,7 @@
 
 ## Environment Variables
 ### Loom Variables — Set Before Running `scripts/test-loom.sh`
-- `RUSTFLAGS="--cfg loom"` — enables loom feature gate, REQUIRED for all loom tests
+- `RUSTFLAGS="--cfg sqlite_graphrag_loom"` — enables the project-local loom gate, REQUIRED for all loom tests
 - `LOOM_MAX_PREEMPTIONS=2` — limits preemption depth per model (local: 2, CI: 2)
 - `LOOM_MAX_BRANCHES=500` — limits branching factor per execution (CI default: 500)
 - `LOOM_LOG=1` — enables verbose loom execution tracing to stderr
@@ -158,8 +158,8 @@
 - Excludes: loom tests (always separate)
 ### Loom CI Job — Separate Workflow Step
 - Activates: `ci.yml` job named `loom`
-- Environment: `RUSTFLAGS="--cfg loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
-- Runs: `/usr/bin/timeout 3600 cargo nextest run --release -E 'test(loom)'`
+- Environment: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
+- Runs: `/usr/bin/timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1`
 - NEVER merged with the default or ci profile runs
 
 
