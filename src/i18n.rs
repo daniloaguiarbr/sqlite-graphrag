@@ -262,8 +262,8 @@ pub mod validacao {
 
     pub fn body_excede(max: usize) -> String {
         match current() {
-            Language::English => format!("body exceeds {max} chars"),
-            Language::Portugues => format!("corpo excede {max} caracteres"),
+            Language::English => format!("body exceeds {max} bytes"),
+            Language::Portugues => format!("corpo excede {max} bytes"),
         }
     }
 
@@ -491,20 +491,22 @@ mod testes {
 
         #[test]
         fn body_excede_en() {
+            let limite = crate::constants::MAX_MEMORY_BODY_LEN;
             let msg = match Language::English {
-                Language::English => format!("body exceeds {} chars", 20_000),
-                Language::Portugues => format!("corpo excede {} caracteres", 20_000),
+                Language::English => format!("body exceeds {limite} bytes"),
+                Language::Portugues => format!("corpo excede {limite} bytes"),
             };
-            assert!(msg.contains("body exceeds 20000"), "obtido: {msg}");
+            assert!(msg.contains("body exceeds 512000"), "obtido: {msg}");
         }
 
         #[test]
         fn body_excede_pt() {
+            let limite = crate::constants::MAX_MEMORY_BODY_LEN;
             let msg = match Language::Portugues {
-                Language::English => format!("body exceeds {} chars", 20_000),
-                Language::Portugues => format!("corpo excede {} caracteres", 20_000),
+                Language::English => format!("body exceeds {limite} bytes"),
+                Language::Portugues => format!("corpo excede {limite} bytes"),
             };
-            assert!(msg.contains("corpo excede 20000"), "obtido: {msg}");
+            assert!(msg.contains("corpo excede 512000"), "obtido: {msg}");
         }
 
         #[test]

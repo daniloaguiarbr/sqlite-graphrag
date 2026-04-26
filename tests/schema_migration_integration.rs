@@ -1,6 +1,6 @@
 #![cfg(feature = "slow-tests")]
 
-// Suite 3 — Validação de schema e migrations V001-V005
+// Suite 3 — Validação de schema e migrations V001-V006
 //
 // ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_DB_PATH` apontando para um arquivo
 // SQLite em `TempDir` exclusivo. A introspecção é feita via rusqlite diretamente,
@@ -85,12 +85,12 @@ fn indice_existe(conn: &Connection, nome: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 1 — init aplica exatamente 5 migrations V001 a V005
+// Teste 1 — init aplica exatamente 6 migrations V001 a V006
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn init_cria_5_migrations_v001_a_v005() {
+fn init_cria_6_migrations_v001_a_v006() {
     let (_tmp, db_path) = init_db_isolado();
     let conn = conn_ro(&db_path);
 
@@ -106,10 +106,14 @@ fn init_cria_5_migrations_v001_a_v005() {
 
     assert_eq!(
         versoes.len(),
-        5,
-        "deve haver exatamente 5 migrations aplicadas, encontrou: {versoes:?}"
+        6,
+        "deve haver exatamente 6 migrations aplicadas, encontrou: {versoes:?}"
     );
-    assert_eq!(versoes, vec![1, 2, 3, 4, 5], "versões V001-V005 esperadas");
+    assert_eq!(
+        versoes,
+        vec![1, 2, 3, 4, 5, 6],
+        "versões V001-V006 esperadas"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -403,12 +407,12 @@ fn schema_meta_campos_obrigatorios_existem() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 12 — schema_version em schema_meta corresponde a V005 (5)
+// Teste 12 — schema_version em schema_meta corresponde a V006 (6)
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn schema_version_meta_igual_a_5() {
+fn schema_version_meta_igual_a_6() {
     let (_tmp, db_path) = init_db_isolado();
     let conn = conn_ro(&db_path);
 
@@ -421,7 +425,7 @@ fn schema_version_meta_igual_a_5() {
         .expect("schema_version deve existir em schema_meta");
 
     assert_eq!(
-        versao, "5",
-        "schema_version em schema_meta deve ser '5' após V005"
+        versao, "6",
+        "schema_version em schema_meta deve ser '6' após V006"
     );
 }

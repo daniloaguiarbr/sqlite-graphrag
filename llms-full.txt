@@ -60,7 +60,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Every subcommand accepts `--json` producing deterministic stdout payloads
 - Every invocation can stay stateless, while heavy embedding commands may also auto-start and reuse `sqlite-graphrag daemon` when needed
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
-- Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one graph object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
+- Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one `{body?, entities, relationships}` object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
+- `remember` accepts body payloads up to `512000` bytes and up to `512` chunks
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
 
@@ -134,6 +135,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - `strength` MUST be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
 - File payload relations use underscore labels such as `applies_to`, `depends_on`, and `tracked_in`
 - `link` and `unlink` flags use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
+- `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
 
 ```json
 [
@@ -492,7 +494,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.16 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.17 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

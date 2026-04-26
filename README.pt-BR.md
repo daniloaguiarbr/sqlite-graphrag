@@ -9,14 +9,14 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.16 --locked`
-- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.17 --locked`
+- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
 - Verifique o binário ativo com `sqlite-graphrag --version`
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.16 --locked --force
+cargo install sqlite-graphrag --version 1.0.17 --locked --force
 sqlite-graphrag --version
 ```
 
@@ -46,7 +46,8 @@ sqlite-graphrag --version
 - Toda invocação pode continuar stateless, mas comandos pesados de embedding agora sobem e reutilizam `sqlite-graphrag daemon` automaticamente quando necessário
 - `sqlite-graphrag daemon` continua existindo para controle explícito, mas o caminho comum não exige mais startup manual
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
-- Stdin aceita corpos ou payloads JSON para entidades e relacionamentos em lote
+- Stdin é explícito: use `--body-stdin` para texto ou `--graph-stdin` para um objeto `{body?, entities, relationships}`; arrays crus de entidades e relacionamentos usam `--entities-file` e `--relationships-file`
+- `remember` aceita payloads de body até `512000` bytes e até `512` chunks
 - Payloads de relacionamento usam `strength` em `[0.0, 1.0]`, mapeado para `weight` nas saídas
 - Stderr carrega saída de tracing apenas sob `SQLITE_GRAPHRAG_LOG_LEVEL=debug`
 - `--help` é inglês por padrão; use `--lang` para mensagens humanas de runtime, não para o help estático do clap
@@ -86,7 +87,7 @@ sqlite-graphrag --version
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install sqlite-graphrag --version 1.0.16 --locked --force
+cargo install sqlite-graphrag --version 1.0.17 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -98,8 +99,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.16 --locked`
-- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.17 --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`

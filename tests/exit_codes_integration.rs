@@ -215,7 +215,7 @@ fn test_exit_05_namespace_error_exit_code_correto() {
 #[test]
 fn test_exit_06_limit_exceeded_exit_code_correto() {
     use sqlite_graphrag::errors::AppError;
-    let err = AppError::LimitExceeded("body excede limite de 20000 chars".into());
+    let err = AppError::LimitExceeded("body excede limite de 512000 bytes".into());
     assert_eq!(err.exit_code(), 6, "LimitExceeded deve mapear para exit 6");
 }
 
@@ -224,7 +224,9 @@ fn test_exit_06_limit_exceeded_body_gigante_via_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let corpo_gigante = "a".repeat(20_001);
+    let corpo_gigante = "a".repeat(512_001);
+    let body_path = tmp.path().join("body-grande.txt");
+    std::fs::write(&body_path, corpo_gigante).unwrap();
 
     cmd_base(&tmp)
         .args([
@@ -237,8 +239,8 @@ fn test_exit_06_limit_exceeded_body_gigante_via_cli() {
             "desc",
             "--namespace",
             "global",
-            "--body",
-            &corpo_gigante,
+            "--body-file",
+            body_path.to_str().unwrap(),
         ])
         .assert()
         .failure()

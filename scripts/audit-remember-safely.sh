@@ -15,6 +15,7 @@ BIN="${BIN:-sqlite-graphrag}"
 CORPUS_DIR="$1"
 MEMORY_MAX="${MEMORY_MAX:-4G}"
 SWAP_MAX="${SWAP_MAX:-0}"
+AUDIT_TIMEOUT_SECS="${AUDIT_TIMEOUT_SECS:-1800}"
 
 if [[ -n "${WORK_DIR:-}" ]]; then
   mkdir -p "$WORK_DIR"
@@ -26,15 +27,18 @@ DB_PATH="$WORK_DIR/graphrag.sqlite"
 CACHE_DIR="$WORK_DIR/cache"
 
 cleanup() {
-  SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" daemon --stop >/dev/null 2>&1 || true
+  /usr/bin/timeout -k 30 "$AUDIT_TIMEOUT_SECS" \
+    env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" daemon --stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 rm -f "$DB_PATH"
 
 printf '==> inicializando banco com %s\n' "$BIN"
-SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" init --db "$DB_PATH" --json >/dev/null
-SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" health --db "$DB_PATH" --json >/dev/null
+/usr/bin/timeout -k 30 "$AUDIT_TIMEOUT_SECS" \
+  env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" init --db "$DB_PATH" --json >/dev/null
+/usr/bin/timeout -k 30 "$AUDIT_TIMEOUT_SECS" \
+  env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" health --db "$DB_PATH" --json >/dev/null
 
 run_case() {
   local label="$1"
@@ -49,7 +53,7 @@ run_case() {
   printf 'RUN   %-18s %s\n' "$label" "$file_name"
   local output
   set +e
-  output="$({ systemd-run --user --scope -p "MemoryMax=$MEMORY_MAX" -p "MemorySwapMax=$SWAP_MAX" env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" remember --db "$DB_PATH" --name "audit-$label" --type reference --description audit --body-file "$file_path" --json; } 2>&1)"
+  output="$({ /usr/bin/timeout -k 30 "$AUDIT_TIMEOUT_SECS" systemd-run --user --scope -p "MemoryMax=$MEMORY_MAX" -p "MemorySwapMax=$SWAP_MAX" env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" remember --db "$DB_PATH" --name "audit-$label" --type reference --description audit --body-file "$file_path" --json; } 2>&1)"
   local status=$?
   set -e
   printf '%s\n' "$output"
@@ -67,7 +71,7 @@ for _ in $(seq 1 190); do
 done
 printf '\nRUN   %-18s %s\n' synthetic "$(basename "$SYNTHETIC")"
 set +e
-SYNTHETIC_OUTPUT="$({ systemd-run --user --scope -p "MemoryMax=$MEMORY_MAX" -p "MemorySwapMax=$SWAP_MAX" env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" remember --db "$DB_PATH" --name audit-synthetic --type reference --description audit --body-file "$SYNTHETIC" --json; } 2>&1)"
+SYNTHETIC_OUTPUT="$({ /usr/bin/timeout -k 30 "$AUDIT_TIMEOUT_SECS" systemd-run --user --scope -p "MemoryMax=$MEMORY_MAX" -p "MemorySwapMax=$SWAP_MAX" env SQLITE_GRAPHRAG_CACHE_DIR="$CACHE_DIR" "$BIN" remember --db "$DB_PATH" --name audit-synthetic --type reference --description audit --body-file "$SYNTHETIC" --json; } 2>&1)"
 SYNTHETIC_STATUS=$?
 set -e
 printf '%s\n' "$SYNTHETIC_OUTPUT"

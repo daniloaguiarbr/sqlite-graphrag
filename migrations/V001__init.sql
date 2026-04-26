@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS memories (
     name        TEXT    NOT NULL,
     type        TEXT    NOT NULL CHECK(type IN ('user','feedback','project','reference','decision','incident','skill')),
     description TEXT    NOT NULL CHECK(length(description) <= 500),
-    body        TEXT    NOT NULL CHECK(length(body) <= 20000),
+    body        TEXT    NOT NULL CHECK(length(CAST(body AS BLOB)) <= 512000),
     body_hash   TEXT    NOT NULL,
     session_id  TEXT,
     source      TEXT    NOT NULL DEFAULT 'agent' CHECK(source IN ('agent','user','system','import','sync')),

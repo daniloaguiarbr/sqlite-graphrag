@@ -414,8 +414,9 @@ let output = Command::new("sqlite-graphrag")
 ### Input — Structured Arguments Only
 - CLI flags accept typed arguments validated by `clap` with strict parsing
 - Stdin accepts a raw body when `--body-stdin` is active on `remember` or `edit`
-- Stdin accepts graph JSON when `--graph-stdin` is active on `remember`; invalid JSON fails instead of becoming memory body
+- Stdin accepts a graph JSON object with optional `body`, `entities`, and `relationships` when `--graph-stdin` is active on `remember`; invalid JSON fails instead of becoming memory body
 - Body sources such as `--body`, `--body-file`, `--body-stdin`, and `--graph-stdin` are rejected when combined ambiguously
+- `remember` accepts body payloads up to `512000` bytes and up to `512` chunks; larger payloads return exit code `6`
 - Environment variables override defaults without mutating the file database
 - The default database path is always `./graphrag.sqlite` in the invocation directory
 - Language is controlled by `--lang en` or `--lang pt` for deterministic output
@@ -555,6 +556,7 @@ let output = Command::new("sqlite-graphrag")
 - Stored graph outputs expose this value as `weight`
 - File payloads MUST use canonical stored relation names with underscores such as `applies_to`, `depends_on`, and `tracked_in`
 - CLI flags for `link` and `unlink` use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
+- `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
 
 
 ## Machine-Readable Schemas

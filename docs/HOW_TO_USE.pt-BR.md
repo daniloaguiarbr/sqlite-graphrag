@@ -514,8 +514,9 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
 - `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`
-- `--graph-stdin` aceita um objeto JSON com `entities` e `relationships`; JSON inválido falha e não é salvo como texto do body
+- `--graph-stdin` aceita um objeto JSON com `body` opcional, `entities` e `relationships`; JSON inválido falha e não é salvo como texto do body
 - `--graph-stdin` é mutuamente exclusivo com `--body`, `--body-file`, `--body-stdin`, `--entities-file` e `--relationships-file`
+- `remember` aceita payloads de body até `512000` bytes e até `512` chunks; payloads maiores retornam exit code `6`
 - `strength` deve ser número de ponto flutuante no intervalo inclusivo `[0.0, 1.0]`
 - `strength` é mapeado para o campo `weight` nas saídas de relacionamentos e travessia de grafo
 - `relation` em `--relationships-file` DEVE usar os rótulos canônicos persistidos como `uses`, `supports`, `applies_to`, `depends_on` e `tracked_in`

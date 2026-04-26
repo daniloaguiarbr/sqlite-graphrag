@@ -86,6 +86,8 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
 #[serde(deny_unknown_fields)]
 struct GraphInput {
     #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
     entities: Vec<NewEntity>,
     #[serde(default)]
     relationships: Vec<NewRelationship>,
@@ -189,32 +191,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     let mut raw_body = if let Some(b) = args.body {
-        if b.len() > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
-            return Err(AppError::LimitExceeded(format!(
-                "documento tem {} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember",
-                b.len()
-            )));
-        }
         b
     } else if let Some(path) = args.body_file {
-        let file_len = std::fs::metadata(&path).map_err(AppError::Io)?.len() as usize;
-        if file_len > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
-            return Err(AppError::LimitExceeded(format!(
-                "arquivo tem {file_len} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember"
-            )));
-        }
         std::fs::read_to_string(&path).map_err(AppError::Io)?
     } else if args.body_stdin || args.graph_stdin {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
             .map_err(AppError::Io)?;
-        if buf.len() > REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES {
-            return Err(AppError::LimitExceeded(format!(
-                "entrada stdin tem {} bytes; limite operacional seguro atual é {REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES} bytes; reduza ou divida o documento antes de usar remember",
-                buf.len()
-            )));
-        }
         buf
     } else {
         String::new()
@@ -233,7 +217,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
             AppError::Validation(format!("invalid --graph-stdin JSON payload: {e}"))
         })?;
-        raw_body = String::new();
+        raw_body = graph.body.take().unwrap_or_default();
     }
 
     if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
@@ -337,16 +321,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         )));
     }
 
-    if chunks_created > 1
-        && raw_body.len() > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES
-    {
-        return Err(AppError::LimitExceeded(format!(
-            "documento multi-chunk tem {} bytes; limite operacional seguro atual é {} bytes; reduza ou divida o documento antes de usar remember",
-            raw_body.len(),
-            crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES
-        )));
-    }
-
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
@@ -357,28 +331,23 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             .iter()
             .map(|c| chunking::chunk_text(&raw_body, c))
             .collect();
-        let chunk_token_counts: Vec<usize> = chunk_texts
-            .iter()
-            .map(|text| crate::tokenizer::count_passage_tokens(tokenizer, text))
-            .collect::<Result<_, _>>()?;
-        let controlled_batches = crate::embedder::controlled_batch_count(&chunk_token_counts);
         output::emit_progress_i18n(
             &format!(
-                "Embedding {} chunks across {} controlled batches...",
-                chunks_info.len(),
-                controlled_batches
+                "Embedding {} chunks serially to keep memory bounded...",
+                chunks_info.len()
             ),
             &format!(
-                "Embedando {} chunks em {} batches controlados...",
-                chunks_info.len(),
-                controlled_batches
+                "Embedando {} chunks serialmente para manter memória limitada...",
+                chunks_info.len()
             ),
         );
-        let chunk_embeddings = crate::daemon::embed_passages_controlled_or_local(
-            &paths.models,
-            &chunk_texts,
-            &chunk_token_counts,
-        )?;
+        let mut chunk_embeddings = Vec::with_capacity(chunk_texts.len());
+        for chunk_text in &chunk_texts {
+            chunk_embeddings.push(crate::daemon::embed_passage_or_local(
+                &paths.models,
+                chunk_text,
+            )?);
+        }
         output::emit_progress_i18n(
             &format!(
                 "Remember stage: chunk embeddings complete; process RSS {} MB",
@@ -436,9 +405,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 }
             }
 
-            if chunks_info.len() > 1 {
-                storage_chunks::delete_chunks(&tx, existing_id)?;
-            }
+            storage_chunks::delete_chunks(&tx, existing_id)?;
 
             let next_v = versions::next_version(&tx, existing_id)?;
             memories::update(&tx, existing_id, &new_memory, args.expected_updated_at)?;

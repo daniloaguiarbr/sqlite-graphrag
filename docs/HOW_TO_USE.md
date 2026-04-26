@@ -515,8 +515,9 @@ sqlite-graphrag remember --name config-notes --type project \
 - Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
 - `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`
-- `--graph-stdin` accepts one JSON object with `entities` and `relationships`; invalid JSON fails and is not saved as body text
+- `--graph-stdin` accepts one JSON object with optional `body`, `entities`, and `relationships`; invalid JSON fails and is not saved as body text
 - `--graph-stdin` is mutually exclusive with `--body`, `--body-file`, `--body-stdin`, `--entities-file`, and `--relationships-file`
+- `remember` accepts body payloads up to `512000` bytes and up to `512` chunks; larger payloads return exit code `6`
 - `strength` must be a floating-point number in the inclusive range `[0.0, 1.0]`
 - `strength` is mapped to the stored `weight` field in relationship outputs and graph traversal results
 - `relation` in `--relationships-file` must use the canonical stored labels such as `uses`, `supports`, `applies_to`, `depends_on`, and `tracked_in`

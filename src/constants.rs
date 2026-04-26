@@ -32,8 +32,8 @@ pub const MAX_MEMORY_NAME_LEN: usize = 80;
 /// Maximum character length for a memory `description` field.
 pub const MAX_MEMORY_DESCRIPTION_LEN: usize = 500;
 
-/// Hard upper bound on memory `body` length in characters.
-pub const MAX_MEMORY_BODY_LEN: usize = 20_000;
+/// Hard upper bound on memory `body` length in bytes.
+pub const MAX_MEMORY_BODY_LEN: usize = 512_000;
 
 /// Body character count above which the body is split into chunks.
 pub const MAX_BODY_CHARS_BEFORE_CHUNK: usize = 8_000;
@@ -106,21 +106,9 @@ pub const CHUNK_OVERLAP_TOKENS: usize = 50;
 
 /// Guard operacional explícito para documentos multi-chunk no `remember`.
 ///
-/// Enquanto o bug crítico de crescimento explosivo de memória não for totalmente eliminado,
-/// documentos que geram mais de 6 chunks são rejeitados antes do embedding.
-///
-/// Limite calibrado a partir da auditoria segura da `v1.0.4` publicada sob `MemoryMax=4G`:
-/// documentos com 6 chunks passaram, enquanto documentos moderados que implicaram 7+ chunks
-/// ainda acionaram OOM no caminho de `remember`.
-pub const REMEMBER_MAX_SAFE_MULTI_CHUNKS: usize = 6;
-
-/// Guard operacional temporário por tamanho do body quando `remember` entra no caminho multi-chunk.
-///
-/// A auditoria segura da `v1.0.4` e da `v1.0.5` mostrou que documentos reais densos já
-/// estouravam OOM entre `4141` bytes (passou) e `4540` bytes (falhou) sob `MemoryMax=4G`.
-/// Até a causa raiz final ser eliminada, corpos multi-chunk acima deste valor são rejeitados
-/// antes de qualquer trabalho ONNX.
-pub const REMEMBER_MAX_SAFE_MULTI_CHUNK_BODY_BYTES: usize = 4_500;
+/// O caminho multi-chunk usa embeddings seriais para evitar amplificação de memória no ONNX.
+/// Este limite preserva um teto operacional claro para agentes e scripts.
+pub const REMEMBER_MAX_SAFE_MULTI_CHUNKS: usize = 512;
 
 /// Teto de chunks por micro-batch controlado no `remember`.
 ///

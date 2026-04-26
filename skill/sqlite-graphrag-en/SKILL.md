@@ -51,7 +51,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Output with `--json` emits `memory_id`, `version`, `namespace`, and `operation`.
 - Output with `--json` always emits JSON, even if a non-JSON `--format` is also present.
 - Stdin accepts body content only with `--body-stdin` on `remember` or `edit`.
-- Stdin accepts graph JSON only with `--graph-stdin`; invalid JSON must fail.
+- Stdin accepts graph JSON only with `--graph-stdin`; the object may contain optional `body`, `entities`, and `relationships`; invalid JSON must fail.
+- `remember` accepts body payloads up to `512000` bytes and up to `512` chunks.
 
 
 ## Prohibitions

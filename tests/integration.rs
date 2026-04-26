@@ -806,7 +806,7 @@ fn test_stats_retorna_contagens() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert!(json["memories"].as_i64().unwrap() >= 1);
     assert!(json["db_size_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(json["schema_version"], "5");
+    assert_eq!(json["schema_version"], "6");
 }
 
 #[test]
@@ -1811,6 +1811,120 @@ fn test_graph_stdin_com_skip_extraction_persiste_grafo_explicito() {
         .iter()
         .any(|node| node["name"] == "skip-tool" && node["type"] == "tool"));
     assert_eq!(json["edges"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_graph_stdin_aceita_body_no_mesmo_payload() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let payload = r#"{
+        "body": "corpo textual enviado junto com grafo explicito",
+        "entities": [
+            {"name": "payload-tool", "entity_type": "tool"},
+            {"name": "payload-file", "entity_type": "file"}
+        ],
+        "relationships": [
+            {"source": "payload-tool", "target": "payload-file", "relation": "uses", "strength": 0.8}
+        ]
+    }"#;
+
+    let remember_output = cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "grafo-com-body",
+            "--type",
+            "project",
+            "--description",
+            "grafo com body via stdin",
+            "--skip-extraction",
+            "--graph-stdin",
+            "--json",
+        ])
+        .write_stdin(payload)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let remember_json: serde_json::Value = serde_json::from_slice(&remember_output).unwrap();
+    assert_eq!(remember_json["entities_persisted"], 2);
+    assert_eq!(remember_json["relationships_persisted"], 1);
+
+    let read_output = cmd(&tmp)
+        .args(["read", "--name", "grafo-com-body", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let read_json: serde_json::Value = serde_json::from_slice(&read_output).unwrap();
+    assert_eq!(
+        read_json["body"],
+        "corpo textual enviado junto com grafo explicito"
+    );
+}
+
+#[test]
+fn test_remember_aceita_documento_acima_do_limite_antigo_com_chunks() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let body = (0..900)
+        .map(|i| format!("termo{i} documento real para chunk seguro"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let output = cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "doc-acima-limite-antigo",
+            "--type",
+            "reference",
+            "--description",
+            "documento acima do limite antigo",
+            "--body",
+            &body,
+            "--skip-extraction",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(
+        json["chunks_created"].as_u64().unwrap_or_default() > 1,
+        "documento deve usar caminho multi-chunk"
+    );
+}
+
+#[test]
+fn test_remember_rejeita_body_acima_do_limite_operacional_novo() {
+    let tmp = TempDir::new().unwrap();
+    let body_path = tmp.path().join("body-grande.txt");
+    std::fs::write(&body_path, "x".repeat(512_001)).unwrap();
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "body-grande",
+            "--type",
+            "reference",
+            "--description",
+            "body acima do limite novo",
+            "--body-file",
+            body_path.to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .code(6);
 }
 
 #[test]

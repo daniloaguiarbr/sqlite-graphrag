@@ -19,51 +19,51 @@
 ## Test Categories
 ### Unit Tests — Inline with Source
 - Location: `#[cfg(test)] mod tests` blocks inside each `src/` module
-- Run with: `cargo nextest run --profile default`
+- Run with: `/usr/bin/timeout 300 cargo nextest run --profile default`
 - Scope: pure functions, error variants, masking, parsing, validation
 - Isolation: no I/O, no filesystem, no HTTP calls
 - Gate: always compiled, always run in the default profile
 ### Integration Tests — Separate Files
 - Location: `tests/` directory
-- Run with: `cargo nextest run --profile default`
+- Run with: `/usr/bin/timeout 300 cargo nextest run --profile default`
 - Scope: CLI subcommands, JSON schema contracts, PRD compliance, storage CRUD
 - Isolation: `TempDir` per test, `env_clear()`, wiremock for HTTP
 - Gate: always compiled, always run in the default profile
 ### Loom Concurrency Tests — Explicit Opt-in Only
 - Location: `tests/loom_lock_slots.rs`
-- Run with: `scripts/test-loom.sh` or the CI `loom` job
+- Run with: `/usr/bin/timeout 3900 bash scripts/test-loom.sh` or the CI `loom` job
 - Scope: lock-slot semaphore permutation testing
 - Isolation: MUST NOT run in parallel with any other test — one model at a time
 - Gate: `#[cfg(loom)]` required on EVERY test function and import block
 - Thermal risk: unguarded loom tests triggered system freeze on 2026-04-19
 ### Slow End-to-End and Stress Tests — Opt-in via Feature Flag
 - Location: `tests/` files guarded by `#[cfg(feature = "slow-tests")]`
-- Run with: `cargo nextest run --profile heavy --features slow-tests`
+- Run with: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
 - Scope: long-running end-to-end smoke suites, contract suites, daemon reuse, i18n parity, exit-code routing, high-concurrency load, and extended retry loops
 - Gate: excluded from the default and `ci` nextest profiles
-- Critical release suites: `cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
-- Critical release suites: `cargo test --features slow-tests --test prd_compliance -- --nocapture`
+- Critical release suites: `/usr/bin/timeout 1200 cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
+- Critical release suites: `/usr/bin/timeout 1200 cargo test --features slow-tests --test prd_compliance -- --nocapture`
 - CI runs those two contract suites in a dedicated `slow-contracts` job on `ubuntu-latest`
 ### Benchmarks — Criterion
 - Location: `benches/`
-- Run with: `cargo bench` or `cargo criterion`
+- Run with: `/usr/bin/timeout 1800 cargo bench` or `/usr/bin/timeout 1800 cargo criterion`
 - Scope: latency baselines for remember, recall, hybrid-search, stats, graph
 - Gate: never included in `cargo nextest run`
 
 
 ## How to Run
 ### Default — Local Development
-- Run all unit and integration tests: `cargo nextest run --profile default`
-- Run with output on failure: `cargo nextest run --profile default --no-capture`
-- Run a specific test by name: `cargo nextest run --profile default test_name_fragment`
-- Run a specific file: `cargo nextest run --profile default -E 'test(schema_contract)'`
+- Run all unit and integration tests: `/usr/bin/timeout 300 cargo nextest run --profile default`
+- Run with output on failure: `/usr/bin/timeout 300 cargo nextest run --profile default --no-capture`
+- Run a specific test by name: `/usr/bin/timeout 300 cargo nextest run --profile default test_name_fragment`
+- Run a specific file: `/usr/bin/timeout 300 cargo nextest run --profile default -E 'test(schema_contract)'`
 ### CI — Constrained Parallelism
-- Run all tests as CI would: `cargo nextest run --profile ci`
+- Run all tests as CI would: `/usr/bin/timeout 600 cargo nextest run --profile ci`
 - The `ci` profile sets `test-threads = 2` and `RUST_TEST_THREADS=2`
 - The `ci` profile enables retries on flaky tests
 - The workflow also runs `doc_contract_integration` and `prd_compliance` separately with `--features slow-tests`
 ### Heavy — Stress and Slow Tests
-- Run stress and slow tests: `cargo nextest run --profile heavy --features slow-tests`
+- Run stress and slow tests: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
 - The `heavy` profile sets `test-threads = 1` for maximum isolation
 - NEVER run the `heavy` profile on a thermally throttled machine
 - For release validation, prefer the explicit contract commands above before broader heavy runs
@@ -71,7 +71,7 @@
 
 ## Safe Remember Audit
 ### Reproduce Installed-Binary Behavior Under cgroup Limits
-- Use `bash scripts/audit-remember-safely.sh <corpus-dir>` to audit `remember` safely against a real corpus
+- Use `/usr/bin/timeout 3900 bash scripts/audit-remember-safely.sh <corpus-dir>` to audit `remember` safely against a real corpus
 - The script defaults to the installed `sqlite-graphrag` in `PATH`
 - Override the binary with `BIN=./target/debug/sqlite-graphrag` to compare local changes against the published build
 - The script uses `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
@@ -82,7 +82,7 @@
 
 ## Daemon Tests
 ### Validate Persistent-Process Reuse Explicitly
-- Run `cargo test --all-features --test daemon_integration -- --nocapture` to validate the daemon end to end
+- Run `/usr/bin/timeout 900 cargo test --all-features --test daemon_integration -- --nocapture` to validate the daemon end to end
 - The daemon suite proves `ping`, `shutdown`, auto-start, restart after stop, and counter increments across `init`, `remember`, `recall`, and `hybrid-search`
 - Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` to isolate the daemon socket and model cache per run
 - If a daemon test hangs, run `sqlite-graphrag daemon --stop` with the same cache dir before retrying
@@ -97,14 +97,14 @@
 - CPU usage is extremely high — one core saturates completely per model
 - NEVER run loom tests alongside other tests on the same process
 ### Running Loom Tests Locally
-- Use the canonical script: `bash scripts/test-loom.sh`
+- Use the canonical script: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
 - The script sets `RUSTFLAGS="--cfg loom"` and `RUST_TEST_THREADS=1`
 - The script sets `LOOM_MAX_PREEMPTIONS=2` for faster local iteration
 - Run in release mode only: `--release` is mandatory for acceptable speed
 - Monitor CPU temperature before and during the run
 ### Running Individual Loom Tests
-- Build first: `RUSTFLAGS="--cfg loom" cargo build --release --tests`
-- Run single model: `RUSTFLAGS="--cfg loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
+- Build first: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg loom" cargo build --release --tests`
+- Run single model: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
 - Set lower preemption bound for local iteration: `LOOM_MAX_PREEMPTIONS=2`
 - Set higher bound for CI thoroughness: `LOOM_MAX_PREEMPTIONS=3`
 ### Checkpoint and Resume
@@ -141,15 +141,15 @@
 - Timeout per test: 60 seconds
 - Excludes: loom tests, slow-tests feature
 ### Profile — ci
-- Activates: `cargo nextest run --profile ci`
+- Activates: `/usr/bin/timeout 600 cargo nextest run --profile ci`
 - `test-threads`: 2
 - `RUST_TEST_THREADS`: 2 (explicit, prevents thermal overload on shared runners)
 - Retries: 2 for flaky tests
 - Timeout per test: 120 seconds
 - Excludes: loom tests, slow-tests feature
-- Dedicated CI job `slow-contracts` covers `doc_contract_integration` and `prd_compliance` with `cargo test --features slow-tests`
+- Dedicated CI job `slow-contracts` covers `doc_contract_integration` and `prd_compliance` with `/usr/bin/timeout 1200 cargo test --features slow-tests`
 ### Profile — heavy
-- Activates: `cargo nextest run --profile heavy --features slow-tests`
+- Activates: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
 - `test-threads`: 1
 - `RUST_TEST_THREADS`: 1
 - Retries: 0
@@ -159,7 +159,7 @@
 ### Loom CI Job — Separate Workflow Step
 - Activates: `ci.yml` job named `loom`
 - Environment: `RUSTFLAGS="--cfg loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
-- Runs: `cargo nextest run --release -E 'test(loom)'`
+- Runs: `/usr/bin/timeout 3600 cargo nextest run --release -E 'test(loom)'`
 - NEVER merged with the default or ci profile runs
 
 
@@ -185,7 +185,7 @@
 - Symptom: test passes locally but fails intermittently in CI
 - Cause: missing `#[serial]` on tests sharing global state or env vars
 - Fix: add `#[serial]` from the `serial_test` crate to affected tests
-- Diagnostic: run `cargo nextest run --profile ci --retries 0` to see all failures
+- Diagnostic: run `/usr/bin/timeout 600 cargo nextest run --profile ci --retries 0` to see all failures
 
 
 ## References

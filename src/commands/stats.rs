@@ -134,7 +134,7 @@ mod testes {
             namespaces: vec!["global".to_string(), "projeto".to_string()],
             db_size_bytes: 8192,
             db_bytes: 8192,
-            schema_version: "5".to_string(),
+            schema_version: "6".to_string(),
             elapsed_ms: 7,
         };
         let json = serde_json::to_value(&resp).expect("serialização falhou");
@@ -148,7 +148,7 @@ mod testes {
         assert_eq!(json["chunks_total"], 20);
         assert_eq!(json["db_size_bytes"], 8192u64);
         assert_eq!(json["db_bytes"], 8192u64);
-        assert_eq!(json["schema_version"], "5");
+        assert_eq!(json["schema_version"], "6");
         assert_eq!(json["elapsed_ms"], 7u64);
     }
 
@@ -220,7 +220,7 @@ mod testes {
             namespaces: vec![],
             db_size_bytes: 0,
             db_bytes: 0,
-            schema_version: "5".to_string(),
+            schema_version: "6".to_string(),
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialização falhou");

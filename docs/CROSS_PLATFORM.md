@@ -59,7 +59,7 @@ cargo install --path .
 ### glibc First — Official Linux Release Path
 - glibc binary runs on Ubuntu 20.04, Debian 11, Fedora 36 plus mainstream distros
 - `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` are the only published Linux assets now
-- `x86_64-unknown-linux-musl` is not part of the official release matrix in `v1.0.16`
+- `x86_64-unknown-linux-musl` is not part of the official release matrix since `v1.0.16`
 - Reintroducing musl now requires a custom ONNX Runtime build or a different backend strategy
 - Prefer glibc for workstations, CI runners, and container bases until that backend gap is closed
 
@@ -104,7 +104,7 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 ## Containers
 ### glibc Images — Official Path Today
 - Prefer Debian or Ubuntu base images for the current official Linux release assets
-- Alpine and musl-only images are not part of the supported release matrix in `v1.0.16`
+- Alpine and musl-only images are not part of the supported release matrix since `v1.0.16`
 - A musl container path requires a custom backend decision before it becomes a supported workflow again
 
 

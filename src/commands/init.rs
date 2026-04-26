@@ -118,7 +118,7 @@ mod testes {
     fn init_response_serializa_todos_campos() {
         let resp = InitResponse {
             db_path: "/tmp/test.sqlite".to_string(),
-            schema_version: "5".to_string(),
+            schema_version: "6".to_string(),
             model: "multilingual-e5-small".to_string(),
             dim: 384,
             namespace: "global".to_string(),
@@ -127,7 +127,7 @@ mod testes {
         };
         let json = serde_json::to_value(&resp).expect("serialização falhou");
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
-        assert_eq!(json["schema_version"], "5");
+        assert_eq!(json["schema_version"], "6");
         assert_eq!(json["model"], "multilingual-e5-small");
         assert_eq!(json["dim"], 384usize);
         assert_eq!(json["namespace"], "global");

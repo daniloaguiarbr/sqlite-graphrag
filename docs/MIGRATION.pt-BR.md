@@ -1,6 +1,6 @@
 # Guia de Migração — neurographrag para sqlite-graphrag
 
-- Este guia cobre o rename do legado `neurographrag` para `sqlite-graphrag v1.0.16`
+- Este guia cobre o rename do legado `neurographrag` para `sqlite-graphrag v1.0.17`
 - O projeto renomeado preserva o mesmo conjunto central de funcionalidades do legado `neurographrag v2.3.0`
 - O crate e o repositório públicos já existem; use o checkout local apenas para validar mudanças não lançadas
 
@@ -18,7 +18,7 @@
 ```bash
 cargo install --path .
 ```
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.16 --locked`
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.17 --locked`
 
 ### Passo 2 — Atualizar invocações de comando
 ```bash
@@ -55,7 +55,7 @@ sqlite-graphrag namespace-detect
 ## Notas de Compatibilidade
 - Não existe alias de compatibilidade para o nome antigo do binário nesta cópia do repositório
 - Contratos JSON, exit codes e semântica operacional permanecem alinhados ao comportamento legado `v2.3.0`
-- A release pública atual sob o novo nome é `sqlite-graphrag v1.0.16`
+- A release pública atual sob o novo nome é `sqlite-graphrag v1.0.17`
 
 ## Rollback
 - Reinstale ou restaure o binário legado `neurographrag` se precisar reverter imediatamente

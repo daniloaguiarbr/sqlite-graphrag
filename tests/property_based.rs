@@ -6,7 +6,7 @@ use regex::Regex;
 // ---------------------------------------------------------------------------
 
 const MAX_MEMORY_NAME_LEN: usize = 80;
-const MAX_MEMORY_BODY_LEN: usize = 20_000;
+const MAX_MEMORY_BODY_LEN: usize = 512_000;
 const NAME_SLUG_REGEX: &str = r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$";
 
 // Número de casos proptest. Em CI pode ser reduzido via PROPTEST_CASES=32.
@@ -94,33 +94,33 @@ proptest! {
         );
     }
 
-    /// Qualquer string Unicode com mais de MAX_MEMORY_BODY_LEN chars deve
+    /// Qualquer string ASCII com mais de MAX_MEMORY_BODY_LEN bytes deve
     /// ter comprimento superior ao limite — invariante de boundary.
     #[test]
     fn body_length_boundary_unicode_acima_do_limite(
         extra in "[\\p{L}]{1,500}"
     ) {
-        // Gera um body com exatamente MAX_MEMORY_BODY_LEN + len(extra) chars.
+        // Gera um body com pelo menos MAX_MEMORY_BODY_LEN + len(extra) bytes.
         let padding: String = "a".repeat(MAX_MEMORY_BODY_LEN);
         let body = format!("{padding}{extra}");
         prop_assert!(
-            body.chars().count() > MAX_MEMORY_BODY_LEN,
-            "Body deveria exceder limite mas tem {} chars",
-            body.chars().count()
+            body.len() > MAX_MEMORY_BODY_LEN,
+            "Body deveria exceder limite mas tem {} bytes",
+            body.len()
         );
     }
 
-    /// Body com exatamente MAX_MEMORY_BODY_LEN chars deve ser <= ao limite.
+    /// Body ASCII com até MAX_MEMORY_BODY_LEN bytes deve ser <= ao limite.
     #[test]
     fn body_length_boundary_unicode_no_limite(
-        chars in "[\\p{L}\\p{N}]{1,20000}"
+        chars in "[A-Za-z0-9]{1,4096}"
     ) {
         let truncated: String = chars.chars().take(MAX_MEMORY_BODY_LEN).collect();
         prop_assert!(
-            truncated.chars().count() <= MAX_MEMORY_BODY_LEN,
-            "Truncado deveria ser <= {} mas tem {} chars",
+            truncated.len() <= MAX_MEMORY_BODY_LEN,
+            "Truncado deveria ser <= {} mas tem {} bytes",
             MAX_MEMORY_BODY_LEN,
-            truncated.chars().count()
+            truncated.len()
         );
     }
 
@@ -269,12 +269,12 @@ mod testes_unitarios {
     #[test]
     fn body_limite_exato_aceito() {
         let body: String = "x".repeat(MAX_MEMORY_BODY_LEN);
-        assert_eq!(body.chars().count(), MAX_MEMORY_BODY_LEN);
+        assert_eq!(body.len(), MAX_MEMORY_BODY_LEN);
     }
 
     #[test]
     fn body_um_acima_do_limite_detectado() {
         let body: String = "x".repeat(MAX_MEMORY_BODY_LEN + 1);
-        assert!(body.chars().count() > MAX_MEMORY_BODY_LEN);
+        assert!(body.len() > MAX_MEMORY_BODY_LEN);
     }
 }

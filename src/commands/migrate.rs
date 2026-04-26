@@ -165,22 +165,22 @@ mod testes {
 
     #[test]
     fn latest_schema_version_retorna_versao_maxima() {
-        let conn = cria_db_com_historico(5);
+        let conn = cria_db_com_historico(6);
         let version = latest_schema_version(&conn).unwrap();
-        assert_eq!(version, "5");
+        assert_eq!(version, "6");
     }
 
     #[test]
     fn migrate_response_serializa_campos_obrigatorios() {
         let resp = MigrateResponse {
             db_path: "/tmp/test.sqlite".to_string(),
-            schema_version: "5".to_string(),
+            schema_version: "6".to_string(),
             status: "ok".to_string(),
             elapsed_ms: 12,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], "ok");
-        assert_eq!(json["schema_version"], "5");
+        assert_eq!(json["schema_version"], "6");
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
         assert_eq!(json["elapsed_ms"], 12);
     }

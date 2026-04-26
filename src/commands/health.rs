@@ -316,7 +316,7 @@ mod testes {
             },
             db_path: "/tmp/test.sqlite".to_string(),
             db_size_bytes: 4096,
-            schema_version: 5,
+            schema_version: 6,
             elapsed_ms: 0,
             missing_entities: vec![],
             wal_size_mb: 0.0,

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-04-26
+
+### Changed
+- `remember` now accepts body payloads up to `512000` bytes and up to `512` chunks, with serial multi-chunk embeddings to keep memory bounded on real documentation corpora
+- `remember --graph-stdin` now accepts one strict graph object with optional `body`, `entities`, and `relationships`, allowing a single stdin payload to store text plus explicit graph data
+
+### Fixed
+- Schema migration `V006__memory_body_limit` raises the SQLite `memories.body` CHECK constraint for existing databases, keeping the Rust limit and database constraint aligned
+- `scripts/audit-remember-safely.sh` now wraps daemon cleanup, init, health, and audited `remember` calls with `/usr/bin/timeout -k 30 "${AUDIT_TIMEOUT_SECS:-1800}"`
+- Testing docs now recommend timeout-wrapped long commands to reduce the risk of local hangs during slow, loom, heavy, and audit runs
+
 ## [1.0.16] - 2026-04-26
 
 ### Fixed

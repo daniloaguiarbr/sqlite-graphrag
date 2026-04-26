@@ -249,7 +249,9 @@ fn lang_pt_body_excede_limite_stderr_portugues() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let corpo_enorme = "x".repeat(20_001);
+    let corpo_enorme = "x".repeat(512_001);
+    let body_path = tmp.path().join("body-grande-pt.txt");
+    std::fs::write(&body_path, corpo_enorme).unwrap();
     cmd_lang(&tmp, "pt")
         .args([
             "remember",
@@ -259,8 +261,8 @@ fn lang_pt_body_excede_limite_stderr_portugues() {
             "user",
             "--description",
             "descricao de teste",
-            "--body",
-            &corpo_enorme,
+            "--body-file",
+            body_path.to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -275,7 +277,9 @@ fn lang_en_body_excede_limite_stderr_ingles() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let corpo_enorme = "x".repeat(20_001);
+    let corpo_enorme = "x".repeat(512_001);
+    let body_path = tmp.path().join("body-grande-en.txt");
+    std::fs::write(&body_path, corpo_enorme).unwrap();
     cmd_lang(&tmp, "en")
         .args([
             "remember",
@@ -285,8 +289,8 @@ fn lang_en_body_excede_limite_stderr_ingles() {
             "user",
             "--description",
             "test description",
-            "--body",
-            &corpo_enorme,
+            "--body-file",
+            body_path.to_str().unwrap(),
         ])
         .assert()
         .failure()

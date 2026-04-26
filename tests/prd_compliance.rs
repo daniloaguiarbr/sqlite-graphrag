@@ -425,7 +425,7 @@ fn prd_cinco_instancias_quinta_retorna_exit_75() {
 }
 
 // ---------------------------------------------------------------------------
-// 11 — MAX_MEMORY_BODY_LEN=20000: corpo acima do limite retorna exit 6
+// 11 — MAX_MEMORY_BODY_LEN=512000: corpo acima do limite retorna exit 6
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -433,7 +433,9 @@ fn prd_max_body_len_excedido_retorna_exit_6() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let corpo_gigante = "x".repeat(20_001);
+    let corpo_gigante = "x".repeat(512_001);
+    let body_path = tmp.path().join("body-grande.txt");
+    std::fs::write(&body_path, corpo_gigante).unwrap();
 
     cmd_base(&tmp)
         .args([
@@ -444,8 +446,8 @@ fn prd_max_body_len_excedido_retorna_exit_6() {
             "user",
             "--description",
             "limite de corpo",
-            "--body",
-            &corpo_gigante,
+            "--body-file",
+            body_path.to_str().unwrap(),
         ])
         .assert()
         .failure()
