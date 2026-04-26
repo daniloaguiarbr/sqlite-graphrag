@@ -48,7 +48,7 @@ pub struct GraphArgs {
     /// File path to write output instead of stdout.
     #[arg(long)]
     pub output: Option<PathBuf>,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -66,7 +66,7 @@ pub struct GraphTraverseArgs {
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
     pub format: GraphTraverseFormat,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -79,7 +79,7 @@ pub struct GraphStatsArgs {
     /// Output format for the stats response.
     #[arg(long, value_enum, default_value = "json")]
     pub format: GraphStatsFormat,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -98,7 +98,7 @@ pub struct GraphEntitiesArgs {
     /// Number of results to skip for pagination.
     #[arg(long, default_value_t = 0usize)]
     pub offset: usize,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,

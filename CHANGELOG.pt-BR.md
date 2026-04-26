@@ -10,6 +10,16 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.16] - 2026-04-26
+
+### Corrigido
+- `remember` agora cria e migra o banco padrão `./graphrag.sqlite` antes da escrita, evitando arquivos SQLite vazios e falhas `no such table` em diretórios novos
+- `remember --graph-stdin --skip-extraction` agora persiste payloads explícitos de grafo em vez de descartar entidades e relacionamentos silenciosamente
+- Falhas em payloads de grafo agora são validadas antes da escrita e memória, chunks, entidades e relacionamentos são persistidos de forma atômica, então input inválido não deixa memórias parciais
+- O parser de input de grafo agora rejeita campos desconhecidos e valida `entity_type`, `relation` e `strength` antes de tocar no SQLite
+- Docs para agentes, arquivos de contexto para LLMs, schemas e saída de `--help` agora refletem o contrato estrito de JSON via stdin/stdout
+- `scripts/test-loom.sh` agora envolve execuções longas de loom com timeout configurável
+
 ## [1.0.15] - 2026-04-26
 
 ### Corrigido

@@ -60,7 +60,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Every subcommand accepts `--json` producing deterministic stdout payloads
 - Every invocation can stay stateless, while heavy embedding commands may also auto-start and reuse `sqlite-graphrag daemon` when needed
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
-- Stdin accepts bodies or JSON payloads for entities and relationship batches
+- Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one graph object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
 
@@ -191,10 +191,10 @@ ouch compress /tmp/ng.sqlite /tmp/ng-$(date +%Y%m%d).tar.zst
 const { spawn } = require('child_process');
 const proc = spawn('sqlite-graphrag', ['recall', query, '--k', '5', '--json']);
 ```
-### Docker Alpine build for CI pipelines
+### Docker Debian build for CI pipelines
 ```dockerfile
-FROM rust:1.88-alpine AS builder
-RUN apk add musl-dev sqlite-dev
+FROM rust:1.88-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN cargo install --locked sqlite-graphrag
 ```
 
@@ -378,7 +378,7 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
     }' \
   | claude --print "Use this context to answer: $USER_QUERY"
 ```
-- Structured JSON flows cleanly into any orchestrator reading from stdin
+- Structured JSON flows cleanly into any downstream orchestrator reading this command's stdout through its own stdin
 - Token cost drops by seventy percent compared to full-corpus context stuffing
 
 
@@ -492,7 +492,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.14 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.16 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

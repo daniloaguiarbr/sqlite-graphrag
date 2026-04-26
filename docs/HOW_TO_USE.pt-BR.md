@@ -159,7 +159,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
     }' \
   | claude --print "Use este contexto para responder: $QUERY_USUARIO"
 ```
-- JSON estruturado flui limpo para qualquer orquestrador que leia de stdin nativamente
+- JSON estruturado flui limpo para qualquer orquestrador downstream que leia o stdout deste comando pelo próprio stdin
 - Campo `distance` permite ao orquestrador descartar hits fracos de recall antes do prompt
 - Determinismo dos códigos de saída permite rotear erros sem parsear stderr manualmente
 - Recall retorna snippets em vez de corpos completos, o que ajuda a manter prompts menores

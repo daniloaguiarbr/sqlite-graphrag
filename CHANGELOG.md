@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-04-26
+
+### Fixed
+- `remember` now creates and migrates the default `./graphrag.sqlite` database before writing, preventing empty SQLite files and `no such table` failures in fresh directories
+- `remember --graph-stdin --skip-extraction` now persists explicit graph payloads instead of silently discarding entities and relationships
+- Graph payload failures now validate before writes and persist memory, chunks, entities and relationships atomically, so invalid graph input no longer leaves partial memories behind
+- Graph input parsing now rejects unknown fields and validates `entity_type`, `relation` and `strength` before touching SQLite
+- Agent-facing docs, LLM context files, schemas and `--help` output now align with the strict stdin/stdout JSON contract
+- `scripts/test-loom.sh` now wraps long loom runs with a configurable timeout
+
 ## [1.0.15] - 2026-04-26
 
 ### Fixed

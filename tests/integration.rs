@@ -144,6 +144,50 @@ fn test_crud_usa_graphrag_sqlite_no_diretorio_da_invocacao() {
 }
 
 #[test]
+fn test_remember_sem_init_cria_banco_local_migrado() {
+    let pasta = TempDir::new().unwrap();
+    let banco = pasta.path().join("graphrag.sqlite");
+
+    assert!(
+        !banco.exists(),
+        "banco local nao deve existir antes do remember"
+    );
+
+    isolated_cmd_in(pasta.path())
+        .args([
+            "remember",
+            "--name",
+            "memoria-sem-init",
+            "--type",
+            "user",
+            "--description",
+            "create sem init",
+            "--body",
+            "conteudo salvo sem init explicito",
+            "--skip-extraction",
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        banco.exists(),
+        "remember deve criar graphrag.sqlite migrado no cwd"
+    );
+
+    let read_output = isolated_cmd_in(pasta.path())
+        .args(["read", "--name", "memoria-sem-init", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let read_json: serde_json::Value = serde_json::from_slice(&read_output).unwrap();
+    assert_eq!(read_json["name"], "memoria-sem-init");
+    assert_eq!(read_json["body"], "conteudo salvo sem init explicito");
+}
+
+#[test]
 fn test_init_retorna_json_com_status_ok() {
     let tmp = TempDir::new().unwrap();
     let output = cmd(&tmp)
@@ -390,6 +434,56 @@ fn test_remember_graph_stdin_invalido_falha_sem_salvar_memoria() {
         .assert()
         .failure()
         .code(4);
+}
+
+#[test]
+fn test_remember_graph_stdin_semantico_invalido_falha_sem_salvar_memoria() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let casos = [
+        (
+            "tipo-invalido",
+            r#"{"entities":[{"name":"bad-agent","entity_type":"agent"}],"relationships":[]}"#,
+        ),
+        (
+            "relacao-invalida",
+            r#"{"entities":[{"name":"a","entity_type":"tool"},{"name":"b","entity_type":"file"}],"relationships":[{"source":"a","target":"b","relation":"writes","strength":0.5}]}"#,
+        ),
+        (
+            "peso-invalido",
+            r#"{"entities":[{"name":"c","entity_type":"tool"},{"name":"d","entity_type":"file"}],"relationships":[{"source":"c","target":"d","relation":"uses","strength":2.0}]}"#,
+        ),
+        (
+            "campo-desconhecido",
+            r#"{"entities":[{"name":"e","entity_type":"tool","extra":"nao"}],"relationships":[]}"#,
+        ),
+    ];
+
+    for (name, payload) in casos {
+        cmd(&tmp)
+            .args([
+                "remember",
+                "--name",
+                name,
+                "--type",
+                "project",
+                "--description",
+                "grafo invalido",
+                "--graph-stdin",
+                "--json",
+            ])
+            .write_stdin(payload)
+            .assert()
+            .failure()
+            .code(1);
+
+        cmd(&tmp)
+            .args(["read", "--name", name, "--json"])
+            .assert()
+            .failure()
+            .code(4);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1662,6 +1756,61 @@ fn test_graph_stdin_preserva_entity_type_ao_criar_relationships() {
 
     assert_eq!(tipo_tool["type"], "tool");
     assert_eq!(tipo_file["type"], "file");
+}
+
+#[test]
+fn test_graph_stdin_com_skip_extraction_persiste_grafo_explicito() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let payload = r#"{
+        "entities": [
+            {"name": "skip-tool", "entity_type": "tool"},
+            {"name": "skip-file", "entity_type": "file"}
+        ],
+        "relationships": [
+            {"source": "skip-tool", "target": "skip-file", "relation": "uses", "strength": 0.8}
+        ]
+    }"#;
+
+    let remember_output = cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "grafo-skip",
+            "--type",
+            "project",
+            "--description",
+            "grafo explicito com skip",
+            "--skip-extraction",
+            "--graph-stdin",
+            "--json",
+        ])
+        .write_stdin(payload)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let remember_json: serde_json::Value = serde_json::from_slice(&remember_output).unwrap();
+    assert_eq!(remember_json["entities_persisted"], 2);
+    assert_eq!(remember_json["relationships_persisted"], 1);
+
+    let output = cmd(&tmp)
+        .args(["graph", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["name"] == "skip-tool" && node["type"] == "tool"));
+    assert_eq!(json["edges"].as_array().unwrap().len(), 1);
 }
 
 #[test]

@@ -22,6 +22,17 @@ pub fn open_rw(path: &Path) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
+pub fn ensure_schema(conn: &mut Connection) -> Result<(), AppError> {
+    crate::migrations::runner()
+        .run(conn)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("migration failed: {e}")))?;
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {};",
+        crate::constants::SCHEMA_USER_VERSION
+    ))?;
+    Ok(())
+}
+
 /// Aplica permissões 600 (owner read/write only) ao arquivo SQLite e aos arquivos WAL/SHM
 /// associados no Unix para evitar vazamento de memórias privadas em diretórios compartilhados
 /// (ex: /tmp multi-user, Dropbox, NFS). No-op em Windows. Falhas silenciosas para não

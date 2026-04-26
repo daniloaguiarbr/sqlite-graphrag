@@ -18,7 +18,7 @@ pub struct InitArgs {
     /// ou fallback `global`.
     #[arg(long)]
     pub namespace: Option<String>,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
 }
 

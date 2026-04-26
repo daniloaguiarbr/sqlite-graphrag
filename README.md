@@ -9,14 +9,14 @@ Your AI agents forget everything. Give any LLM agent a memory that survives rest
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
-- Install the current published release with `cargo install sqlite-graphrag --version 1.0.15 --locked`
-- Upgrade an existing published install with `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
+- Install the current published release with `cargo install sqlite-graphrag --version 1.0.16 --locked`
+- Upgrade an existing published install with `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
 - Verify the active binary with `sqlite-graphrag --version`
 - Release-grade validation includes the `slow-tests` contract suites documented in `docs/TESTING.md`
 - Build directly from the local checkout with `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.15 --locked --force
+cargo install sqlite-graphrag --version 1.0.16 --locked --force
 sqlite-graphrag --version
 ```
 
@@ -46,7 +46,7 @@ sqlite-graphrag --version
 - Every invocation can stay stateless, but heavy embedding commands now auto-start and reuse a persistent daemon when needed
 - `sqlite-graphrag daemon` still exists for explicit control, but the common path no longer requires manual startup
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
-- Stdin accepts bodies or JSON payloads for entities and relationship batches
+- Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one graph object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
 - Relationship payloads use `strength` in `[0.0, 1.0]`, mapped to `weight` in outputs
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - `--help` is English-first by design; use `--lang` for human-facing runtime messages, not static clap help text
@@ -86,7 +86,7 @@ sqlite-graphrag --version
 ## Quick Start
 ### Install and record your first memory in four commands
 ```bash
-cargo install sqlite-graphrag --version 1.0.15 --locked --force
+cargo install sqlite-graphrag --version 1.0.16 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -98,8 +98,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Installation
 ### Multiple distribution channels
-- Install the published release with `cargo install sqlite-graphrag --version 1.0.15 --locked`
-- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
+- Install the published release with `cargo install sqlite-graphrag --version 1.0.16 --locked`
+- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
@@ -215,10 +215,10 @@ ouch compress /tmp/ng.sqlite /tmp/ng-$(date +%Y%m%d).tar.zst
 const { spawn } = require('child_process');
 const proc = spawn('sqlite-graphrag', ['recall', query, '--k', '5', '--json']);
 ```
-### Docker Alpine build for CI pipelines
+### Docker Debian build for CI pipelines
 ```dockerfile
-FROM rust:1.88-alpine AS builder
-RUN apk add musl-dev sqlite-dev
+FROM rust:1.88-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN cargo install --path .

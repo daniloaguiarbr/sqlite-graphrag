@@ -18,7 +18,7 @@ pub struct ListArgs {
     pub offset: usize,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,

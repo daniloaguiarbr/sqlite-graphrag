@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// `name` is normalized to kebab-case by the caller. `description` is
 /// optional and preserved across upserts when the new value is `None`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct NewEntity {
     pub name: String,
     #[serde(alias = "type")]
@@ -26,6 +27,7 @@ pub struct NewEntity {
 /// `strength` must lie within `[0.0, 1.0]` and is mapped to the `weight`
 /// column of the `relationships` table.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct NewRelationship {
     pub source: String,
     pub target: String,

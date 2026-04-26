@@ -9,14 +9,14 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.15 --locked`
-- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.16 --locked`
+- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
 - Verifique o binário ativo com `sqlite-graphrag --version`
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.15 --locked --force
+cargo install sqlite-graphrag --version 1.0.16 --locked --force
 sqlite-graphrag --version
 ```
 
@@ -86,7 +86,7 @@ sqlite-graphrag --version
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install sqlite-graphrag --version 1.0.15 --locked --force
+cargo install sqlite-graphrag --version 1.0.16 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -98,8 +98,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.15 --locked`
-- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.16 --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.16 --locked --force`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
@@ -215,10 +215,10 @@ ouch compress /tmp/ng.sqlite /tmp/ng-$(date +%Y%m%d).tar.zst
 const { spawn } = require('child_process');
 const proc = spawn('sqlite-graphrag', ['recall', query, '--k', '5', '--json']);
 ```
-### Build Docker Alpine para pipelines de CI
+### Build Docker Debian para pipelines de CI
 ```dockerfile
-FROM rust:1.88-alpine AS builder
-RUN apk add musl-dev sqlite-dev
+FROM rust:1.88-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN cargo install --path .

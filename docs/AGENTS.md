@@ -425,7 +425,7 @@ let output = Command::new("sqlite-graphrag")
 - Every subcommand emits exactly one JSON document when `--json` is set
 - Keys are stable across releases inside the current major version line
 - Timestamps follow RFC 3339 with UTC offset notation always present
-- Null fields are omitted to keep payloads lean for agent consumption
+- Optional fields may be omitted or serialized as `null`; agents must handle both forms
 - Arrays preserve deterministic order sorted by `score` or `updated_at` descending
 
 

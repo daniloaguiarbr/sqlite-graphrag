@@ -155,7 +155,7 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
     }' \
   | claude --print "Use this context to answer: $USER_QUERY"
 ```
-- Structured JSON flows cleanly into any orchestrator reading from stdin
+- Structured JSON flows cleanly into any downstream orchestrator reading this command's stdout through its own stdin
 - Distance field lets the orchestrator drop weak recall hits before prompting
 - Determinism of exit codes lets the orchestrator route errors without parsing stderr
 - Recall returns snippets instead of full bodies, which helps keep prompts smaller

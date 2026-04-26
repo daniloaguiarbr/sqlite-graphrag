@@ -5,7 +5,7 @@ use crate::i18n::erros;
 use crate::output::{self, JsonOutputFormat, RememberResponse};
 use crate::paths::AppPaths;
 use crate::storage::chunks as storage_chunks;
-use crate::storage::connection::open_rw;
+use crate::storage::connection::{ensure_schema, open_rw};
 use crate::storage::entities::{NewEntity, NewRelationship};
 use crate::storage::memories::NewMemory;
 use crate::storage::{entities, memories, versions};
@@ -76,18 +76,81 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     pub session_id: Option<String>,
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct GraphInput {
     #[serde(default)]
     entities: Vec<NewEntity>,
     #[serde(default)]
     relationships: Vec<NewRelationship>,
+}
+
+fn validate_graph_input(graph: &GraphInput) -> Result<(), AppError> {
+    for entity in &graph.entities {
+        if !is_valid_entity_type(&entity.entity_type) {
+            return Err(AppError::Validation(format!(
+                "invalid entity_type '{}' for entity '{}'",
+                entity.entity_type, entity.name
+            )));
+        }
+    }
+
+    for rel in &graph.relationships {
+        if !is_valid_relation(&rel.relation) {
+            return Err(AppError::Validation(format!(
+                "invalid relation '{}' for relationship '{}' -> '{}'",
+                rel.relation, rel.source, rel.target
+            )));
+        }
+        if !(0.0..=1.0).contains(&rel.strength) {
+            return Err(AppError::Validation(format!(
+                "invalid strength {} for relationship '{}' -> '{}'; expected value in [0.0, 1.0]",
+                rel.strength, rel.source, rel.target
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_valid_entity_type(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "project"
+            | "tool"
+            | "person"
+            | "file"
+            | "concept"
+            | "incident"
+            | "decision"
+            | "memory"
+            | "dashboard"
+            | "issue_tracker"
+    )
+}
+
+fn is_valid_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "applies_to"
+            | "uses"
+            | "depends_on"
+            | "causes"
+            | "fixes"
+            | "contradicts"
+            | "supports"
+            | "follows"
+            | "related"
+            | "mentions"
+            | "replaces"
+            | "tracked_in"
+    )
 }
 
 pub fn run(args: RememberArgs) -> Result<(), AppError> {
@@ -158,21 +221,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     };
 
     let mut graph = GraphInput::default();
-    if !args.skip_extraction {
-        if let Some(path) = args.entities_file {
-            let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-            graph.entities = serde_json::from_str(&content)?;
-        }
-        if let Some(path) = args.relationships_file {
-            let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-            graph.relationships = serde_json::from_str(&content)?;
-        }
-        if args.graph_stdin {
-            graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
-                AppError::Validation(format!("invalid --graph-stdin JSON payload: {e}"))
-            })?;
-            raw_body = String::new();
-        }
+    if let Some(path) = args.entities_file {
+        let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
+        graph.entities = serde_json::from_str(&content)?;
+    }
+    if let Some(path) = args.relationships_file {
+        let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
+        graph.relationships = serde_json::from_str(&content)?;
+    }
+    if args.graph_stdin {
+        graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
+            AppError::Validation(format!("invalid --graph-stdin JSON payload: {e}"))
+        })?;
+        raw_body = String::new();
     }
 
     if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
@@ -185,6 +246,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             MAX_RELATIONSHIPS_PER_MEMORY,
         )));
     }
+    validate_graph_input(&graph)?;
 
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
         return Err(AppError::LimitExceeded(
@@ -205,7 +267,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let snippet: String = raw_body.chars().take(200).collect();
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    paths.ensure_dirs()?;
     let mut conn = open_rw(&paths.db)?;
+    ensure_schema(&mut conn)?;
 
     {
         use crate::constants::MAX_NAMESPACES_ACTIVE;
@@ -345,6 +409,22 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     };
 
     let mut warnings = Vec::new();
+    let mut entities_persisted = 0usize;
+    let mut relationships_persisted = 0usize;
+
+    let graph_entity_embeddings = graph
+        .entities
+        .iter()
+        .map(|entity| {
+            let entity_text = match &entity.description {
+                Some(desc) => format!("{} {}", entity.name, desc),
+                None => entity.name.clone(),
+            };
+            crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     let (memory_id, action, version) = match existing_memory {
         Some((existing_id, _updated_at, _current_version)) => {
@@ -355,7 +435,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                     ));
                 }
             }
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
             if chunks_info.len() > 1 {
                 storage_chunks::delete_chunks(&tx, existing_id)?;
@@ -384,7 +463,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &args.name,
                 &snippet,
             )?;
-            tx.commit()?;
             (existing_id, "updated".to_string(), next_v)
         }
         None => {
@@ -393,7 +471,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                     "identical body already exists as memory id {hash_id}"
                 ));
             }
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let id = memories::insert(&tx, &new_memory)?;
             versions::insert_version(
                 &tx,
@@ -416,13 +493,11 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &args.name,
                 &snippet,
             )?;
-            tx.commit()?;
             (id, "created".to_string(), 1)
         }
     };
 
     if chunks_info.len() > 1 {
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
 
         let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
@@ -434,7 +509,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         for (i, emb) in chunk_embeddings.iter().enumerate() {
             storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
         }
-        tx.commit()?;
         output::emit_progress_i18n(
             &format!(
                 "Remember stage: persisted chunk vectors; process RSS {} MB",
@@ -447,25 +521,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         );
     }
 
-    let mut entities_persisted = 0usize;
-    let mut relationships_persisted = 0usize;
-
     if !graph.entities.is_empty() || !graph.relationships.is_empty() {
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for entity in &graph.entities {
             let entity_id = entities::upsert_entity(&tx, &namespace, entity)?;
-            let entity_text = match &entity.description {
-                Some(desc) => format!("{} {}", entity.name, desc),
-                None => entity.name.clone(),
-            };
-            let entity_embedding =
-                crate::daemon::embed_passage_or_local(&paths.models, &entity_text)?;
+            let entity_embedding = &graph_entity_embeddings[entities_persisted];
             entities::upsert_entity_vec(
                 &tx,
                 entity_id,
                 &namespace,
                 &entity.entity_type,
-                &entity_embedding,
+                entity_embedding,
                 &entity.name,
             )?;
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
@@ -503,8 +568,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             entities::link_memory_relationship(&tx, memory_id, rel_id)?;
             relationships_persisted += 1;
         }
-        tx.commit()?;
     }
+    tx.commit()?;
 
     let created_at_epoch = chrono::Utc::now().timestamp();
     let created_at_iso = crate::tz::formatar_iso(chrono::Utc::now());

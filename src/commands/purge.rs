@@ -24,7 +24,7 @@ pub struct PurgeArgs {
     /// Compatibilidade com ferramentas que passam --yes para confirmar operações destrutivas.
     #[arg(long, hide = true, default_value_t = false)]
     pub yes: bool,
-    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
