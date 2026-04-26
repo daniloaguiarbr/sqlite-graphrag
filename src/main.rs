@@ -27,6 +27,20 @@ fn main() {
         }
     }
 
+    // Desabilita a CPU memory arena do ONNX Runtime para evitar retenção
+    // agressiva de chunks alocados em inferências de shapes variáveis.
+    // Combinada com `with_arena_allocator(false)` no execution provider, fecha
+    // a porta para o crescimento explosivo de RSS observado em corpora reais.
+    // Referências:
+    //   - https://onnxruntime.ai/docs/performance/tune-performance/memory.html
+    //   - https://github.com/qdrant/fastembed/issues/570
+    if std::env::var_os("ORT_DISABLE_CPU_MEM_ARENA").is_none() {
+        // SAFETY: single-threaded neste ponto — nenhuma outra thread existe ainda.
+        unsafe {
+            std::env::set_var("ORT_DISABLE_CPU_MEM_ARENA", "1");
+        }
+    }
+
     let log_level =
         std::env::var("SQLITE_GRAPHRAG_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string());
     let log_format =

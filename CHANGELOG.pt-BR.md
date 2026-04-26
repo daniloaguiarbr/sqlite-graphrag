@@ -10,6 +10,20 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.18] - 2026-04-26
+
+### Adicionado
+- Novo helper `parent_or_err` em `src/paths.rs` e quatro testes unitários protegem contra paths malformados vindos de `--db /` ou de `SQLITE_GRAPHRAG_DB_PATH` vazio.
+- Novo `DaemonSpawnGuard` em `src/daemon.rs` remove o arquivo `daemon-spawn.lock` em encerramento gracioso e emite uma linha estruturada `tracing::info!` ao encerrar o daemon.
+- Variável de ambiente `ORT_DISABLE_CPU_MEM_ARENA=1` agora é setada por padrão em `main.rs` antes do fastembed inicializar, complementando a mitigação existente de `with_arena_allocator(false)` contra crescimento descontrolado de RSS em payloads de shapes variáveis.
+- README e `README.pt-BR.md` agora expõem quatro variáveis de ambiente `SQLITE_GRAPHRAG_*` adicionais na tabela de configuração em runtime: `DISPLAY_TZ`, `DAEMON_FORCE_AUTOSTART`, `DAEMON_DISABLE_AUTOSTART`, `DAEMON_CHILD`.
+- README e `README.pt-BR.md` agora apresentam o cluster de quatro badges exigido pelas regras do projeto: crates.io, docs.rs, license, Contributor Covenant.
+
+### Alterado
+- `path.parent().unwrap()` removido de `src/paths.rs`, `src/daemon.rs::try_acquire_spawn_lock` e `src/daemon.rs::save_spawn_state`; os três call sites agora propagam erros de validação via `parent_or_err`.
+- Tagline do README reescrita de um parágrafo de 36 palavras para um blockquote de 12 palavras em conformidade com a regra de documentação sobre tamanho de tagline; o parágrafo duplicado acima do blockquote foi removido.
+- Snippets de instalação do README não fazem mais hard-code de `--version 1.0.17` em oito locais entre `README.md` e `README.pt-BR.md`; agora recomendam `cargo install sqlite-graphrag --locked` e linkam para `CHANGELOG.md` para o histórico de versões.
+
 ### Corrigido
 - O CI agora fixa `cargo-nextest` em `0.9.114`, a release mais nova compatível com o MSRV Rust 1.88.
 - Os testes Loom agora usam o gate local `sqlite_graphrag_loom` para evitar compilar dependências Tokio sob o `cfg(loom)` upstream.

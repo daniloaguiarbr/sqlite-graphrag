@@ -1,22 +1,23 @@
 # sqlite-graphrag
 
-27 agentes de IA. Um binário de 25 MB. Zero chamadas à nuvem.
-
+[![Crates.io](https://img.shields.io/crates/v/sqlite-graphrag.svg)](https://crates.io/crates/sqlite-graphrag)
+[![Docs.rs](https://docs.rs/sqlite-graphrag/badge.svg)](https://docs.rs/sqlite-graphrag)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](LICENSE)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-> Memória persistente para 27 agentes de IA em um binário Rust de 25 MB
+> Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.17 --locked`
-- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
+- Instale a última release publicada com `cargo install sqlite-graphrag --locked`
+- Atualize uma instalação existente com `cargo install sqlite-graphrag --locked --force`
 - Verifique o binário ativo com `sqlite-graphrag --version`
+- Veja o histórico completo de releases em [CHANGELOG.md](CHANGELOG.md)
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.17 --locked --force
+cargo install sqlite-graphrag --locked --force
 sqlite-graphrag --version
 ```
 
@@ -87,7 +88,7 @@ sqlite-graphrag --version
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install sqlite-graphrag --version 1.0.17 --locked --force
+cargo install sqlite-graphrag --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -99,8 +100,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.17 --locked`
-- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
+- Instale a última release publicada com `cargo install sqlite-graphrag --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --locked --force`
+- Para fixar uma versão específica use `cargo install sqlite-graphrag --version <X.Y.Z> --locked`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
@@ -192,6 +194,10 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
+| `SQLITE_GRAPHRAG_DISPLAY_TZ` | Fuso horário IANA para campos `*_iso` no JSON | `UTC` | `America/Sao_Paulo` |
+| `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Força o autostart do daemon mesmo quando os guards o pulariam | indefinido | `1` |
+| `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Desabilita completamente o autostart do daemon (útil em testes/CI) | indefinido | `1` |
+| `SQLITE_GRAPHRAG_DAEMON_CHILD` | Flag INTERNA setada automaticamente ao spawnar o filho do daemon; não setar manualmente | indefinido | `1` |
 | `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 

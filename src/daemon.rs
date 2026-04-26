@@ -153,6 +153,45 @@ pub fn embed_passages_controlled_or_local(
     }
 }
 
+struct DaemonSpawnGuard {
+    models_dir: PathBuf,
+}
+
+impl DaemonSpawnGuard {
+    fn new(models_dir: &Path) -> Self {
+        Self {
+            models_dir: models_dir.to_path_buf(),
+        }
+    }
+}
+
+impl Drop for DaemonSpawnGuard {
+    fn drop(&mut self) {
+        let lock_path = spawn_lock_path(&self.models_dir);
+        if lock_path.exists() {
+            match std::fs::remove_file(&lock_path) {
+                Ok(()) => {
+                    tracing::debug!(
+                        path = %lock_path.display(),
+                        "lock file de spawn removido ao encerrar daemon graciosamente"
+                    );
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %lock_path.display(),
+                        "falha ao remover lock file de spawn ao encerrar daemon"
+                    );
+                }
+            }
+        }
+        tracing::info!(
+            "daemon encerrado graciosamente; socket será limpo pelo OS ou pelo próximo daemon via try_overwrite"
+        );
+    }
+}
+
 pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
     let socket = daemon_label(models_dir);
     let name = to_local_socket_name(&socket)?;
@@ -162,6 +201,10 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
         .try_overwrite(true)
         .create_sync()
         .map_err(AppError::Io)?;
+
+    // Guard que limpa o lock file de spawn em encerramento gracioso.
+    // SIGKILL não dispara Drop; nesse caso try_overwrite(true) acima é o fallback.
+    let _spawn_guard = DaemonSpawnGuard::new(models_dir);
 
     // Warm the model once per daemon process.
     let _ = embedder::get_embedder(models_dir)?;
@@ -465,7 +508,7 @@ fn spawn_state_path(models_dir: &Path) -> PathBuf {
 
 fn try_acquire_spawn_lock(models_dir: &Path) -> Result<Option<File>, AppError> {
     let path = spawn_lock_path(models_dir);
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(AppError::Io)?;
+    std::fs::create_dir_all(crate::paths::parent_or_err(&path)?).map_err(AppError::Io)?;
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -525,7 +568,7 @@ fn load_spawn_state(models_dir: &Path) -> Result<DaemonSpawnState, AppError> {
 
 fn save_spawn_state(models_dir: &Path, state: &DaemonSpawnState) -> Result<(), AppError> {
     let path = spawn_state_path(models_dir);
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(AppError::Io)?;
+    std::fs::create_dir_all(crate::paths::parent_or_err(&path)?).map_err(AppError::Io)?;
     let bytes = serde_json::to_vec(state).map_err(AppError::Json)?;
     std::fs::write(path, bytes).map_err(AppError::Io)
 }

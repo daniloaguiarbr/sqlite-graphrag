@@ -19,9 +19,21 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
 
     maybe_init_dynamic_ort(models_dir)?;
 
-    // Desabilita arena allocator da EP CPU para reduzir retenção agressiva de memória
-    // entre inferências repetidas com shapes variáveis. O fastembed já desliga
-    // memory pattern em alguns cenários, mas não desliga a CPU arena por padrão.
+    // Mitigação multi-camada do RSS explosivo observado com payloads de shapes
+    // variáveis. As três camadas atuais são:
+    //   1. `with_arena_allocator(false)` no execution provider CPU (linha abaixo)
+    //   2. env var `ORT_DISABLE_CPU_MEM_ARENA=1` em `main.rs` (default desde v1.0.18)
+    //   3. env var `ORT_NUM_THREADS=1` + `ORT_INTRA_OP_NUM_THREADS=1` em `main.rs`
+    // A bandeira `with_memory_pattern(false)` existe em ort 2.0 (`SessionBuilder`)
+    // mas fastembed 5.13.2 NÃO expõe acesso ao SessionBuilder customizado via
+    // `TextInitOptions`. Caso o RSS volte a crescer em corpora reais, a próxima
+    // mitigação requer um dos seguintes caminhos:
+    //   - Forkar fastembed para expor `SessionBuilder::with_memory_pattern(false)`
+    //   - Bypass de fastembed e uso direto de ort com SessionBuilder customizado
+    //   - Padding fixo em `plan_controlled_batches` para eliminar shapes variáveis
+    // Referências:
+    //   https://onnxruntime.ai/docs/performance/tune-performance/memory.html
+    //   https://github.com/qdrant/fastembed/issues/570
     let cpu_ep: ExecutionProviderDispatch = CPU::default().with_arena_allocator(false).build();
 
     let model = TextEmbedding::try_new(

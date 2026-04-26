@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-04-26
+
+### Added
+- New `parent_or_err` helper in `src/paths.rs` and four unit tests guard against malformed paths from `--db /` or empty `SQLITE_GRAPHRAG_DB_PATH`.
+- New `DaemonSpawnGuard` in `src/daemon.rs` removes the `daemon-spawn.lock` file on graceful shutdown and emits a structured `tracing::info!` line when the daemon exits.
+- Default environment variable `ORT_DISABLE_CPU_MEM_ARENA=1` is now set by `main.rs` before fastembed initializes, complementing the existing `with_arena_allocator(false)` mitigation against runaway RSS growth on variable-shape payloads.
+- README and `README.pt-BR.md` now expose four additional `SQLITE_GRAPHRAG_*` environment variables in the runtime configuration table: `DISPLAY_TZ`, `DAEMON_FORCE_AUTOSTART`, `DAEMON_DISABLE_AUTOSTART`, `DAEMON_CHILD`.
+- README and `README.pt-BR.md` now ship the four-badge cluster mandated by project rules: crates.io, docs.rs, license, Contributor Covenant.
+
+### Changed
+- `path.parent().unwrap()` removed from `src/paths.rs`, `src/daemon.rs::try_acquire_spawn_lock`, and `src/daemon.rs::save_spawn_state`; all three call sites now propagate validation errors via `parent_or_err`.
+- README tagline rewritten from a 36-word paragraph to a 12-word blockquote in compliance with the documentation rule on tagline length; the duplicate paragraph above the blockquote was removed.
+- README installation snippets no longer hard-code `--version 1.0.17` in eight locations across `README.md` and `README.pt-BR.md`; they now recommend `cargo install sqlite-graphrag --locked` and link to `CHANGELOG.md` for version history.
+
 ### Fixed
 - CI now pins `cargo-nextest` to `0.9.114`, the newest release compatible with MSRV Rust 1.88.
 - Loom tests now use the project-local `sqlite_graphrag_loom` cfg gate so Tokio dependencies are not compiled under upstream `cfg(loom)`.

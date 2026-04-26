@@ -1,22 +1,23 @@
 # sqlite-graphrag
 
-Your AI agents forget everything. Give any LLM agent a memory that survives restarts, cloud outages, and API bills. No cloud. No Python. No embeddings API. Still GraphRAG. This 25 MB binary gives them a brain.
-
+[![Crates.io](https://img.shields.io/crates/v/sqlite-graphrag.svg)](https://crates.io/crates/sqlite-graphrag)
+[![Docs.rs](https://docs.rs/sqlite-graphrag/badge.svg)](https://docs.rs/sqlite-graphrag)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](LICENSE)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-> Your AI agents forget everything. Give any LLM agent a memory that survives restarts, cloud outages, and API bills. No cloud. No Python. No embeddings API. Still GraphRAG. This 25 MB binary gives them a brain.
+> Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
 
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
-- Install the current published release with `cargo install sqlite-graphrag --version 1.0.17 --locked`
-- Upgrade an existing published install with `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
+- Install the latest published release with `cargo install sqlite-graphrag --locked`
+- Upgrade an existing install with `cargo install sqlite-graphrag --locked --force`
 - Verify the active binary with `sqlite-graphrag --version`
+- See [CHANGELOG.md](CHANGELOG.md) for the full release history
 - Release-grade validation includes the `slow-tests` contract suites documented in `docs/TESTING.md`
 - Build directly from the local checkout with `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.17 --locked --force
+cargo install sqlite-graphrag --locked --force
 sqlite-graphrag --version
 ```
 
@@ -87,7 +88,7 @@ sqlite-graphrag --version
 ## Quick Start
 ### Install and record your first memory in four commands
 ```bash
-cargo install sqlite-graphrag --version 1.0.17 --locked --force
+cargo install sqlite-graphrag --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -99,8 +100,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Installation
 ### Multiple distribution channels
-- Install the published release with `cargo install sqlite-graphrag --version 1.0.17 --locked`
-- Upgrade an existing published binary with `cargo install sqlite-graphrag --version 1.0.17 --locked --force`
+- Install the latest published release with `cargo install sqlite-graphrag --locked`
+- Upgrade an existing published binary with `cargo install sqlite-graphrag --locked --force`
+- Pin to a specific version with `cargo install sqlite-graphrag --version <X.Y.Z> --locked`
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
 - Homebrew formula is planned under `brew install sqlite-graphrag`
@@ -192,6 +194,10 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
+| `SQLITE_GRAPHRAG_DISPLAY_TZ` | IANA timezone for `*_iso` JSON fields | `UTC` | `America/Sao_Paulo` |
+| `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Force daemon autostart even when guards would skip it | unset | `1` |
+| `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Disable daemon autostart entirely (useful in tests/CI) | unset | `1` |
+| `SQLITE_GRAPHRAG_DAEMON_CHILD` | INTERNAL flag set automatically when spawning the daemon child; do not set manually | unset | `1` |
 | `ORT_DYLIB_PATH` | Explicit path to `libonnxruntime.so` for ARM64 GNU dynamic loading | auto-discovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 
