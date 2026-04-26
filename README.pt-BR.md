@@ -9,14 +9,14 @@
 
 - Versão em inglês disponível em [README.md](README.md)
 - O pacote público e o repositório já estão disponíveis no GitHub e no crates.io
-- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.10 --locked`
-- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.10 --locked --force`
+- Instale a release publicada atual com `cargo install sqlite-graphrag --version 1.0.15 --locked`
+- Atualize uma instalação publicada existente com `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
 - Verifique o binário ativo com `sqlite-graphrag --version`
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.10 --locked --force
+cargo install sqlite-graphrag --version 1.0.15 --locked --force
 sqlite-graphrag --version
 ```
 
@@ -86,7 +86,7 @@ sqlite-graphrag --version
 ## Início Rápido
 ### Instale e grave sua primeira memória em quatro comandos
 ```bash
-cargo install sqlite-graphrag --version 1.0.10 --locked --force
+cargo install sqlite-graphrag --version 1.0.15 --locked --force
 sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
@@ -98,8 +98,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Instalação
 ### Múltiplos canais de distribuição
-- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.14 --locked`
-- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.14 --locked --force`
+- Instale a release publicada com `cargo install sqlite-graphrag --version 1.0.15 --locked`
+- Atualize um binário publicado existente com `cargo install sqlite-graphrag --version 1.0.15 --locked --force`
 - Instale a partir do checkout local com `cargo install --path .`
 - Compile a partir do checkout local com `cargo build --release`
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
@@ -147,7 +147,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Inicializa banco e baixa modelo de embedding |
-| `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs` | Executa ou controla o daemon persistente de embeddings |
+| `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs`, `--db`, `--json` | Executa ou controla o daemon persistente de embeddings |
 | `health` | `--json` | Exibe integridade e status dos pragmas |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |

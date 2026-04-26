@@ -24,17 +24,35 @@ pub struct RememberArgs {
     pub r#type: MemoryType,
     #[arg(long)]
     pub description: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with_all = ["body_file", "body_stdin", "graph_stdin"]
+    )]
     pub body: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with_all = ["body", "body_stdin", "graph_stdin"]
+    )]
     pub body_file: Option<std::path::PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with_all = ["body", "body_file", "graph_stdin"]
+    )]
     pub body_stdin: bool,
     #[arg(long)]
     pub entities_file: Option<std::path::PathBuf>,
     #[arg(long)]
     pub relationships_file: Option<std::path::PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "body",
+            "body_file",
+            "body_stdin",
+            "entities_file",
+            "relationships_file"
+        ]
+    )]
     pub graph_stdin: bool,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
@@ -150,10 +168,10 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             graph.relationships = serde_json::from_str(&content)?;
         }
         if args.graph_stdin {
-            if let Ok(g) = serde_json::from_str::<GraphInput>(&raw_body) {
-                graph = g;
-                raw_body = String::new();
-            }
+            graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
+                AppError::Validation(format!("invalid --graph-stdin JSON payload: {e}"))
+            })?;
+            raw_body = String::new();
         }
     }
 
@@ -454,15 +472,29 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             entities::increment_degree(&tx, entity_id)?;
             entities_persisted += 1;
         }
+        let entity_types: std::collections::HashMap<&str, &str> = graph
+            .entities
+            .iter()
+            .map(|entity| (entity.name.as_str(), entity.entity_type.as_str()))
+            .collect();
+
         for rel in &graph.relationships {
             let source_entity = NewEntity {
                 name: rel.source.clone(),
-                entity_type: "concept".to_string(),
+                entity_type: entity_types
+                    .get(rel.source.as_str())
+                    .copied()
+                    .unwrap_or("concept")
+                    .to_string(),
                 description: None,
             };
             let target_entity = NewEntity {
                 name: rel.target.clone(),
-                entity_type: "concept".to_string(),
+                entity_type: entity_types
+                    .get(rel.target.as_str())
+                    .copied()
+                    .unwrap_or("concept")
+                    .to_string(),
                 description: None,
             };
             let source_id = entities::upsert_entity(&tx, &namespace, &source_entity)?;

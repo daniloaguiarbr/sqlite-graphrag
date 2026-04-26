@@ -9,7 +9,7 @@
 ## A Pergunta Que Nenhum Framework Responde
 ### Open Loop — Por Que 27 Agentes de IA Escolhem Esta Como Sua Camada de Memória
 - Por que 27 agentes de IA escolhem sqlite-graphrag como sua camada de memória persistente?
-- Três razões técnicas: recall em menos de 50 ms, zero dependências cloud, JSON determinístico
+- Três razões técnicas: memória local durável, zero dependências cloud, JSON determinístico
 - Cada agente ganha memória persistente sem gastar um único token adicional
 - Versus MCPs pesados, sqlite-graphrag entrega contrato stdin/stdout determinístico
 - O segredo que os frameworks jamais documentam mora em um único arquivo SQLite portátil
@@ -19,7 +19,7 @@
 ### Cinco Diferenciais — Projetados Para Loops Autônomos
 - Saída JSON determinística elimina cada hack de parser no código de orquestração
 - Exit codes seguem `sysexits.h` para sua lógica de retry funcionar sem casar string
-- Zero dependências de runtime entregam um binário estático com menos de 30 MB
+- Nenhum runtime Python ou Node acompanha a binária Rust da CLI
 - Stdin aceita payloads estruturados para seus agentes jamais escaparem argumentos shell
 - Comandos pesados de embedding podem subir e reutilizar `sqlite-graphrag daemon` automaticamente em vez de pagar cold-start em cada loop
 - Comportamento cross-platform permanece idêntico em Linux macOS e Windows desde o início
@@ -28,11 +28,11 @@
 
 ## Economia Que Converte
 ### Números Que Vendem A Troca
-- Economize 200 dólares por mês substituindo Pinecone e chamadas de embedding OpenAI
-- Reduza em até 80 por cento os tokens gastos em RAG via recall por grafo tipado
-- Derrube a latência de retrieval de 800 ms em vector DB cloud para 8 ms em SSD local
-- Corte o cold-start de 12 segundos de boot Docker para 90 ms de binário único
-- Elimine 4 horas semanais de manutenção de cluster com banco zero-ops em um arquivo
+- Remova dependências recorrentes de bancos vetoriais cloud nos fluxos locais de agentes
+- Mantenha o retrieval local na workstation ou no runner de CI em vez de uma stack RAG remota
+- Reduza a superfície operacional para um arquivo SQLite e uma CLI
+- Reuse o daemon nos comandos pesados em vez de pagar cold-start completo em cada loop
+- Preserve a orquestração determinística com JSON estável e exit codes estáveis
 
 
 ## Soberania Como Vantagem Competitiva
@@ -84,7 +84,7 @@
 ```bash
 sqlite-graphrag recall "user session context" --json --k 5
 ```
-- Saída: JSON com array `results` contendo campos `name`, `score` e `updated_at`
+- Saída: JSON com entradas em `results` contendo `name`, `snippet`, `distance` e `source`
 
 ### Z.ai
 - Plataforma de agentes hospedada com planejamento multi-etapa e orquestração de tools
@@ -93,7 +93,7 @@ sqlite-graphrag recall "user session context" --json --k 5
 sqlite-graphrag remember --name "task-plan-$(date +%s)" --type project --description "plano de tarefa Z.ai" --body "$PLAN"
 sqlite-graphrag recall "previous task plan" --json --k 3
 ```
-- Saída: JSON determinístico com `results` ordenados por score de similaridade cosseno
+- Saída: JSON determinístico com `results`, `direct_matches` e `graph_matches`
 
 ### Ollama
 - Servidor LLM local rodando modelos abertos em hardware consumer sem cloud
@@ -102,7 +102,7 @@ sqlite-graphrag recall "previous task plan" --json --k 3
 sqlite-graphrag recall "conversation history" --json --k 5
 sqlite-graphrag remember --name "ollama-session" --type project --description "sessão Ollama" --body "$CONTEXT"
 ```
-- Saída: resposta JSON de recall com `elapsed_ms` abaixo de 50 em hardware moderno
+- Saída: JSON determinístico de recall com `elapsed_ms` e campos estáveis de resultado
 
 ### Hermes Agent
 - Framework de agente comunitário projetado para loops de tool-calling no estilo ReAct
@@ -133,7 +133,7 @@ sqlite-graphrag remember --name "node-result-$(date +%s)" --type project --descr
 ## Integrações com Crates Rust
 ### Crates de Agente e LLM — Chame sqlite-graphrag como Subprocess
 - Todo crate Rust que spawna um agente LLM pode chamar sqlite-graphrag via `std::process::Command`
-- Recall em menos de 50 ms em grafo de 10 mil entradas medido em M1 e x86_64
+- Recall por subprocesso determinístico permite a crates Rust reutilizarem um contrato estável de memória
 - Zero tokens adicionais: memória vive no SQLite não dentro da janela de contexto
 - Cada crate ganha memória persistente sem importar nenhuma dependência do sqlite-graphrag
 
@@ -414,7 +414,8 @@ let output = Command::new("sqlite-graphrag")
 ### Entrada — Apenas Argumentos Estruturados
 - Flags da CLI aceitam argumentos tipados validados por `clap` com parsing estrito
 - Stdin aceita body puro quando `--body-stdin` está ativo em `remember` ou `edit`
-- Stdin aceita payload JSON quando `--payload-stdin` está ativo em modos batch
+- Stdin aceita JSON de grafo quando `--graph-stdin` está ativo em `remember`; JSON inválido falha em vez de virar body de memória
+- Fontes de corpo como `--body`, `--body-file`, `--body-stdin` e `--graph-stdin` são rejeitadas quando combinadas de forma ambígua
 - Variáveis de ambiente sobrescrevem defaults sem mutar o arquivo do banco de dados
 - Idioma é controlado por `--lang <en|pt|pt-BR|portuguese|PT|pt-br>` para saída determinística
 
@@ -533,6 +534,7 @@ let output = Command::new("sqlite-graphrag")
 - Todos os subcomandos aceitam `--json` para JSON determinístico no stdout
 - Apenas comandos que expõem `--format` no help aceitam `--format json`
 - `--json` é a forma curta — preferida em one-liners e pipelines de agentes
+- Se `--json` aparece com um `--format` não JSON, `--json` vence e stdout continua JSON
 - `--format json` é a forma explícita — específica por comando, preferida onde também existem outros modos de saída
 
 
@@ -579,5 +581,5 @@ cargo install --path . && sqlite-graphrag init
 - Flag `--locked` reusa o `Cargo.lock` enviado para proteger MSRV de drift transitivo
 - Comando `init` cria `graphrag.sqlite` no diretório atual e baixa o modelo de embedding localmente
 - Primeira invocação pode levar um minuto enquanto `fastembed` baixa `multilingual-e5-small`
-- Invocações seguintes iniciam frias em menos de 100 ms em hardware consumer moderno
+- Invocações seguintes evitam apenas o primeiro download do modelo, mas comandos pesados ainda dependem da residência do modelo e do daemon
 - Remova com `cargo uninstall sqlite-graphrag` deixando o arquivo de banco intacto

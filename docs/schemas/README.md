@@ -50,9 +50,9 @@
 - Schemas describe the OUTPUT JSON contract, not the CLI input shape
 - Several subcommands accept multiple flag aliases that produce the same output
 - `sync-safe-copy` accepts `--dest` (primary), `--to`, and `--output` — all write to the same `dest_path` field in the response
-- `graph stats` accepts both `--json` (no-op legacy) and `--format json` — neither changes the response shape
+- `graph stats` accepts both `--json` and `--format json`; if `--json` is combined with `--format text`, `--json` wins and the response remains JSON
 - `__debug_schema` is exposed by the binary with a double-underscore prefix; the schema file uses kebab-case `debug-schema.schema.json` following the directory convention
-- The `--json` flag on any subcommand is a no-op kept for backward compatibility — JSON is always emitted on stdout
+- The `--json` flag is the universal compatibility switch for JSON stdout; on commands with alternate text formats, `--json` wins
 ### Stability Guarantee
 - Schemas track the `main` branch and are updated with every breaking change
 - Minor additions (new optional fields) do NOT bump the schema version
@@ -75,9 +75,9 @@
 - Os schemas descrevem o contrato de OUTPUT JSON, não o formato de entrada CLI
 - Vários subcomandos aceitam múltiplos aliases de flag que produzem a mesma saída
 - `sync-safe-copy` aceita `--dest` (primária), `--to` e `--output` — todos gravam no mesmo campo `dest_path` da resposta
-- `graph stats` aceita `--json` (no-op legado) e `--format json` — nenhum altera o formato da resposta
+- `graph stats` aceita `--json` e `--format json`; se `--json` for combinado com `--format text`, `--json` vence e a resposta continua JSON
 - `__debug_schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
-- A flag `--json` em qualquer subcomando é no-op mantida por compatibilidade — JSON é sempre emitido no stdout
+- A flag `--json` é o switch universal de compatibilidade para JSON no stdout; em comandos com formatos textuais alternativos, `--json` vence
 ### Uso
 - Inspecionar rapidamente o shape da resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq '.'`
 - Validar com um validador JSON Schema real: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`

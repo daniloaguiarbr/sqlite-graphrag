@@ -44,13 +44,14 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 ## Contrato
 - Input `--name <slug>` aceita identificador kebab-case até 128 caracteres.
 - Input `--type <kind>` aceita `user`, `feedback`, `project` ou `reference`.
-- Input `--body <text>` aceita texto cru ou lê stdin quando usa `-` como valor.
+- Input `--body <text>` aceita texto cru; stdin exige `--body-stdin` explícito.
 - O banco padrão é `./graphrag.sqlite` no diretório da invocação.
 - O override do banco acontece apenas por `--db <path>` ou `SQLITE_GRAPHRAG_DB_PATH`.
 - Input `--lang <en|pt|pt-BR|portuguese|PT|pt-br>` seleciona idioma do output para mensagens humanas.
 - Output com `--json` emite `memory_id`, `version`, `namespace` e `operation`.
-- Output sem `--json` emite blocos Markdown sob títulos localizados.
-- Stdin aceita corpo quando usuário faz pipe de dados para `remember` ou `edit`.
+- Output com `--json` sempre emite JSON, mesmo se um `--format` não JSON também estiver presente.
+- Stdin aceita corpo somente com `--body-stdin` em `remember` ou `edit`.
+- Stdin aceita JSON de grafo somente com `--graph-stdin`; JSON inválido deve falhar.
 
 
 ## Proibições
@@ -106,7 +107,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 
 ## Exemplos
 - Exemplo 1 salva nota de usuário a partir do stdin e captura o identificador retornado.
-- `echo "Finalizar refactor de auth até sexta" | sqlite-graphrag remember --name lembrete-auth --type user --description "lembrete de refactor" --json`
+- `echo "Finalizar refactor de auth até sexta" | sqlite-graphrag remember --name lembrete-auth --type user --description "lembrete de refactor" --body-stdin --json`
 - Exemplo 2 recupera top matches para tópico de auth usando recuperação híbrida.
 - `sqlite-graphrag hybrid-search "erro auth 401" --json --k 5`
 - Exemplo 3 verifica integridade do banco antes do pipeline de release publicar.

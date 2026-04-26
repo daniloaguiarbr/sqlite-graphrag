@@ -183,6 +183,7 @@ pub fn run(args: GraphArgs) -> Result<(), AppError> {
             args.db.as_deref(),
             args.namespace.as_deref(),
             args.format,
+            args.json,
             args.output.as_deref(),
         ),
         Some(GraphSubcommand::Traverse(a)) => run_traverse(a),
@@ -195,6 +196,7 @@ fn run_entities_snapshot(
     db: Option<&str>,
     namespace: Option<&str>,
     format: GraphExportFormat,
+    json: bool,
     output_path: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
     let inicio = Instant::now();
@@ -243,7 +245,13 @@ fn run_entities_snapshot(
         });
     }
 
-    let rendered = match format {
+    let effective_format = if json {
+        GraphExportFormat::Json
+    } else {
+        format
+    };
+
+    let rendered = match effective_format {
         GraphExportFormat::Json => render_json(&GraphSnapshot {
             nodes,
             edges,
@@ -253,7 +261,7 @@ fn run_entities_snapshot(
         GraphExportFormat::Mermaid => render_mermaid(&nodes, &edges),
     };
 
-    if let Some(path) = output_path {
+    if let Some(path) = output_path.filter(|_| !json) {
         fs::write(path, &rendered)?;
         output::emit_progress(&format!("wrote {}", path.display()));
     } else {
@@ -393,7 +401,13 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     };
 
-    match args.format {
+    let effective_format = if args.json {
+        GraphStatsFormat::Json
+    } else {
+        args.format
+    };
+
+    match effective_format {
         GraphStatsFormat::Json => output::emit_json(&resp)?,
         GraphStatsFormat::Text => {
             output::emit_text(&format!(
@@ -719,19 +733,16 @@ mod testes {
             "--format",
             "dot",
         ]);
-        assert!(parsed.is_err(), "graph traverse nao deve aceitar format=dot");
+        assert!(
+            parsed.is_err(),
+            "graph traverse nao deve aceitar format=dot"
+        );
     }
 
     #[test]
     fn graph_stats_cli_aceita_format_text() {
-        let parsed = Cli::try_parse_from([
-            "sqlite-graphrag",
-            "graph",
-            "stats",
-            "--format",
-            "text",
-        ])
-        .expect("graph stats --format text deve ser aceito");
+        let parsed = Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "text"])
+            .expect("graph stats --format text deve ser aceito");
 
         match parsed.command {
             Commands::Graph(args) => match args.subcommand {
@@ -746,13 +757,8 @@ mod testes {
 
     #[test]
     fn graph_stats_cli_rejeita_format_mermaid() {
-        let parsed = Cli::try_parse_from([
-            "sqlite-graphrag",
-            "graph",
-            "stats",
-            "--format",
-            "mermaid",
-        ]);
+        let parsed =
+            Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "mermaid"]);
         assert!(
             parsed.is_err(),
             "graph stats nao deve aceitar format=mermaid"

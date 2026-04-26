@@ -3,7 +3,7 @@
 
 > Persistent memory for 27 AI agents in a single 25 MB Rust binary
 
-27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, private memory layer backed by a single SQLite file. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 
@@ -29,15 +29,15 @@ cargo install --locked sqlite-graphrag
 - Graph-native retrieval beats pure vector RAG on multi-hop questions by design
 - Deterministic JSON output unlocks clean orchestration by LLM agents in pipelines
 - Native cross-platform binary ships without Python, Node or Docker dependencies
-- Save 200 dollars per month by replacing Pinecone plus OpenAI embedding calls
-- Drop retrieval latency from 800 ms in cloud vector DBs to 8 ms on local SSD
+- Remove recurring cloud vector database dependencies from local agent workflows
+- Keep retrieval local to the workstation or CI runner instead of a remote RAG stack
 
 
 ## Economy That Converts
 ### Numbers That Sell The Switch
-- Cut tokens spent on RAG by up to 80 percent through graph traversal recall
-- Reduce cold-start time from 12 seconds Docker boot to 90 ms single binary launch
-- Avoid 4 hours weekly of cluster maintenance with a single-file zero-ops database
+- Graph traversal can reduce repeated prompt stuffing in agent loops
+- Daemon reuse reduces repeated model startup cost on heavy commands
+- Single-file storage lowers the operational surface compared to a remote RAG stack
 - Your proprietary data NEVER leaves the developer workstation or the CI runner
 - Your compliance surface shrinks to one SQLite file under your own encryption
 - Your audit trail lives in the `memory_versions` table with immutable history
@@ -119,8 +119,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
-| `link` | `--source`, `--target`, `--relation` | Create a typed edge between two memories |
-| `unlink` | `--source`, `--target`, `--relation` | Remove a typed edge |
+| `link` | `--source`, `--target`, `--relation` | Create an explicit relationship between two entities |
+| `unlink` | `--source`, `--target`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
 | `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
 
@@ -217,9 +217,8 @@ RUN cargo install --locked sqlite-graphrag
 | `14` | Filesystem I/O error | Check permissions and disk space |
 | `15` | Database busy after retries | Wait and retry the operation |
 | `20` | Internal or JSON serialization error | File a bug report |
-| `73` | Memory guard rejected low RAM | Free RAM before retry |
 | `75` | `EX_TEMPFAIL` — all slots busy | Retry with backoff |
-| `77` | Low RAM for embedding model | Free at least 1 GB before retry |
+| `77` | Low RAM for embedding model | Free RAM until the host is back above the 2 GB guard threshold |
 
 
 ## JSON Output Format
@@ -228,12 +227,13 @@ RUN cargo install --locked sqlite-graphrag
 {
   "query": "graphrag retrieval",
   "k": 3,
-  "namespace": "default",
+  "direct_matches": [
+    { "memory_id": 1, "name": "graphrag-intro", "namespace": "global", "type": "user", "description": "intro doc", "snippet": "GraphRAG combines...", "distance": 0.09, "source": "direct" }
+  ],
+  "graph_matches": [],
   "elapsed_ms": 12,
   "results": [
-    { "name": "graphrag-intro", "score": 0.91, "type": "user", "updated_at": "2026-04-18T12:00:00Z" },
-    { "name": "vector-search-notes", "score": 0.84, "type": "project", "updated_at": "2026-04-17T08:12:03Z" },
-    { "name": "hybrid-ranker", "score": 0.77, "type": "feedback", "updated_at": "2026-04-16T21:04:55Z" }
+    { "memory_id": 1, "name": "graphrag-intro", "namespace": "global", "type": "user", "description": "intro doc", "snippet": "GraphRAG combines...", "distance": 0.09, "source": "direct" }
   ]
 }
 ```
@@ -257,16 +257,15 @@ RUN cargo install --locked sqlite-graphrag
 
 ## Performance
 ### Measured on a 1000-memory database
-- Cold startup under 50 milliseconds on native ARM64 Apple Silicon
-- Recall with `--k 5` completes under 20 milliseconds after model load
-- Hybrid search with RRF completes under 30 milliseconds on warm cache
+- Cold and warm timings depend on hardware, model residency, and database size
+- `recall` and `hybrid-search` become much cheaper when the daemon already holds the model
 - First `init` downloads the quantized model once and caches it locally
-- Embedding model uses approximately 750 MB of RAM per process instance
+- Embedding model uses roughly 1.1 GB of RAM per heavy process after the current calibration
 
 
 ## Safe Parallel Invocation
 ### Counting semaphore with four simultaneous slots
-- Each invocation loads `multilingual-e5-small` consuming roughly 750 MB of RAM
+- Each heavy invocation can load `multilingual-e5-small` consuming roughly 1.1 GB of RAM
 - Up to four instances run in parallel via `MAX_CONCURRENT_CLI_INSTANCES` default
 - Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`
 - A fifth concurrent invocation waits up to 300 seconds then exits with code 75
@@ -298,7 +297,7 @@ RUN cargo install --locked sqlite-graphrag
 - `TEXT_BODY_PREVIEW_LEN` equals 200 characters in list and recall snippets
 - `MAX_CONCURRENT_CLI_INSTANCES` equals 4 across cooperating subprocess agents
 - `CLI_LOCK_DEFAULT_WAIT_SECS` equals 300 seconds before exit code `75`
-- `PURGE_RETENTION_DAYS_DEFAULT` equals 30 days before hard delete becomes allowed
+- `PURGE_RETENTION_DAYS_DEFAULT` equals 90 days before hard delete becomes allowed
 
 
 ## Troubleshooting FAQ
@@ -493,7 +492,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.2 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.14 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

@@ -11,10 +11,15 @@ pub struct DaemonArgs {
     pub ping: bool,
     #[arg(long)]
     pub stop: bool,
+    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 pub fn run(args: DaemonArgs) -> Result<(), AppError> {
-    let paths = AppPaths::resolve(None)?;
+    let _ = args.json;
+    let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
 
     if args.ping {

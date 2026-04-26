@@ -41,9 +41,7 @@ jobs:
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
             use-cross: false
-          # aarch64-pc-windows-msvc remains disabled until the runner/toolchain
-          # explicitly proves ARM64 MSVC components are installed in addition to
-          # `rustup target add aarch64-pc-windows-msvc`.
+          # ARM64 Windows release builds require the native `windows-11-arm` runner.
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

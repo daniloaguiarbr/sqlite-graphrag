@@ -9,7 +9,7 @@
 ## The Question No Agent Framework Answers
 ### Open Loop — Why 27 AI Agents Choose This As Their Memory Layer
 - Why do 27 AI agents choose sqlite-graphrag as their persistent memory layer?
-- Three technical reasons: sub-50ms recall, zero cloud dependencies, deterministic JSON
+- Three technical reasons: durable local memory, zero cloud dependencies, deterministic JSON
 - Each agent gains persistent memory without spending a single additional token
 - Versus heavy MCPs, sqlite-graphrag delivers a deterministic stdin/stdout contract
 - The secret the frameworks never document sits inside a single portable SQLite file
@@ -19,7 +19,7 @@
 ### Five Differentiators — Engineered for Autonomous Loops
 - Deterministic JSON output removes every parser hack from your orchestrator code
 - Exit codes follow `sysexits.h` so your retry logic works without string matching
-- Zero runtime dependencies ship in one statically linked binary under 30 MB
+- No Python or Node runtime ships alongside the Rust CLI binary
 - Stdin accepts structured payloads so your agents never escape shell arguments
 - Heavy embedding commands can auto-start and reuse `sqlite-graphrag daemon` instead of paying cold-start on every loop
 - Cross-platform behavior stays identical on Linux, macOS and Windows out of the box
@@ -28,11 +28,11 @@
 
 ## Economy That Converts
 ### Numbers That Sell The Switch
-- Save 200 dollars per month by replacing Pinecone plus OpenAI embedding calls
-- Cut tokens spent on RAG by up to 80 percent through graph traversal recall
-- Drop retrieval latency from 800 ms in cloud vector DBs to 8 ms on local SSD
-- Reduce cold-start time from 12 seconds Docker boot to 90 ms single binary launch
-- Avoid 4 hours weekly of cluster maintenance with a single-file zero-ops database
+- Remove recurring cloud vector database dependencies from local agent workflows
+- Keep retrieval local to the workstation or CI runner instead of a remote RAG stack
+- Reduce the operational surface to one SQLite file and one CLI binary
+- Reuse the daemon on heavy commands instead of paying full cold-start every loop
+- Preserve orchestration determinism through stable JSON and stable exit codes
 
 
 ## Sovereignty as Competitive Advantage
@@ -84,7 +84,7 @@
 ```bash
 sqlite-graphrag recall "user session context" --json --k 5
 ```
-- Output: JSON with `results` array containing `name`, `score`, and `updated_at` fields
+- Output: JSON with `results` entries carrying `name`, `snippet`, `distance`, and `source`
 
 ### Z.ai
 - Hosted agent platform with multi-step task planning and tool orchestration
@@ -93,7 +93,7 @@ sqlite-graphrag recall "user session context" --json --k 5
 sqlite-graphrag remember --name "task-plan-$(date +%s)" --type project --description "Z.ai task plan" --body "$PLAN"
 sqlite-graphrag recall "previous task plan" --json --k 3
 ```
-- Output: deterministic JSON with `results` sorted by cosine similarity score
+- Output: deterministic JSON with `results`, `direct_matches`, and `graph_matches`
 
 ### Ollama
 - Local LLM server running open models on consumer hardware without cloud calls
@@ -102,7 +102,7 @@ sqlite-graphrag recall "previous task plan" --json --k 3
 sqlite-graphrag recall "conversation history" --json --k 5
 sqlite-graphrag remember --name "ollama-session" --type project --description "Ollama conversation" --body "$CONTEXT"
 ```
-- Output: JSON recall response with `elapsed_ms` under 50 on modern hardware
+- Output: deterministic recall JSON with `elapsed_ms` and stable result fields
 
 ### Hermes Agent
 - Community agent framework designed for ReAct-style tool-calling loops
@@ -133,7 +133,7 @@ sqlite-graphrag remember --name "node-result-$(date +%s)" --type project --descr
 ## Rust Crate Integrations
 ### Agent and LLM Crates — Call sqlite-graphrag as a Subprocess
 - Every Rust crate that spawns an LLM agent can call sqlite-graphrag via `std::process::Command`
-- Sub-50ms recall on a 10k-entry knowledge graph benchmarked on M1 and x86_64
+- Deterministic subprocess recall lets Rust crates reuse a stable memory contract
 - Zero additional tokens: memory lives in SQLite, not inside the context window
 - Each crate gains persistent memory without importing any sqlite-graphrag dependency
 
@@ -414,7 +414,8 @@ let output = Command::new("sqlite-graphrag")
 ### Input — Structured Arguments Only
 - CLI flags accept typed arguments validated by `clap` with strict parsing
 - Stdin accepts a raw body when `--body-stdin` is active on `remember` or `edit`
-- Stdin accepts a JSON payload when `--payload-stdin` is active on batch modes
+- Stdin accepts graph JSON when `--graph-stdin` is active on `remember`; invalid JSON fails instead of becoming memory body
+- Body sources such as `--body`, `--body-file`, `--body-stdin`, and `--graph-stdin` are rejected when combined ambiguously
 - Environment variables override defaults without mutating the file database
 - The default database path is always `./graphrag.sqlite` in the invocation directory
 - Language is controlled by `--lang en` or `--lang pt` for deterministic output
@@ -537,6 +538,7 @@ let output = Command::new("sqlite-graphrag")
 - Every subcommand accepts `--json` for deterministic JSON stdout
 - Only commands that expose `--format` in their help accept `--format json`
 - `--json` is the short form — preferred in one-liners and agent pipelines
+- If `--json` appears with a non-JSON `--format`, `--json` wins and stdout remains JSON
 - `--format json` is the explicit form — command-specific, preferred where alternate output modes also exist
 
 
@@ -583,5 +585,5 @@ cargo install --path . && sqlite-graphrag init
 - Flag `--locked` reuses the shipped `Cargo.lock` to protect MSRV from transitive drift
 - Command `init` creates `graphrag.sqlite` in the current working directory and downloads the embedding model locally
 - First invocation may take one minute while `fastembed` fetches `multilingual-e5-small`
-- Subsequent invocations start cold in under 100 ms on modern consumer hardware
+- Subsequent invocations skip the first model download, but heavy commands still depend on model residency and daemon state
 - Uninstall with `cargo uninstall sqlite-graphrag` leaving the database file in place

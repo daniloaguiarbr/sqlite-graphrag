@@ -1,6 +1,6 @@
 # SUPORTE CROSS PLATFORM
 
-> Um binário, nove targets, zero drama de configuração em todo sistema operacional moderno
+> Um binário, cinco targets, zero drama de configuração em todo sistema operacional moderno
 
 
 - Leia este guia em inglês em [CROSS_PLATFORM.md](CROSS_PLATFORM.md)
@@ -18,9 +18,9 @@
 
 ### Depois — Binário Único Que Simplesmente Roda
 - Um `cargo install --locked` entrega o binário em qualquer target suportado oficialmente
-- Sem runtime Python, sem runtime Node, sem JVM, sem bibliotecas compartilhadas exigidas
+- Sem runtime Python, sem runtime Node, sem JVM, e com apenas um contrato de biblioteca compartilhada no ARM64 GNU
 - Startup do binário fica abaixo de oitenta milissegundos em todo target suportado
-- Códigos de saída permanecem idênticos nos nove targets garantindo orquestração confiável
+- Códigos de saída permanecem idênticos nos cinco targets publicados garantindo orquestração confiável
 - Formato JSON de saída fica byte a byte idêntico em todo sistema operacional testado
 
 
@@ -58,27 +58,12 @@ cargo install --path .
 
 
 ## Notas Para Linux
-### glibc Versus musl — Dois Sabores Para Duas Realidades
-- Binário glibc roda em Ubuntu 20.04, Debian 11, Fedora 36 e qualquer distro mainstream
-- Binário musl roda em Alpine 3.18, Void Linux, Chimera Linux e imagens distroless
-- Binário musl estático pesa dois MB a mais mas elimina toda dependência compartilhada
-- Escolha glibc para workstations desktop onde `ldd` reporta bibliotecas como esperado
-- Escolha musl para containers, funções Lambda e qualquer contexto de execução efêmero
-- Faça build diretamente do checkout local via `cargo install --path . --target x86_64-unknown-linux-musl`
-
-
-### Uso Em Container — Alpine Docker Abaixo de 40 MB
-```dockerfile
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /out/sqlite-graphrag /usr/local/bin/sqlite-graphrag
-ENTRYPOINT ["sqlite-graphrag"]
-```
-- Imagem final pesa 38 MB comprimida incluindo o binário musl e os certificados CA
-- Padrão multi-stage mantém o toolchain Rust fora da camada de imagem de produção
-- Latência de cold start fica abaixo de oitenta milissegundos incluindo spawn do container
-- Pods Kubernetes com esta imagem escalam horizontalmente a 500 pods por minuto tranquilamente
-- Substitui imagens Python RAG de 600 MB, economizando noventa e quatro por cento do registry
+### glibc Primeiro — Caminho Oficial de Release no Linux
+- Binário glibc roda em Ubuntu 20.04, Debian 11, Fedora 36 e distros mainstream
+- `x86_64-unknown-linux-gnu` e `aarch64-unknown-linux-gnu` são os únicos assets Linux publicados agora
+- `x86_64-unknown-linux-musl` não faz parte da matriz oficial de release em `v1.0.15`
+- Reintroduzir musl agora exige build custom do ONNX Runtime ou outra estratégia de backend
+- Prefira glibc para workstations, runners de CI e imagens de container até esse gap fechar
 
 
 ## Notas Para macOS
@@ -86,14 +71,14 @@ ENTRYPOINT ["sqlite-graphrag"]
 - Binários não assinados baixados via navegador disparam quarentena na primeira execução
 - Remova a quarentena com `xattr -d com.apple.quarantine /usr/local/bin/sqlite-graphrag`
 - Binários instalados via `cargo install` ignoram Gatekeeper por virem do rustc local
-- Distribuição via Homebrew está planejada após a release pública `sqlite-graphrag v1.0.0`
-- Macs Apple Silicon e Intel rodam igualmente rápido graças ao build universal2 incluído
+- Distribuição via Homebrew continua planejada sobre a linha pública atual de release
+- Os assets oficiais de macOS atualmente cobrem apenas Apple Silicon
 
 
 ### Apple Silicon — Performance Nativa em M1 M2 M3 M4
 - Binário aarch64 nativo roda trinta por cento mais rápido que x86_64 via Rosetta
-- Binário universal2 agrupa ambas as arquiteturas em um arquivo único de 44 MB para distribuição
-- Carregamento de modelo usa framework Apple Accelerate automaticamente via backend `candle`
+- macOS Intel está atualmente fora da matriz oficial de release nesta configuração do projeto
+- O carregamento de modelo segue a mesma stack `fastembed` mais `ort` usada nos outros targets publicados
 - Geração de embeddings atinge 2000 tokens por segundo no M3 Pro contra 800 via Rosetta
 - Cold start mede vinte e oito milissegundos no M2 graças ao preditor de branches melhorado
 
@@ -120,13 +105,11 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - Scripts persistem corretamente entre Windows, Linux e macOS quando salvos em UTF-8
 
 
-## Docker Alpine
-### Imagem Mínima — 38 MB Comprimida
-- Imagem base `alpine:3.19` ocupa 5 MB comprimida antes de qualquer customização aplicada
-- Binário musl estático contribui com 27 MB sem linkar nenhum objeto compartilhado glibc
-- Pacote de certificados CA adiciona 1 MB necessário para o download único do modelo via HTTPS
-- Imagem final chega a 38 MB comprimida cabendo confortavelmente em qualquer tier de registry
-- Cold start do container mede abaixo de 100 ms totais incluindo desempacotamento de camadas
+## Containers
+### Imagens glibc — Caminho Oficial Hoje
+- Prefira imagens base Debian ou Ubuntu para os assets Linux oficiais atuais
+- Alpine e imagens puramente musl não fazem parte da matriz suportada em `v1.0.15`
+- O caminho de container musl exige uma decisão de backend antes de voltar a ser suportado
 
 
 ## Suporte A Shells
@@ -176,14 +159,12 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 
 
 ## Performance Por Target
-### Benchmarks — Cold Start E Pegada De Memória
+### Benchmarks — Targets Suportados Selecionados
 | Target | Cold Start | Warm Recall | RSS Após Modelo | Throughput Embedding |
 | --- | --- | --- | --- | --- |
 | x86_64-linux-gnu (i7-13700) | 48 ms | 4 ms | 820 MB | 1500 tok/s |
-| x86_64-linux-musl (i7-13700) | 52 ms | 4 ms | 835 MB | 1500 tok/s |
 | aarch64-linux-gnu (Graviton3) | 58 ms | 5 ms | 810 MB | 1400 tok/s |
 | aarch64-apple-darwin (M3 Pro) | 28 ms | 3 ms | 790 MB | 2000 tok/s |
-| x86_64-apple-darwin (i9-2019) | 45 ms | 5 ms | 840 MB | 1100 tok/s |
 | x86_64-windows-msvc (i7-12700) | 75 ms | 6 ms | 860 MB | 1300 tok/s |
 
 - Cold start mede tempo desde o spawn do processo até a primeira query SQL completa com sucesso
@@ -202,7 +183,7 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - OpenClaw framework de agentes visa containers Linux primordialmente mas funciona em macOS também
 - Paperclip assistente de pesquisa roda em ambientes desktop macOS e Linux simultaneamente
 - VS Code Copilot da Microsoft executa via tasks no terminal integrado entre sistemas operacionais
-- Google Antigravity plataforma roda o binário Linux musl dentro de seu runtime sandbox
+- Google Antigravity plataforma roda o binário Linux glibc dentro de seu runtime sandbox
 - Windsurf da Codeium visa predominantemente instalações de editor em macOS e Windows
 - Cursor editor invoca o binário via seu terminal em macOS, Linux e Windows sem distinção
 - Zed editor roda sqlite-graphrag como ferramenta externa em macOS e Linux nativamente

@@ -60,14 +60,14 @@ fn skip_if_not_installed() -> PathBuf {
     }
 }
 
-/// Retorna a versão do binário instalado como string, ex: "1.0.10"
+/// Retorna a versão do binário instalado como string, ex: "1.2.3"
 fn installed_version(bin: &PathBuf) -> String {
     let out = Command::new(bin)
         .arg("--version")
         .output()
         .expect("--version falhou");
     let s = String::from_utf8_lossy(&out.stdout);
-    // formato: "sqlite-graphrag 1.0.10\n"
+    // formato: "sqlite-graphrag 1.2.3\n"
     s.split_whitespace().nth(1).unwrap_or("0.0.0").to_string()
 }
 
@@ -901,8 +901,7 @@ fn smoke_26_default_db_in_current_dir() {
     assert_json_stdout(&read_out);
     let read_json: serde_json::Value = serde_json::from_slice(&read_out.stdout).unwrap();
     assert_eq!(
-        read_json["name"],
-        "smoke-cwd-default",
+        read_json["name"], "smoke-cwd-default",
         "smoke_26: read deve enxergar memoria salva no banco default"
     );
 

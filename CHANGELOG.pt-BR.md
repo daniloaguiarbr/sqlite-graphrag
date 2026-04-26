@@ -10,6 +10,15 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.15] - 2026-04-26
+
+### Corrigido
+- `remember --graph-stdin` agora rejeita JSON inválido em vez de persistir payloads malformados como corpos de memória
+- `remember` e `edit` agora rejeitam fontes ambíguas de corpo, como `--body` explícito junto com `--body-stdin`
+- O CRUD de grafo via `--graph-stdin` agora preserva valores declarados de `entity_type` quando relacionamentos referenciam entidades existentes no input
+- `graph --json` agora domina formatos textuais como `--format dot`, `--format mermaid` e saída textual de stats
+- `daemon` agora aceita as flags compartilhadas `--db` e `--json`, mantendo a mesma superfície determinística de flags para invocações por agentes
+
 ## [1.0.14] - 2026-04-25
 
 ### Corrigido

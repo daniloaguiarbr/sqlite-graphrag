@@ -11,11 +11,11 @@ use std::io::Read as _;
 pub struct EditArgs {
     #[arg(long)]
     pub name: String,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["body_file", "body_stdin"])]
     pub body: Option<String>,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["body", "body_stdin"])]
     pub body_file: Option<std::path::PathBuf>,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["body", "body_file"])]
     pub body_stdin: bool,
     #[arg(long)]
     pub description: Option<String>,

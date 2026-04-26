@@ -80,10 +80,7 @@ fn test_crud_usa_graphrag_sqlite_no_diretorio_da_invocacao() {
         "banco local nao deve existir antes do init no diretorio da invocacao"
     );
 
-    isolated_cmd_in(pasta.path())
-        .arg("init")
-        .assert()
-        .success();
+    isolated_cmd_in(pasta.path()).arg("init").assert().success();
 
     assert!(
         banco.exists(),
@@ -189,6 +186,44 @@ fn test_health_ok_apos_init() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["status"], "ok");
     assert_eq!(json["integrity"], "ok");
+}
+
+// ---------------------------------------------------------------------------
+// daemon
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_daemon_help_lista_db_e_json() {
+    let tmp = TempDir::new().unwrap();
+
+    let output = Command::cargo_bin("sqlite-graphrag")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .args(["daemon", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let help = String::from_utf8(output).unwrap();
+    assert!(help.contains("--db"));
+    assert!(help.contains("--json"));
+}
+
+#[test]
+fn test_daemon_aceita_db_ping_json_sem_erro_de_parse() {
+    let tmp = TempDir::new().unwrap();
+
+    Command::cargo_bin("sqlite-graphrag")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .args(["daemon", "--db", "foo.sqlite", "--ping", "--json"])
+        .assert()
+        .failure()
+        .code(4);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +338,58 @@ fn test_remember_force_merge_atualiza() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["action"], "updated");
     assert_eq!(json["name"], "memoria-merge");
+}
+
+#[test]
+fn test_remember_rejeita_body_e_body_stdin_juntos() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "entrada-ambigua",
+            "--type",
+            "project",
+            "--description",
+            "fontes ambiguas",
+            "--body",
+            "corpo explicito",
+            "--body-stdin",
+        ])
+        .write_stdin("corpo stdin")
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn test_remember_graph_stdin_invalido_falha_sem_salvar_memoria() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "grafo-invalido",
+            "--type",
+            "project",
+            "--description",
+            "json invalido",
+            "--graph-stdin",
+        ])
+        .write_stdin("{not-json")
+        .assert()
+        .failure()
+        .code(1);
+
+    cmd(&tmp)
+        .args(["read", "--name", "grafo-invalido"])
+        .assert()
+        .failure()
+        .code(4);
 }
 
 // ---------------------------------------------------------------------------
@@ -762,6 +849,41 @@ fn test_edit_memoria_funciona() {
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["action"], "updated");
+}
+
+#[test]
+fn test_edit_rejeita_body_e_body_stdin_juntos() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "memoria-edit-ambigua",
+            "--type",
+            "user",
+            "--description",
+            "desc",
+            "--body",
+            "corpo original",
+        ])
+        .assert()
+        .success();
+
+    cmd(&tmp)
+        .args([
+            "edit",
+            "--name",
+            "memoria-edit-ambigua",
+            "--body",
+            "corpo explicito",
+            "--body-stdin",
+        ])
+        .write_stdin("corpo stdin")
+        .assert()
+        .failure()
+        .code(2);
 }
 
 #[test]
@@ -1487,6 +1609,144 @@ fn test_graph_export_json_estrutura_correta() {
     assert!(json["edges"].is_array());
     assert!(json["nodes"].as_array().unwrap().len() >= 2);
     assert!(!json["edges"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_graph_stdin_preserva_entity_type_ao_criar_relationships() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let payload = r#"{
+        "entities": [
+            {"name": "tipo-tool", "entity_type": "tool"},
+            {"name": "tipo-file", "entity_type": "file"}
+        ],
+        "relationships": [
+            {"source": "tipo-tool", "target": "tipo-file", "relation": "uses", "strength": 0.9}
+        ]
+    }"#;
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "grafo-tipado",
+            "--type",
+            "project",
+            "--description",
+            "grafo tipado via stdin",
+            "--graph-stdin",
+        ])
+        .write_stdin(payload)
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["graph", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let nodes = json["nodes"].as_array().unwrap();
+    let tipo_tool = nodes
+        .iter()
+        .find(|node| node["name"] == "tipo-tool")
+        .expect("tipo-tool deve existir");
+    let tipo_file = nodes
+        .iter()
+        .find(|node| node["name"] == "tipo-file")
+        .expect("tipo-file deve existir");
+
+    assert_eq!(tipo_tool["type"], "tool");
+    assert_eq!(tipo_file["type"], "file");
+}
+
+#[test]
+fn test_graph_json_flag_vence_format_dot() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let output = cmd(&tmp)
+        .args(["graph", "--json", "--format", "dot"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["nodes"].is_array());
+    assert!(json["edges"].is_array());
+}
+
+#[test]
+fn test_graph_json_flag_vence_format_mermaid() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let output = cmd(&tmp)
+        .args(["graph", "--json", "--format", "mermaid"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["nodes"].is_array());
+    assert!(json["edges"].is_array());
+}
+
+#[test]
+fn test_graph_json_flag_mantem_stdout_mesmo_com_output() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let output_path = tmp.path().join("graph.dot");
+    let output_path_str = output_path.to_str().unwrap();
+
+    let output = cmd(&tmp)
+        .args([
+            "graph",
+            "--json",
+            "--format",
+            "dot",
+            "--output",
+            output_path_str,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["nodes"].is_array());
+    assert!(
+        !output_path.exists(),
+        "--json deve manter o contrato stdout em vez de gravar DOT"
+    );
+}
+
+#[test]
+fn test_graph_stats_json_flag_vence_format_text() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let output = cmd(&tmp)
+        .args(["graph", "stats", "--json", "--format", "text"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["node_count"].is_number());
+    assert!(json["edge_count"].is_number());
 }
 
 #[test]

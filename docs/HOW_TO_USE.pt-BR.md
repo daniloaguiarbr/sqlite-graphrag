@@ -1,6 +1,6 @@
 # COMO USAR sqlite-graphrag
 
-> Entregue memória persistente a qualquer agente de IA em 60 segundos, gastando zero dólares
+> Entregue memória persistente a qualquer agente de IA com uma binária local e zero dependências cloud
 
 
 - Leia este guia em inglês em [HOW_TO_USE.md](HOW_TO_USE.md)
@@ -18,19 +18,19 @@
 
 ## Tempo de Leitura e Impacto
 ### Investimento — Cinco Minutos de Leitura e Dez de Execução
-- Tempo total de leitura chega a cinco minutos para leitores técnicos escaneando
-- Tempo total de execução chega a dez minutos incluindo download do modelo
-- Curva de aprendizado cai a zero para quem conhece padrões CLI tradicionais
-- Primeira memória persiste em sessenta segundos após o término da instalação
-- Primeira busca híbrida retorna hits ranqueados em menos de cinquenta milissegundos
-- Economia esperada de tokens por mês bate duzentos mil em um único agente
+- Leitores técnicos conseguem escanear este guia rapidamente pelos títulos
+- O tempo da primeira execução depende principalmente do download único do modelo
+- Padrões CLI tradicionais mantêm a curva de aprendizado baixa para usuários de shell
+- A primeira memória pode ser persistida logo após a instalação e a inicialização
+- A primeira busca híbrida depende do hardware, da residência do modelo e do tamanho do banco
+- Armazenamento local remove dependências recorrentes de retrieval em cloud do fluxo
 
 
 ## Pré-Requisitos
 ### Ambiente — Linha de Base Mínima Suportada
 - Rust 1.88 ou mais recente instalado via `rustup` em Linux macOS e Windows
 - SQLite versão 3.40 ou mais nova acompanhando sua distribuição do sistema operacional
-- Sistemas operacionais Linux glibc, Linux musl, macOS 11 e superiores, Windows 10 em diante
+- Os assets publicados cobrem Linux glibc, macOS Apple Silicon e Windows em x86_64 ou ARM64
 - RAM disponível de 100 MB livre em runtime mais 1 GB durante a carga do modelo
 - Espaço em disco de 200 MB para o cache do modelo de embeddings na primeira invocação
 - Acesso de rede EXCLUSIVAMENTE no primeiro `init` para baixar embeddings quantizados
@@ -47,7 +47,7 @@ sqlite-graphrag remember --name primeira-memoria --type user --description "prim
 - Segunda linha cria o banco SQLite e baixa o modelo de embeddings do `fastembed`
 - Terceira linha persiste sua primeira memória e indexa para recuperação híbrida
 - Confirmação vai para stdout, traces vão para stderr, código zero sinaliza sucesso
-- Sua próxima chamada de `recall` retorna a nota recém-salva em milissegundos
+- Sua próxima chamada de `recall` retorna a nota recém-salva assim que o modelo estiver pronto
 
 
 ## Comandos Essenciais
@@ -76,12 +76,14 @@ sqlite-graphrag purge --retention-days 90 --yes
 sqlite-graphrag daemon
 sqlite-graphrag daemon --ping
 sqlite-graphrag daemon --stop
+sqlite-graphrag daemon --db ./graphrag.sqlite --ping --json
 ```
 - `init`, `remember`, `recall` e `hybrid-search` tentam usar o daemon automaticamente primeiro
 - Se o daemon não estiver disponível, esses comandos sobem o processo sob demanda antes de cair para o caminho local
 - Subir `sqlite-graphrag daemon` manualmente agora é opcional e útil principalmente para supervisão explícita ou debug
 - Use `--ping` para confirmar que o daemon está vivo e inspecionar o contador de requests de embedding atendidos
 - Use `--stop` para shutdown gracioso após sessões longas de agentes ou ingestão em lote
+- `--db` e `--json` são aceitos para manter o mesmo contrato global da CLI usado por pipelines de agentes
 
 
 ## Padrões Avançados
@@ -98,8 +100,8 @@ sqlite-graphrag hybrid-search "estratégia migração postgres" \
 - Combina similaridade vetorial densa e matches textuais esparsos em ranqueamento único
 - Ajuste de pesos permite favorecer proximidade semântica sobre precisão de palavras
 - Constante RRF `--rrf-k 60` coincide com o padrão recomendado pelo paper original
-- Pipeline economiza oitenta por cento dos tokens comparado ao re-ranking via LLM
-- Latência esperada fica abaixo de quinze milissegundos em bancos até 100 MB
+- O pipeline mantém campos de ranking explícitos para a orquestração downstream
+- A latência depende do hardware, da residência do modelo e do tamanho do banco
 
 
 ### Receita Dois — Travessia de Grafo Para Recall Multi-Hop
@@ -107,32 +109,33 @@ sqlite-graphrag hybrid-search "estratégia migração postgres" \
 sqlite-graphrag link --source design-auth --target spec-jwt --relation depends-on
 sqlite-graphrag link --source spec-jwt --target rfc-7519 --relation references
 sqlite-graphrag related design-auth --hops 2 --json \
-  | jaq -r '.nodes[] | select(.depth == 2) | .name'
+  | jaq -r '.results[] | select(.hop_distance == 2) | .name'
 ```
 - Dois hops revelam conhecimento transitivo invisível à busca vetorial pura
 - Relações tipadas permitem ao agente raciocinar sobre causa, dependência e referência
-- Queries de grafo executam em menos de cinco milissegundos via joins indexados
-- Recall multi-hop recupera contexto que embeddings planos deixam fora do top-K
-- Economiza quinze minutos por sessão de debug caçando decisões arquiteturais relacionadas
+- Queries de grafo permanecem locais dentro de joins SQLite e relações tipadas
+- Recall multi-hop recupera contexto que o primeiro passe vetorial frequentemente não traz
+- Distância de hop entrega ao orquestrador um sinal explícito de profundidade de expansão
 
 
 ### Receita Três — Ingestão Em Lote Via Pipeline Shell
 ```bash
 find ./docs -name "*.md" -print0 \
-  | xargs -0 -n 1 -P 4 -I {} bash -c '
-      nome=$(basename {} .md)
+  | xargs -0 -n 1 -P 1 -I {} bash -c '
+      nome=$(basename "$1" .md)
       sqlite-graphrag remember \
+        --max-concurrency 1 \
         --name "doc-${nome}" \
         --type reference \
-        --description "importado de {}" \
-        --body "$(cat {})"
-    '
+        --description "importado de $1" \
+        --body-file "$1"
+    ' _ {}
 ```
-- Fator paralelo `-P 4` coincide exatamente com os slots padrão do semáforo interno
+- Inicie ingestão em lote com `-P 1` e só aumente após medir RSS no host atual
 - Código de saída `75` sinaliza slots exauridos e o orquestrador DEVE tentar depois
 - Código de saída `77` sinaliza pressão de RAM e o orquestrador DEVE aguardar memória
-- Throughput do lote atinge 200 documentos por minuto num laptop moderno com CPU atual
-- Economiza quarenta minutos de ingestão manual por cada mil arquivos Markdown processados
+- `--body-file` evita deriva de quoting shell em corpos Markdown
+- Throughput de ingestão pesada depende do hardware, do daemon e do tamanho dos documentos
 
 
 ### Receita Quatro — Sincronização Segura Com Dropbox ou iCloud
@@ -141,26 +144,26 @@ sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite
 ouch compress ~/Dropbox/graphrag.sqlite ~/Dropbox/graphrag-$(date +%Y%m%d).tar.zst
 ```
 - `sync-safe-copy` faz checkpoint do WAL e copia snapshot consistente atomicamente
-- Dropbox, iCloud e Google Drive NUNCA corrompem o banco ativo durante a sincronização
-- Compressão via `ouch` reduz snapshot em sessenta por cento para buckets de arquivamento
-- Recuperação em outra máquina exige apenas um `ouch decompress` e um `cp` simples
-- Protege anos de memória contra corrupção induzida por sincronizadores em SQLite cru
+- O snapshot reduz o risco de um sincronizador copiar um banco SQLite em mutação
+- A taxa de compressão varia com o conteúdo do banco e o estado do WAL
+- A recuperação continua simples com uma descompressão e uma cópia
+- Use a cópia com checkpoint em vez de sincronizar o banco vivo diretamente
 
 
 ### Receita Cinco — Integração Com Orquestrador Claude Code
 ```bash
 sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
   | jaq -c '{
-      contexto: [.results[] | {name, body, score}],
+      contexto: [.results[] | {name, snippet, distance, source}],
       gerado_em: now | todate
     }' \
   | claude --print "Use este contexto para responder: $QUERY_USUARIO"
 ```
 - JSON estruturado flui limpo para qualquer orquestrador que leia de stdin nativamente
-- Campo de score permite ao orquestrador descartar hits de baixa relevância antes do prompt
+- Campo `distance` permite ao orquestrador descartar hits fracos de recall antes do prompt
 - Determinismo dos códigos de saída permite rotear erros sem parsear stderr manualmente
-- Custo de tokens cai setenta por cento comparado ao context stuffing de corpus completo
-- Latência ida e volta fica abaixo de cem milissegundos fim a fim localmente
+- Recall retorna snippets em vez de corpos completos, o que ajuda a manter prompts menores
+- A latência fim a fim depende da CLI local e do runtime do modelo downstream
 
 
 ## Configuração e Notas de Namespace
@@ -170,9 +173,9 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Use `namespace-detect` para inspecionar o namespace resolvido antes de operações em massa
 
 ### Semântica do Score
-- Saída JSON usa o campo `score` (similaridade cosseno, maior valor indica mais relevância)
-- Resultados são ordenados por `score` decrescente; o melhor match aparece sempre primeiro
-- Prefira sempre `--json` em pipelines para obter o `score` bruto com filtragem precisa
+- `recall` emite `distance`, onde valores menores significam matches mais similares
+- `hybrid-search` emite `score` e `combined_score`, onde valores maiores sobem no ranking
+- Prefira sempre `--json` em pipelines para o orquestrador usar os campos brutos realmente retornados
 
 ### Aliases da Flag --lang
 - `--lang en` força saída em inglês independente do locale do sistema
@@ -184,6 +187,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - `--json` é aceita por todos os subcomandos como flag ampla de compatibilidade para JSON determinístico no stdout
 - `--format json` é aceita apenas pelos comandos que expõem `--format` no help
 - Use `--json` em pipelines quando quiser uma grafia única que funcione na CLI inteira
+- Quando `--json` aparece com um `--format` não JSON, `--json` vence e stdout continua JSON
 - Use `--format json` apenas nos comandos que anunciam `--format`
 
 ### Flags de Formato de Saída Padronizadas
@@ -202,8 +206,8 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 | `forget` | sim | não | json |
 | `link` | sim | sim | json |
 | `unlink` | sim | sim | json |
-| `stats` | sim | sim | json |
-| `health` | sim | sim | json |
+| `stats` | sim | não | json |
+| `health` | sim | não | json |
 | `history` | sim | não | json |
 | `edit` | sim | não | json |
 | `rename` | sim | sim | json |
@@ -213,9 +217,11 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 | `optimize` | sim | não | json |
 | `migrate` | sim | não | json |
 | `init` | sim | não | json |
-| `sync-safe-copy` | sim | sim | json |
+| `sync-safe-copy` | sim | não | json |
 | `hybrid-search` | sim | sim | json |
+| `related` | sim | sim | json |
 | `namespace-detect` | sim | não | json |
+| `daemon` | sim | não | json |
 
 ```bash
 # Forma curta — preferida em pipelines
@@ -225,7 +231,7 @@ sqlite-graphrag recall "auth" --json | jaq '.results[].name'
 sqlite-graphrag recall "auth" --format json | jaq '.results[].name'
 
 # Ambas as formas aceitas no mesmo pipeline
-sqlite-graphrag stats --json && sqlite-graphrag health --format json
+sqlite-graphrag stats --json && sqlite-graphrag recall "auth" --format json
 ```
 
 ### Descoberta do Caminho do Banco
@@ -302,7 +308,8 @@ sqlite-graphrag edit --name design-auth \
 - Pré-requisitos: a memória deve existir no namespace de destino
 - `--body-file` lê o conteúdo do corpo a partir de um arquivo, evitando problemas de escape
 - `--body-stdin` lê o corpo via stdin para integração em pipelines
-- `--expected-updated-at` aceita timestamp ISO 8601; divergências retornam exit 3
+- `--body`, `--body-file` e `--body-stdin` são mutuamente exclusivos
+- `--expected-updated-at` aceita epoch Unix ou RFC 3339; divergências retornam exit 3
 - Exit code 0: edição concluída e nova versão indexada
 - Exit code 3: conflito de locking otimista — a memória foi modificada concorrentemente
 
@@ -318,7 +325,8 @@ sqlite-graphrag graph --format mermaid --output grafo.mmd
 - `--format json` (padrão) emite `{"nodes": [...], "edges": [...]}` no stdout
 - `--format dot` emite um grafo direcionado compatível com Graphviz para renderização offline
 - `--format mermaid` emite um bloco de fluxograma Mermaid para embutir em Markdown
-- `--output <PATH>` grava diretamente em arquivo em vez de imprimir no stdout
+- `--json` força JSON no stdout mesmo quando `--format dot`, `--format mermaid` ou `graph stats --format text` também estiver presente
+- `--output <PATH>` grava diretamente em arquivo em vez de imprimir no stdout, exceto quando `--json` está presente
 - Exit code 0: exportação concluída
 
 #### Usando graph traverse
@@ -372,7 +380,6 @@ sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```bash
 sqlite-graphrag health
 sqlite-graphrag health --json
-sqlite-graphrag health --format json
 ```
 - Pré-requisitos: um banco inicializado deve existir
 - Executa `PRAGMA integrity_check` primeiro; retorna exit code 10 com `integrity_ok: false` se corrupção for detectada
@@ -391,7 +398,7 @@ sqlite-graphrag health --format json
 sqlite-graphrag history --name design-auth
 ```
 - Pré-requisitos: a memória deve existir e ter ao menos uma versão armazenada
-- Saída é array JSON com campos `version`, `updated_at` e `body` truncado
+- Saída é objeto JSON com `name`, `namespace`, `versions` e `elapsed_ms`
 - Versões começam em 1 e incrementam a cada chamada bem-sucedida de `edit` ou `restore`
 - Exit code 0: histórico retornado
 - Exit code 4: memória não encontrada no namespace de destino
@@ -404,7 +411,7 @@ sqlite-graphrag namespace-detect
 sqlite-graphrag namespace-detect --namespace meu-projeto
 ```
 - Pré-requisitos: nenhum — funciona sem banco de dados presente
-- Saída JSON com campos `namespace` (valor resolvido) e `source` (flag, env ou auto)
+- Saída JSON com campos `namespace`, `source`, `cwd` e `elapsed_ms`
 - Ordem de precedência: flag `--namespace` > env `SQLITE_GRAPHRAG_NAMESPACE` > auto-detecção
 - Exit code 0: resolução concluída
 
@@ -507,6 +514,8 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
 - `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`
+- `--graph-stdin` aceita um objeto JSON com `entities` e `relationships`; JSON inválido falha e não é salvo como texto do body
+- `--graph-stdin` é mutuamente exclusivo com `--body`, `--body-file`, `--body-stdin`, `--entities-file` e `--relationships-file`
 - `strength` deve ser número de ponto flutuante no intervalo inclusivo `[0.0, 1.0]`
 - `strength` é mapeado para o campo `weight` nas saídas de relacionamentos e travessia de grafo
 - `relation` em `--relationships-file` DEVE usar os rótulos canônicos persistidos como `uses`, `supports`, `applies_to`, `depends_on` e `tracked_in`
@@ -537,7 +546,7 @@ sqlite-graphrag remember --name notas-config --type project \
 
 ## Integração Com Agentes de IA
 ### Vinte e Um Agentes — Uma Única Camada de Persistência
-- Claude Code da Anthropic consome JSON via stdin e orquestra via códigos de saída
+- Claude Code da Anthropic consome JSON do stdout e orquestra via códigos de saída
 - Codex da OpenAI lê saída do hybrid-search para ancorar geração em memória local
 - Gemini CLI do Google parseia saída `--json` para injetar fatos em prompts ativos
 - Opencode como harness open source trata sqlite-graphrag como backend MCP nativo

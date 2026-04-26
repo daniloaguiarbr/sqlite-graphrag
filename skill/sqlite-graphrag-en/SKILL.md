@@ -44,13 +44,14 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ## Contract
 - Input `--name <slug>` accepts kebab-case identifier up to 128 characters.
 - Input `--type <kind>` accepts `user`, `feedback`, `project`, or `reference`.
-- Input `--body <text>` accepts raw text or reads stdin when omitted with `-`.
+- Input `--body <text>` accepts raw text; stdin requires explicit `--body-stdin`.
 - Database default is `./graphrag.sqlite` in the invocation directory.
 - Database override happens only through `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`.
 - Input `--lang <en|pt>` selects output language for human-readable messages.
 - Output with `--json` emits `memory_id`, `version`, `namespace`, and `operation`.
-- Output without `--json` emits Markdown blocks under language-aware headings.
-- Stdin accepts body content when the user pipes data into `remember` or `edit`.
+- Output with `--json` always emits JSON, even if a non-JSON `--format` is also present.
+- Stdin accepts body content only with `--body-stdin` on `remember` or `edit`.
+- Stdin accepts graph JSON only with `--graph-stdin`; invalid JSON must fail.
 
 
 ## Prohibitions
@@ -106,7 +107,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 ## Examples
 - Example 1 saves a user note from stdin and captures the returned identifier.
-- `echo "Finalize auth refactor by Friday" | sqlite-graphrag remember --name auth-reminder --type user --description "auth reminder" --json`
+- `echo "Finalize auth refactor by Friday" | sqlite-graphrag remember --name auth-reminder --type user --description "auth reminder" --body-stdin --json`
 - Example 2 recalls top matches for an auth topic using hybrid retrieval.
 - `sqlite-graphrag hybrid-search "auth error 401" --json --k 5`
 - Example 3 checks database integrity before a release pipeline publishes.

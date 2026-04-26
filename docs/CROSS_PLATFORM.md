@@ -1,6 +1,6 @@
 # CROSS PLATFORM SUPPORT
 
-> One binary, nine targets, zero configuration drama across every major operating system
+> One binary, five targets, zero configuration drama across every major operating system
 
 
 - Read this guide in Portuguese at [CROSS_PLATFORM.pt-BR.md](CROSS_PLATFORM.pt-BR.md)
@@ -17,9 +17,9 @@
 
 ### After — Single Binary That Just Runs
 - One `cargo install --locked` command delivers the binary to any supported target
-- No Python runtime, no Node runtime, no JVM, no shared libraries required
+- No Python runtime, no Node runtime, no JVM, and only one ARM64 GNU shared library contract
 - Binary startup stays under eighty milliseconds across every target we ship
-- Exit codes remain identical across all nine targets for reliable orchestration
+- Exit codes remain identical across all five shipped targets for reliable orchestration
 - JSON output format stays byte-for-byte identical across every operating system
 
 ### Bridge — The Command That Takes You There
@@ -56,26 +56,12 @@ cargo install --path .
 
 
 ## Linux Notes
-### glibc Versus musl — Two Flavors for Two Realities
-- glibc binary runs on Ubuntu 20.04, Debian 11, Fedora 36 plus any mainstream distro
-- musl binary runs on Alpine 3.18, Void Linux, Chimera Linux and any distroless image
-- Static musl binary weighs two MB more but drops every runtime shared library dep
-- Choose glibc for desktop workstations where `ldd` reports libraries as expected
-- Choose musl for containers, Lambda functions and any ephemeral execution context
-- Build directly from the local checkout via `cargo install --path . --target x86_64-unknown-linux-musl`
-
-### Container Usage — Alpine Docker in Under 40 MB
-```dockerfile
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /out/sqlite-graphrag /usr/local/bin/sqlite-graphrag
-ENTRYPOINT ["sqlite-graphrag"]
-```
-- Final image weighs 38 MB compressed including the musl binary and CA certificates
-- Multi-stage build pattern keeps Rust toolchain out of the production image layer
-- Cold start latency stays under eighty milliseconds including container spawn overhead
-- Kubernetes pods using this image scale horizontally at 500 pods per minute comfortably
-- Replaces 600 MB Python RAG images, saving ninety four percent on registry storage
+### glibc First — Official Linux Release Path
+- glibc binary runs on Ubuntu 20.04, Debian 11, Fedora 36 plus mainstream distros
+- `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` are the only published Linux assets now
+- `x86_64-unknown-linux-musl` is not part of the official release matrix in `v1.0.15`
+- Reintroducing musl now requires a custom ONNX Runtime build or a different backend strategy
+- Prefer glibc for workstations, CI runners, and container bases until that backend gap is closed
 
 
 ## macOS Notes
@@ -83,13 +69,13 @@ ENTRYPOINT ["sqlite-graphrag"]
 - Unsigned binaries downloaded via browser trigger Gatekeeper quarantine on first launch
 - Remove quarantine with `xattr -d com.apple.quarantine /usr/local/bin/sqlite-graphrag`
 - Binaries installed via `cargo install` bypass Gatekeeper since they come from rustc
-- Homebrew distribution is planned after the public `sqlite-graphrag v1.0.0` release
-- Apple Silicon and Intel Macs run identically fast thanks to the universal2 build
+- Homebrew distribution remains planned on top of the current public release line
+- Official macOS release assets currently target Apple Silicon only
 
 ### Apple Silicon — Native Performance on M1 M2 M3 M4
 - Native aarch64 binary runs thirty percent faster than Rosetta-translated x86_64
-- Universal2 binary bundles both architectures in one 44 MB file for distribution
-- Model loading uses Apple Accelerate framework automatically via `candle` backend
+- Intel macOS is currently outside the official release matrix for this project configuration
+- Model loading follows the same `fastembed` plus `ort` stack used on the other published targets
 - Embedding generation hits 2000 tokens per second on M3 Pro versus 800 on Rosetta
 - Cold start measures twenty eight milliseconds on M2 thanks to improved branch predictor
 
@@ -115,13 +101,11 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - Scripts persist correctly across Windows, Linux and macOS when saved in UTF-8
 
 
-## Alpine Docker
-### Minimal Image — 38 MB Compressed
-- Base image `alpine:3.19` occupies 5 MB compressed before any customization applied
-- Static musl binary contributes 27 MB without linking any glibc shared objects
-- CA certificates package adds 1 MB needed for the one-time model download via HTTPS
-- Final image reaches 38 MB compressed which fits comfortably in any registry tier
-- Container cold start measures under 100 ms total including image layer unpacking
+## Containers
+### glibc Images — Official Path Today
+- Prefer Debian or Ubuntu base images for the current official Linux release assets
+- Alpine and musl-only images are not part of the supported release matrix in `v1.0.15`
+- A musl container path requires a custom backend decision before it becomes a supported workflow again
 
 
 ## Shell Support
@@ -170,14 +154,12 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 
 
 ## Performance by Target
-### Benchmarks — Cold Start and Memory Footprint
+### Benchmarks — Selected Supported Targets
 | Target | Cold Start | Warm Recall | RSS After Model | Embedding Throughput |
 | --- | --- | --- | --- | --- |
 | x86_64-linux-gnu (i7-13700) | 48 ms | 4 ms | 820 MB | 1500 tok/s |
-| x86_64-linux-musl (i7-13700) | 52 ms | 4 ms | 835 MB | 1500 tok/s |
 | aarch64-linux-gnu (Graviton3) | 58 ms | 5 ms | 810 MB | 1400 tok/s |
 | aarch64-apple-darwin (M3 Pro) | 28 ms | 3 ms | 790 MB | 2000 tok/s |
-| x86_64-apple-darwin (i9-2019) | 45 ms | 5 ms | 840 MB | 1100 tok/s |
 | x86_64-windows-msvc (i7-12700) | 75 ms | 6 ms | 860 MB | 1300 tok/s |
 
 - Cold start measures time from process spawn to first successful SQL query completion
@@ -196,7 +178,7 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - OpenClaw agent framework targets Linux containers primarily but works on macOS too
 - Paperclip research assistant runs on macOS and Linux desktop environments simultaneously
 - VS Code Copilot from Microsoft executes via integrated terminal tasks across OSes
-- Google Antigravity platform runs the Linux musl binary inside its sandboxed runtime
+- Google Antigravity platform runs the Linux glibc binary inside its sandboxed runtime
 - Windsurf from Codeium targets macOS and Windows editor installations predominantly
 - Cursor editor invokes the binary via its terminal across macOS, Linux and Windows
 - Zed editor runs sqlite-graphrag as an external tool on macOS and Linux natively
