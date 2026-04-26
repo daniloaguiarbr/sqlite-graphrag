@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -44,6 +44,8 @@ fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
 fn init_db(tmp: &TempDir) {
     let status = sqlite_graphrag_cmd(tmp)
         .args(["init"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .expect("sqlite-graphrag init falhou");
     assert!(status.success(), "init retornou {:?}", status.code());
@@ -76,6 +78,8 @@ fn populate_db(tmp: &TempDir, count: usize) {
             .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
             .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path)
             .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .expect("remember falhou");
         assert!(

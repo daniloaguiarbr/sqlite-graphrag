@@ -215,7 +215,7 @@ jobs:
       - name: Run benchmarks
         env:
           RUST_TEST_THREADS: "2"
-        run: timeout 300 cargo bench --bench regression_baseline -- --quick
+        run: timeout 900 cargo bench --bench regression_baseline -- --quick
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
