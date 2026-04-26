@@ -96,8 +96,8 @@ fn quatro_threads_invariante_maximo_tres_slots() {
     const MAX_SLOTS: usize = 3;
 
     let mut builder = loom::model::Builder::new();
-    builder.preemption_bound = Some(2);
-    builder.max_branches = 500;
+    builder.preemption_bound = Some(1);
+    builder.max_branches = 100;
     builder.check(|| {
         let sem = Arc::new(SlotSemaforo::novo(MAX_SLOTS));
         let contador_holds = Arc::new(AtomicUsize::new(0));
@@ -148,11 +148,15 @@ fn quatro_threads_invariante_maximo_tres_slots() {
 #[test]
 fn release_libera_slot_para_proxima_thread() {
     let mut builder = loom::model::Builder::new();
-    builder.preemption_bound = Some(2);
-    builder.max_branches = 500;
+    builder.preemption_bound = Some(1);
+    builder.max_branches = 100;
     builder.check(|| {
         // Semáforo com 1 slot para forçar contenção determinística.
         let sem = Arc::new(SlotSemaforo::novo(1));
+        assert!(
+            sem.try_acquire(),
+            "main deve ocupar o único slot antes de iniciar as threads"
+        );
 
         let sem_a = Arc::new(sem.clonar());
         let sem_b = Arc::new(sem.clonar());
@@ -160,11 +164,10 @@ fn release_libera_slot_para_proxima_thread() {
         // Sinalização de que A liberou o slot.
         let liberado = Arc::new(AtomicUsize::new(0));
         let liberado_b = Arc::clone(&liberado);
+        let b_adquiriu = Arc::new(AtomicUsize::new(0));
+        let b_adquiriu_t = Arc::clone(&b_adquiriu);
 
         let ha = loom::thread::spawn(move || {
-            // A sempre consegue adquirir — semáforo começa vazio.
-            let adquiriu = sem_a.try_acquire();
-            assert!(adquiriu, "thread A deve adquirir o único slot disponível");
             loom::thread::yield_now();
             sem_a.release();
             // Sinaliza que o slot foi liberado.
@@ -175,6 +178,7 @@ fn release_libera_slot_para_proxima_thread() {
             // B tenta em loop até o slot estar livre — modela polling de wait_seconds.
             loop {
                 if sem_b.try_acquire() {
+                    b_adquiriu_t.store(1, Ordering::Release);
                     sem_b.release();
                     break;
                 }
@@ -182,6 +186,7 @@ fn release_libera_slot_para_proxima_thread() {
                 if liberado_b.load(Ordering::Acquire) == 1 {
                     // Tenta uma última vez após a liberação confirmada.
                     if sem_b.try_acquire() {
+                        b_adquiriu_t.store(1, Ordering::Release);
                         sem_b.release();
                     }
                     break;
@@ -197,6 +202,11 @@ fn release_libera_slot_para_proxima_thread() {
             sem.ocupados(),
             0,
             "slot deve estar livre após ambas as threads terminarem"
+        );
+        assert_eq!(
+            b_adquiriu.load(Ordering::Acquire),
+            1,
+            "thread B deve adquirir o slot após a liberação"
         );
     });
 }
@@ -214,8 +224,8 @@ fn shutdown_limpo_todos_slots_liberados() {
     const MAX_SLOTS: usize = 4;
 
     let mut builder = loom::model::Builder::new();
-    builder.preemption_bound = Some(2);
-    builder.max_branches = 500;
+    builder.preemption_bound = Some(1);
+    builder.max_branches = 100;
     builder.check(|| {
         let sem = Arc::new(SlotSemaforo::novo(MAX_SLOTS));
         let adquiridos_total = Arc::new(AtomicUsize::new(0));

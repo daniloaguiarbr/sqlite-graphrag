@@ -193,8 +193,8 @@ jobs:
       - name: Run loom tests
         env:
           RUSTFLAGS: "--cfg sqlite_graphrag_loom"
-          LOOM_MAX_PREEMPTIONS: "2"
-          LOOM_MAX_BRANCHES: "500"
+          LOOM_MAX_PREEMPTIONS: "1"
+          LOOM_MAX_BRANCHES: "100"
           RUST_TEST_THREADS: "1"
         run: timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1
 

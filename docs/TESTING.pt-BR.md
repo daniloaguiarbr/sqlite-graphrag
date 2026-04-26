@@ -99,14 +99,14 @@
 ### Executar Testes Loom Localmente
 - Use o script canônico: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
 - O script define `RUSTFLAGS="--cfg sqlite_graphrag_loom"` e `RUST_TEST_THREADS=1`
-- O script define `LOOM_MAX_PREEMPTIONS=2` para iteração local mais rápida
+- O script define `LOOM_MAX_PREEMPTIONS=1` para iteração local limitada
 - Execute somente no modo release: `--release` é obrigatório para velocidade aceitável
 - Monitore a temperatura da CPU antes e durante a execução
 ### Executar Testes Loom Individualmente
 - Compilar primeiro: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo build --release --tests`
 - Executar modelo único: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
-- Limite menor para iteração local: `LOOM_MAX_PREEMPTIONS=2`
-- Limite maior para rigor no CI: `LOOM_MAX_PREEMPTIONS=3`
+- Limite menor para iteração local: `LOOM_MAX_PREEMPTIONS=1`
+- Aumente os limites manualmente apenas em depurações focadas
 ### Checkpoint e Retomada
 - Defina `LOOM_CHECKPOINT_FILE=/tmp/loom-checkpoint.json` para retomar execuções interrompidas
 - O arquivo de checkpoint registra as permutações já exploradas
@@ -116,8 +116,8 @@
 ## Variáveis de Ambiente
 ### Variáveis do Loom — Definir Antes de Executar `scripts/test-loom.sh`
 - `RUSTFLAGS="--cfg sqlite_graphrag_loom"` — habilita o gate local do projeto para loom, OBRIGATÓRIO para todos os testes loom
-- `LOOM_MAX_PREEMPTIONS=2` — limita a profundidade de preempção por modelo (local: 2, CI: 2)
-- `LOOM_MAX_BRANCHES=500` — limita o fator de ramificação por execução (padrão CI: 500)
+- `LOOM_MAX_PREEMPTIONS=1` — limita a profundidade de preempção por modelo (padrão local e CI: 1)
+- `LOOM_MAX_BRANCHES=100` — limita o fator de ramificação por execução (padrão local e CI: 100)
 - `LOOM_LOG=1` — habilita rastreamento detalhado de execução do loom no stderr
 - `LOOM_CHECKPOINT_FILE=/tmp/loom.json` — caminho para arquivo de checkpoint para retomar execuções
 - `RUST_TEST_THREADS=1` — OBRIGATÓRIO, proíbe execução paralela de modelos loom
@@ -158,7 +158,7 @@
 - Exclui: testes loom (sempre separados)
 ### Job CI Loom — Etapa Separada no Workflow
 - Ativa: job chamado `loom` em `ci.yml`
-- Ambiente: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
+- Ambiente: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=1`, `LOOM_MAX_BRANCHES=100`
 - Executa: `/usr/bin/timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1`
 - NUNCA deve ser mesclado com as execuções dos profiles default ou ci
 
@@ -179,8 +179,8 @@
 ### Teste Loom Não Termina
 - Sintoma: modelo loom não termina após vários minutos
 - Causa: `LOOM_MAX_PREEMPTIONS` não definido, exploração sem limite padrão
-- Correção: defina `LOOM_MAX_PREEMPTIONS=2` para iteração local
-- Trade-off: valores menores perdem entrelaçamentos raros, CI usa 2 por velocidade
+- Correção: defina `LOOM_MAX_PREEMPTIONS=1` para iteração local limitada
+- Trade-off: valores menores perdem entrelaçamentos raros; aumente o limite apenas em depurações focadas
 ### Testes Instáveis no CI
 - Sintoma: teste passa localmente mas falha de forma intermitente no CI
 - Causa: ausência de `#[serial]` em testes que compartilham estado global ou variáveis de ambiente

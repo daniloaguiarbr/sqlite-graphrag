@@ -62,8 +62,8 @@ sqlite-graphrag forget --name design-auth
 sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` inicializa o banco, baixa o modelo e valida a extensão `sqlite-vec`
-- `remember` armazena conteúdo, extrai entidades e gera embeddings atomicamente
-- `recall` executa busca KNN vetorial pura sobre a tabela `vec_memories`
+- `remember` armazena conteúdo e gera embeddings atomicamente; nós e arestas do grafo são persistidos quando fornecidos explicitamente
+- `recall` executa KNN vetorial sobre `vec_memories` e expande matches de grafo por padrão, exceto com `--no-graph`
 - `hybrid-search` funde FTS5 textual e KNN vetorial via Reciprocal Rank Fusion
 - `read` recupera memória pelo nome kebab-case exato em uma única query SQL
 - `forget` faz remoção lógica preservando integralmente o histórico de versões
@@ -107,7 +107,7 @@ sqlite-graphrag hybrid-search "estratégia migração postgres" \
 ### Receita Dois — Travessia de Grafo Para Recall Multi-Hop
 ```bash
 sqlite-graphrag link --source design-auth --target spec-jwt --relation depends-on
-sqlite-graphrag link --source spec-jwt --target rfc-7519 --relation references
+sqlite-graphrag link --source spec-jwt --target rfc-7519 --relation mentions
 sqlite-graphrag related design-auth --hops 2 --json \
   | jaq -r '.results[] | select(.hop_distance == 2) | .name'
 ```
@@ -474,8 +474,7 @@ sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends
 ## Notas Adicionais Sobre Comandos Essenciais
 ### Nota sobre link
 - Pré-requisito: as entidades devem existir no grafo antes de criar links explícitos
-- O comando `remember` extrai automaticamente entidades do texto `--body` durante a ingestão
-- Crie primeiro as memórias que referenciam as entidades e depois chame `link` para tipar as arestas
+- Crie primeiro memórias com payloads explícitos de grafo e depois chame `link` para tipar arestas adicionais
 - Use `--from`/`--source` e `--to`/`--target` de forma intercambiável; aliases legados continuam suportados
 - Ambas as entidades `--from` e `--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Tentar vincular entidades cujos nomes não correspondam a nó tipado retorna exit code 4
@@ -503,7 +502,7 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 ### Nota sobre o schema dos nós do grafo
 - `graph --format json` emite `{"nodes": [...], "edges": [...]}`
 - Campos de nó: `{id, name, namespace, kind, type}` onde `kind` e `type` carregam o mesmo valor
-- Campos de aresta espelham o schema de `link` com `from`, `source`, `to`, `target`, `relation`, `weight`
+- Campos de aresta são `{from, to, relation, weight}`
 
 ### Nota sobre remember
 - `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 por nome duplicado
@@ -513,13 +512,13 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - NÃO envie `entity_type` e `type` no mesmo objeto porque o parser trata isso como campo duplicado
 - Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
-- `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`
+- `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`; `from` e `to` são aceitos como aliases de `source` e `target`
 - `--graph-stdin` aceita um objeto JSON com `body` opcional, `entities` e `relationships`; JSON inválido falha e não é salvo como texto do body
 - `--graph-stdin` é mutuamente exclusivo com `--body`, `--body-file`, `--body-stdin`, `--entities-file` e `--relationships-file`
 - `remember` aceita payloads de body até `512000` bytes e até `512` chunks; payloads maiores retornam exit code `6`
 - `strength` deve ser número de ponto flutuante no intervalo inclusivo `[0.0, 1.0]`
 - `strength` é mapeado para o campo `weight` nas saídas de relacionamentos e travessia de grafo
-- `relation` em `--relationships-file` DEVE usar os rótulos canônicos persistidos como `uses`, `supports`, `applies_to`, `depends_on` e `tracked_in`
+- `relation` em `--relationships-file` aceita rótulos canônicos persistidos como `uses`, `supports`, `applies_to`, `depends_on` e `tracked_in`; aliases com hífen como `depends-on` e `tracked-in` são normalizados antes da gravação
 
 ```json
 [

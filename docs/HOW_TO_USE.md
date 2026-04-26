@@ -62,8 +62,8 @@ sqlite-graphrag forget --name auth-design
 sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
-- `remember` stores content, extracts entities and generates embeddings atomically
-- `recall` performs pure vector KNN search over the `vec_memories` table
+- `remember` stores content and generates embeddings atomically; graph nodes and edges are persisted when supplied explicitly
+- `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
 - `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
 - `read` fetches a memory by its exact kebab-case name in a single SQL query
 - `forget` performs a soft delete preserving the full version history
@@ -106,7 +106,7 @@ sqlite-graphrag hybrid-search "postgres migration strategy" \
 ### Recipe Two — Graph Traversal for Multi-Hop Recall
 ```bash
 sqlite-graphrag link --source auth-design --target jwt-spec --relation depends-on
-sqlite-graphrag link --source jwt-spec --target rfc-7519 --relation references
+sqlite-graphrag link --source jwt-spec --target rfc-7519 --relation mentions
 sqlite-graphrag related auth-design --hops 2 --json \
   | jaq -r '.results[] | select(.hop_distance == 2) | .name'
 ```
@@ -470,8 +470,7 @@ sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends
 ## Additional Notes on Core Commands
 ### Note on link
 - Prerequisite: entities must exist in the graph before creating explicit links
-- The `remember` command auto-extracts entities from the `--body` text during ingestion
-- Create the memories that reference the entities first, then call `link` to type the edges
+- Create memories with explicit graph payloads first, then call `link` to type additional edges
 - Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
 - Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Attempting to link entities whose names do not match a typed node returns exit code 4
@@ -500,7 +499,7 @@ sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
 ### Note on graph nodes schema
 - `graph --format json` emits `{"nodes": [...], "edges": [...]}`
 - Node fields: `{id, name, namespace, kind, type}` where `kind` and `type` carry the same value
-- Edge fields mirror the `link` schema with `from`, `source`, `to`, `target`, `relation`, `weight`
+- Edge fields are `{from, to, relation, weight}`
 
 ### Note on remember
 - `--force-merge` updates an existing memory body instead of returning exit code 2 on duplicate name
@@ -514,13 +513,13 @@ sqlite-graphrag remember --name config-notes --type project \
 - Do not send both `entity_type` and `type` in the same object because Serde treats that as a duplicate field
 - Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
-- `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`
+- `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`; `from` and `to` are accepted as aliases for `source` and `target`
 - `--graph-stdin` accepts one JSON object with optional `body`, `entities`, and `relationships`; invalid JSON fails and is not saved as body text
 - `--graph-stdin` is mutually exclusive with `--body`, `--body-file`, `--body-stdin`, `--entities-file`, and `--relationships-file`
 - `remember` accepts body payloads up to `512000` bytes and up to `512` chunks; larger payloads return exit code `6`
 - `strength` must be a floating-point number in the inclusive range `[0.0, 1.0]`
 - `strength` is mapped to the stored `weight` field in relationship outputs and graph traversal results
-- `relation` in `--relationships-file` must use the canonical stored labels such as `uses`, `supports`, `applies_to`, `depends_on`, and `tracked_in`
+- `relation` in `--relationships-file` accepts canonical stored labels such as `uses`, `supports`, `applies_to`, `depends_on`, and `tracked_in`; dashed aliases such as `depends-on` and `tracked-in` are normalized before storage
 
 ```json
 [

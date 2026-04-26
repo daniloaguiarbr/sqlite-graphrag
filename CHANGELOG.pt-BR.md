@@ -13,6 +13,9 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 ### Corrigido
 - O CI agora fixa `cargo-nextest` em `0.9.114`, a release mais nova compatível com o MSRV Rust 1.88.
 - Os testes Loom agora usam o gate local `sqlite_graphrag_loom` para evitar compilar dependências Tokio sob o `cfg(loom)` upstream.
+- O JSON de relacionamentos de grafo agora aceita aliases `from`/`to` e relações com hífen, normalizando antes da gravação.
+- Clippy no macOS e testes de concorrência no Windows agora tratam errno e contenção de lock de arquivo específicos da plataforma corretamente.
+- A documentação de grafo e `related` agora reflete a superfície real da CLI e não afirma mais extração automática de entidades em ingestão body-only.
 
 ## [1.0.17] - 2026-04-26
 

@@ -115,11 +115,25 @@ fn try_any_slot(max: usize) -> Result<Option<(File, usize)>, AppError> {
     for slot in 1..=max {
         match try_acquire_slot(slot) {
             Ok(file) => return Ok(Some((file, slot))),
-            Err(AppError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                continue;
-            }
+            Err(AppError::Io(e)) if is_lock_contended(&e) => continue,
             Err(e) => return Err(e),
         }
     }
     Ok(None)
+}
+
+fn is_lock_contended(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }

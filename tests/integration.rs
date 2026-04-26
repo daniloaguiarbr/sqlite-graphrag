@@ -1759,6 +1759,53 @@ fn test_graph_stdin_preserva_entity_type_ao_criar_relationships() {
 }
 
 #[test]
+fn test_graph_stdin_aceita_aliases_from_to_e_relacao_com_hifen() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let payload = r#"{
+        "entities": [
+            {"name": "alias-tool", "entity_type": "tool"},
+            {"name": "alias-file", "entity_type": "file"}
+        ],
+        "relationships": [
+            {"from": "alias-tool", "to": "alias-file", "relation": "depends-on", "strength": 0.7}
+        ]
+    }"#;
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "grafo-aliases",
+            "--type",
+            "project",
+            "--description",
+            "grafo com aliases de relacionamento",
+            "--graph-stdin",
+        ])
+        .write_stdin(payload)
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["graph", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let edges = json["edges"].as_array().unwrap();
+    assert!(edges.iter().any(|edge| {
+        edge["from"] == "alias-tool"
+            && edge["to"] == "alias-file"
+            && edge["relation"] == "depends_on"
+    }));
+}
+
+#[test]
 fn test_graph_stdin_com_skip_extraction_persiste_grafo_explicito() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);

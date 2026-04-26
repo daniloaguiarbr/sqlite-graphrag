@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/relationships-input.schema.json",
   "title": "RememberRelationshipsInput",
-  "description": "JSON array accepted by `sqlite-graphrag remember --relationships-file`. Each relationship must define source, target, canonical relation label, and strength. Stored graph outputs expose `strength` as `weight`.",
+  "description": "JSON array accepted by `sqlite-graphrag remember --relationships-file`. Each relationship must define source/from, target/to, relation label, and strength. Stored graph outputs expose `strength` as `weight`.",
   "type": "array",
   "items": {
     "type": "object",
@@ -12,14 +12,22 @@
         "type": "string",
         "description": "Source entity name."
       },
+      "from": {
+        "type": "string",
+        "description": "Alias for `source`."
+      },
       "target": {
         "type": "string",
         "description": "Target entity name."
       },
+      "to": {
+        "type": "string",
+        "description": "Alias for `target`."
+      },
       "relation": {
         "type": "string",
-        "enum": ["applies_to", "uses", "depends_on", "causes", "fixes", "contradicts", "supports", "follows", "related", "mentions", "replaces", "tracked_in"],
-        "description": "Canonical stored relation label with underscores. CLI flags on `link` and `unlink` use dashed spellings like `applies-to` and `tracked-in` instead."
+        "enum": ["applies_to", "applies-to", "uses", "depends_on", "depends-on", "causes", "fixes", "contradicts", "supports", "follows", "related", "mentions", "replaces", "tracked_in", "tracked-in"],
+        "description": "Canonical stored relation label with underscores, or dashed alias normalized before storage."
       },
       "strength": {
         "type": "number",
@@ -32,7 +40,21 @@
         "description": "Optional human-readable description of the relationship."
       }
     },
-    "required": ["source", "target", "relation", "strength"],
+    "allOf": [
+      {
+        "oneOf": [
+          { "required": ["source"], "not": { "required": ["from"] } },
+          { "required": ["from"], "not": { "required": ["source"] } }
+        ]
+      },
+      {
+        "oneOf": [
+          { "required": ["target"], "not": { "required": ["to"] } },
+          { "required": ["to"], "not": { "required": ["target"] } }
+        ]
+      }
+    ],
+    "required": ["relation", "strength"],
     "examples": [
       {
         "source": "SQLite",

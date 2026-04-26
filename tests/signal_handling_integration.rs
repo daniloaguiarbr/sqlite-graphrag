@@ -53,7 +53,7 @@ fn send_signal(child: &Child, signal: libc::c_int) -> Result<(), i32> {
     if ret == 0 {
         Ok(())
     } else {
-        Err(unsafe { *libc::__errno_location() })
+        Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(-1))
     }
 }
 

@@ -175,9 +175,9 @@
 - Objetos de entidade DEVEM incluir `name` mais `entity_type` ou alias `type`.
 - Agentes NÃO DEVEM enviar `entity_type` e `type` no mesmo objeto de entidade.
 - Valores válidos para `entity_type` são `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard` e `issue_tracker`.
-- Objetos de relacionamento DEVEM incluir `source`, `target`, `relation` e `strength`.
+- Objetos de relacionamento DEVEM incluir `source`/`from`, `target`/`to`, `relation` e `strength`.
 - `strength` DEVE ser float em `[0.0, 1.0]`.
-- Payloads de relacionamento DEVEM usar rótulos canônicos persistidos com underscore: `applies_to`, `depends_on`, `tracked_in`.
+- Payloads de relacionamento PODEM usar rótulos canônicos persistidos com underscore: `applies_to`, `depends_on`, `tracked_in`; aliases com hífen são normalizados antes da gravação.
 - As flags interativas de `link` e `unlink` usam rótulos com hífen: `applies-to`, `depends-on`, `tracked-in`.
 
 ```json

@@ -131,9 +131,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Agents MUST NOT send both `entity_type` and `type` in the same object
 - Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - `--relationships-file` expects a JSON array of relationships
-- Each relationship MUST include `source`, `target`, `relation`, and `strength`
+- Each relationship MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` MUST be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
-- File payload relations use underscore labels such as `applies_to`, `depends_on`, and `tracked_in`
+- File payload relations use underscore labels such as `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - `link` and `unlink` flags use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 - `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
 

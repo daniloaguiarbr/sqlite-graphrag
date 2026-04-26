@@ -47,9 +47,9 @@
 - Cada entidade deve incluir `name` mais `entity_type` ou alias `type`
 - Valores válidos de `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - `--relationships-file` espera um array JSON de objetos de relacionamento
-- Cada relacionamento deve incluir `source`, `target`, `relation` e `strength`
+- Cada relacionamento deve incluir `source`/`from`, `target`/`to`, `relation` e `strength`
 - `strength` deve ser float em `[0.0, 1.0]` e é mapeado para `weight` nas saídas do grafo
-- Payloads de arquivo usam relações com underscore como `applies_to`, `depends_on` e `tracked_in`
+- Payloads de arquivo usam relações com underscore como `applies_to`, `depends_on` e `tracked_in`; aliases com hífen são normalizados antes da gravação
 - As flags CLI de `link` e `unlink` usam relações com hífen como `applies-to`, `depends-on` e `tracked-in`
 
 

@@ -47,9 +47,9 @@
 - Each entity must include `name` plus `entity_type` or alias `type`
 - Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - `--relationships-file` expects a JSON array of relationship objects
-- Each relationship must include `source`, `target`, `relation`, and `strength`
+- Each relationship must include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` must be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
-- File payload relations use underscore labels like `applies_to`, `depends_on`, and `tracked_in`
+- File payload relations use underscore labels like `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - CLI flags on `link` and `unlink` use dashed labels like `applies-to`, `depends-on`, and `tracked-in`
 
 

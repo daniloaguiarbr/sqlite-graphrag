@@ -93,7 +93,7 @@ struct GraphInput {
     relationships: Vec<NewRelationship>,
 }
 
-fn validate_graph_input(graph: &GraphInput) -> Result<(), AppError> {
+fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppError> {
     for entity in &graph.entities {
         if !is_valid_entity_type(&entity.entity_type) {
             return Err(AppError::Validation(format!(
@@ -103,7 +103,8 @@ fn validate_graph_input(graph: &GraphInput) -> Result<(), AppError> {
         }
     }
 
-    for rel in &graph.relationships {
+    for rel in &mut graph.relationships {
+        rel.relation = rel.relation.replace('-', "_");
         if !is_valid_relation(&rel.relation) {
             return Err(AppError::Validation(format!(
                 "invalid relation '{}' for relationship '{}' -> '{}'",
@@ -230,7 +231,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             MAX_RELATIONSHIPS_PER_MEMORY,
         )));
     }
-    validate_graph_input(&graph)?;
+    normalize_and_validate_graph_input(&mut graph)?;
 
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
         return Err(AppError::LimitExceeded(

@@ -99,14 +99,14 @@
 ### Running Loom Tests Locally
 - Use the canonical script: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
 - The script sets `RUSTFLAGS="--cfg sqlite_graphrag_loom"` and `RUST_TEST_THREADS=1`
-- The script sets `LOOM_MAX_PREEMPTIONS=2` for faster local iteration
+- The script sets `LOOM_MAX_PREEMPTIONS=1` for bounded local iteration
 - Run in release mode only: `--release` is mandatory for acceptable speed
 - Monitor CPU temperature before and during the run
 ### Running Individual Loom Tests
 - Build first: `/usr/bin/timeout 600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo build --release --tests`
 - Run single model: `/usr/bin/timeout 3600 env RUSTFLAGS="--cfg sqlite_graphrag_loom" RUST_TEST_THREADS=1 cargo nextest run --release -E 'test(lock_slot)'`
-- Set lower preemption bound for local iteration: `LOOM_MAX_PREEMPTIONS=2`
-- Set higher bound for CI thoroughness: `LOOM_MAX_PREEMPTIONS=3`
+- Set lower preemption bound for local iteration: `LOOM_MAX_PREEMPTIONS=1`
+- Increase bounds manually only for focused debugging runs
 ### Checkpoint and Resume
 - Set `LOOM_CHECKPOINT_FILE=/tmp/loom-checkpoint.json` to resume interrupted runs
 - The checkpoint file records explored permutations so far
@@ -116,8 +116,8 @@
 ## Environment Variables
 ### Loom Variables — Set Before Running `scripts/test-loom.sh`
 - `RUSTFLAGS="--cfg sqlite_graphrag_loom"` — enables the project-local loom gate, REQUIRED for all loom tests
-- `LOOM_MAX_PREEMPTIONS=2` — limits preemption depth per model (local: 2, CI: 2)
-- `LOOM_MAX_BRANCHES=500` — limits branching factor per execution (CI default: 500)
+- `LOOM_MAX_PREEMPTIONS=1` — limits preemption depth per model (local and CI default: 1)
+- `LOOM_MAX_BRANCHES=100` — limits branching factor per execution (local and CI default: 100)
 - `LOOM_LOG=1` — enables verbose loom execution tracing to stderr
 - `LOOM_CHECKPOINT_FILE=/tmp/loom.json` — path for checkpoint file to resume runs
 - `RUST_TEST_THREADS=1` — REQUIRED, forbids parallel execution of loom models
@@ -158,7 +158,7 @@
 - Excludes: loom tests (always separate)
 ### Loom CI Job — Separate Workflow Step
 - Activates: `ci.yml` job named `loom`
-- Environment: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=2`, `LOOM_MAX_BRANCHES=500`
+- Environment: `RUSTFLAGS="--cfg sqlite_graphrag_loom"`, `RUST_TEST_THREADS=1`, `LOOM_MAX_PREEMPTIONS=1`, `LOOM_MAX_BRANCHES=100`
 - Runs: `/usr/bin/timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1`
 - NEVER merged with the default or ci profile runs
 
@@ -179,8 +179,8 @@
 ### Loom Test Runs Forever
 - Symptom: loom model does not terminate after several minutes
 - Cause: `LOOM_MAX_PREEMPTIONS` not set, defaults to unbounded exploration
-- Fix: set `LOOM_MAX_PREEMPTIONS=2` for local iteration
-- Trade-off: lower values miss rare interleavings, CI uses 2 for speed
+- Fix: set `LOOM_MAX_PREEMPTIONS=1` for bounded local iteration
+- Trade-off: lower values miss rare interleavings; raise the bound only for focused debugging
 ### Flaky Tests in CI
 - Symptom: test passes locally but fails intermittently in CI
 - Cause: missing `#[serial]` on tests sharing global state or env vars

@@ -174,7 +174,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `namespace-detect` | `--namespace <nome>` | Resolve precedência de namespace para invocação |
 | `link` | `--from`, `--to`, `--relation`, `--weight` | Cria relacionamento explícito entre duas entidades |
 | `unlink` | `--relationship-id` | Remove um relacionamento específico entre duas entidades |
-| `related` | `--name`, `--k`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
+| `related` | `--name`, `--limit`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
 | `graph` | `--format`, `--output` | Exporta snapshot do grafo em `json`, `dot` ou `mermaid` |
 ### Manutenção
 | Comando | Argumentos | Descrição |

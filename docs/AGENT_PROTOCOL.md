@@ -181,9 +181,9 @@
 - Entity objects MUST include `name` plus `entity_type` or alias `type`.
 - Agents MUST NOT send both `entity_type` and `type` in the same entity object.
 - Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`.
-- Relationship objects MUST include `source`, `target`, `relation`, and `strength`.
+- Relationship objects MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`.
 - `strength` MUST be a float in `[0.0, 1.0]`.
-- Relationship payloads MUST use canonical stored relation labels with underscores: `applies_to`, `depends_on`, `tracked_in`.
+- Relationship payloads MAY use canonical stored relation labels with underscores: `applies_to`, `depends_on`, `tracked_in`; dashed aliases are normalized before storage.
 - The interactive CLI relation flags on `link` and `unlink` use dashed labels: `applies-to`, `depends-on`, `tracked-in`.
 
 ```json

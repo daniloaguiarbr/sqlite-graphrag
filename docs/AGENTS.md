@@ -551,10 +551,10 @@ let output = Command::new("sqlite-graphrag")
 - Agents MUST NOT send both `entity_type` and `type` in the same entity object
 - Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`
 - `--relationships-file` accepts a JSON array of relationship objects
-- Each relationship object MUST include `source`, `target`, `relation`, and `strength`
+- Each relationship object MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` MUST be a floating-point number in the inclusive range `[0.0, 1.0]`
 - Stored graph outputs expose this value as `weight`
-- File payloads MUST use canonical stored relation names with underscores such as `applies_to`, `depends_on`, and `tracked_in`
+- File payloads MAY use canonical stored relation names with underscores such as `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - CLI flags for `link` and `unlink` use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 - `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
 

@@ -29,7 +29,9 @@ pub struct NewEntity {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NewRelationship {
+    #[serde(alias = "from")]
     pub source: String,
+    #[serde(alias = "to")]
     pub target: String,
     pub relation: String,
     pub strength: f64,
