@@ -31,6 +31,7 @@ pub struct RememberArgs {
     pub body: Option<String>,
     #[arg(
         long,
+        help = "Read body from a file instead of --body",
         conflicts_with_all = ["body", "body_stdin", "graph_stdin"]
     )]
     pub body_file: Option<std::path::PathBuf>,
@@ -39,12 +40,19 @@ pub struct RememberArgs {
         conflicts_with_all = ["body", "body_file", "graph_stdin"]
     )]
     pub body_stdin: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "JSON file containing entities to associate with this memory"
+    )]
     pub entities_file: Option<std::path::PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "JSON file containing relationships to associate with this memory"
+    )]
     pub relationships_file: Option<std::path::PathBuf>,
     #[arg(
         long,
+        help = "Read graph JSON (body + entities + relationships) from stdin",
         conflicts_with_all = [
             "body",
             "body_file",
@@ -58,7 +66,7 @@ pub struct RememberArgs {
     pub namespace: Option<String>,
     #[arg(long)]
     pub metadata: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "JSON file containing metadata key-value pairs")]
     pub metadata_file: Option<std::path::PathBuf>,
     #[arg(long)]
     pub force_merge: bool,
@@ -70,7 +78,10 @@ pub struct RememberArgs {
 Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     )]
     pub expected_updated_at: Option<i64>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Disable automatic entity/relationship extraction from body"
+    )]
     pub skip_extraction: bool,
     #[arg(long)]
     pub session_id: Option<String>,
@@ -97,7 +108,7 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
     for entity in &graph.entities {
         if !is_valid_entity_type(&entity.entity_type) {
             return Err(AppError::Validation(format!(
-                "invalid entity_type '{}' for entity '{}'",
+                "entity_type '{}' inválido para entidade '{}'",
                 entity.entity_type, entity.name
             )));
         }
@@ -107,13 +118,13 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
         rel.relation = rel.relation.replace('-', "_");
         if !is_valid_relation(&rel.relation) {
             return Err(AppError::Validation(format!(
-                "invalid relation '{}' for relationship '{}' -> '{}'",
+                "relation '{}' inválida para relacionamento '{}' -> '{}'",
                 rel.relation, rel.source, rel.target
             )));
         }
         if !(0.0..=1.0).contains(&rel.strength) {
             return Err(AppError::Validation(format!(
-                "invalid strength {} for relationship '{}' -> '{}'; expected value in [0.0, 1.0]",
+                "strength {} inválido para relacionamento '{}' -> '{}'; esperado valor em [0.0, 1.0]",
                 rel.strength, rel.source, rel.target
             )));
         }
@@ -163,13 +174,26 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
-    if args.name.is_empty() || args.name.len() > MAX_MEMORY_NAME_LEN {
+    // Auto-normalizar para kebab-case antes de validar (P2-H).
+    let normalized_name = {
+        let n = args.name.to_lowercase().replace(['_', ' '], "-");
+        if n != args.name {
+            tracing::warn!(
+                original = %args.name,
+                normalized = %n,
+                "name auto-normalized to kebab-case"
+            );
+        }
+        n
+    };
+
+    if normalized_name.is_empty() || normalized_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::Validation(
             crate::i18n::validacao::nome_comprimento(MAX_MEMORY_NAME_LEN),
         ));
     }
 
-    if args.name.starts_with("__") {
+    if normalized_name.starts_with("__") {
         return Err(AppError::Validation(
             crate::i18n::validacao::nome_reservado(),
         ));
@@ -178,9 +202,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     {
         let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
-        if !slug_re.is_match(&args.name) {
+        if !slug_re.is_match(&normalized_name) {
             return Err(AppError::Validation(crate::i18n::validacao::nome_kebab(
-                &args.name,
+                &normalized_name,
             )));
         }
     }
@@ -205,6 +229,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         String::new()
     };
 
+    let entities_provided_externally =
+        args.entities_file.is_some() || args.relationships_file.is_some() || args.graph_stdin;
+
     let mut graph = GraphInput::default();
     if let Some(path) = args.entities_file {
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
@@ -216,7 +243,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
     if args.graph_stdin {
         graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
-            AppError::Validation(format!("invalid --graph-stdin JSON payload: {e}"))
+            AppError::Validation(format!("payload JSON inválido em --graph-stdin: {e}"))
         })?;
         raw_body = graph.body.take().unwrap_or_default();
     }
@@ -253,6 +280,31 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
+
+    if !args.skip_extraction
+        && !entities_provided_externally
+        && graph.entities.is_empty()
+        && !raw_body.is_empty()
+    {
+        match crate::extraction::extract_graph_auto(&raw_body, &paths) {
+            Ok(extracted) => {
+                graph.entities = extracted.entities;
+                graph.relationships = extracted.relationships;
+
+                if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
+                    graph.entities.truncate(MAX_ENTITIES_PER_MEMORY);
+                }
+                if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
+                    graph.relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
+                }
+                normalize_and_validate_graph_input(&mut graph)?;
+            }
+            Err(e) => {
+                tracing::warn!("auto-extraction falhou (graceful degradation): {e:#}");
+            }
+        }
+    }
+
     let mut conn = open_rw(&paths.db)?;
     ensure_schema(&mut conn)?;
 
@@ -275,10 +327,11 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
     }
 
-    let existing_memory = memories::find_by_name(&conn, &namespace, &args.name)?;
+    let existing_memory = memories::find_by_name(&conn, &namespace, &normalized_name)?;
     if existing_memory.is_some() && !args.force_merge {
         return Err(AppError::Duplicate(erros::memoria_duplicada(
-            &args.name, &namespace,
+            &normalized_name,
+            &namespace,
         )));
     }
 
@@ -298,8 +351,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
     let model_max_length = crate::tokenizer::get_model_max_length(&paths.models)?;
     let total_passage_tokens = crate::tokenizer::count_passage_tokens(tokenizer, &raw_body)?;
-    let token_offsets = crate::tokenizer::passage_token_offsets(tokenizer, &raw_body)?;
-    let chunks_info = chunking::split_into_chunks_by_token_offsets(&raw_body, &token_offsets);
+    let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body, tokenizer);
     let chunks_created = chunks_info.len();
 
     output::emit_progress_i18n(
@@ -368,7 +420,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let memory_type = args.r#type.as_str();
     let new_memory = NewMemory {
         namespace: namespace.clone(),
-        name: args.name.clone(),
+        name: normalized_name.clone(),
         memory_type: memory_type.to_string(),
         description: args.description.clone(),
         body: body_for_storage,
@@ -414,7 +466,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &tx,
                 existing_id,
                 next_v,
-                &args.name,
+                &normalized_name,
                 memory_type,
                 &args.description,
                 &new_memory.body,
@@ -428,7 +480,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &namespace,
                 memory_type,
                 &embedding,
-                &args.name,
+                &normalized_name,
                 &snippet,
             )?;
             (existing_id, "updated".to_string(), next_v)
@@ -444,7 +496,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &tx,
                 id,
                 1,
-                &args.name,
+                &normalized_name,
                 memory_type,
                 &args.description,
                 &new_memory.body,
@@ -458,7 +510,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &namespace,
                 memory_type,
                 &embedding,
-                &args.name,
+                &normalized_name,
                 &snippet,
             )?;
             (id, "created".to_string(), 1)
@@ -470,7 +522,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
         let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
-                "chunk embeddings cache missing for multi-chunk remember path"
+                "cache de embeddings de chunks ausente no caminho multi-chunk do remember"
             ))
         })?;
 

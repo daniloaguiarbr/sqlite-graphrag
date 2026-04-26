@@ -92,14 +92,14 @@ pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("lock poisoned: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Embedding("empty embedding result".into()))?;
-    assert_eq!(emb.len(), EMBEDDING_DIM, "unexpected embedding dimension");
+        .ok_or_else(|| AppError::Embedding("resultado de embedding vazio".into()))?;
+    assert_eq!(emb.len(), EMBEDDING_DIM, "dimensão de embedding inesperada");
     Ok(emb)
 }
 
@@ -107,13 +107,13 @@ pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f3
     let prefixed = format!("{QUERY_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("lock poisoned: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Embedding("empty embedding result".into()))?;
+        .ok_or_else(|| AppError::Embedding("resultado de embedding vazio".into()))?;
     Ok(emb)
 }
 
@@ -129,11 +129,11 @@ pub fn embed_passages_batch(
     let strs: Vec<&str> = prefixed.iter().map(String::as_str).collect();
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("lock poisoned: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
         .embed(strs, Some(batch_size.min(FASTEMBED_BATCH_SIZE)))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     for emb in &results {
-        assert_eq!(emb.len(), EMBEDDING_DIM, "unexpected embedding dimension");
+        assert_eq!(emb.len(), EMBEDDING_DIM, "dimensão de embedding inesperada");
     }
     Ok(results)
 }
@@ -149,7 +149,7 @@ pub fn embed_passages_controlled(
 ) -> Result<Vec<Vec<f32>>, AppError> {
     if texts.len() != token_counts.len() {
         return Err(AppError::Internal(anyhow::anyhow!(
-            "texts/token_counts length mismatch in controlled embedding"
+            "comprimento de texts/token_counts diverge no embedding controlado"
         )));
     }
 

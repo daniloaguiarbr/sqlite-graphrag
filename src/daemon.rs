@@ -102,7 +102,7 @@ pub fn embed_passage_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>,
         Some(DaemonResponse::PassageEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "unexpected daemon response for passage embedding: {other:?}"
+            "resposta inesperada do daemon para embedding de passage: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -121,7 +121,7 @@ pub fn embed_query_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, A
         Some(DaemonResponse::QueryEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "unexpected daemon response for query embedding: {other:?}"
+            "resposta inesperada do daemon para embedding de query: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -144,7 +144,7 @@ pub fn embed_passages_controlled_or_local(
         Some(DaemonResponse::PassageEmbeddings { embeddings, .. }) => Ok(embeddings),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "unexpected daemon response for batch passage embeddings: {other:?}"
+            "resposta inesperada do daemon para batch de embeddings de passage: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -193,6 +193,20 @@ impl Drop for DaemonSpawnGuard {
 }
 
 pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
+    // Tokio runtime com 2 worker threads para reduzir threads ociosas do daemon.
+    // O loop de accept permanece síncrono; cada conexão é despachada para spawn_blocking
+    // de forma que embeddings pesados não bloqueiem os workers tokio.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("daemon-worker")
+        .enable_all()
+        .build()
+        .map_err(AppError::Io)?;
+
+    rt.block_on(run_async(models_dir, idle_shutdown_secs))
+}
+
+async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
     let socket = daemon_label(models_dir);
     let name = to_local_socket_name(&socket)?;
     let listener = ListenerOptions::new()
@@ -217,13 +231,14 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
 
     let mut handled_embed_requests = 0_u64;
     let mut last_activity = Instant::now();
+    let models_dir = models_dir.to_path_buf();
 
     loop {
         if shutdown_requested() {
             break;
         }
 
-        if !daemon_control_dir(models_dir).exists() {
+        if !daemon_control_dir(&models_dir).exists() {
             tracing::info!("daemon control directory disappeared; shutting down");
             break;
         }
@@ -231,7 +246,18 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
         match listener.accept() {
             Ok(stream) => {
                 last_activity = Instant::now();
-                let should_exit = handle_client(stream, models_dir, &mut handled_embed_requests)?;
+                let models_dir_clone = models_dir.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let mut counter = 0_u64;
+                    handle_client(stream, &models_dir_clone, &mut counter)
+                        .map(|should_exit| (should_exit, counter))
+                })
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("spawn_blocking panicked: {e}")))?;
+
+                let (should_exit, delta) = result?;
+                handled_embed_requests += delta;
+
                 if should_exit {
                     break;
                 }
@@ -245,7 +271,7 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
                     );
                     break;
                 }
-                thread::sleep(Duration::from_millis(50));
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Err(err) => return Err(AppError::Io(err)),
         }
@@ -267,7 +293,7 @@ fn handle_client(
         write_response(
             reader.get_mut(),
             &DaemonResponse::Error {
-                message: "empty daemon request".to_string(),
+                message: "requisição vazia ao daemon".to_string(),
             },
         )?;
         return Ok(false);
@@ -380,7 +406,7 @@ fn request_if_available(
     let mut line = String::new();
     reader.read_line(&mut line).map_err(AppError::Io)?;
     if line.trim().is_empty() {
-        return Err(AppError::Embedding("daemon returned empty response".into()));
+        return Err(AppError::Embedding("daemon retornou resposta vazia".into()));
     }
 
     let response = serde_json::from_str(line.trim()).map_err(AppError::Json)?;

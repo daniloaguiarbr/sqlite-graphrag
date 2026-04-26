@@ -53,6 +53,17 @@ sqlite-graphrag --version
 - Stderr carries tracing output under `SQLITE_GRAPHRAG_LOG_LEVEL=debug` only
 - `--help` is English-first by design; use `--lang` for human-facing runtime messages, not static clap help text
 - Cross-platform behavior is identical across Linux, macOS and Windows hosts
+
+
+## Graph Schema
+### Entity types, relation labels and edge strength
+- `entity_type` accepts exactly 9 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`
+- `relation` accepts exactly 12 values: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
+- `strength` is a float in `[0.0, 1.0]` representing edge weight; mapped to `weight` in all read outputs
+- Unlisted `entity_type` or `relation` values are rejected at write time with exit code 1
+- Use `sqlite-graphrag graph --format json` to inspect the full stored graph at any time
+
+
 ### 27 AI agents and IDEs supported out of the box
 | Agent | Vendor | Minimum version | Integration pattern |
 | --- | --- | --- | --- |

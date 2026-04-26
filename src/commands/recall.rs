@@ -25,11 +25,12 @@ pub struct RecallArgs {
     pub max_hops: u32,
     #[arg(long, default_value = "0.3")]
     pub min_weight: f64,
-    /// Filter results by maximum distance. If all matches exceed `min_distance`,
-    /// the command exits with code 4 (`not found`) per the documented public contract.
+    /// Filter results by maximum distance. Results with distance greater than this value
+    /// are excluded. If all matches exceed this threshold, the command exits with code 4
+    /// (`not found`) per the documented public contract.
     /// Default `1.0` disables the filter and preserves the top-k behavior.
-    #[arg(long, default_value = "1.0")]
-    pub min_distance: f32,
+    #[arg(long, alias = "min-distance", default_value = "1.0")]
+    pub max_distance: f32,
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -44,6 +45,12 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
+        )));
+    }
 
     output::emit_progress_i18n(
         "Computing query embedding...",
@@ -161,14 +168,14 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         }
     }
 
-    // Filtrar por min_distance se < 1.0 (ativado). Se nenhum hit dentro do threshold, exit 4.
-    if args.min_distance < 1.0 {
+    // Filtrar por max_distance se < 1.0 (ativado). Se nenhum hit dentro do threshold, exit 4.
+    if args.max_distance < 1.0 {
         let has_relevant = direct_matches
             .iter()
-            .any(|item| item.distance <= args.min_distance);
+            .any(|item| item.distance <= args.max_distance);
         if !has_relevant {
             return Err(AppError::NotFound(erros::sem_resultados_recall(
-                args.min_distance,
+                args.max_distance,
                 &args.query,
                 &namespace,
             )));

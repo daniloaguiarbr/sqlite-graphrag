@@ -55,6 +55,9 @@ pub struct HybridSearchItem {
     pub vec_rank: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fts_rank: Option<usize>,
+    /// Score RRF combinado — alias explícito de `combined_score` para contratos de integração.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rrf_score: Option<f64>,
 }
 
 /// Pesos RRF usados na busca híbrida: vec (vetorial) e fts (texto).
@@ -162,6 +165,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                 source: "hybrid".to_string(),
                 vec_rank: vec_rank_map.get(&memory_id).copied(),
                 fts_rank: fts_rank_map.get(&memory_id).copied(),
+                rrf_score: Some(combined_score),
             })
         })
         .collect();
@@ -275,6 +279,7 @@ mod testes {
             source: "hybrid".to_string(),
             vec_rank: Some(1),
             fts_rank: None,
+            rrf_score: Some(0.0328),
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(
@@ -301,6 +306,7 @@ mod testes {
             source: "hybrid".to_string(),
             vec_rank: None,
             fts_rank: Some(2),
+            rrf_score: Some(0.016),
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(
@@ -327,6 +333,7 @@ mod testes {
             source: "hybrid".to_string(),
             vec_rank: Some(3),
             fts_rank: Some(1),
+            rrf_score: Some(0.05),
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"vec_rank\""), "deve conter vec_rank");

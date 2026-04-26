@@ -76,6 +76,10 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
         })?
         .to_string();
 
+    if name.trim().is_empty() {
+        return Err(AppError::Validation("name must not be empty".to_string()));
+    }
+
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 

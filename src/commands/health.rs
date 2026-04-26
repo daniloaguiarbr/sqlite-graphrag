@@ -22,6 +22,8 @@ pub struct HealthArgs {
 #[derive(Serialize)]
 struct HealthCounts {
     memories: i64,
+    /// Alias de `memories` para contrato documentado em AGENT_PROTOCOL.md.
+    memories_total: i64,
     entities: i64,
     relationships: i64,
     vec_memories: i64,
@@ -106,6 +108,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             model_ok: false,
             counts: HealthCounts {
                 memories: 0,
+                memories_total: 0,
                 entities: 0,
                 relationships: 0,
                 vec_memories: 0,
@@ -273,6 +276,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         model_ok,
         counts: HealthCounts {
             memories: memories_count,
+            memories_total: memories_count,
             entities: entities_count,
             relationships: relationships_count,
             vec_memories: vec_memories_count,
@@ -310,6 +314,7 @@ mod testes {
             model_ok: false,
             counts: HealthCounts {
                 memories: 5,
+                memories_total: 5,
                 entities: 3,
                 relationships: 2,
                 vec_memories: 5,

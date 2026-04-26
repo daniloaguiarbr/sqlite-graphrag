@@ -10,6 +10,33 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.19] - 2026-04-26
+
+### Adicionado
+- Chunking hierárquico-recursivo de markdown via `text-splitter = "0.30.1"` (`src/chunking.rs::split_into_chunks_hierarchical`) preserva fronteiras H1/H2 e separadores suaves de parágrafo para documentos que começam com marcadores markdown.
+- Extração híbrida automática de entidades (`src/extraction.rs::extract_graph_auto`) combinando pré-filtro regex (emails, URLs, UUIDs, identificadores ALL_CAPS) com passagem CPU `candle` BERT NER (`Davlan/bert-base-multilingual-cased-ner-hrl`, ~676 MB safetensors, AFL-3.0). NER opera em janela deslizante com `MAX_SEQ_LEN=512` e `STRIDE=256`, limitado a `MAX_ENTS=30`/`MAX_RELS=50`. O modelo é baixado lazy na primeira execução e degrada graciosamente para apenas regex em caso de falha (via `tracing::warn!`).
+- `remember` agora invoca `extract_graph_auto` automaticamente quando `--skip-extraction` está ausente, nenhum `--entities-file`/`--relationships-file`/`--graph-stdin` é fornecido e o body é não-vazio, materializando entidades e relacionamentos `mentions` antes da persistência.
+- 15 testes unitários em `src/extraction.rs` cobrindo pré-filtro regex (email/URL/UUID/ALL_CAPS), decodificação IOB (mapeamento PER/ORG/LOC, descarte de DATE, ORG-com-sufixo-`sdk` → `tool`), enforcement de `MAX_RELS`, dedup por nome em lowercase e fallback gracioso quando o modelo NER está ausente.
+- 6 novos testes de chunking em `src/chunking.rs` validando fronteiras `# H1` e `## H2`, documentos markdown de 60 KB com overlap 50, fallback de texto puro e separadores suaves de parágrafo `\n\n`.
+
+### Mudado
+- `Cargo.toml` adiciona `text-splitter = "0.30.1"` (features `markdown`, `tokenizers`) e `candle-core`/`candle-nn`/`candle-transformers = "0.10.2"` (default-features off) além de `huggingface-hub` (`hf-hub` renomeado) para downloads de modelo.
+- `Cargo.toml` faz bump de `sqlite-vec` de `0.1.6` para `0.1.9` (correção de DELETE e melhorias em constraints KNN) e remove seis dependências órfãs (`notify`, `slug`, `toml`, `uuid`, `zerocopy`, `tracing-appender`).
+- `Cargo.toml` reduz `tokio` de `features = ["full"]` para o conjunto mínimo `["rt-multi-thread", "sync", "time", "io-util", "macros"]`.
+- Footprint de threads do daemon reduzido de ~65 para ≤4 threads sustentadas via `RAYON_NUM_THREADS=2`, `ORT_INTRA_OP_NUM_THREADS=1` e `ORT_INTER_OP_NUM_THREADS=1` definidos em `src/main.rs` antes da inicialização de qualquer runtime.
+- A flag `--skip-extraction` agora exibe help string documentando que desabilita a extração automática de entidades/relacionamentos; o campo previamente dormente é reutilizado como toggle visível ao usuário.
+
+### Corrigido
+- `recall` agora reporta `DB inexistente` de forma consistente com os demais subcomandos via helper compartilhado `erros::banco_nao_encontrado` (P1-A).
+- `recall --min-distance` foi renomeado para `--max-distance` mantendo `min-distance` como alias legado para compatibilidade (P2-K).
+- `related ''` rejeita strings vazias com erro de validação claro em vez de produzir zero resultados silenciosamente (P2-L).
+- 15+ strings voltadas ao usuário em `embedder.rs`, `daemon.rs`, `paths.rs`, `tokenizer.rs` e `commands/remember.rs` agora exibem traduções em português junto aos originais em inglês (P2-I).
+- `--name` é auto-normalizado para kebab-case com `tracing::warn!` quando snake_case ou CapsName são detectados (P2-H).
+- Flags ocultas `--body-file`, `--entities-file`, `--relationships-file`, `--graph-stdin`, `--metadata-file` agora expõem `#[arg(help = ...)]` para aparecer no `--help` (P2-G).
+- `stats.memories`, `list.items` e `health.counts.memories` foram unificados sob a chave `memories_total` em todos os outputs JSON (P3-E).
+- `HybridSearchItem.rrf_score: Option<f64>` agora é populado com o score real de reciprocal-rank-fusion em vez de retornar sempre `null` (P3-F).
+- Rejeição de `--tz` agora sugere fusos horários IANA válidos na mensagem de erro (P3-A).
+
 ## [1.0.18] - 2026-04-26
 
 ### Adicionado

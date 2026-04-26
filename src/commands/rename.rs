@@ -55,13 +55,25 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
-    if args.new_name.starts_with("__") {
+    let normalized_new_name = {
+        let n = args.new_name.to_lowercase().replace(['_', ' '], "-");
+        if n != args.new_name {
+            tracing::warn!(
+                original = %args.new_name,
+                normalized = %n,
+                "new_name auto-normalized to kebab-case"
+            );
+        }
+        n
+    };
+
+    if normalized_new_name.starts_with("__") {
         return Err(AppError::Validation(
             crate::i18n::validacao::nome_reservado(),
         ));
     }
 
-    if args.new_name.is_empty() || args.new_name.len() > MAX_MEMORY_NAME_LEN {
+    if normalized_new_name.is_empty() || normalized_new_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::Validation(
             crate::i18n::validacao::novo_nome_comprimento(MAX_MEMORY_NAME_LEN),
         ));
@@ -70,9 +82,9 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     {
         let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
-        if !slug_re.is_match(&args.new_name) {
+        if !slug_re.is_match(&normalized_new_name) {
             return Err(AppError::Validation(
-                crate::i18n::validacao::novo_nome_kebab(&args.new_name),
+                crate::i18n::validacao::novo_nome_kebab(&normalized_new_name),
             ));
         }
     }
@@ -105,12 +117,12 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
             "UPDATE memories SET name=?2 WHERE id=?1 AND updated_at=?3 AND deleted_at IS NULL",
-            rusqlite::params![memory_id, args.new_name, ts],
+            rusqlite::params![memory_id, normalized_new_name, ts],
         )?
     } else {
         tx.execute(
             "UPDATE memories SET name=?2 WHERE id=?1 AND deleted_at IS NULL",
-            rusqlite::params![memory_id, args.new_name],
+            rusqlite::params![memory_id, normalized_new_name],
         )?
     };
 
@@ -126,7 +138,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         &tx,
         memory_id,
         next_v,
-        &args.new_name,
+        &normalized_new_name,
         &memory_type,
         &description,
         &body,
@@ -139,7 +151,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     output::emit_json(&RenameResponse {
         memory_id,
-        name: args.new_name,
+        name: normalized_new_name,
         action: "renamed",
         version: next_v,
         elapsed_ms: inicio.elapsed().as_millis() as u64,

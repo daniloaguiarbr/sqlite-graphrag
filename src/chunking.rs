@@ -2,6 +2,8 @@
 // Token-based chunking for E5 model (512 token limit)
 
 use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS, EMBEDDING_DIM};
+use text_splitter::{ChunkConfig, MarkdownSplitter};
+use tokenizers::Tokenizer;
 
 // Heurística conservadora para reduzir o risco de subestimar o número real de tokens
 // em Markdown, código e texto multilíngue. Valor anterior 4 chars/token permitia
@@ -116,6 +118,44 @@ pub fn split_into_chunks_by_token_offsets(
     }
 
     chunks
+}
+
+/// Divide body em chunks usando MarkdownSplitter com tokenizer real.
+/// Respeita limites semânticos de Markdown (H1-H6, parágrafos, blocos).
+/// Para texto puro sem marcadores Markdown, cai sobre quebras de parágrafo e sentenças.
+pub fn split_into_chunks_hierarchical(body: &str, tokenizer: &Tokenizer) -> Vec<Chunk> {
+    if body.is_empty() {
+        return Vec::new();
+    }
+
+    let config = ChunkConfig::new(CHUNK_SIZE_TOKENS)
+        .with_sizer(tokenizer)
+        .with_overlap(CHUNK_OVERLAP_TOKENS)
+        .expect("CHUNK_OVERLAP_TOKENS deve ser menor que CHUNK_SIZE_TOKENS");
+
+    let splitter = MarkdownSplitter::new(config);
+
+    let items: Vec<(usize, &str)> = splitter.chunk_indices(body).collect();
+
+    if items.is_empty() {
+        return vec![Chunk {
+            start_offset: 0,
+            end_offset: body.len(),
+            token_count_approx: body.chars().count() / CHARS_PER_TOKEN,
+        }];
+    }
+
+    items
+        .into_iter()
+        .map(|(start, text)| {
+            let end = start + text.len();
+            Chunk {
+                start_offset: start,
+                end_offset: end,
+                token_count_approx: text.chars().count() / CHARS_PER_TOKEN,
+            }
+        })
+        .collect()
 }
 
 pub fn chunk_text<'a>(body: &'a str, chunk: &Chunk) -> &'a str {
@@ -258,5 +298,126 @@ mod tests {
         let agg = aggregate_embeddings(&embs);
         let norm: f32 = agg.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 1e-5);
+    }
+
+    fn split_hier_chars(body: &str, size: usize) -> Vec<Chunk> {
+        use text_splitter::{Characters, ChunkConfig, MarkdownSplitter};
+        if body.is_empty() {
+            return Vec::new();
+        }
+        let config = ChunkConfig::new(size)
+            .with_sizer(Characters)
+            .with_overlap(0)
+            .expect("overlap deve ser menor que size");
+        let splitter = MarkdownSplitter::new(config);
+        let items: Vec<(usize, &str)> = splitter.chunk_indices(body).collect();
+        if items.is_empty() {
+            return vec![Chunk {
+                start_offset: 0,
+                end_offset: body.len(),
+                token_count_approx: body.chars().count() / CHARS_PER_TOKEN,
+            }];
+        }
+        items
+            .into_iter()
+            .map(|(start, text)| {
+                let end = start + text.len();
+                Chunk {
+                    start_offset: start,
+                    end_offset: end,
+                    token_count_approx: text.chars().count() / CHARS_PER_TOKEN,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_hierarchical_empty_body_retorna_vazio() {
+        use text_splitter::{Characters, ChunkConfig, MarkdownSplitter};
+        let config = ChunkConfig::new(100)
+            .with_sizer(Characters)
+            .with_overlap(0)
+            .expect("overlap < size");
+        let splitter = MarkdownSplitter::new(config);
+        let result: Vec<_> = splitter.chunk_indices("").collect();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_h1_boundary_gera_dois_chunks() {
+        let body = "# Title 1\n\nbody1 body1 body1 body1 body1 body1\n\n# Title 2\n\nbody2 body2 body2 body2 body2 body2";
+        let chunks = split_hier_chars(body, 30);
+        assert!(
+            chunks.len() >= 2,
+            "esperado >=2 chunks, obtido {}",
+            chunks.len()
+        );
+        for c in &chunks {
+            assert!(body.is_char_boundary(c.start_offset));
+            assert!(body.is_char_boundary(c.end_offset));
+        }
+    }
+
+    #[test]
+    fn test_markdown_h2_nested_respeita_boundaries() {
+        let body = "# H1\n\n## H2a\n\nParágrafo A com texto suficiente para forçar split.\n\n## H2b\n\nParágrafo B com texto suficiente para forçar split também.";
+        let chunks = split_hier_chars(body, 40);
+        assert!(!chunks.is_empty());
+        for c in &chunks {
+            assert!(body.is_char_boundary(c.start_offset));
+            assert!(body.is_char_boundary(c.end_offset));
+            assert!(c.end_offset > c.start_offset);
+            assert!(c.end_offset <= body.len());
+        }
+    }
+
+    #[test]
+    fn test_markdown_paragrafo_soft_boundary() {
+        let para = "Frase de texto simples para preencher o parágrafo. ";
+        let body = format!(
+            "{}\n\n{}\n\n{}",
+            para.repeat(3),
+            para.repeat(3),
+            para.repeat(3)
+        );
+        let chunks = split_hier_chars(&body, 80);
+        assert!(
+            chunks.len() >= 2,
+            "esperado >=2 chunks com body de {} chars",
+            body.len()
+        );
+        for c in &chunks {
+            assert!(body.is_char_boundary(c.start_offset));
+            assert!(body.is_char_boundary(c.end_offset));
+        }
+    }
+
+    #[test]
+    fn test_markdown_60kb_offsets_validos() {
+        let bloco = "# Seção\n\nTexto de conteúdo do bloco. ".repeat(1500);
+        assert!(
+            bloco.len() > 50_000,
+            "body deve ser >50KB, tem {} bytes",
+            bloco.len()
+        );
+        let chunks = split_hier_chars(&bloco, 256);
+        assert!(chunks.len() > 1);
+        for c in &chunks {
+            assert!(bloco.is_char_boundary(c.start_offset));
+            assert!(bloco.is_char_boundary(c.end_offset));
+            assert!(c.end_offset > c.start_offset);
+            assert!(!chunk_text(&bloco, c).is_empty());
+        }
+    }
+
+    #[test]
+    fn test_fallback_texto_puro_sem_marcadores() {
+        let body = "a ".repeat(1000);
+        let chunks = split_hier_chars(&body, 100);
+        assert!(!chunks.is_empty());
+        for c in &chunks {
+            assert!(body.is_char_boundary(c.start_offset));
+            assert!(body.is_char_boundary(c.end_offset));
+        }
     }
 }

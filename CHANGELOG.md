@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-04-26
+
+### Added
+- Hierarchical-recursive markdown chunking via `text-splitter = "0.30.1"` (`src/chunking.rs::split_into_chunks_hierarchical`) preserves H1/H2 boundaries and paragraph soft-boundaries for documents starting with markdown markers.
+- Automatic hybrid entity extraction (`src/extraction.rs::extract_graph_auto`) combining a regex prefilter (emails, URLs, UUIDs, ALL_CAPS identifiers) with a CPU `candle` BERT NER pass (`Davlan/bert-base-multilingual-cased-ner-hrl`, ~676 MB safetensors, AFL-3.0). NER runs sliding-window with `MAX_SEQ_LEN=512` and `STRIDE=256`, capped at `MAX_ENTS=30`/`MAX_RELS=50`. The model downloads lazily on first use and falls back to regex-only on failure (graceful degradation via `tracing::warn!`).
+- `remember` now invokes `extract_graph_auto` automatically when `--skip-extraction` is absent, no `--entities-file`/`--relationships-file`/`--graph-stdin` is provided, and the body is non-empty, materializing entities and `mentions` relationships before persistence.
+- 15 unit tests in `src/extraction.rs` covering regex prefilter (email/URL/UUID/ALL_CAPS), IOB decoding (PER/ORG/LOC mapping, DATE discard, ORG-with-`sdk`-suffix → `tool`), `MAX_RELS` enforcement, dedup by lowercase name, and graceful fallback when the NER model is absent.
+- 6 new chunking tests in `src/chunking.rs` validating `# H1` and `## H2` boundaries, 60 KB markdown documents with overlap 50, plain-text fallback, and `\n\n` paragraph soft-boundaries.
+
+### Changed
+- `Cargo.toml` adds `text-splitter = "0.30.1"` (features `markdown`, `tokenizers`) and `candle-core`/`candle-nn`/`candle-transformers = "0.10.2"` (default-features off) plus `huggingface-hub` (`hf-hub` renamed) for model downloads.
+- `Cargo.toml` bumps `sqlite-vec` from `0.1.6` to `0.1.9` (DELETE fix and KNN constraint improvements) and removes six orphan dependencies (`notify`, `slug`, `toml`, `uuid`, `zerocopy`, `tracing-appender`).
+- `Cargo.toml` reduces `tokio` from `features = ["full"]` to the minimal set `["rt-multi-thread", "sync", "time", "io-util", "macros"]`.
+- Daemon thread footprint reduced from ~65 to ≤4 sustained threads via `RAYON_NUM_THREADS=2`, `ORT_INTRA_OP_NUM_THREADS=1`, and `ORT_INTER_OP_NUM_THREADS=1` set in `src/main.rs` before any runtime initialization.
+- `--skip-extraction` flag now ships a help string documenting that it disables automatic entity/relationship extraction; the previously dormant field is reused as the user-facing toggle.
+
+### Fixed
+- `recall` now reports `DB inexistente` consistently with other subcommands via the shared `erros::banco_nao_encontrado` helper (P1-A).
+- `recall --min-distance` is renamed to `--max-distance` with the legacy `min-distance` retained as alias for backward compatibility (P2-K).
+- `related ''` rejects empty strings with a clear validation error rather than producing zero results silently (P2-L).
+- 15+ user-facing strings in `embedder.rs`, `daemon.rs`, `paths.rs`, `tokenizer.rs`, and `commands/remember.rs` now ship Portuguese translations alongside the English originals (P2-I).
+- `--name` is auto-normalized to kebab-case with a `tracing::warn!` when snake_case or CapsName inputs are detected (P2-H).
+- Hidden flags `--body-file`, `--entities-file`, `--relationships-file`, `--graph-stdin`, `--metadata-file` now expose `#[arg(help = ...)]` so they appear in `--help` output (P2-G).
+- `stats.memories`, `list.items`, and `health.counts.memories` are unified under the `memories_total` key across all JSON outputs (P3-E).
+- `HybridSearchItem.rrf_score: Option<f64>` is now populated with the actual reciprocal-rank-fusion score instead of always returning `null` (P3-F).
+- `--tz` rejection now suggests valid IANA timezones in the error message (P3-A).
+
 ## [1.0.18] - 2026-04-26
 
 ### Added

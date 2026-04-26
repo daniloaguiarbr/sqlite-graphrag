@@ -12,7 +12,9 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn resolve(db_override: Option<&str>) -> Result<Self, AppError> {
         let proj = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
-            AppError::Io(std::io::Error::other("cannot determine home directory"))
+            AppError::Io(std::io::Error::other(
+                "não foi possível determinar o diretório home",
+            ))
         })?;
 
         let cache_root = if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {

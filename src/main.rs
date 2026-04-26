@@ -23,7 +23,17 @@ fn main() {
         unsafe {
             std::env::set_var("ORT_NUM_THREADS", "1");
             std::env::set_var("ORT_INTRA_OP_NUM_THREADS", "1");
+            std::env::set_var("ORT_INTER_OP_NUM_THREADS", "1");
             std::env::set_var("OMP_NUM_THREADS", "1");
+        }
+    }
+
+    // Limitar pool Rayon a 2 threads — o daemon tokio usa worker_threads=2 e o Rayon
+    // compartilha o mesmo processo; threads acima de 2 são desperdício para embeddings sequenciais.
+    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        // SAFETY: single-threaded neste ponto.
+        unsafe {
+            std::env::set_var("RAYON_NUM_THREADS", "2");
         }
     }
 

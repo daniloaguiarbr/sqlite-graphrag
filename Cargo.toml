@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.18"
+version = "1.0.19"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -57,28 +57,22 @@ path = "tests/loom_lock_slots.rs"
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
-sqlite-vec = "0.1.6"
+sqlite-vec = "0.1.9"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-tracing-appender = "0.2"
 refinery = { version = "0.8", features = ["rusqlite"] }
 anyhow = "1"
 thiserror = "2"
 blake3 = "1"
-slug = "0.1"
-uuid = { version = "1", features = ["v4", "serde"] }
 directories = "5"
 fs4 = { version = "0.9", features = ["sync"] }
 interprocess = "2"
-notify = "6"
 regex = "1"
-toml = "0.8"
-tokio = { version = "1", features = ["full"] }
-zerocopy = { version = "0.7", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "macros"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
@@ -88,16 +82,19 @@ ctrlc = { version = "3.4", features = ["termination"] }
 # sem --locked resolve 0.4.3 e quebra a instalação em toolchains 1.88..1.94.
 # Reavaliar quando CI passar em 1.95 e `rust-version` avançar para 1.95.
 constant_time_eq = "=0.4.2"
+text-splitter = { version = "0.30.1", features = ["markdown", "tokenizers"] }
+huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
+candle-core = { version = "0.10.2", default-features = false }
+candle-nn = { version = "0.10.2", default-features = false }
+candle-transformers = { version = "0.10.2", default-features = false }
 
 [target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
-huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
-huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
 
 [dev-dependencies]
 assert_cmd = "2"

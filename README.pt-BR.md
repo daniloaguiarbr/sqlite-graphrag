@@ -53,6 +53,17 @@ sqlite-graphrag --version
 - Stderr carrega saída de tracing apenas sob `SQLITE_GRAPHRAG_LOG_LEVEL=debug`
 - `--help` é inglês por padrão; use `--lang` para mensagens humanas de runtime, não para o help estático do clap
 - Comportamento cross-platform é idêntico em hosts Linux, macOS e Windows
+
+
+## Schema do Grafo
+### Tipos de entidade, rótulos de relação e peso de aresta
+- `entity_type` aceita exatamente 9 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`
+- `relation` aceita exatamente 12 valores: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
+- `strength` é um float em `[0.0, 1.0]` representando o peso da aresta; mapeado para `weight` em todos os outputs de leitura
+- Valores de `entity_type` ou `relation` não listados são rejeitados na escrita com código de saída 1
+- Use `sqlite-graphrag graph --format json` para inspecionar o grafo completo armazenado a qualquer momento
+
+
 ### 27 agentes de IA e IDEs suportados de imediato
 | Agente | Fornecedor | Versão mínima | Padrão de integração |
 | --- | --- | --- | --- |

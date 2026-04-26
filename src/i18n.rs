@@ -171,13 +171,13 @@ pub mod erros {
         }
     }
 
-    pub fn sem_resultados_recall(min_distance: f32, query: &str, namespace: &str) -> String {
+    pub fn sem_resultados_recall(max_distance: f32, query: &str, namespace: &str) -> String {
         match current() {
             Language::English => format!(
-                "no results within --min-distance {min_distance} for query '{query}' in namespace '{namespace}'"
+                "no results within --max-distance {max_distance} for query '{query}' in namespace '{namespace}'"
             ),
             Language::Portugues => format!(
-                "nenhum resultado dentro de --min-distance {min_distance} para a consulta '{query}' no namespace '{namespace}'"
+                "nenhum resultado dentro de --max-distance {max_distance} para a consulta '{query}' no namespace '{namespace}'"
             ),
         }
     }
