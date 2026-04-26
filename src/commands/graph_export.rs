@@ -749,9 +749,9 @@ mod testes {
                 Some(GraphSubcommand::Stats(stats)) => {
                     assert_eq!(stats.format, GraphStatsFormat::Text);
                 }
-                _ => panic!("subcomando inesperado"),
+                _ => unreachable!("subcomando inesperado"),
             },
-            _ => panic!("comando inesperado"),
+            _ => unreachable!("comando inesperado"),
         }
     }
 

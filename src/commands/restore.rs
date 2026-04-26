@@ -4,6 +4,7 @@ use crate::output;
 use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
+use crate::storage::memories;
 use crate::storage::versions;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
@@ -87,6 +88,16 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
 
+    // v1.0.21 P1-D: re-embed body restaurado para manter `vec_memories` sincronizado
+    // com `memories`. Sem isso, queries semânticas usavam o vetor da versão pós-forget,
+    // causando recall inconsistente (vec_memories=2 vs memories=3 após forget+restore).
+    output::emit_progress_i18n(
+        "Re-computing embedding for restored memory...",
+        "Recalculando embedding da memória restaurada...",
+    );
+    let embedding = crate::daemon::embed_passage_or_local(&paths.models, &old_body)?;
+    let snippet: String = old_body.chars().take(300).collect();
+
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     // deleted_at = NULL reativa memórias soft-deletadas; sem filtro deleted_at no WHERE
@@ -136,6 +147,11 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         &old_metadata,
         None,
         "restore",
+    )?;
+
+    // v1.0.21 P1-D: ressincronizar vec_memories com o body restaurado.
+    memories::upsert_vec(
+        &tx, memory_id, &namespace, &old_type, &embedding, &old_name, &snippet,
     )?;
 
     tx.commit()?;

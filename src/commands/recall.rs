@@ -43,6 +43,11 @@ pub struct RecallArgs {
 pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
+    if args.query.trim().is_empty() {
+        return Err(AppError::Validation(
+            "query não pode estar vazia".to_string(),
+        ));
+    }
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 

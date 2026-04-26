@@ -83,9 +83,19 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
 
     let db_size_bytes = std::fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
-    let chunks_total: i64 = conn
-        .query_row("SELECT COUNT(*) FROM memory_chunks", [], |r| r.get(0))
-        .unwrap_or(0);
+    // v1.0.21 P1-C: query usa tabela `memory_chunks` (correta).
+    // Se a tabela não existir (DB legado pré-chunking), o erro é "no such table"
+    // e o fallback retorna 0. Outros erros são logados via tracing para auditoria.
+    let chunks_total: i64 = match conn.query_row("SELECT COUNT(*) FROM memory_chunks", [], |r| {
+        r.get::<_, i64>(0)
+    }) {
+        Ok(n) => n,
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => 0,
+        Err(e) => {
+            tracing::warn!("falha ao contar memory_chunks: {e}");
+            0
+        }
+    };
 
     let avg_body_len: f64 = conn
         .query_row(

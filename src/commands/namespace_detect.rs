@@ -121,7 +121,7 @@ mod testes {
             crate::cli::Commands::NamespaceDetect(args) => {
                 assert_eq!(args.db.as_deref(), Some("/tmp/graphrag.sqlite"));
             }
-            _ => panic!("comando incorreto parseado"),
+            _ => unreachable!("comando incorreto parseado"),
         }
     }
 }

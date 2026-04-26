@@ -78,7 +78,7 @@ mod testes {
         assert!(resultado.is_err(), "deve falhar quando db não existe");
         match resultado.unwrap_err() {
             AppError::NotFound(_) => {}
-            outro => panic!("esperava NotFound, obteve: {outro:?}"),
+            outro => unreachable!("esperava NotFound, obteve: {outro:?}"),
         }
         std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
         std::env::remove_var("LOG_LEVEL");

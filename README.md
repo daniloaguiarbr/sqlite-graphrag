@@ -261,6 +261,7 @@ RUN cargo install --path .
 | `14` | Filesystem I/O error |
 | `15` | Database busy after retries (moved from 13 in the legacy line) |
 | `20` | Internal or JSON serialization error |
+| `73` | `EX_NOPERM`: memory guard rejected low RAM condition |
 | `75` | `EX_TEMPFAIL`: all concurrency slots busy |
 | `77` | Available RAM below minimum required to load the embedding model |
 

@@ -120,7 +120,7 @@ mod testes {
                 assert_eq!(required_mb, u64::MAX);
                 assert!(available_mb < u64::MAX);
             }
-            outro => panic!("esperado LowMemory, got: {outro:?}"),
+            outro => unreachable!("esperado LowMemory, got: {outro:?}"),
         }
     }
 

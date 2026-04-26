@@ -96,6 +96,9 @@ pub struct ExtractedEntity {
 pub struct ExtractionResult {
     pub entities: Vec<NewEntity>,
     pub relationships: Vec<NewRelationship>,
+    /// Método usado para extração: "bert+regex" ou "regex-only".
+    /// Útil para auditoria, métricas e reportes ao usuário.
+    pub extraction_method: String,
 }
 
 pub trait Extractor: Send + Sync {
@@ -379,6 +382,15 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
         };
 
         if prefix == "B" {
+            if token.starts_with("##") {
+                // BERT confuso: subword com B-prefix indica continuação de entidade anterior.
+                // Anexar à última parte da entidade atual; senão descartar.
+                let clean = token.strip_prefix("##").unwrap_or(token.as_str());
+                if let Some(last) = current_parts.last_mut() {
+                    last.push_str(clean);
+                }
+                continue;
+            }
             flush(&mut current_parts, &mut current_type, &mut entities);
             current_parts.push(token.clone());
             current_type = Some(entity_type.to_string());
@@ -556,9 +568,13 @@ fn to_new_entities(extracted: Vec<ExtractedEntity>) -> Vec<NewEntity> {
 pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResult> {
     let regex_entities = apply_regex_prefilter(body);
 
+    let mut bert_used = false;
     let ner_entities = match get_or_init_model(paths) {
         Some(model) => match run_ner_sliding_window(model, body, paths) {
-            Ok(ents) => ents,
+            Ok(ents) => {
+                bert_used = true;
+                ents
+            }
             Err(e) => {
                 tracing::warn!("NER falhou, usando apenas regex: {e:#}");
                 Vec::new()
@@ -571,9 +587,16 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     let entities = to_new_entities(merged);
     let relationships = build_relationships(&entities);
 
+    let extraction_method = if bert_used {
+        "bert+regex".to_string()
+    } else {
+        "regex-only".to_string()
+    };
+
     Ok(ExtractionResult {
         entities,
         relationships,
+        extraction_method,
     })
 }
 
@@ -587,6 +610,7 @@ impl Extractor for RegexExtractor {
         Ok(ExtractionResult {
             entities,
             relationships,
+            extraction_method: "regex-only".to_string(),
         })
     }
 }
@@ -688,6 +712,31 @@ mod tests {
         assert_eq!(ents.len(), 1);
         assert_eq!(ents[0].entity_type, "person");
         assert!(ents[0].name.contains("John"));
+    }
+
+    #[test]
+    fn iob_strip_subword_b_prefix() {
+        // v1.0.21 P0: BERT às vezes emite ##AI com B-prefix (subword confuso).
+        // Deve mergear na entidade ativa em vez de criar entidade fantasma "##AI".
+        let tokens = vec!["Open".to_string(), "##AI".to_string()];
+        let labels = vec!["B-ORG".to_string(), "B-ORG".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            ents.iter().any(|e| e.name == "OpenAI" || e.name == "Open"),
+            "deveria mergear ##AI ou descartar"
+        );
+    }
+
+    #[test]
+    fn iob_subword_orphan_descarta() {
+        // v1.0.21 P0: subword órfão sem entidade ativa não deve virar entidade.
+        let tokens = vec!["##AI".to_string()];
+        let labels = vec!["B-ORG".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            ents.is_empty(),
+            "subword órfão sem entidade ativa deve ser descartado"
+        );
     }
 
     #[test]

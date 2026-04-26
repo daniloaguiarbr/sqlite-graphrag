@@ -89,6 +89,9 @@ pub struct RememberResponse {
     pub entities_persisted: usize,
     pub relationships_persisted: usize,
     pub chunks_created: usize,
+    /// Método de extração usado: "bert+regex" ou "regex-only". None se skip-extraction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extraction_method: Option<String>,
     pub merged_into_memory_id: Option<i64>,
     pub warnings: Vec<String>,
     /// Timestamp Unix epoch seconds.
@@ -218,6 +221,7 @@ mod tests {
             entities_persisted: 2,
             relationships_persisted: 3,
             chunks_created: 4,
+            extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec!["aviso".to_string()],
             created_at: 1776569715,

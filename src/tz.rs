@@ -116,7 +116,7 @@ mod testes {
                     "mensagem deve citar o valor inválido"
                 );
             }
-            other => panic!("esperado AppError::Validation, obtido: {other:?}"),
+            other => unreachable!("esperado AppError::Validation, obtido: {other:?}"),
         }
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
     }

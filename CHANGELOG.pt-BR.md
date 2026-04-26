@@ -10,6 +10,24 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.21] - 2026-04-26
+
+### Corrigido
+- BERT NER `iob_to_entities` não vaza mais fragmentos WordPiece como `##AI` ou `##hropic` como entidades separadas. Quando BERT emite label `B-*` em um token iniciado por `##` (estado confuso do modelo), o subword é anexado à entidade ativa se houver, ou descartado caso contrário (correção P0 em `src/extraction.rs:381-394`). Validação empírica: auditoria de 138 documentos FlowAiper produziu ZERO fragmentos `##` na tabela de entidades.
+- `recall` rejeita queries vazias com `AppError::Validation` e mensagem clara em vez de vazar erro bruto do rusqlite `Invalid column type Null at index: 1, name: distance` (correção P1 em `src/commands/recall.rs`).
+- `restore` agora re-embeda o corpo da memória restaurada e faz upsert em `vec_memories` para que recall vetorial funcione em memórias restauradas. v1.0.20 deixava `vec_memories` desatualizado após `forget` + `restore` (correção P1 em `src/commands/restore.rs`).
+- `stats` reporta `chunks_total` com precisão consultando `memory_chunks` e tratando apenas erros "no such table" como estado legado do DB; outros erros do SQLite agora são logados via `tracing::warn!` para visibilidade (correção P1 em `src/commands/stats.rs`).
+- Seis panics em caminhos de produção convertidos para `unreachable!()` idiomático dentro de blocos `#[cfg(test)]` (correção P1 em `graph_export.rs`, `memory_guard.rs`, `optimize.rs`, `tz.rs`, `namespace_detect.rs`).
+- Tabelas de exit codes do README EN e pt-BR agora listam `73` (guarda de memória rejeitou condição de pouca RAM), alinhando com `llms.txt` e semântica do source (correção P1 docs).
+
+### Adicionado
+- Campo `RememberResponse.extraction_method: Option<String>` expondo se a extração automática usou `bert+regex` ou caiu em `regex-only`. Campo é omitido do JSON quando `--skip-extraction` está ativo (telemetria P1 em `src/output.rs` e `src/commands/remember.rs`).
+- Campo `ExtractionResult.extraction_method` populado por `extract_graph_auto` e `RegexExtractor`, expondo o caminho real de extração (correção P1 em `src/extraction.rs`).
+- 2 testes novos cobrindo o fix do merge IOB: `iob_strip_subword_b_prefix` e `iob_subword_orphan_descarta`.
+
+### Modificado
+- `Cargo.toml` versão atualizada de `1.0.20` para `1.0.21`.
+
 ## [1.0.20] - 2026-04-26
 
 ### Corrigido

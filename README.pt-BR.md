@@ -261,6 +261,7 @@ RUN cargo install --path .
 | `14` | Erro de I/O do sistema de arquivos |
 | `15` | Banco ocupado após tentativas (movido de 13 na linha legada) |
 | `20` | Erro interno ou de serialização JSON |
+| `73` | `EX_NOPERM`: guarda de memória rejeitou condição de pouca RAM |
 | `75` | `EX_TEMPFAIL`: todos os slots de concorrência ocupados |
 | `77` | RAM disponível abaixo do mínimo para carregar o modelo |
 

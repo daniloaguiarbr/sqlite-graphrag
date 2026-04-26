@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-04-26
+
+### Fixed
+- BERT NER `iob_to_entities` no longer leaks WordPiece subword fragments like `##AI` or `##hropic` as standalone entities. When BERT emits a `B-*` label on a token starting with `##` (model confused state), the subword is appended to the active entity if any, otherwise discarded (P0 fix in `src/extraction.rs:381-394`). Empirically validated: stress audit of 138 FlowAiper documents produced ZERO `##` fragments in the entity table.
+- `recall` rejects empty queries with `AppError::Validation` and a clear message instead of leaking raw rusqlite error `Invalid column type Null at index: 1, name: distance` (P1 fix in `src/commands/recall.rs`).
+- `restore` now re-embeds the restored memory body and upserts into `vec_memories` so vector recall works on restored memories. v1.0.20 left `vec_memories` count behind `memories` count after `forget` + `restore` (P1 fix in `src/commands/restore.rs`).
+- `stats` reports `chunks_total` accurately by querying `memory_chunks` and treating only "no such table" errors as legacy DB state worth defaulting to zero; other SQLite errors are now logged via `tracing::warn!` for visibility (P1 fix in `src/commands/stats.rs`).
+- Six panics in production paths converted to idiomatic `unreachable!()` inside `#[cfg(test)]` blocks (P1 fix in `graph_export.rs`, `memory_guard.rs`, `optimize.rs`, `tz.rs`, `namespace_detect.rs`).
+- README EN and pt-BR exit code tables now list `73` (memory guard rejected low RAM condition), matching `llms.txt` and source semantics (P1 docs fix).
+
+### Added
+- `RememberResponse.extraction_method: Option<String>` field exposing whether auto-extraction used `bert+regex` or fell back to `regex-only`. Field is omitted from JSON when `--skip-extraction` is set (telemetry P1 in `src/output.rs` and `src/commands/remember.rs`).
+- `ExtractionResult.extraction_method` field populated by `extract_graph_auto` and `RegexExtractor`, exposing the actual extraction path taken (P1 fix in `src/extraction.rs`).
+- 2 new unit tests covering the IOB merge fix: `iob_strip_subword_b_prefix` and `iob_subword_orphan_descarta`.
+
+### Changed
+- `Cargo.toml` version bumped from `1.0.20` to `1.0.21`.
+
 ## [1.0.20] - 2026-04-26
 
 ### Fixed

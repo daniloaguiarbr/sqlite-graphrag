@@ -285,6 +285,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     paths.ensure_dirs()?;
 
     // v1.0.20: usar .trim().is_empty() para rejeitar bodies que são apenas whitespace.
+    let mut extraction_method: Option<String> = None;
     if !args.skip_extraction
         && !entities_provided_externally
         && graph.entities.is_empty()
@@ -292,6 +293,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     {
         match crate::extraction::extract_graph_auto(&raw_body, &paths) {
             Ok(extracted) => {
+                extraction_method = Some(extracted.extraction_method.clone());
                 graph.entities = extracted.entities;
                 graph.relationships = extracted.relationships;
 
@@ -608,6 +610,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         entities_persisted,
         relationships_persisted,
         chunks_created,
+        extraction_method,
         merged_into_memory_id: None,
         warnings,
         created_at: created_at_epoch,
@@ -634,6 +637,7 @@ mod testes {
             entities_persisted: 0,
             relationships_persisted: 0,
             chunks_created: 1,
+            extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec![],
             created_at: 1_705_320_000,
@@ -662,6 +666,7 @@ mod testes {
             version: 2,
             entities_persisted: 3,
             relationships_persisted: 1,
+            extraction_method: None,
             chunks_created: 2,
             merged_into_memory_id: None,
             warnings: vec![],
@@ -690,6 +695,7 @@ mod testes {
             operation: "created".to_string(),
             version: 1,
             entities_persisted: 0,
+            extraction_method: None,
             relationships_persisted: 0,
             chunks_created: 1,
             merged_into_memory_id: None,
@@ -749,6 +755,7 @@ mod testes {
             action: "updated".to_string(),
             operation: "updated".to_string(),
             version: 3,
+            extraction_method: None,
             entities_persisted: 0,
             relationships_persisted: 0,
             chunks_created: 1,
