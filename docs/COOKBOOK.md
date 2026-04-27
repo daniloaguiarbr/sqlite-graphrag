@@ -1,7 +1,7 @@
 # sqlite-graphrag Cookbook
 
 
-> 15 production-grade recipes that save your team hours every single week
+> 23 production-grade recipes that save your team hours every single week
 
 - Read the Portuguese version at [COOKBOOK.pt-BR.md](COOKBOOK.pt-BR.md)
 

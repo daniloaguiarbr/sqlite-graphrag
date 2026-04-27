@@ -378,6 +378,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let total_passage_tokens = crate::tokenizer::count_passage_tokens(tokenizer, &raw_body)?;
     let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body, tokenizer);
     let chunks_created = chunks_info.len();
+    // For single-chunk bodies the memory row itself stores the content and no
+    // entry is appended to `memory_chunks` (see line ~545). For multi-chunk
+    // bodies every chunk is persisted via `insert_chunk_slices`.
+    let chunks_persisted = if chunks_info.len() > 1 {
+        chunks_info.len()
+    } else {
+        0
+    };
 
     output::emit_progress_i18n(
         &format!(
@@ -629,6 +637,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         entities_persisted,
         relationships_persisted,
         chunks_created,
+        chunks_persisted,
         extraction_method,
         merged_into_memory_id: None,
         warnings,
@@ -656,6 +665,7 @@ mod testes {
             entities_persisted: 0,
             relationships_persisted: 0,
             chunks_created: 1,
+            chunks_persisted: 0,
             extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec![],
@@ -687,6 +697,7 @@ mod testes {
             relationships_persisted: 1,
             extraction_method: None,
             chunks_created: 2,
+            chunks_persisted: 2,
             merged_into_memory_id: None,
             warnings: vec![],
             created_at: 0,
@@ -717,6 +728,7 @@ mod testes {
             extraction_method: None,
             relationships_persisted: 0,
             chunks_created: 1,
+            chunks_persisted: 0,
             merged_into_memory_id: None,
             warnings: vec!["identical body already exists as memory id 3".to_string()],
             created_at: 0,
@@ -778,6 +790,7 @@ mod testes {
             entities_persisted: 0,
             relationships_persisted: 0,
             chunks_created: 1,
+            chunks_persisted: 0,
             merged_into_memory_id: Some(7),
             warnings: vec![],
             created_at: 0,

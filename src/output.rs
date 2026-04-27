@@ -65,6 +65,7 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
 ///     entities_persisted: 0,
 ///     relationships_persisted: 0,
 ///     chunks_created: 1,
+///     chunks_persisted: 0,
 ///     merged_into_memory_id: None,
 ///     warnings: vec![],
 ///     created_at: 1_700_000_000,
@@ -88,7 +89,18 @@ pub struct RememberResponse {
     pub version: i64,
     pub entities_persisted: usize,
     pub relationships_persisted: usize,
+    /// Total chunks produced by the hierarchical splitter for this body.
+    ///
+    /// For single-chunk bodies this equals 1 even though no row is added to
+    /// the `memory_chunks` table — the memory row itself acts as the chunk.
+    /// Use `chunks_persisted` to know how many rows were actually written.
     pub chunks_created: usize,
+    /// Number of rows actually inserted into the `memory_chunks` table.
+    ///
+    /// Equals zero for single-chunk bodies (the memory row is the chunk) and
+    /// equals `chunks_created` for multi-chunk bodies. Added in v1.0.23 to
+    /// disambiguate from `chunks_created` and reflect database state precisely.
+    pub chunks_persisted: usize,
     /// Método de extração usado: "bert+regex" ou "regex-only". None se skip-extraction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction_method: Option<String>,
@@ -122,6 +134,7 @@ pub struct RememberResponse {
 ///     snippet: "ownership e borrowing".into(),
 ///     distance: 0.12,
 ///     source: "direct".into(),
+///     graph_depth: None,
 /// };
 ///
 /// let json = serde_json::to_string(&item).unwrap();
@@ -141,6 +154,15 @@ pub struct RecallItem {
     pub snippet: String,
     pub distance: f32,
     pub source: String,
+    /// Number of graph hops between this match and the seed memories.
+    ///
+    /// Set to `None` for direct vector matches (where `distance` is meaningful)
+    /// and to `Some(N)` for traversal results, with `N=0` when the depth could
+    /// not be tracked precisely. Added in v1.0.23 to disambiguate graph results
+    /// from the `distance: 0.0` placeholder previously used for graph entries.
+    /// Field is omitted from JSON output when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_depth: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -221,6 +243,7 @@ mod tests {
             entities_persisted: 2,
             relationships_persisted: 3,
             chunks_created: 4,
+            chunks_persisted: 4,
             extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec!["aviso".to_string()],
@@ -250,10 +273,13 @@ mod tests {
             snippet: "trecho".to_string(),
             distance: 0.5,
             source: "db".to_string(),
+            graph_depth: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"type\""));
         assert!(!json.contains("memory_type"));
+        // Field is omitted from JSON when None.
+        assert!(!json.contains("graph_depth"));
     }
 
     #[test]
@@ -298,9 +324,11 @@ mod tests {
             snippet: "s".to_string(),
             distance: 0.1,
             source: "src".to_string(),
+            graph_depth: Some(2),
         };
         let cloned = item.clone();
         assert_eq!(cloned.memory_id, item.memory_id);
         assert_eq!(cloned.name, item.name);
+        assert_eq!(cloned.graph_depth, Some(2));
     }
 }

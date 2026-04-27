@@ -1,7 +1,7 @@
 # Livro de Receitas sqlite-graphrag
 
 
-> 15 receitas de nível produção que poupam horas da sua equipe toda semana
+> 23 receitas de nível produção que poupam horas da sua equipe toda semana
 
 - Leia a versão em inglês em [COOKBOOK.md](COOKBOOK.md)
 

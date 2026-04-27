@@ -10,6 +10,24 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.23] - 2026-04-27
+
+### Corrigido
+- Mesclagem de subword do BERT NER agora prefere o candidato mais longo quando múltiplas fontes extraem nomes sobrepostos. Antes "OpenAI" extraído por regex podia perder para "Open" vazado de subword BERT porque ambos deduplicavam para a chave lowercase `open`. A nova lógica em `merge_and_deduplicate` retém estritamente a entrada mais longa, favorecendo a marca mais específica visível no corpus (P1 fix em `src/extraction.rs`).
+- Nomes de modelos versionados com separador de espaço ("Claude 4", "Llama 3", "Python 3") agora são extraídos como entidades `concept` pelo novo passe `augment_versioned_model_names`. O BERT NER frequentemente classifica esses tokens como substantivos comuns e os pula, então o sufixo de versão sumia. Variantes com hífen como "GPT-5" continuam tratadas pelo pipeline NER+sufixo existente (P1 fix em `src/extraction.rs`).
+- `recall` agora expõe `graph_depth: Option<u32>` em cada `RecallItem`. Matches diretos por vetor recebem `None` (use `distance`); resultados de traversal recebem `Some(0)` como sentinela para "alcançável via grafo, profundidade ainda não rastreada com precisão". O placeholder legado `distance: 0.0` permanece por compatibilidade mas deve ser tratado como depreciado para linhas de grafo (P1 fix em `src/commands/recall.rs` e `src/output.rs`).
+- `remember` agora reporta `chunks_persisted: usize` ao lado de `chunks_created: usize` para que clientes saibam exatamente quantas linhas foram inseridas em `memory_chunks`. Bodies de chunk único reportam `chunks_persisted: 0` (a própria linha de memória atua como chunk) enquanto multi-chunk reportam `chunks_persisted == chunks_created`. Resolve o achado da auditoria v1.0.22 onde corpos curtos mostravam `chunks_created: 1` com zero linhas persistidas (P1 fix em `src/output.rs` e `src/commands/remember.rs`).
+
+### Adicionado
+- `recall --max-graph-results <N>` limita `graph_matches` a no máximo N entradas. Padrão é unbounded para preservar a forma vista em v1.0.22, mas permite capar vizinhanças densas de grafo explicitamente. A docstring de `-k` agora declara claramente que ela controla apenas `direct_matches` (P1 fix de UX em `src/commands/recall.rs`).
+- README EN agora lista os aliases `pt-BR` e `portuguese` para `SQLITE_GRAPHRAG_LANG`. Antes apenas o README PT-BR os mencionava, deixando leitores ingleses sem ciência (P1 fix de sincronia de docs).
+- README EN+PT agora documentam os cinco targets de binários pré-compilados explicitamente e destacam que Mac Intel (`x86_64-apple-darwin`) requer build local porque o GitHub aposentou o runner macos-13 em dezembro de 2025 e a Apple descontinuou suporte ao x86_64. Migração recomendada é para Apple Silicon (P1 fix de clareza de distribuição).
+- `docs/COOKBOOK.md` e `docs/COOKBOOK.pt-BR.md` taglines agora declaram a contagem correta de 23 receitas (alegavam incorretamente 15 desde as adições da v1.0.22). Contado por `rg -c '^## How To'` em ambos arquivos (P1 fix de precisão de docs).
+
+### Modificado
+- `Cargo.toml` versão bumpada de `1.0.22` para `1.0.23`.
+- JSON do `RememberResponse` ganha o campo `chunks_persisted` (sempre presente); JSON do `RecallItem` ganha `graph_depth` (omitido quando `None` via `skip_serializing_if`). Ambas adições são forward-compatible para qualquer cliente que use parsers JSON tolerantes.
+
 ## [1.0.22] - 2026-04-27
 
 ### Corrigido

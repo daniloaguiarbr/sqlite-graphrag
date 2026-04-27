@@ -119,6 +119,17 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Homebrew formula is planned under `brew install sqlite-graphrag`
 - Scoop bucket is planned under `scoop install sqlite-graphrag`
 - Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:<version>`
+### Pre-built binaries (GitHub Releases)
+- `x86_64-unknown-linux-gnu` Linux Intel/AMD 64-bit
+- `aarch64-unknown-linux-gnu` Linux ARM 64-bit (Raspberry Pi 4+, AWS Graviton)
+- `aarch64-apple-darwin` macOS Apple Silicon (M1/M2/M3/M4)
+- `x86_64-pc-windows-msvc` Windows Intel/AMD 64-bit
+- `aarch64-pc-windows-msvc` Windows ARM 64-bit
+### Mac Intel users (x86_64-apple-darwin)
+- No pre-built binary is published for Intel Macs
+- GitHub retired the macos-13 runner in December 2025 and Apple discontinued x86_64 support
+- Build locally via `cargo install sqlite-graphrag --locked` (Rust 1.88+ required)
+- Recommended migration path is to Apple Silicon when feasible
 
 
 ## Usage
@@ -214,7 +225,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | --- | --- | --- | --- |
 | `SQLITE_GRAPHRAG_DB_PATH` | Path to the SQLite database file override | `./graphrag.sqlite` in the invocation directory | `/data/graphrag.sqlite` |
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Directory override for model cache and lock files | XDG cache dir | `~/.cache/sqlite-graphrag` |
-| `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
+| `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` (aliases: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
 | `SQLITE_GRAPHRAG_DISPLAY_TZ` | IANA timezone for `*_iso` JSON fields | `UTC` | `America/Sao_Paulo` |

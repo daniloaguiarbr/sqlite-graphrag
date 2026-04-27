@@ -11,6 +11,11 @@ use crate::storage::memories;
 #[derive(clap::Args)]
 pub struct RecallArgs {
     pub query: String,
+    /// Maximum number of direct vector matches to return.
+    ///
+    /// Note: this flag controls only `direct_matches`. Graph traversal results
+    /// (`graph_matches`) are unbounded by default; use `--max-graph-results` to
+    /// cap them independently. The `results` field aggregates both lists.
     #[arg(short = 'k', long, default_value = "10")]
     pub k: usize,
     #[arg(long, value_enum)]
@@ -25,6 +30,13 @@ pub struct RecallArgs {
     pub max_hops: u32,
     #[arg(long, default_value = "0.3")]
     pub min_weight: f64,
+    /// Cap the size of `graph_matches` to at most N entries.
+    ///
+    /// Defaults to unbounded (`None`) so existing pipelines see the same shape
+    /// as in v1.0.22 and earlier. Set this when a query touches a dense graph
+    /// neighbourhood and the caller only needs a top-N preview. Added in v1.0.23.
+    #[arg(long, value_name = "N")]
+    pub max_graph_results: Option<usize>,
     /// Filter results by maximum distance. Results with distance greater than this value
     /// are excluded. If all matches exceed this threshold, the command exits with code 4
     /// (`not found`) per the documented public contract.
@@ -106,6 +118,8 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                 snippet,
                 distance,
                 source: "direct".to_string(),
+                // Direct vector matches do not have a graph depth; rely on `distance`.
+                graph_depth: None,
             });
             memory_ids.push(memory_id);
         }
@@ -132,6 +146,13 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             )?;
 
             for graph_mem_id in graph_memory_ids {
+                // v1.0.23: respect the optional cap on graph results so dense
+                // neighbourhoods do not flood the response unintentionally.
+                if let Some(cap) = args.max_graph_results {
+                    if graph_matches.len() >= cap {
+                        break;
+                    }
+                }
                 let row = {
                     let mut stmt = conn.prepare_cached(
                         "SELECT id, namespace, name, type, description, body, body_hash,
@@ -165,8 +186,16 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                         memory_type: row.memory_type,
                         description: row.description,
                         snippet,
+                        // Kept for backward compatibility; v1.0.23 callers should
+                        // read `graph_depth` instead. Future releases may switch
+                        // this to `f32::NAN` after a deprecation cycle.
                         distance: 0.0,
                         source: "graph".to_string(),
+                        // `traverse_from_memories` does not yet expose per-result
+                        // depth, so we report `Some(0)` as a sentinel meaning
+                        // "unknown depth, but reachable via graph traversal".
+                        // A future release should plumb the real hop count through.
+                        graph_depth: Some(0),
                     });
                 }
             }
@@ -219,6 +248,7 @@ mod testes {
             snippet: "snippet".to_string(),
             distance,
             source: source.to_string(),
+            graph_depth: if source == "graph" { Some(0) } else { None },
         }
     }
 

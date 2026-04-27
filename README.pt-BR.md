@@ -119,6 +119,17 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Fórmula Homebrew planejada sob `brew install sqlite-graphrag`
 - Bucket Scoop planejado sob `scoop install sqlite-graphrag`
 - Imagem Docker planejada como `ghcr.io/daniloaguiarbr/sqlite-graphrag:<version>`
+### Binários pré-compilados (GitHub Releases)
+- `x86_64-unknown-linux-gnu` Linux Intel/AMD 64-bit
+- `aarch64-unknown-linux-gnu` Linux ARM 64-bit (Raspberry Pi 4+, AWS Graviton)
+- `aarch64-apple-darwin` macOS Apple Silicon (M1/M2/M3/M4)
+- `x86_64-pc-windows-msvc` Windows Intel/AMD 64-bit
+- `aarch64-pc-windows-msvc` Windows ARM 64-bit
+### Usuários de Mac Intel (x86_64-apple-darwin)
+- Não há binário pré-compilado para Macs Intel
+- O GitHub aposentou o runner macos-13 em dezembro de 2025 e a Apple descontinuou suporte ao x86_64
+- Compile localmente com `cargo install sqlite-graphrag --locked` (requer Rust 1.88+)
+- Caminho de migração recomendado é para Apple Silicon quando viável
 
 
 ## Uso

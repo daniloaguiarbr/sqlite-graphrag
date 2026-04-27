@@ -185,6 +185,7 @@ fn hybrid_search_response_shape_tem_results() {
             snippet: "trecho".to_string(),
             distance: 0.3,
             source: "graph".to_string(),
+            graph_depth: Some(1),
         }],
     };
 

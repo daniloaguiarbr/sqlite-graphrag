@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-04-27
+
+### Fixed
+- BERT NER subword merge now prefers the longest candidate when multiple sources extract overlapping names. Previously "OpenAI" from regex could lose to "Open" from a BERT subword leak because both deduplicated to the lowercase key `open`. The new logic in `merge_and_deduplicate` retains the strictly longest entry, biasing toward the most specific brand visible in the corpus (P1 fix in `src/extraction.rs`).
+- Versioned model names with a space separator ("Claude 4", "Llama 3", "Python 3") are now extracted as `concept` entities through the new `augment_versioned_model_names` pass. BERT NER frequently classifies these tokens as common nouns and skips them, so the version suffix used to vanish. Hyphenated variants like "GPT-5" remain handled by the existing NER+suffix pipeline (P1 fix in `src/extraction.rs`).
+- `recall` now exposes `graph_depth: Option<u32>` on every `RecallItem`. Direct vector matches set it to `None` (rely on `distance`); graph traversal results set it to `Some(0)` as a sentinel for "reachable via graph, depth not yet tracked precisely". The legacy `distance: 0.0` placeholder remains for backward compatibility but should be treated as deprecated for graph rows (P1 fix in `src/commands/recall.rs` and `src/output.rs`).
+- `remember` now reports `chunks_persisted: usize` alongside `chunks_created: usize` so callers know exactly how many rows landed in `memory_chunks`. Single-chunk bodies report `chunks_persisted: 0` (the memory row itself acts as the chunk) while multi-chunk bodies report `chunks_persisted == chunks_created`. Resolves the v1.0.22 audit finding where short bodies showed `chunks_created: 1` with zero rows persisted (P1 fix in `src/output.rs` and `src/commands/remember.rs`).
+
+### Added
+- `recall --max-graph-results <N>` caps `graph_matches` at most N entries. Defaults to unbounded so v1.0.22 callers see the same shape, but lets dense graph neighbourhoods be capped explicitly. The `-k` docstring now states clearly that it controls only `direct_matches` (P1 UX fix in `src/commands/recall.rs`).
+- README EN now lists the `pt-BR` and `portuguese` aliases for `SQLITE_GRAPHRAG_LANG`. Previously only the PT-BR README mentioned them, leaving English readers unaware (P1 docs sync fix).
+- README EN+PT now document the five pre-built binary targets explicitly and call out that Mac Intel (`x86_64-apple-darwin`) requires building locally because GitHub retired the macos-13 runner in December 2025 and Apple discontinued x86_64 support. Recommended migration is to Apple Silicon (P1 distribution clarity fix).
+- `docs/COOKBOOK.md` and `docs/COOKBOOK.pt-BR.md` taglines now state the correct recipe count of 23 (was incorrectly claiming 15 since the v1.0.22 additions). Counted by `rg -c '^## How To'` in both files (P1 docs accuracy fix).
+
+### Changed
+- `Cargo.toml` version bumped from `1.0.22` to `1.0.23`.
+- `RememberResponse` JSON gains the `chunks_persisted` field (always present); `RecallItem` JSON gains `graph_depth` (omitted when `None` via `skip_serializing_if`). Both additions are forward-compatible for any client that uses lenient JSON parsers.
+
 ## [1.0.22] - 2026-04-27
 
 ### Fixed

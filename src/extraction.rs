@@ -624,19 +624,105 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
         .collect()
 }
 
+/// Captures versioned model names that BERT NER consistently misses.
+///
+/// BERT NER often classifies tokens like "Claude" or "Llama" as common nouns,
+/// failing to emit a B-PER/B-ORG tag. As a result, `extend_with_numeric_suffix`
+/// never sees these candidates and the version suffix gets lost.
+///
+/// This function scans the body with a conservative regex, matching capitalised
+/// words followed by a space-or-hyphen and a small integer. Matches that are not
+/// already covered by an existing entity (case-insensitive) are appended with the
+/// `concept` type, mirroring how `extend_with_numeric_suffix` represents these
+/// items downstream.
+///
+/// Examples covered: "Claude 4", "Llama 3", "Python 3".
+/// Examples already handled upstream and skipped here: "GPT-5", "Apple" without
+/// a numeric suffix.
+fn augment_versioned_model_names(
+    entities: Vec<ExtractedEntity>,
+    body: &str,
+) -> Vec<ExtractedEntity> {
+    static VERSIONED_MODEL_RE: OnceLock<Regex> = OnceLock::new();
+    let model_re = VERSIONED_MODEL_RE
+        .get_or_init(|| Regex::new(r"\b([A-Z][A-Za-z]{2,15})[\s\-]+(\d+(?:\.\d+)?)\b").unwrap());
+
+    let mut existing_lc: std::collections::HashSet<String> =
+        entities.iter().map(|ent| ent.name.to_lowercase()).collect();
+    let mut result = entities;
+
+    for caps in model_re.captures_iter(body) {
+        let full_match = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        // Conservative cap: avoid harvesting multi-word noise like "section 12" inside
+        // long passages. A model name plus a one or two digit suffix fits in 24 chars.
+        if full_match.is_empty() || full_match.len() > 24 {
+            continue;
+        }
+        let normalized_lc = full_match.to_lowercase();
+        if existing_lc.contains(&normalized_lc) {
+            continue;
+        }
+        // Stop appending once the global entity cap is reached to keep parity with
+        // `merge_and_deduplicate` truncation semantics.
+        if result.len() >= MAX_ENTS {
+            break;
+        }
+        existing_lc.insert(normalized_lc);
+        result.push(ExtractedEntity {
+            name: full_match.to_string(),
+            entity_type: "concept".to_string(),
+        });
+    }
+
+    result
+}
+
 fn merge_and_deduplicate(
     regex_ents: Vec<ExtractedEntity>,
     ner_ents: Vec<ExtractedEntity>,
 ) -> Vec<ExtractedEntity> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // v1.0.23: when multiple sources produce overlapping names ("Open" from BERT
+    // subword leak vs "OpenAI" from regex), prefer the longest candidate. The
+    // previous implementation used a HashSet and kept whichever name appeared
+    // first, occasionally yielding truncated brand names like "Open" instead of
+    // "OpenAI". The new logic resolves collisions using a (lowercase prefix) lookup
+    // that retains the longest match while preserving insertion order via `result`.
+    let mut by_lc: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut result: Vec<ExtractedEntity> = Vec::new();
     let mut truncated = false;
 
     let total_input = regex_ents.len() + ner_ents.len();
     for ent in regex_ents.into_iter().chain(ner_ents) {
         let key = ent.name.to_lowercase();
-        if seen.insert(key) {
-            result.push(ent);
+        // Detect prefix collisions in both directions: "open" vs "openai" should
+        // both map to the longest stored candidate. We scan stored keys to find
+        // the longest existing entry that contains or is contained by the new key.
+        let mut collision_idx: Option<usize> = None;
+        for (existing_key, idx) in &by_lc {
+            if existing_key == &key
+                || existing_key.starts_with(&key)
+                || key.starts_with(existing_key)
+            {
+                collision_idx = Some(*idx);
+                break;
+            }
+        }
+        match collision_idx {
+            Some(idx) => {
+                // Replace stored entity only when the new candidate is strictly
+                // longer; otherwise drop the new one. This biases toward the most
+                // specific brand name visible in the corpus.
+                if ent.name.len() > result[idx].name.len() {
+                    let old_key = result[idx].name.to_lowercase();
+                    by_lc.remove(&old_key);
+                    result[idx] = ent;
+                    by_lc.insert(key, idx);
+                }
+            }
+            None => {
+                by_lc.insert(key, result.len());
+                result.push(ent);
+            }
         }
         if result.len() >= MAX_ENTS {
             truncated = true;
@@ -686,7 +772,11 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     let merged = merge_and_deduplicate(regex_entities, ner_entities);
     // v1.0.22: estender entidades NER com sufixos numéricos do body (GPT-5, Claude 4, Python 3).
     let extended = extend_with_numeric_suffix(merged, body);
-    let entities = to_new_entities(extended);
+    // v1.0.23: capture versioned model names that BERT NER does not detect on its own
+    // (e.g. "Claude 4", "Llama 3"). Hyphenated variants like "GPT-5" are already covered
+    // by the NER+suffix pipeline above, but space-separated names need a dedicated pass.
+    let with_models = augment_versioned_model_names(extended, body);
+    let entities = to_new_entities(with_models);
     let relationships = build_relationships(&entities);
 
     let extraction_method = if bert_used {
