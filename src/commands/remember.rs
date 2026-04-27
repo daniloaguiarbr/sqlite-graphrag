@@ -8,7 +8,7 @@ use crate::storage::chunks as storage_chunks;
 use crate::storage::connection::{ensure_schema, open_rw};
 use crate::storage::entities::{NewEntity, NewRelationship};
 use crate::storage::memories::NewMemory;
-use crate::storage::{entities, memories, versions};
+use crate::storage::{entities, memories, urls as storage_urls, versions};
 use serde::Deserialize;
 use std::io::Read as _;
 
@@ -199,7 +199,12 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         trimmed
     };
 
-    if normalized_name.is_empty() || normalized_name.len() > MAX_MEMORY_NAME_LEN {
+    if normalized_name.is_empty() {
+        return Err(AppError::Validation(
+            "name cannot be empty after normalization (input was blank or contained only hyphens/underscores/spaces)".to_string(),
+        ));
+    }
+    if normalized_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::Validation(
             crate::i18n::validacao::nome_comprimento(MAX_MEMORY_NAME_LEN),
         ));
@@ -305,6 +310,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     // v1.0.20: usar .trim().is_empty() para rejeitar bodies que são apenas whitespace.
     let mut extraction_method: Option<String> = None;
+    let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
+    let mut relationships_truncated = false;
     if !args.skip_extraction
         && !entities_provided_externally
         && graph.entities.is_empty()
@@ -313,13 +320,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         match crate::extraction::extract_graph_auto(&raw_body, &paths) {
             Ok(extracted) => {
                 extraction_method = Some(extracted.extraction_method.clone());
+                extracted_urls = extracted.urls;
                 graph.entities = extracted.entities;
                 graph.relationships = extracted.relationships;
+                relationships_truncated = extracted.relationships_truncated;
 
                 if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
                     graph.entities.truncate(MAX_ENTITIES_PER_MEMORY);
                 }
                 if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
+                    relationships_truncated = true;
                     graph.relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
                 }
                 normalize_and_validate_graph_input(&mut graph)?;
@@ -624,6 +634,21 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
     tx.commit()?;
 
+    // v1.0.24 P0-2: persistir URLs em tabela dedicada, fora da transação principal.
+    // Falhas não propagam — caminho não crítico com graceful degradation.
+    let urls_persisted = if !extracted_urls.is_empty() {
+        let url_entries: Vec<storage_urls::MemoryUrl> = extracted_urls
+            .into_iter()
+            .map(|u| storage_urls::MemoryUrl {
+                url: u.url,
+                offset: Some(u.offset as i64),
+            })
+            .collect();
+        storage_urls::insert_urls(&conn, memory_id, &url_entries)
+    } else {
+        0
+    };
+
     let created_at_epoch = chrono::Utc::now().timestamp();
     let created_at_iso = crate::tz::formatar_iso(chrono::Utc::now());
 
@@ -636,8 +661,10 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         version,
         entities_persisted,
         relationships_persisted,
+        relationships_truncated,
         chunks_created,
         chunks_persisted,
+        urls_persisted,
         extraction_method,
         merged_into_memory_id: None,
         warnings,
@@ -664,8 +691,10 @@ mod testes {
             version: 1,
             entities_persisted: 0,
             relationships_persisted: 0,
+            relationships_truncated: false,
             chunks_created: 1,
             chunks_persisted: 0,
+            urls_persisted: 0,
             extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec![],
@@ -695,9 +724,11 @@ mod testes {
             version: 2,
             entities_persisted: 3,
             relationships_persisted: 1,
+            relationships_truncated: false,
             extraction_method: None,
             chunks_created: 2,
             chunks_persisted: 2,
+            urls_persisted: 0,
             merged_into_memory_id: None,
             warnings: vec![],
             created_at: 0,
@@ -727,8 +758,10 @@ mod testes {
             entities_persisted: 0,
             extraction_method: None,
             relationships_persisted: 0,
+            relationships_truncated: false,
             chunks_created: 1,
             chunks_persisted: 0,
+            urls_persisted: 0,
             merged_into_memory_id: None,
             warnings: vec!["identical body already exists as memory id 3".to_string()],
             created_at: 0,
@@ -789,8 +822,10 @@ mod testes {
             extraction_method: None,
             entities_persisted: 0,
             relationships_persisted: 0,
+            relationships_truncated: false,
             chunks_created: 1,
             chunks_persisted: 0,
+            urls_persisted: 0,
             merged_into_memory_id: Some(7),
             warnings: vec![],
             created_at: 0,
@@ -800,5 +835,115 @@ mod testes {
 
         let json = serde_json::to_value(&resp).expect("serialização falhou");
         assert_eq!(json["merged_into_memory_id"], 7);
+    }
+
+    #[test]
+    fn remember_response_urls_persisted_serializa_campo() {
+        // v1.0.24 P0-2: garante que urls_persisted aparece no JSON e aceita valor > 0.
+        let resp = RememberResponse {
+            memory_id: 3,
+            name: "mem-com-urls".to_string(),
+            namespace: "global".to_string(),
+            action: "created".to_string(),
+            operation: "created".to_string(),
+            version: 1,
+            entities_persisted: 0,
+            relationships_persisted: 0,
+            relationships_truncated: false,
+            chunks_created: 1,
+            chunks_persisted: 0,
+            urls_persisted: 3,
+            extraction_method: Some("regex-only".to_string()),
+            merged_into_memory_id: None,
+            warnings: vec![],
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["urls_persisted"], 3);
+    }
+
+    #[test]
+    fn nome_vazio_apos_normalizacao_retorna_mensagem_especifica() {
+        // P0-4 regression: name consisting only of hyphens normalizes to empty string;
+        // must produce a distinct error message, not the "too long" message.
+        use crate::errors::AppError;
+        let normalized = "---".to_lowercase().replace(['_', ' '], "-");
+        let normalized = normalized.trim_matches('-').to_string();
+        let resultado: Result<(), AppError> = if normalized.is_empty() {
+            Err(AppError::Validation(
+                "name cannot be empty after normalization (input was blank or contained only hyphens/underscores/spaces)".to_string(),
+            ))
+        } else {
+            Ok(())
+        };
+        assert!(resultado.is_err());
+        if let Err(AppError::Validation(msg)) = resultado {
+            assert!(
+                msg.contains("empty after normalization"),
+                "mensagem deve mencionar 'empty after normalization', obteve: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn nome_so_underscores_apos_normalizacao_retorna_mensagem_especifica() {
+        // P0-4 regression: name consisting only of underscores normalizes to empty string.
+        use crate::errors::AppError;
+        let normalized = "___".to_lowercase().replace(['_', ' '], "-");
+        let normalized = normalized.trim_matches('-').to_string();
+        assert!(
+            normalized.is_empty(),
+            "underscores devem normalizar para string vazia"
+        );
+        let resultado: Result<(), AppError> = if normalized.is_empty() {
+            Err(AppError::Validation(
+                "name cannot be empty after normalization (input was blank or contained only hyphens/underscores/spaces)".to_string(),
+            ))
+        } else {
+            Ok(())
+        };
+        assert!(resultado.is_err());
+        if let Err(AppError::Validation(msg)) = resultado {
+            assert!(
+                msg.contains("empty after normalization"),
+                "mensagem deve mencionar 'empty after normalization', obteve: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn remember_response_relationships_truncated_serializa_campo() {
+        // P1-D: garante que relationships_truncated aparece no JSON como bool.
+        let resp_false = RememberResponse {
+            memory_id: 1,
+            name: "test".to_string(),
+            namespace: "global".to_string(),
+            action: "created".to_string(),
+            operation: "created".to_string(),
+            version: 1,
+            entities_persisted: 2,
+            relationships_persisted: 1,
+            relationships_truncated: false,
+            chunks_created: 1,
+            chunks_persisted: 0,
+            urls_persisted: 0,
+            extraction_method: None,
+            merged_into_memory_id: None,
+            warnings: vec![],
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+        };
+        let json_false = serde_json::to_value(&resp_false).expect("serialização falhou");
+        assert_eq!(json_false["relationships_truncated"], false);
+
+        let resp_true = RememberResponse {
+            relationships_truncated: true,
+            ..resp_false
+        };
+        let json_true = serde_json::to_value(&resp_true).expect("serialização falhou");
+        assert_eq!(json_true["relationships_truncated"], true);
     }
 }

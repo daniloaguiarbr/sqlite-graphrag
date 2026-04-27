@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.24] - 2026-04-27
+
+### Added
+- BERT NER batch inference via `predict_batch` reduces per-document latency on multi-doc workloads (Phase 3 perf).
+- SQLITE_BUSY and SQLITE_LOCKED retry with exponential backoff in `with_busy_retry`; avoids spurious exit 10 on WAL-mode contention (Phase 3).
+- `spawn_blocking` warm-up for daemon BERT model init prevents blocking the async executor during startup (Phase 3).
+- Schema migration V007: `memory_urls` table with indexes; URLs extracted from BERT NER are now persisted separately instead of leaking into the entity graph (Phase 2).
+- `src/storage/urls.rs` CRUD module providing `upsert_urls`, `get_urls_for_memory` and `delete_urls_for_memory` (Phase 2).
+- `RememberResponse.urls_persisted: usize` field reporting how many URL entries landed in `memory_urls` (Phase 2).
+- `RememberResponse.relationships_truncated: bool` field indicating whether the relationships payload was capped at `max_relationships_per_memory` (Phase 4).
+- `namespace_initial` persisted in `schema_meta` on `init`; `purge` resolves contextually via `SQLITE_GRAPHRAG_NAMESPACE` (Phase 4 P1-A/P1-C).
+- Positional and flag arguments in `read`, `forget`, `history`, `edit`, `rename`; e.g. `sqlite-graphrag read my-note` is equivalent to `sqlite-graphrag read --name my-note` (Phase 4 P1-B).
+- Stopwords list expanded with 17 new entries: `ACEITE`, `ACK`, `ACL`, `BORDA`, `CHECKLIST`, `COMPLETED`, `CONFIRME`, `DEVEMOS`, `DONE`, `FIXED`, `NEGUE`, `PENDING`, `PLAN`, `PODEMOS`, `RECUSE`, `TOKEN`, `VAMOS` (Phase 2 P0-3).
+- NFKC unicode normalization in `merge_and_deduplicate` prevents near-duplicate entities caused by composed vs decomposed Unicode forms (Phase 2 P1-E).
+- Regression tests for `graph` traverse exit 4 when the database is absent (Phase 1 P0-7).
+- Regression tests for positional-plus-flag argument equivalence in `read`, `forget`, `history`, `edit`, `rename` (Phase 4 P1-B).
+
+### Changed
+- `ReadResponse.metadata` is now `serde_json::Value` instead of `String`; agents receive a structured object directly without a second `JSON.parse` call (Phase 5 P2-A).
+- `LinkResponse` simplified: redundant `source` and `target` fields removed; `LinkArgs` no longer accepts `--source`/`--target` flag aliases (Phase 4 P1-O).
+- `purge` no longer defaults namespace to `"global"`; resolves via `SQLITE_GRAPHRAG_NAMESPACE` or explicit `--namespace` (Phase 4 P1-C).
+- `recall --precise` behavior is now documented and internally uses `effective_k = 100000` for exhaustive KNN (Phase 1 P0-6).
+- `init --model` now uses the typed `EmbeddingModelChoice` enum validated at parse time (Phase 1 P0-8).
+- `main.rs` RAM measurement uses `Result` propagation instead of `expect` (Phase 1 P1-G).
+- Daemon warm-up model load moved into `spawn_blocking` to avoid blocking the Tokio executor (Phase 3 P1-I).
+- `augment_versioned_model_names` regex extended to recognize `GPT-4o`, `Claude 4 Sonnet`, `Llama 3 Pro`, `Mixtral 8x7B` patterns (Phase 5 P2-D).
+- `extend_with_numeric_suffix` now accepts alphanumeric suffixes (e.g. `v2`, `3b`, `7B`) in addition to purely numeric ones (Phase 5 P2-E).
+- Graph entity serialization uses `Vec::new()` instead of `Option<Vec>` so the `entities` field is always an array, never `null` (Phase 5 P2-C).
+- `--type` argument docstrings clarified to distinguish memory `type` from `entity_type` (Phase 5 P2-J).
+- `Cargo.toml` version bumped from `1.0.23` to `1.0.24`.
+
+### Fixed
+- `remember` rejects names that normalize to an empty string after kebab-case canonicalization; returns exit 1 with a clear validation message (Phase 4 P0-4).
+- URLs no longer leak into the entity graph; all URL-shaped tokens from BERT NER are now routed to `memory_urls` via V007 (Phase 2 P0-2).
+- `HybridSearchResponse.weights` serialization confirmed correct; field was a no-op phantom flag with no behavioral effect (Phase 4 P1-N).
+
+### Security
+- Added `// SAFETY:` comments to every `unsafe { std::env::set_var(...) }` block in `main.rs` (Phase 1 P1-H).
+- `deny.toml`: `unmaintained` set to `"workspace"` to scope unmaintained-crate checks to workspace members only; reduces false-positive CI failures on transitively unmaintained crates (Phase 5 P2-K).
+- `SQLITE_GRAPHRAG_LANG` invalid value now emits a `tracing::warn!` log instead of silently falling back to English (Phase 1 P1-M).
+
+### Internal
+- 412+ tests passing across all phases.
+- Bundle release: Phases 1, 2, 3, 4 and 5 land in a single commit.
+
 ## [1.0.23] - 2026-04-27
 
 ### Fixed

@@ -10,11 +10,11 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct LinkArgs {
-    /// Source entity. Also accepts the alias `--source`.
-    #[arg(long, alias = "source")]
+    /// Source entity.
+    #[arg(long)]
     pub from: String,
-    /// Target entity. Also accepts the alias `--target`.
-    #[arg(long, alias = "target")]
+    /// Target entity.
+    #[arg(long)]
     pub to: String,
     #[arg(long, value_enum)]
     pub relation: RelationKind,
@@ -34,11 +34,7 @@ pub struct LinkArgs {
 struct LinkResponse {
     action: String,
     from: String,
-    /// Duplicata de `from` para compatibilidade com docs que usam `source`.
-    source: String,
     to: String,
-    /// Duplicata de `to` para compatibilidade com docs que usam `target`.
-    target: String,
     relation: String,
     weight: f64,
     namespace: String,
@@ -102,9 +98,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let response = LinkResponse {
         action: action.clone(),
         from: args.from.clone(),
-        source: args.from.clone(),
         to: args.to.clone(),
-        target: args.to.clone(),
         relation: relation_str.to_string(),
         weight,
         namespace: namespace.clone(),
@@ -129,23 +123,28 @@ mod testes {
     use super::*;
 
     #[test]
-    fn link_response_source_duplica_from() {
+    fn link_response_sem_aliases_redundantes() {
+        // P1-O: campos source/target foram removidos do JSON de resposta.
         let resp = LinkResponse {
             action: "created".to_string(),
             from: "entidade-a".to_string(),
-            source: "entidade-a".to_string(),
             to: "entidade-b".to_string(),
-            target: "entidade-b".to_string(),
             relation: "uses".to_string(),
             weight: 1.0,
             namespace: "default".to_string(),
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialização deve funcionar");
-        assert_eq!(json["source"], json["from"]);
-        assert_eq!(json["target"], json["to"]);
-        assert_eq!(json["source"], "entidade-a");
-        assert_eq!(json["target"], "entidade-b");
+        assert_eq!(json["from"], "entidade-a");
+        assert_eq!(json["to"], "entidade-b");
+        assert!(
+            json.get("source").is_none(),
+            "campo 'source' foi removido em P1-O"
+        );
+        assert!(
+            json.get("target").is_none(),
+            "campo 'target' foi removido em P1-O"
+        );
     }
 
     #[test]
@@ -153,9 +152,7 @@ mod testes {
         let resp = LinkResponse {
             action: "already_exists".to_string(),
             from: "origem".to_string(),
-            source: "origem".to_string(),
             to: "destino".to_string(),
-            target: "destino".to_string(),
             relation: "mentions".to_string(),
             weight: 0.8,
             namespace: "teste".to_string(),
@@ -164,9 +161,7 @@ mod testes {
         let json = serde_json::to_value(&resp).expect("serialização deve funcionar");
         assert!(json.get("action").is_some());
         assert!(json.get("from").is_some());
-        assert!(json.get("source").is_some());
         assert!(json.get("to").is_some());
-        assert!(json.get("target").is_some());
         assert!(json.get("relation").is_some());
         assert!(json.get("weight").is_some());
         assert!(json.get("namespace").is_some());

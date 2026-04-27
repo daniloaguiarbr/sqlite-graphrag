@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.23"
+version = "1.0.24"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -87,6 +87,7 @@ huggingface-hub = { package = "hf-hub", version = "0.4", default-features = fals
 candle-core = { version = "0.10.2", default-features = false }
 candle-nn = { version = "0.10.2", default-features = false }
 candle-transformers = { version = "0.10.2", default-features = false }
+unicode-normalization = "0.1.25"
 
 [target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }

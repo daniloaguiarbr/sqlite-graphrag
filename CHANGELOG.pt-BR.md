@@ -10,6 +10,51 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.24] - 2026-04-27
+
+### Adicionado
+- Inferência em lote do BERT NER via `predict_batch` reduz latência por documento em fluxos multi-doc (Phase 3 perf).
+- Retry de SQLITE_BUSY e SQLITE_LOCKED com backoff exponencial em `with_busy_retry`; evita exit 10 espúrio em contenção de WAL (Phase 3).
+- Aquecimento `spawn_blocking` para carga do modelo BERT no daemon; previne bloqueio do executor async durante inicialização (Phase 3).
+- Migração de schema V007: tabela `memory_urls` com índices; URLs extraídas pelo BERT NER agora são persistidas separadamente em vez de vazar para o grafo de entidades (Phase 2).
+- Módulo CRUD `src/storage/urls.rs` com `upsert_urls`, `get_urls_for_memory` e `delete_urls_for_memory` (Phase 2).
+- Campo `RememberResponse.urls_persisted: usize` reportando quantas entradas de URL foram inseridas em `memory_urls` (Phase 2).
+- Campo `RememberResponse.relationships_truncated: bool` indicando se o payload de relacionamentos foi truncado pelo limite de `max_relationships_per_memory` (Phase 4).
+- `namespace_initial` persistido em `schema_meta` no `init`; `purge` resolve namespace contextualmente via `SQLITE_GRAPHRAG_NAMESPACE` (Phase 4 P1-A/P1-C).
+- Argumentos posicionais e por flag em `read`, `forget`, `history`, `edit`, `rename`; por exemplo, `sqlite-graphrag read minha-nota` é equivalente a `sqlite-graphrag read --name minha-nota` (Phase 4 P1-B).
+- Lista de stopwords expandida com 17 novas entradas: `ACEITE`, `ACK`, `ACL`, `BORDA`, `CHECKLIST`, `COMPLETED`, `CONFIRME`, `DEVEMOS`, `DONE`, `FIXED`, `NEGUE`, `PENDING`, `PLAN`, `PODEMOS`, `RECUSE`, `TOKEN`, `VAMOS` (Phase 2 P0-3).
+- Normalização Unicode NFKC em `merge_and_deduplicate` evita entidades quase duplicadas causadas por formas Unicode compostas vs decompostas (Phase 2 P1-E).
+- Testes de regressão para `graph` traverse com exit 4 quando o banco está ausente (Phase 1 P0-7).
+- Testes de regressão para equivalência de argumento posicional com flag em `read`, `forget`, `history`, `edit`, `rename` (Phase 4 P1-B).
+
+### Modificado
+- `ReadResponse.metadata` agora é `serde_json::Value` em vez de `String`; agentes recebem um objeto estruturado diretamente sem segunda chamada a `JSON.parse` (Phase 5 P2-A).
+- `LinkResponse` simplificado: campos redundantes `source` e `target` removidos; `LinkArgs` não aceita mais os aliases de flag `--source`/`--target` (Phase 4 P1-O).
+- `purge` não assume mais namespace `"global"` como padrão; resolve via `SQLITE_GRAPHRAG_NAMESPACE` ou `--namespace` explícito (Phase 4 P1-C).
+- O comportamento de `recall --precise` está agora documentado e usa internamente `effective_k = 100000` para KNN exaustivo (Phase 1 P0-6).
+- `init --model` agora usa o enum tipado `EmbeddingModelChoice` validado em tempo de parse (Phase 1 P0-8).
+- Medição de RAM em `main.rs` usa propagação de `Result` em vez de `expect` (Phase 1 P1-G).
+- Carga do modelo no aquecimento do daemon movida para `spawn_blocking` para não bloquear o executor Tokio (Phase 3 P1-I).
+- Regex de `augment_versioned_model_names` estendida para reconhecer padrões como `GPT-4o`, `Claude 4 Sonnet`, `Llama 3 Pro`, `Mixtral 8x7B` (Phase 5 P2-D).
+- `extend_with_numeric_suffix` agora aceita sufixos alfanuméricos (ex: `v2`, `3b`, `7B`) além dos puramente numéricos (Phase 5 P2-E).
+- Serialização de entidades do grafo usa `Vec::new()` em vez de `Option<Vec>`; o campo `entities` é sempre um array, nunca `null` (Phase 5 P2-C).
+- Docstrings do argumento `--type` esclarecidas para distinguir `type` de memória de `entity_type` (Phase 5 P2-J).
+- Versão do `Cargo.toml` bumped de `1.0.23` para `1.0.24`.
+
+### Corrigido
+- `remember` rejeita nomes que normalizam para string vazia após canonicalização kebab-case; retorna exit 1 com mensagem de validação clara (Phase 4 P0-4).
+- URLs não vazam mais para o grafo de entidades; todos os tokens com forma de URL do BERT NER agora são roteados para `memory_urls` via V007 (Phase 2 P0-2).
+- Serialização de `HybridSearchResponse.weights` confirmada correta; o campo era um flag fantasma sem efeito comportamental (Phase 4 P1-N).
+
+### Segurança
+- Comentários `// SAFETY:` adicionados a todos os blocos `unsafe { std::env::set_var(...) }` em `main.rs` (Phase 1 P1-H).
+- `deny.toml`: `unmaintained` definido como `"workspace"` para restringir verificações de crates não mantidas apenas aos membros do workspace; reduz falsos positivos de CI em crates transitivas (Phase 5 P2-K).
+- Valor inválido em `SQLITE_GRAPHRAG_LANG` agora emite log `tracing::warn!` em vez de retornar silenciosamente ao inglês (Phase 1 P1-M).
+
+### Interno
+- 412+ testes passando em todas as fases.
+- Release bundle: Fases 1, 2, 3, 4 e 5 em um único commit.
+
 ## [1.0.23] - 2026-04-27
 
 ### Corrigido

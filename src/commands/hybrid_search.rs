@@ -7,6 +7,12 @@ use crate::storage::memories;
 
 use std::collections::HashMap;
 
+/// Arguments for the `hybrid-search` subcommand.
+///
+/// When `--namespace` is omitted the search runs against the `global` namespace,
+/// which is the default namespace used by `remember` when no `--namespace` flag
+/// is provided. Pass an explicit `--namespace` value to search a different
+/// isolated namespace.
 #[derive(clap::Args)]
 pub struct HybridSearchArgs {
     pub query: String,
@@ -18,6 +24,9 @@ pub struct HybridSearchArgs {
     pub weight_vec: f32,
     #[arg(long, default_value = "1.0")]
     pub weight_fts: f32,
+    /// Filter by memory.type. Note: distinct from graph entity_type
+    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
+    /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
     #[arg(long)]

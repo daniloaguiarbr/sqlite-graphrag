@@ -19,7 +19,9 @@ fn main() {
     // evitando que invocações paralelas spawnem dezenas de threads cada.
     // Deve ser definido ANTES de fastembed inicializar a sessão ONNX.
     if std::env::var_os("ORT_NUM_THREADS").is_none() {
-        // SAFETY: single-threaded neste ponto — nenhuma outra thread existe ainda.
+        // SAFETY: called before tokio runtime starts; single-threaded context
+        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
+        // edition; this comment documents the invariant explicitly.
         unsafe {
             std::env::set_var("ORT_NUM_THREADS", "1");
             std::env::set_var("ORT_INTRA_OP_NUM_THREADS", "1");
@@ -31,7 +33,9 @@ fn main() {
     // Limitar pool Rayon a 2 threads — o daemon tokio usa worker_threads=2 e o Rayon
     // compartilha o mesmo processo; threads acima de 2 são desperdício para embeddings sequenciais.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        // SAFETY: single-threaded neste ponto.
+        // SAFETY: called before tokio runtime starts; single-threaded context
+        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
+        // edition; this comment documents the invariant explicitly.
         unsafe {
             std::env::set_var("RAYON_NUM_THREADS", "2");
         }
@@ -45,7 +49,9 @@ fn main() {
     //   - https://onnxruntime.ai/docs/performance/tune-performance/memory.html
     //   - https://github.com/qdrant/fastembed/issues/570
     if std::env::var_os("ORT_DISABLE_CPU_MEM_ARENA").is_none() {
-        // SAFETY: single-threaded neste ponto — nenhuma outra thread existe ainda.
+        // SAFETY: called before tokio runtime starts; single-threaded context
+        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
+        // edition; this comment documents the invariant explicitly.
         unsafe {
             std::env::set_var("ORT_DISABLE_CPU_MEM_ARENA", "1");
         }
@@ -104,6 +110,9 @@ fn main() {
         && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").is_none()
         && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_CHILD").is_none()
     {
+        // SAFETY: called before tokio runtime starts; single-threaded context
+        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
+        // edition; this comment documents the invariant explicitly.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
         }
@@ -162,7 +171,16 @@ fn main() {
         let cpu_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        let available_mb = measured_available_mb.expect("embedding-heavy command must measure RAM");
+        // SAFETY invariant: measured_available_mb is always Some when embedding_heavy is true,
+        // because the block above (lines ~137-157) sets it to Some(available_mb) in that branch.
+        // Using unwrap_or_else with exit instead of ? because main() returns ().
+        let available_mb = measured_available_mb.unwrap_or_else(|| {
+            eprintln!(
+                "{}: embedding-heavy command must measure available RAM",
+                sqlite_graphrag::i18n::prefixo_erro()
+            );
+            std::process::exit(20);
+        });
         let safe_concurrency = calculate_safe_concurrency(
             available_mb,
             cpu_count,

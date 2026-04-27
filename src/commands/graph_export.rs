@@ -462,7 +462,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 |r| r.get(0),
             )?;
             let mut stmt = conn.prepare(
-                "SELECT id, name, type, namespace, created_at FROM entities
+                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
                  WHERE namespace = ?1 AND type = ?2
                  ORDER BY name ASC LIMIT ?3 OFFSET ?4",
             )?;
@@ -478,7 +478,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 |r| r.get(0),
             )?;
             let mut stmt = conn.prepare(
-                "SELECT id, name, type, namespace, created_at FROM entities
+                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
                  WHERE namespace = ?1
                  ORDER BY name ASC LIMIT ?2 OFFSET ?3",
             )?;
@@ -494,7 +494,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 |r| r.get(0),
             )?;
             let mut stmt = conn.prepare(
-                "SELECT id, name, type, namespace, created_at FROM entities
+                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
                  WHERE type = ?1
                  ORDER BY name ASC LIMIT ?2 OFFSET ?3",
             )?;
@@ -506,7 +506,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
         (None, None) => {
             let count: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
             let mut stmt = conn.prepare(
-                "SELECT id, name, type, namespace, created_at FROM entities
+                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
                  ORDER BY name ASC LIMIT ?1 OFFSET ?2",
             )?;
             let rows = stmt
@@ -720,6 +720,24 @@ mod testes {
         assert_eq!(json["entity_type"], "concept");
         assert_eq!(json["namespace"], "project-a");
         assert_eq!(json["created_at"], "2026-04-19T12:00:00Z");
+    }
+
+    #[test]
+    fn entity_item_entity_type_nunca_e_null() {
+        // P2-C: entity_type must never be null, even when DB column is empty.
+        let item = EntityItem {
+            id: 1,
+            name: "sem-tipo".to_string(),
+            entity_type: String::new(),
+            namespace: "ns".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert!(
+            !json["entity_type"].is_null(),
+            "entity_type nao deve ser null"
+        );
+        assert!(json["entity_type"].is_string());
     }
 
     #[test]

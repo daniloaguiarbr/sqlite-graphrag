@@ -9,9 +9,12 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct RenameArgs {
+    /// Current memory name as a positional argument. Alternative to `--name` / `--old`.
+    #[arg(value_name = "NAME", conflicts_with = "name")]
+    pub name_positional: Option<String>,
     /// Current memory name. Also accepts the alias `--old`.
     #[arg(long, alias = "old")]
-    pub name: String,
+    pub name: Option<String>,
     /// New memory name. Also accepts the alias `--new`.
     #[arg(long, alias = "new")]
     pub new_name: String,
@@ -53,6 +56,10 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let _ = args.format;
     use crate::constants::*;
 
+    // Resolve current name from positional or --name/--old flag.
+    let name = args.name_positional.or(args.name).ok_or_else(|| {
+        AppError::Validation("name required: pass as positional argument or via --name".to_string())
+    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     // v1.0.20: trim_matches('-') também remove hífens trailing/leading.
@@ -99,8 +106,8 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     }
     let mut conn = open_rw(&paths.db)?;
 
-    let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &args.name)?
-        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
+    let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &name)?
+        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
@@ -111,7 +118,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         }
     }
 
-    let row = memories::read_by_name(&conn, &namespace, &args.name)?
+    let row = memories::read_by_name(&conn, &namespace, &name)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("memory not found before rename")))?;
 
     let memory_type = row.memory_type.clone();

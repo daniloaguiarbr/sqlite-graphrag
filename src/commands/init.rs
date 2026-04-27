@@ -5,6 +5,17 @@ use crate::pragmas::apply_init_pragmas;
 use crate::storage::connection::open_rw;
 use serde::Serialize;
 
+/// Embedding model choices exposed through `--model`.
+///
+/// Currently only `multilingual-e5-small` is supported. Additional variants
+/// will be added here as new models are integrated; the `value_enum` derive
+/// ensures the CLI rejects unknown strings at parse time rather than at runtime.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmbeddingModelChoice {
+    #[value(name = "multilingual-e5-small")]
+    MultilingualE5Small,
+}
+
 #[derive(clap::Args)]
 pub struct InitArgs {
     /// Path to graphrag.sqlite. Defaults to `./graphrag.sqlite` in the current directory.
@@ -12,15 +23,14 @@ pub struct InitArgs {
     pub db: Option<String>,
     /// Embedding model identifier. Currently only `multilingual-e5-small` is supported.
     /// Reserved for future multi-model support; safe to omit.
-    #[arg(long)]
-    pub model: Option<String>,
+    #[arg(long, value_enum)]
+    pub model: Option<EmbeddingModelChoice>,
     /// Force re-initialization, overwriting any existing schema metadata.
     /// Use only when the schema is corrupted; loses configuration but preserves data.
     #[arg(long)]
     pub force: bool,
-    /// Namespace inicial a resolver. Alinhado à documentação bilíngue que prevê `init --namespace`.
-    /// Se fornecido, sobrepõe `SQLITE_GRAPHRAG_NAMESPACE`; caso contrário, resolve via env
-    /// ou fallback `global`.
+    /// Initial namespace to resolve. Aligned with bilingual docs that mention `init --namespace`.
+    /// When provided, overrides `SQLITE_GRAPHRAG_NAMESPACE`; otherwise resolves via env or fallback `global`.
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
@@ -81,6 +91,11 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('sqlite-graphrag_version', ?1)",
         rusqlite::params![crate::constants::SQLITE_GRAPHRAG_VERSION],
+    )?;
+    // Persist the resolved namespace so downstream tools can inspect it without re-resolving.
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('namespace_initial', ?1)",
+        rusqlite::params![namespace],
     )?;
 
     output::emit_progress_i18n(
@@ -172,5 +187,21 @@ mod testes {
             384,
             "dim deve estar alinhado com EMBEDDING_DIM=384"
         );
+    }
+
+    #[test]
+    fn init_response_namespace_alinhado_com_schema() {
+        // Verify namespace field survives round-trip serialization with correct value.
+        let resp = InitResponse {
+            db_path: "/tmp/x.sqlite".to_string(),
+            schema_version: "6".to_string(),
+            model: "multilingual-e5-small".to_string(),
+            dim: 384,
+            namespace: "meu-projeto".to_string(),
+            status: "ok".to_string(),
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        assert_eq!(json["namespace"], "meu-projeto");
     }
 }

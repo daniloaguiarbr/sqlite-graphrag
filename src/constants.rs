@@ -41,6 +41,12 @@ pub const MAX_BODY_CHARS_BEFORE_CHUNK: usize = 8_000;
 /// Maximum attempts when a statement returns `SQLITE_BUSY`.
 pub const MAX_SQLITE_BUSY_RETRIES: u32 = 5;
 
+/// Base delay in milliseconds for the first SQLITE_BUSY retry.
+///
+/// Each subsequent attempt doubles the delay (exponential backoff):
+/// 300 ms → 600 ms → 1200 ms → 2400 ms → 4800 ms (≈ 9.3 s total).
+pub const SQLITE_BUSY_BASE_DELAY_MS: u64 = 300;
+
 /// Query timeout applied to statements in milliseconds.
 pub const QUERY_TIMEOUT_MILLIS: u64 = 5_000;
 
@@ -164,6 +170,25 @@ pub const QUERY_PREFIX: &str = "query: ";
 
 /// Crate version string sourced from `CARGO_PKG_VERSION` at build time.
 pub const SQLITE_GRAPHRAG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Batch size for BERT NER forward passes.
+///
+/// Larger values amortise fixed forward-pass overhead but increase peak RAM.
+/// Memory guide (CPU only, max 512-token windows):
+///   N=4  → ~54 MiB peak
+///   N=8  → ~108 MiB peak  ← default
+///   N=16 → ~216 MiB peak
+///   N=32 → ~432 MiB peak  (not recommended without 16+ GiB RAM)
+///
+/// Override via `GRAPHRAG_NER_BATCH_SIZE` env var. Values outside [1, 32] are
+/// clamped silently.
+pub fn ner_batch_size() -> usize {
+    std::env::var("GRAPHRAG_NER_BATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8)
+        .clamp(1, 32)
+}
 
 /// PRD-canonical regex que valida nomes e namespaces. Permite 1 char `[a-z0-9]`
 /// OU string de 2-80 chars começando com letra e terminando com letra/dígito,

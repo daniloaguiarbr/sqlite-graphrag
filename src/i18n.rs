@@ -33,13 +33,18 @@ impl Language {
 
     pub fn from_env_or_locale() -> Self {
         if let Ok(v) = std::env::var("SQLITE_GRAPHRAG_LANG") {
-            let v = v.to_lowercase();
-            if v.starts_with("pt") {
+            let lower = v.to_lowercase();
+            if lower.starts_with("pt") {
                 return Language::Portugues;
             }
-            if v.starts_with("en") {
+            if lower.starts_with("en") {
                 return Language::English;
             }
+            // Unrecognized value: warn and fall through to locale detection.
+            tracing::warn!(
+                value = %v,
+                "SQLITE_GRAPHRAG_LANG value not recognized, falling back to locale detection"
+            );
         }
         for var in &["LC_ALL", "LANG"] {
             if let Ok(v) = std::env::var(var) {

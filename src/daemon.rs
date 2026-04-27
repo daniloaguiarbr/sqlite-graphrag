@@ -220,8 +220,13 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
     // SIGKILL não dispara Drop; nesse caso try_overwrite(true) acima é o fallback.
     let _spawn_guard = DaemonSpawnGuard::new(models_dir);
 
-    // Warm the model once per daemon process.
-    let _ = embedder::get_embedder(models_dir)?;
+    // Warm the model once per daemon process inside spawn_blocking so the
+    // ONNX session initialisation (CPU-bound, may take several seconds) does
+    // not block a tokio worker thread.
+    let models_dir_warm = models_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || embedder::get_embedder(&models_dir_warm).map(|_| ()))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("model warm-up panicked: {e}")))??;
 
     crate::output::emit_json(&DaemonResponse::Listening {
         pid: std::process::id(),

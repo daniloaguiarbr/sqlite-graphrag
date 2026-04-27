@@ -6,6 +6,7 @@
 
 use crate::embedder::f32_to_bytes;
 use crate::errors::AppError;
+use crate::storage::utils::with_busy_retry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
@@ -83,22 +84,21 @@ pub fn upsert_entity_vec(
     embedding: &[f32],
     name: &str,
 ) -> Result<(), AppError> {
-    conn.execute(
-        "DELETE FROM vec_entities WHERE entity_id = ?1",
-        params![entity_id],
-    )?;
-    conn.execute(
-        "INSERT INTO vec_entities(entity_id, namespace, type, embedding, name)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            entity_id,
-            namespace,
-            entity_type,
-            f32_to_bytes(embedding),
-            name
-        ],
-    )?;
-    Ok(())
+    // Both statements wrapped in with_busy_retry: WAL concurrency can cause
+    // SQLITE_BUSY on vec0 virtual table writes when multiple CLI instances run.
+    let embedding_bytes = f32_to_bytes(embedding);
+    with_busy_retry(|| {
+        conn.execute(
+            "DELETE FROM vec_entities WHERE entity_id = ?1",
+            params![entity_id],
+        )?;
+        conn.execute(
+            "INSERT INTO vec_entities(entity_id, namespace, type, embedding, name)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![entity_id, namespace, entity_type, &embedding_bytes, name],
+        )?;
+        Ok(())
+    })
 }
 
 /// Upserts a typed relationship between two entity ids.

@@ -388,7 +388,13 @@ fn schema_meta_campos_obrigatorios_existem() {
     let (_tmp, db_path) = init_db_isolado();
     let conn = conn_ro(&db_path);
 
-    let chaves_esperadas = ["schema_version", "model", "dim", "created_at"];
+    let chaves_esperadas = [
+        "schema_version",
+        "model",
+        "dim",
+        "created_at",
+        "namespace_initial",
+    ];
 
     for chave in chaves_esperadas {
         let count: i64 = conn

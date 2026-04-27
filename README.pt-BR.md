@@ -147,6 +147,8 @@ sqlite-graphrag remember \
   --description "prefira Postgres real a mocks SQLite" \
   --body "Testes de integração devem usar banco real."
 ```
+- A resposta JSON de `remember` inclui `urls_persisted` (URLs roteadas para a tabela `memory_urls`) e `relationships_truncated` (bool, ativo quando relacionamentos foram truncados)
+- URLs são armazenadas em `memory_urls` via schema V007 e nunca poluem o grafo de entidades
 ### Pule auto-extração BERT NER para ingestão mais rápida
 - `--skip-extraction` desabilita `extract_graph_auto` apenas para a chamada atual
 - Use quando o body é curto, quando você fornece `--entities-file` upstream, ou quando memória do CI é restrita
@@ -159,6 +161,16 @@ sqlite-graphrag remember \
   --skip-extraction \
   --body-stdin < notas.md
 ```
+### Leia, esqueça, edite e renomeie usando argumento posicional
+```bash
+sqlite-graphrag read testes-integracao-postgres --json
+sqlite-graphrag forget testes-integracao-postgres
+sqlite-graphrag history testes-integracao-postgres --json
+sqlite-graphrag edit testes-integracao-postgres --body "Corpo atualizado."
+sqlite-graphrag rename testes-integracao-postgres --new testes-postgres
+```
+- Nome posicional é equivalente a `--name <nome>` para `read`, `forget`, `history`, `edit` e `rename`
+
 ### Busque memórias por similaridade semântica
 ```bash
 sqlite-graphrag recall "testes integração postgres" --k 3 --json
@@ -196,12 +208,12 @@ sqlite-graphrag purge --retention-days 90 --yes
 | --- | --- | --- |
 | `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Salva memória com grafo de entidades opcional |
 | `recall` | `<query>`, `--k`, `--type` | Busca memórias semanticamente via KNN |
-| `read` | `--name <nome>` | Recupera memória por nome kebab-case exato |
+| `read` | `[nome]` ou `--name <nome>` | Recupera memória por nome kebab-case exato |
 | `list` | `--type`, `--limit`, `--offset` | Pagina memórias ordenadas por `updated_at` |
-| `forget` | `--name <nome>` | Remove memória logicamente preservando histórico |
-| `rename` | `--old <nome>`, `--new <nome>` | Renomeia memória mantendo versões |
-| `edit` | `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
-| `history` | `--name <nome>` | Lista todas as versões da memória |
+| `forget` | `[nome]` ou `--name <nome>` | Remove memória logicamente preservando histórico |
+| `rename` | `[antigo]` ou `--old <nome>`, `--new <nome>` | Renomeia memória mantendo versões |
+| `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
+| `history` | `[nome]` ou `--name <nome>` | Lista todas as versões da memória |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
 ### Recuperação e grafo
 | Comando | Argumentos | Descrição |

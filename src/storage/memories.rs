@@ -6,6 +6,7 @@
 
 use crate::embedder::f32_to_bytes;
 use crate::errors::AppError;
+use crate::storage::utils::with_busy_retry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
@@ -220,24 +221,29 @@ pub fn upsert_vec(
     snippet: &str,
 ) -> Result<(), AppError> {
     // sqlite-vec virtual tables do not support INSERT OR REPLACE semantics.
-    // Must delete the existing row first, then insert.
-    conn.execute(
-        "DELETE FROM vec_memories WHERE memory_id = ?1",
-        params![memory_id],
-    )?;
-    conn.execute(
-        "INSERT INTO vec_memories(memory_id, namespace, type, embedding, name, snippet)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            memory_id,
-            namespace,
-            memory_type,
-            f32_to_bytes(embedding),
-            name,
-            snippet
-        ],
-    )?;
-    Ok(())
+    // Must delete the existing row first, then insert.  Both statements are
+    // wrapped in `with_busy_retry` because WAL-mode concurrent writers can
+    // cause SQLITE_BUSY on vec0 virtual table writes.
+    let embedding_bytes = f32_to_bytes(embedding);
+    with_busy_retry(|| {
+        conn.execute(
+            "DELETE FROM vec_memories WHERE memory_id = ?1",
+            params![memory_id],
+        )?;
+        conn.execute(
+            "INSERT INTO vec_memories(memory_id, namespace, type, embedding, name, snippet)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                memory_id,
+                namespace,
+                memory_type,
+                &embedding_bytes,
+                name,
+                snippet
+            ],
+        )?;
+        Ok(())
+    })
 }
 
 /// Deletes the vector row for `memory_id` from `vec_memories`.

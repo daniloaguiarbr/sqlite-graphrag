@@ -8,10 +8,13 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct ForgetArgs {
+    /// Memory name as a positional argument. Alternative to `--name`.
+    #[arg(value_name = "NAME", conflicts_with = "name")]
+    pub name_positional: Option<String>,
     /// Memory name to soft-delete. The row is preserved with `deleted_at` set, recoverable via `restore`.
     /// Use `purge` to permanently remove soft-deleted memories.
     #[arg(long)]
-    pub name: String,
+    pub name: Option<String>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
@@ -31,6 +34,10 @@ struct ForgetResponse {
 
 pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    // Resolve name from positional or --name flag; both are optional, at least one is required.
+    let name = args.name_positional.or(args.name).ok_or_else(|| {
+        AppError::Validation("name required: pass as positional argument or via --name".to_string())
+    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
@@ -41,12 +48,12 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
 
     let conn = open_rw(&paths.db)?;
 
-    let maybe_row = memories::read_by_name(&conn, &namespace, &args.name)?;
-    let forgotten = memories::soft_delete(&conn, &namespace, &args.name)?;
+    let maybe_row = memories::read_by_name(&conn, &namespace, &name)?;
+    let forgotten = memories::soft_delete(&conn, &namespace, &name)?;
 
     if !forgotten {
         return Err(AppError::NotFound(erros::memoria_nao_encontrada(
-            &args.name, &namespace,
+            &name, &namespace,
         )));
     }
 
@@ -62,7 +69,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
 
     output::emit_json(&ForgetResponse {
         forgotten: true,
-        name: args.name,
+        name,
         namespace,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;

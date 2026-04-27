@@ -9,7 +9,8 @@ use serde::Serialize;
 pub struct PurgeArgs {
     #[arg(long)]
     pub name: Option<String>,
-    #[arg(long, default_value = "global")]
+    /// Namespace to purge. Defaults to the contextual namespace (SQLITE_GRAPHRAG_NAMESPACE env var or "global").
+    #[arg(long)]
     pub namespace: Option<String>,
     /// Dias de retenção: memórias com deleted_at mais antigo que (now - retention_days*86400) serão
     /// permanentemente removidas. Default: PURGE_RETENTION_DAYS_DEFAULT (90).
@@ -44,6 +45,10 @@ pub struct PurgeResponse {
     pub elapsed_ms: u64,
 }
 
+/// Permanently delete soft-deleted memories that have exceeded the retention window.
+///
+/// Only memories with `deleted_at IS NOT NULL AND deleted_at <= cutoff_epoch` are affected.
+/// When `--dry-run` is set the DELETE is skipped and the response reflects candidates only.
 pub fn run(args: PurgeArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -346,6 +351,20 @@ mod tests {
             oldest,
             Some(epoch_antigo),
             "oldest_deleted_at deve ser o epoch mais antigo"
+        );
+    }
+
+    #[test]
+    fn purge_args_namespace_aceita_none_sem_default() {
+        // P1-C: namespace deve ser None quando não fornecido, permitindo resolve_namespace
+        // consultar SQLITE_GRAPHRAG_NAMESPACE antes de cair em "global".
+        // O campo era `default_value = "global"` antes de P1-C; com isso removido,
+        // resolve_namespace(None) consulta o env var corretamente.
+        let resolved = crate::namespace::resolve_namespace(None)
+            .expect("resolve_namespace(None) deve retornar Ok");
+        assert_eq!(
+            resolved, "global",
+            "sem env var, resolve_namespace(None) deve cair em 'global'"
         );
     }
 

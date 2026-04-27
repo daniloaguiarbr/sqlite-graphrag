@@ -8,6 +8,12 @@ use crate::storage::connection::open_ro;
 use crate::storage::entities;
 use crate::storage::memories;
 
+/// Arguments for the `recall` subcommand.
+///
+/// When `--namespace` is omitted the query runs against the `global` namespace,
+/// which is the default namespace used by `remember` when no `--namespace` flag
+/// is provided. Pass an explicit `--namespace` value to search a different
+/// isolated namespace.
 #[derive(clap::Args)]
 pub struct RecallArgs {
     pub query: String,
@@ -18,12 +24,20 @@ pub struct RecallArgs {
     /// cap them independently. The `results` field aggregates both lists.
     #[arg(short = 'k', long, default_value = "10")]
     pub k: usize,
+    /// Filter by memory.type. Note: distinct from graph entity_type
+    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
+    /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long)]
     pub no_graph: bool,
+    /// Disable -k cap and return all direct matches without truncation.
+    ///
+    /// When set, the `-k`/`--k` flag is ignored for `direct_matches` and the
+    /// response includes every match above the distance threshold. Useful when
+    /// callers need the complete set rather than a top-N preview.
     #[arg(long)]
     pub precise: bool,
     #[arg(long, default_value = "2")]
@@ -78,7 +92,11 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let conn = open_ro(&paths.db)?;
 
     let memory_type_str = args.r#type.map(|t| t.as_str());
-    let knn_results = memories::knn_search(&conn, &embedding, &namespace, memory_type_str, args.k)?;
+    // When --precise is set, lift the -k cap so every match is returned; the
+    // max_distance filter below will trim irrelevant results instead.
+    let effective_k = if args.precise { 100_000 } else { args.k };
+    let knn_results =
+        memories::knn_search(&conn, &embedding, &namespace, memory_type_str, effective_k)?;
 
     let mut direct_matches = Vec::new();
     let mut memory_ids: Vec<i64> = Vec::new();

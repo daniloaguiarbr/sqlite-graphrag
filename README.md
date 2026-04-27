@@ -147,6 +147,8 @@ sqlite-graphrag remember \
   --description "prefer real Postgres over SQLite mocks" \
   --body "Integration tests must hit a real database."
 ```
+- `remember` JSON response includes `urls_persisted` (URLs routed to `memory_urls` table) and `relationships_truncated` (bool, set when relationships were capped)
+- URLs are stored in `memory_urls` via schema V007 and never pollute the entity graph
 ### Skip BERT NER auto-extraction for faster ingestion
 - `--skip-extraction` disables `extract_graph_auto` for the current call only
 - Use it when the body is short, when you supply `--entities-file` upstream, or when CI memory is tight
@@ -159,6 +161,16 @@ sqlite-graphrag remember \
   --skip-extraction \
   --body-stdin < notes.md
 ```
+### Read, forget, edit and rename using positional name argument
+```bash
+sqlite-graphrag read integration-tests-postgres --json
+sqlite-graphrag forget integration-tests-postgres
+sqlite-graphrag history integration-tests-postgres --json
+sqlite-graphrag edit integration-tests-postgres --body "Updated body text."
+sqlite-graphrag rename integration-tests-postgres --new postgres-tests
+```
+- Positional name is equivalent to `--name <name>` for `read`, `forget`, `history`, `edit` and `rename`
+
 ### Recall memories by semantic similarity
 ```bash
 sqlite-graphrag recall "postgres integration tests" --k 3 --json
@@ -196,12 +208,12 @@ sqlite-graphrag purge --retention-days 90 --yes
 | --- | --- | --- |
 | `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Save a memory with optional entity graph |
 | `recall` | `<query>`, `--k`, `--type` | Search memories semantically via KNN |
-| `read` | `--name <name>` | Fetch a memory by exact kebab-case name |
+| `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |
-| `forget` | `--name <name>` | Soft-delete a memory preserving history |
-| `rename` | `--old <name>`, `--new <name>` | Rename a memory while keeping versions |
-| `edit` | `--name`, `--body`, `--description` | Edit body or description creating new version |
-| `history` | `--name <name>` | List all versions of a memory |
+| `forget` | `[name]` or `--name <name>` | Soft-delete a memory preserving history |
+| `rename` | `[old]` or `--old <name>`, `--new <name>` | Rename a memory while keeping versions |
+| `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
+| `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
 ### Retrieval and graph
 | Command | Arguments | Description |

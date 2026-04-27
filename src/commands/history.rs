@@ -9,10 +9,13 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct HistoryArgs {
+    /// Memory name as a positional argument. Alternative to `--name`.
+    #[arg(value_name = "NAME", conflicts_with = "name")]
+    pub name_positional: Option<String>,
     /// Memory name whose version history will be returned. Includes soft-deleted memories
     /// so that `restore --version <V>` workflow remains discoverable after `forget`.
     #[arg(long)]
-    pub name: String,
+    pub name: Option<String>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
@@ -50,6 +53,10 @@ struct HistoryResponse {
 
 pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    // Resolve name from positional or --name flag; both are optional, at least one is required.
+    let name = args.name_positional.or(args.name).ok_or_else(|| {
+        AppError::Validation("name required: pass as positional argument or via --name".to_string())
+    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
@@ -65,12 +72,12 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let row: Option<(i64, Option<i64>)> = conn
         .query_row(
             "SELECT id, deleted_at FROM memories WHERE namespace = ?1 AND name = ?2",
-            params![namespace, args.name],
+            params![namespace, name],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let (memory_id, deleted_at) = row
-        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
+    let (memory_id, deleted_at) =
+        row.ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
     let deleted = deleted_at.is_some();
 
     let mut stmt = conn.prepare(
@@ -101,7 +108,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
         .collect::<Result<Vec<_>, _>>()?;
 
     output::emit_json(&HistoryResponse {
-        name: args.name,
+        name,
         namespace,
         deleted,
         versions,

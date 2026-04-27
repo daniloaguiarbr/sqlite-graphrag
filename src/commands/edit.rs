@@ -9,9 +9,12 @@ use std::io::Read as _;
 
 #[derive(clap::Args)]
 pub struct EditArgs {
+    /// Memory name as a positional argument. Alternative to `--name`.
+    #[arg(value_name = "NAME", conflicts_with = "name")]
+    pub name_positional: Option<String>,
     /// Memory name to edit. Soft-deleted memories are not editable; use `restore` first.
     #[arg(long)]
-    pub name: String,
+    pub name: Option<String>,
     /// New inline body content. Mutually exclusive with --body-file and --body-stdin.
     #[arg(long, conflicts_with_all = ["body_file", "body_stdin"])]
     pub body: Option<String>,
@@ -54,6 +57,10 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
+    // Resolve name from positional or --name flag; both are optional, at least one is required.
+    let name = args.name_positional.or(args.name).ok_or_else(|| {
+        AppError::Validation("name required: pass as positional argument or via --name".to_string())
+    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -65,9 +72,8 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _current_version) =
-        memories::find_by_name(&conn, &namespace, &args.name)?.ok_or_else(|| {
-            AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace))
-        })?;
+        memories::find_by_name(&conn, &namespace, &name)?
+            .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
@@ -107,7 +113,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         }
     }
 
-    let row = memories::read_by_name(&conn, &namespace, &args.name)?
+    let row = memories::read_by_name(&conn, &namespace, &name)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("memory row not found after check")))?;
 
     let new_body = raw_body.unwrap_or(row.body.clone());
@@ -144,7 +150,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         &tx,
         memory_id,
         next_v,
-        &args.name,
+        &name,
         &memory_type,
         &new_description,
         &new_body,
@@ -157,7 +163,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 
     output::emit_json(&EditResponse {
         memory_id,
-        name: args.name,
+        name,
         action: "updated".to_string(),
         version: next_v,
         elapsed_ms: inicio.elapsed().as_millis() as u64,

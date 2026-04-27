@@ -10,6 +10,9 @@ use serde::Serialize;
 pub struct ListArgs {
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    /// Filter by memory.type. Note: distinct from graph entity_type
+    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
+    /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
     #[arg(long, default_value = "50")]

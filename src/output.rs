@@ -64,8 +64,11 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
 ///     version: 1,
 ///     entities_persisted: 0,
 ///     relationships_persisted: 0,
+///     relationships_truncated: false,
 ///     chunks_created: 1,
 ///     chunks_persisted: 0,
+///     urls_persisted: 0,
+///     extraction_method: None,
 ///     merged_into_memory_id: None,
 ///     warnings: vec![],
 ///     created_at: 1_700_000_000,
@@ -77,6 +80,8 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
 /// assert!(json.contains("\"memory_id\":1"));
 /// assert!(json.contains("\"elapsed_ms\":42"));
 /// assert!(json.contains("\"merged_into_memory_id\":null"));
+/// assert!(json.contains("\"urls_persisted\":0"));
+/// assert!(json.contains("\"relationships_truncated\":false"));
 /// ```
 #[derive(Serialize)]
 pub struct RememberResponse {
@@ -89,6 +94,9 @@ pub struct RememberResponse {
     pub version: i64,
     pub entities_persisted: usize,
     pub relationships_persisted: usize,
+    /// True when the relationship builder hit the cap before covering all entity pairs.
+    /// Callers can use this to decide whether to increase GRAPHRAG_MAX_RELATIONSHIPS_PER_MEMORY.
+    pub relationships_truncated: bool,
     /// Total chunks produced by the hierarchical splitter for this body.
     ///
     /// For single-chunk bodies this equals 1 even though no row is added to
@@ -101,6 +109,10 @@ pub struct RememberResponse {
     /// equals `chunks_created` for multi-chunk bodies. Added in v1.0.23 to
     /// disambiguate from `chunks_created` and reflect database state precisely.
     pub chunks_persisted: usize,
+    /// Number of unique URLs inserted into `memory_urls` for this memory.
+    /// Added in v1.0.24 — split URLs out of the entity graph (P0-2 fix).
+    #[serde(default)]
+    pub urls_persisted: usize,
     /// Método de extração usado: "bert+regex" ou "regex-only". None se skip-extraction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction_method: Option<String>,
@@ -242,8 +254,10 @@ mod tests {
             version: 1,
             entities_persisted: 2,
             relationships_persisted: 3,
+            relationships_truncated: false,
             chunks_created: 4,
             chunks_persisted: 4,
+            urls_persisted: 2,
             extraction_method: None,
             merged_into_memory_id: None,
             warnings: vec!["aviso".to_string()],
@@ -260,6 +274,8 @@ mod tests {
         assert!(json.contains("\"created_at\""));
         assert!(json.contains("\"created_at_iso\""));
         assert!(json.contains("\"elapsed_ms\""));
+        assert!(json.contains("\"urls_persisted\""));
+        assert!(json.contains("\"relationships_truncated\":false"));
     }
 
     #[test]

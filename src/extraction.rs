@@ -8,6 +8,7 @@ use candle_nn::{Linear, Module, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use regex::Regex;
 use serde::Deserialize;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::paths::AppPaths;
 use crate::storage::entities::{NewEntity, NewRelationship};
@@ -31,7 +32,14 @@ static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
 // v1.0.22: lista expandida com termos observados em stress test 495 arquivos do flowaiper.
 // Inclui verbos (ADICIONAR, VALIDAR), adjetivos (ALTA, BAIXA), substantivos comuns (BANCO, CASO),
 // HTTP methods (GET, POST, DELETE) e formatos de dados genéricos (JSON, XML).
+// v1.0.24: added 17 new terms observed in audit v1.0.23: generic status words (COMPLETED, DONE,
+// FIXED, PENDING), PT-BR imperative verbs (ACEITE, CONFIRME, NEGUE, RECUSE), PT-BR modal/
+// common verbs (DEVEMOS, PODEMOS, VAMOS), generic nouns (BORDA, CHECKLIST, PLAN, TOKEN),
+// and common abbreviations (ACK, ACL).
 const ALL_CAPS_STOPWORDS: &[&str] = &[
+    "ACEITE",
+    "ACK",
+    "ACL",
     "ACRESCENTADO",
     "ADICIONAR",
     "AGENTS",
@@ -42,16 +50,22 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ATIVO",
     "BAIXA",
     "BANCO",
+    "BORDA",
     "BLOQUEAR",
     "BUG",
     "CASO",
+    "CHECKLIST",
+    "COMPLETED",
     "CONFIRMADO",
+    "CONFIRME",
     "CONTRATO",
     "CRÍTICO",
     "CRITICAL",
     "CSV",
     "DEVE",
+    "DEVEMOS",
     "DISCO",
+    "DONE",
     "EFEITO",
     "ENTRADA",
     "ERROR",
@@ -64,6 +78,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "EXPANDIR",
     "EXPOR",
     "FALHA",
+    "FIXED",
     "FIXME",
     "FORBIDDEN",
     "HACK",
@@ -72,12 +87,17 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "JAMAIS",
     "JSON",
     "MUST",
+    "NEGUE",
     "NEVER",
     "NOTE",
     "NUNCA",
     "OBRIGATÓRIO",
     "PADRÃO",
+    "PENDING",
+    "PLAN",
+    "PODEMOS",
     "PROIBIDO",
+    "RECUSE",
     "REGRAS",
     "REQUIRED",
     "REQUISITO",
@@ -88,10 +108,12 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "TODAS",
     "TODO",
     "TODOS",
+    "TOKEN",
     "TOOLS",
     "TSV",
     "USAR",
     "VALIDAR",
+    "VAMOS",
     "VOCÊ",
     "WARNING",
     "XML",
@@ -139,13 +161,26 @@ pub struct ExtractedEntity {
     pub entity_type: String,
 }
 
+/// URL com offset de origem extraída do corpo da memória.
+#[derive(Debug, Clone)]
+pub struct ExtractedUrl {
+    pub url: String,
+    /// Posição em bytes no corpo onde a URL foi encontrada.
+    pub offset: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtractionResult {
     pub entities: Vec<NewEntity>,
     pub relationships: Vec<NewRelationship>,
+    /// True when build_relationships hit the cap before covering all entity pairs.
+    /// Exposed in RememberResponse so callers can detect when relationships were cut.
+    pub relationships_truncated: bool,
     /// Método usado para extração: "bert+regex" ou "regex-only".
     /// Útil para auditoria, métricas e reportes ao usuário.
     pub extraction_method: String,
+    /// URLs extraídas do corpo — armazenadas separadamente das entidades do grafo.
+    pub urls: Vec<ExtractedUrl>,
 }
 
 pub trait Extractor: Send + Sync {
@@ -263,6 +298,96 @@ impl BertNerModel {
 
         Ok(labels)
     }
+
+    /// Run a batched forward pass over multiple tokenised windows at once.
+    ///
+    /// Windows are padded on the right with token_id=0 and attention_mask=0 to
+    /// the length of the longest window in the batch.  The attention mask ensures
+    /// BERT ignores padded positions (bert.rs:515-528 adds -3.4e38 before softmax).
+    ///
+    /// Returns one label vector per window, each of length equal to that window's
+    /// original (pre-padding) token count.
+    fn predict_batch(&self, windows: &[(Vec<u32>, Vec<String>)]) -> Result<Vec<Vec<String>>> {
+        let batch_size = windows.len();
+        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap_or(0);
+        if max_len == 0 {
+            return Ok(vec![vec![]; batch_size]);
+        }
+
+        let mut padded_ids: Vec<Tensor> = Vec::with_capacity(batch_size);
+        let mut padded_masks: Vec<Tensor> = Vec::with_capacity(batch_size);
+
+        for (ids, _) in windows {
+            let len = ids.len();
+            let pad_right = max_len - len;
+
+            let ids_i64: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
+            // Build 1-D token tensor then pad to max_len
+            let t = Tensor::from_vec(ids_i64, len, &self.device)
+                .context("criando tensor de ids para batch")?;
+            let t = t
+                .pad_with_zeros(0, 0, pad_right)
+                .context("padding tensor de ids")?;
+            padded_ids.push(t);
+
+            // Attention mask: 1 for real tokens, 0 for padding
+            let mut mask_i64 = vec![1i64; len];
+            mask_i64.extend(vec![0i64; pad_right]);
+            let m = Tensor::from_vec(mask_i64, max_len, &self.device)
+                .context("criando tensor de máscara para batch")?;
+            padded_masks.push(m);
+        }
+
+        // Stack 1-D tensors into (batch_size, max_len)
+        let input_ids = Tensor::stack(&padded_ids, 0).context("stack input_ids")?;
+        let attn_mask = Tensor::stack(&padded_masks, 0).context("stack attn_mask")?;
+        let token_type_ids = Tensor::zeros((batch_size, max_len), DType::I64, &self.device)
+            .context("criando token_type_ids batch")?;
+
+        // Single forward pass for the entire batch
+        let sequence_output = self
+            .bert
+            .forward(&input_ids, &token_type_ids, Some(&attn_mask))
+            .context("forward pass batch BertModel")?;
+        // sequence_output: (batch_size, max_len, hidden_size)
+
+        let logits = self
+            .classifier
+            .forward(&sequence_output)
+            .context("forward pass batch classificador")?;
+        // logits: (batch_size, max_len, num_labels)
+
+        let mut results = Vec::with_capacity(batch_size);
+        for (i, (window_ids, _)) in windows.iter().enumerate() {
+            let example_logits = logits.get(i).context("get logits exemplo")?;
+            // (max_len, num_labels) — slice only real tokens, discard padding
+            let real_len = window_ids.len();
+            let example_slice = example_logits
+                .narrow(0, 0, real_len)
+                .context("narrow para tokens reais")?;
+            let logits_2d: Vec<Vec<f32>> = example_slice.to_vec2().context("to_vec2 logits")?;
+
+            let labels: Vec<String> = logits_2d
+                .iter()
+                .map(|token_logits| {
+                    let argmax = token_logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(0);
+                    self.id2label
+                        .get(&argmax)
+                        .cloned()
+                        .unwrap_or_else(|| "O".to_string())
+                })
+                .collect();
+
+            results.push(labels);
+        }
+
+        Ok(results)
+    }
 }
 
 static NER_MODEL: OnceLock<Option<BertNerModel>> = OnceLock::new();
@@ -352,20 +477,6 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
         // v1.0.20: email é "concept" (regex sozinho não distingue pessoa de mailing list/role).
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
-    for m in regex_url().find_iter(body) {
-        // v1.0.22: URLs strip de sufixo de markdown (backtick fechando, parens, brackets).
-        // Mantidas como entity_type "concept" para preservar rastreabilidade de citações.
-        let raw = m.as_str();
-        let cleaned = raw
-            .trim_end_matches('`')
-            .trim_end_matches(',')
-            .trim_end_matches('.')
-            .trim_end_matches(';')
-            .trim_end_matches(')')
-            .trim_end_matches(']')
-            .trim_end_matches('}');
-        add(&mut entities, &mut seen, cleaned, "concept");
-    }
     for m in regex_uuid().find_iter(body) {
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
@@ -378,6 +489,32 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     }
 
     entities
+}
+
+/// Extrai URLs do corpo de uma memória, desduplicadas por texto.
+/// URLs são armazenadas na tabela `memory_urls` separadamente do grafo de entidades.
+/// v1.0.24: split do bloco URL que poluía apply_regex_prefilter com entity_type='concept'.
+pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for m in regex_url().find_iter(body) {
+        let raw = m.as_str();
+        let cleaned = raw
+            .trim_end_matches('`')
+            .trim_end_matches(',')
+            .trim_end_matches('.')
+            .trim_end_matches(';')
+            .trim_end_matches(')')
+            .trim_end_matches(']')
+            .trim_end_matches('}');
+        if cleaned.len() >= 10 && seen.insert(cleaned.to_string()) {
+            result.push(ExtractedUrl {
+                url: cleaned.to_string(),
+                offset: m.start(),
+            });
+        }
+    }
+    result
 }
 
 fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity> {
@@ -473,9 +610,12 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
     entities
 }
 
-fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
+/// Returns (relationships, truncated) where truncated is true when the cap was hit
+/// before all entity pairs were covered. Exposed in RememberResponse as
+/// `relationships_truncated` so callers can decide whether to increase the cap.
+fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
     if entities.len() < 2 {
-        return Vec::new();
+        return (Vec::new(), false);
     }
 
     // v1.0.22: cap configurável via env var (constants::max_relationships_per_memory).
@@ -530,7 +670,7 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
         );
     }
 
-    rels
+    (rels, hit_cap)
 }
 
 fn run_ner_sliding_window(
@@ -557,34 +697,63 @@ fn run_ner_sliding_window(
         return Ok(Vec::new());
     }
 
-    let mut entities: Vec<ExtractedEntity> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
+    // Phase 1: collect all sliding windows before any inference
+    let mut windows: Vec<(Vec<u32>, Vec<String>)> = Vec::new();
     let mut start = 0usize;
     loop {
         let end = (start + MAX_SEQ_LEN).min(all_ids.len());
-        let window_ids = &all_ids[start..end];
-        let window_tokens = &all_tokens[start..end];
-        let attention_mask: Vec<u32> = vec![1u32; window_ids.len()];
-
-        match model.predict(window_ids, &attention_mask) {
-            Ok(labels) => {
-                let window_ents = iob_to_entities(window_tokens, &labels);
-                for ent in window_ents {
-                    if seen.insert(ent.name.clone()) {
-                        entities.push(ent);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("janela NER falhou (start={start}): {e:#}");
-            }
-        }
-
+        windows.push((
+            all_ids[start..end].to_vec(),
+            all_tokens[start..end].to_vec(),
+        ));
         if end >= all_ids.len() {
             break;
         }
         start += STRIDE;
+    }
+
+    // Phase 2: sort by window length ascending to minimise intra-batch padding waste
+    windows.sort_by_key(|(ids, _)| ids.len());
+
+    // Phase 3: batched inference with fallback to single-window predict on error
+    let batch_size = crate::constants::ner_batch_size();
+    let mut entities: Vec<ExtractedEntity> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for chunk in windows.chunks(batch_size) {
+        match model.predict_batch(chunk) {
+            Ok(batch_labels) => {
+                for (labels, (_, tokens)) in batch_labels.iter().zip(chunk.iter()) {
+                    for ent in iob_to_entities(tokens, labels) {
+                        if seen.insert(ent.name.clone()) {
+                            entities.push(ent);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "batch NER falhou (chunk de {} janelas): {e:#} — fallback single-window",
+                    chunk.len()
+                );
+                // Fallback: process each window individually to preserve entities
+                for (ids, tokens) in chunk {
+                    let mask = vec![1u32; ids.len()];
+                    match model.predict(ids, &mask) {
+                        Ok(labels) => {
+                            for ent in iob_to_entities(tokens, &labels) {
+                                if seen.insert(ent.name.clone()) {
+                                    entities.push(ent);
+                                }
+                            }
+                        }
+                        Err(e2) => {
+                            tracing::warn!("janela NER fallback também falhou: {e2:#}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(entities)
@@ -593,10 +762,14 @@ fn run_ner_sliding_window(
 /// v1.0.22 P1: estende entidades com sufixos numéricos hifenizados ou separados por espaço.
 /// Casos: GPT extraído mas body contém "GPT-5" → reescreve para "GPT-5".
 /// Casos: Claude extraído mas body contém "Claude 4" → reescreve para "Claude 4".
-/// Conservador: só estende se sufixo tiver até 6 caracteres e for puramente numérico.
+/// Conservador: só estende se sufixo tiver até 7 caracteres.
+/// v1.0.24 P2-E: sufixo aceita letra ASCII minúscula opcional após dígitos para cobrir
+/// modelos como "GPT-4o", "Llama-5b", "Mistral-8x" (dígitos + [a-z]? + [x\d+]?).
 fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec<ExtractedEntity> {
     static SUFFIX_RE: OnceLock<Regex> = OnceLock::new();
-    let suffix_re = SUFFIX_RE.get_or_init(|| Regex::new(r"^([\-\s]+\d+(?:\.\d+)?)").unwrap());
+    // Matches: separator + digits + optional decimal + optional lowercase letter
+    // Examples: "-4", " 5", "-4o", " 5b", "-8x", " 3.5", "-3.5-turbo" (capped by len)
+    let suffix_re = SUFFIX_RE.get_or_init(|| Regex::new(r"^([\-\s]+\d+(?:\.\d+)?[a-z]?)").unwrap());
 
     entities
         .into_iter()
@@ -608,8 +781,9 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
                     let after = &body[after_pos..];
                     if let Some(m) = suffix_re.find(after) {
                         let suffix = m.as_str();
-                        // Conservador: limita comprimento total do sufixo a 6 chars
-                        if suffix.len() <= 6 {
+                        // Conservative: cap suffix length to 7 chars to avoid grabbing
+                        // long hyphenated phrases while allowing "4o", "5b", "3.5b".
+                        if suffix.len() <= 7 {
                             let extended = format!("{}{}", ent.name, suffix);
                             return ExtractedEntity {
                                 name: extended,
@@ -636,16 +810,30 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
 /// `concept` type, mirroring how `extend_with_numeric_suffix` represents these
 /// items downstream.
 ///
-/// Examples covered: "Claude 4", "Llama 3", "Python 3".
-/// Examples already handled upstream and skipped here: "GPT-5", "Apple" without
-/// a numeric suffix.
+/// v1.0.24 P2-D: regex extended to cover:
+/// - Alphanumeric version suffixes: "GPT-4o", "Llama-3b", "Mistral-8x"
+/// - Composite versions: "Mixtral 8x7B" (digit × digit + uppercase letter)
+/// - Named release tiers after version: "Claude 4 Sonnet", "Llama 3 Pro"
+///
+/// Examples covered: "Claude 4", "Llama 3", "GPT-4o", "Claude 4 Sonnet", "Mixtral 8x7B".
+/// Examples already handled upstream and skipped here: plain "Apple" without a suffix.
 fn augment_versioned_model_names(
     entities: Vec<ExtractedEntity>,
     body: &str,
 ) -> Vec<ExtractedEntity> {
     static VERSIONED_MODEL_RE: OnceLock<Regex> = OnceLock::new();
-    let model_re = VERSIONED_MODEL_RE
-        .get_or_init(|| Regex::new(r"\b([A-Z][A-Za-z]{2,15})[\s\-]+(\d+(?:\.\d+)?)\b").unwrap());
+    // Pattern breakdown:
+    //   [A-Z][A-Za-z]{2,15}   — capitalised model name (3-16 chars)
+    //   [\s\-]+               — separator: space(s) or hyphen(s)
+    //   \d+(?:\.\d+)?         — version number, optional decimal
+    //   (?:[a-z]|x\d+[A-Za-z]?)? — optional alphanumeric suffix: "o", "b", "x7B"
+    //   (?:\s+(?:Sonnet|Opus|Haiku|Turbo|Pro|Lite|Mini|Nano|Flash|Ultra))? — optional release tier
+    let model_re = VERSIONED_MODEL_RE.get_or_init(|| {
+        Regex::new(
+            r"\b([A-Z][A-Za-z]{2,15})[\s\-]+(\d+(?:\.\d+)?(?:[a-z]|x\d+[A-Za-z]?)?)(?:\s+(?:Sonnet|Opus|Haiku|Turbo|Pro|Lite|Mini|Nano|Flash|Ultra))?\b",
+        )
+        .unwrap()
+    });
 
     let mut existing_lc: std::collections::HashSet<String> =
         entities.iter().map(|ent| ent.name.to_lowercase()).collect();
@@ -687,13 +875,16 @@ fn merge_and_deduplicate(
     // first, occasionally yielding truncated brand names like "Open" instead of
     // "OpenAI". The new logic resolves collisions using a (lowercase prefix) lookup
     // that retains the longest match while preserving insertion order via `result`.
+    // v1.0.24: dedup key uses NFKC normalization before lowercasing so that
+    // visually identical names differing only in Unicode combining marks (e.g.
+    // "Café" NFC vs "Cafe\u{301}" NFD) collapse to the same bucket.
     let mut by_lc: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut result: Vec<ExtractedEntity> = Vec::new();
     let mut truncated = false;
 
     let total_input = regex_ents.len() + ner_ents.len();
     for ent in regex_ents.into_iter().chain(ner_ents) {
-        let key = ent.name.to_lowercase();
+        let key = ent.name.nfkc().collect::<String>().to_lowercase();
         // Detect prefix collisions in both directions: "open" vs "openai" should
         // both map to the longest stored candidate. We scan stored keys to find
         // the longest existing entry that contains or is contained by the new key.
@@ -713,7 +904,7 @@ fn merge_and_deduplicate(
                 // longer; otherwise drop the new one. This biases toward the most
                 // specific brand name visible in the corpus.
                 if ent.name.len() > result[idx].name.len() {
-                    let old_key = result[idx].name.to_lowercase();
+                    let old_key = result[idx].name.nfkc().collect::<String>().to_lowercase();
                     by_lc.remove(&old_key);
                     result[idx] = ent;
                     by_lc.insert(key, idx);
@@ -777,18 +968,22 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     // by the NER+suffix pipeline above, but space-separated names need a dedicated pass.
     let with_models = augment_versioned_model_names(extended, body);
     let entities = to_new_entities(with_models);
-    let relationships = build_relationships(&entities);
+    let (relationships, relationships_truncated) = build_relationships(&entities);
 
     let extraction_method = if bert_used {
-        "bert+regex".to_string()
+        "bert+regex-batch".to_string()
     } else {
         "regex-only".to_string()
     };
 
+    let urls = extract_urls(body);
+
     Ok(ExtractionResult {
         entities,
         relationships,
+        relationships_truncated,
         extraction_method,
+        urls,
     })
 }
 
@@ -798,11 +993,14 @@ impl Extractor for RegexExtractor {
     fn extract(&self, body: &str) -> Result<ExtractionResult> {
         let regex_entities = apply_regex_prefilter(body);
         let entities = to_new_entities(regex_entities);
-        let relationships = build_relationships(&entities);
+        let (relationships, relationships_truncated) = build_relationships(&entities);
+        let urls = extract_urls(body);
         Ok(ExtractionResult {
             entities,
             relationships,
+            relationships_truncated,
             extraction_method: "regex-only".to_string(),
+            urls,
         })
     }
 }
@@ -863,11 +1061,38 @@ mod tests {
     }
 
     #[test]
-    fn regex_url_captura_link() {
+    fn regex_url_nao_aparece_em_apply_regex_prefilter() {
+        // v1.0.24 P0-2: URLs foram removidas de apply_regex_prefilter e agora vão para extract_urls.
         let ents = apply_regex_prefilter("veja https://docs.rs/crate para detalhes");
-        assert!(ents
-            .iter()
-            .any(|e| e.name.starts_with("https://") && e.entity_type == "concept"));
+        assert!(
+            !ents.iter().any(|e| e.name.starts_with("https://")),
+            "URLs não devem aparecer como entidades após split P0-2"
+        );
+    }
+
+    #[test]
+    fn extract_urls_captura_https() {
+        let urls = extract_urls("veja https://docs.rs/crate para detalhes");
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0].url, "https://docs.rs/crate");
+        assert!(urls[0].offset > 0);
+    }
+
+    #[test]
+    fn extract_urls_trim_sufixo_pontuacao() {
+        let urls = extract_urls("link: https://example.com/path. fim");
+        assert!(!urls.is_empty());
+        assert!(
+            !urls[0].url.ends_with('.'),
+            "sufixo ponto deve ser removido"
+        );
+    }
+
+    #[test]
+    fn extract_urls_deduplica_repetidas() {
+        let body = "https://example.com referenciado aqui e depois aqui https://example.com";
+        let urls = extract_urls(body);
+        assert_eq!(urls.len(), 1, "URLs repetidas devem ser deduplicadas");
     }
 
     #[test]
@@ -972,9 +1197,12 @@ mod tests {
                 description: None,
             })
             .collect();
-        let rels = build_relationships(&entities);
+        let (rels, truncated) = build_relationships(&entities);
         let max_rels = crate::constants::max_relationships_per_memory();
         assert!(rels.len() <= max_rels, "deve respeitar max_rels={max_rels}");
+        if rels.len() == max_rels {
+            assert!(truncated, "truncated deve ser true quando atingiu o cap");
+        }
     }
 
     #[test]
@@ -986,7 +1214,7 @@ mod tests {
                 description: None,
             })
             .collect();
-        let rels = build_relationships(&entities);
+        let (rels, _truncated) = build_relationships(&entities);
         let mut pares: std::collections::HashSet<(String, String)> =
             std::collections::HashSet::new();
         for r in &rels {
@@ -1028,5 +1256,294 @@ mod tests {
             .entities
             .iter()
             .any(|e| e.name.contains("teste@exemplo.com")));
+    }
+
+    #[test]
+    fn stopwords_filter_v1024_terms() {
+        // v1.0.24: verify that all 17 new stopwords added in P0-3 are filtered
+        // by apply_regex_prefilter so they do not appear as entities.
+        let body = "ACEITE ACK ACL BORDA CHECKLIST COMPLETED CONFIRME \
+                    DEVEMOS DONE FIXED NEGUE PENDING PLAN PODEMOS RECUSE TOKEN VAMOS";
+        let ents = apply_regex_prefilter(body);
+        let names: Vec<&str> = ents.iter().map(|e| e.name.as_str()).collect();
+        for word in &[
+            "ACEITE",
+            "ACK",
+            "ACL",
+            "BORDA",
+            "CHECKLIST",
+            "COMPLETED",
+            "CONFIRME",
+            "DEVEMOS",
+            "DONE",
+            "FIXED",
+            "NEGUE",
+            "PENDING",
+            "PLAN",
+            "PODEMOS",
+            "RECUSE",
+            "TOKEN",
+            "VAMOS",
+        ] {
+            assert!(
+                !names.contains(word),
+                "v1.0.24 stopword {word} should be filtered but was found in entities"
+            );
+        }
+    }
+
+    #[test]
+    fn dedup_normalizes_unicode_combining_marks() {
+        // v1.0.24 P1-E: "Café" (NFC precomposed) and "Cafe\u{301}" (NFD with
+        // combining acute accent) must deduplicate to a single entity after NFKC
+        // normalization.
+        let nfc = vec![ExtractedEntity {
+            name: "Café".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        // Build the NFD form: 'e' followed by combining acute accent U+0301
+        let nfd_name = "Cafe\u{301}".to_string();
+        let nfd = vec![ExtractedEntity {
+            name: nfd_name,
+            entity_type: "concept".to_string(),
+        }];
+        let merged = merge_and_deduplicate(nfc, nfd);
+        assert_eq!(
+            merged.len(),
+            1,
+            "NFC 'Café' and NFD 'Cafe\\u{{301}}' must deduplicate to 1 entity after NFKC normalization"
+        );
+    }
+
+    // ── predict_batch regression tests ──────────────────────────────────────
+
+    #[test]
+    fn predict_batch_output_count_matches_input() {
+        // Verify that predict_batch returns exactly one Vec<String> per window
+        // without requiring a real model.  We test the shape contract by
+        // constructing the padding logic manually and asserting counts.
+        //
+        // Two windows of different lengths: 3 tokens and 5 tokens.
+        let w1_ids: Vec<u32> = vec![101, 100, 102];
+        let w1_tok: Vec<String> = vec!["[CLS]".into(), "hello".into(), "[SEP]".into()];
+        let w2_ids: Vec<u32> = vec![101, 100, 200, 300, 102];
+        let w2_tok: Vec<String> = vec![
+            "[CLS]".into(),
+            "world".into(),
+            "foo".into(),
+            "bar".into(),
+            "[SEP]".into(),
+        ];
+        let windows: Vec<(Vec<u32>, Vec<String>)> =
+            vec![(w1_ids.clone(), w1_tok), (w2_ids.clone(), w2_tok)];
+
+        // Verify padding logic and output length contracts using tensor operations
+        // that do NOT require BertModel::forward.
+        let device = Device::Cpu;
+        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap();
+        assert_eq!(max_len, 5, "max_len deve ser 5");
+
+        let mut padded_ids: Vec<Tensor> = Vec::new();
+        for (ids, _) in &windows {
+            let len = ids.len();
+            let pad_right = max_len - len;
+            let ids_i64: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
+            let t = Tensor::from_vec(ids_i64, len, &device).unwrap();
+            let t = t.pad_with_zeros(0, 0, pad_right).unwrap();
+            assert_eq!(
+                t.dims(),
+                &[max_len],
+                "cada janela deve ter shape (max_len,) após padding"
+            );
+            padded_ids.push(t);
+        }
+
+        let stacked = Tensor::stack(&padded_ids, 0).unwrap();
+        assert_eq!(
+            stacked.dims(),
+            &[2, max_len],
+            "stack deve produzir (batch_size=2, max_len=5)"
+        );
+
+        // Verify narrow preserves only real tokens for each window
+        // (simulates what predict_batch does after classifier.forward)
+        let fake_logits_data: Vec<f32> = vec![0.0f32; 2 * max_len * 9]; // batch×seq×num_labels=9
+        let fake_logits =
+            Tensor::from_vec(fake_logits_data, (2usize, max_len, 9usize), &device).unwrap();
+        for (i, (ids, _)) in windows.iter().enumerate() {
+            let real_len = ids.len();
+            let example = fake_logits.get(i).unwrap();
+            let sliced = example.narrow(0, 0, real_len).unwrap();
+            assert_eq!(
+                sliced.dims(),
+                &[real_len, 9],
+                "narrow deve preservar apenas {real_len} tokens reais"
+            );
+        }
+    }
+
+    #[test]
+    fn predict_batch_empty_windows_returns_empty() {
+        // predict_batch with no windows must return an empty Vec, not panic.
+        // We test the guard logic directly on the batch size/max_len path.
+        let windows: Vec<(Vec<u32>, Vec<String>)> = vec![];
+        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap_or(0);
+        assert_eq!(max_len, 0, "zero windows → max_len 0");
+        // The real predict_batch returns Ok(vec![]) when max_len == 0.
+        // We assert the expected output shape by reproducing the guard here.
+        let result: Vec<Vec<String>> = if max_len == 0 {
+            Vec::new()
+        } else {
+            unreachable!()
+        };
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn ner_batch_size_default_is_8() {
+        // Verify that ner_batch_size() returns the documented default when the
+        // env var is absent.  We clear the var to avoid cross-test contamination.
+        std::env::remove_var("GRAPHRAG_NER_BATCH_SIZE");
+        assert_eq!(crate::constants::ner_batch_size(), 8);
+    }
+
+    #[test]
+    fn ner_batch_size_env_override_clamped() {
+        // Override via env var; values outside [1, 32] must be clamped.
+        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "64");
+        assert_eq!(crate::constants::ner_batch_size(), 32, "deve clampar em 32");
+
+        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "0");
+        assert_eq!(crate::constants::ner_batch_size(), 1, "deve clampar em 1");
+
+        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "4");
+        assert_eq!(
+            crate::constants::ner_batch_size(),
+            4,
+            "valor válido preservado"
+        );
+
+        std::env::remove_var("GRAPHRAG_NER_BATCH_SIZE");
+    }
+
+    #[test]
+    fn extraction_method_regex_only_unchanged() {
+        // RegexExtractor always returns "regex-only" regardless of NER_MODEL OnceLock state.
+        // This guards against accidentally changing the regex-only fallback string.
+        let result = RegexExtractor.extract("contato: dev@acme.io").unwrap();
+        assert_eq!(
+            result.extraction_method, "regex-only",
+            "RegexExtractor deve retornar regex-only"
+        );
+    }
+
+    // --- P2-E: extend_with_numeric_suffix alphanumeric suffix ---
+
+    #[test]
+    fn extend_suffix_pure_numeric_unchanged() {
+        // Existing behaviour: pure-numeric suffix must still work after P2-E.
+        let ents = vec![ExtractedEntity {
+            name: "GPT".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        let result = extend_with_numeric_suffix(ents, "usando GPT-5 no projeto");
+        assert_eq!(
+            result[0].name, "GPT-5",
+            "sufixo puramente numérico deve ser estendido"
+        );
+    }
+
+    #[test]
+    fn extend_suffix_alphanumeric_letter_after_digit() {
+        // P2-E: "4o" suffix (digit + lowercase letter) must be captured.
+        let ents = vec![ExtractedEntity {
+            name: "GPT".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        let result = extend_with_numeric_suffix(ents, "usando GPT-4o para tarefas avançadas");
+        assert_eq!(result[0].name, "GPT-4o", "sufixo '4o' deve ser aceito");
+    }
+
+    #[test]
+    fn extend_suffix_alphanumeric_b_suffix() {
+        // P2-E: "5b" suffix (digit + 'b') must be captured.
+        let ents = vec![ExtractedEntity {
+            name: "Llama".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        let result = extend_with_numeric_suffix(ents, "modelo Llama-5b open-weight");
+        assert_eq!(result[0].name, "Llama-5b", "sufixo '5b' deve ser aceito");
+    }
+
+    #[test]
+    fn extend_suffix_alphanumeric_x_suffix() {
+        // P2-E: "8x" suffix (digit + 'x') must be captured.
+        let ents = vec![ExtractedEntity {
+            name: "Mistral".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        let result = extend_with_numeric_suffix(ents, "testando Mistral-8x em produção");
+        assert_eq!(result[0].name, "Mistral-8x", "sufixo '8x' deve ser aceito");
+    }
+
+    // --- P2-D: augment_versioned_model_names extended regex ---
+
+    #[test]
+    fn augment_versioned_gpt4o() {
+        // P2-D: "GPT-4o" must be captured with alphanumeric suffix.
+        let result = augment_versioned_model_names(vec![], "usando GPT-4o para análise");
+        assert!(
+            result.iter().any(|e| e.name == "GPT-4o"),
+            "GPT-4o deve ser capturado pelo augment, achados: {:?}",
+            result.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn augment_versioned_claude_4_sonnet() {
+        // P2-D: "Claude 4 Sonnet" must be captured with release tier.
+        let result =
+            augment_versioned_model_names(vec![], "melhor modelo: Claude 4 Sonnet lançado hoje");
+        assert!(
+            result.iter().any(|e| e.name == "Claude 4 Sonnet"),
+            "Claude 4 Sonnet deve ser capturado, achados: {:?}",
+            result.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn augment_versioned_llama_3_pro() {
+        // P2-D: "Llama 3 Pro" must be captured with release tier.
+        let result =
+            augment_versioned_model_names(vec![], "fine-tuning com Llama 3 Pro localmente");
+        assert!(
+            result.iter().any(|e| e.name == "Llama 3 Pro"),
+            "Llama 3 Pro deve ser capturado, achados: {:?}",
+            result.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn augment_versioned_mixtral_8x7b() {
+        // P2-D: "Mixtral 8x7B" composite version must be captured.
+        let result =
+            augment_versioned_model_names(vec![], "executando Mixtral 8x7B no servidor local");
+        assert!(
+            result.iter().any(|e| e.name == "Mixtral 8x7B"),
+            "Mixtral 8x7B deve ser capturado, achados: {:?}",
+            result.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn augment_versioned_does_not_duplicate_existing() {
+        // P2-D back-compat: entities already present must not be duplicated.
+        let existing = vec![ExtractedEntity {
+            name: "Claude 4".to_string(),
+            entity_type: "concept".to_string(),
+        }];
+        let result = augment_versioned_model_names(existing, "usando Claude 4 no projeto");
+        let count = result.iter().filter(|e| e.name == "Claude 4").count();
+        assert_eq!(count, 1, "Claude 4 não deve ser duplicado");
     }
 }

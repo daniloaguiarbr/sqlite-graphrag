@@ -8,9 +8,12 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct ReadArgs {
+    /// Memory name as a positional argument. Alternative to `--name`.
+    #[arg(value_name = "NAME", conflicts_with = "name")]
+    pub name_positional: Option<String>,
     /// Memory name to read. Returns NotFound (exit 4) if missing or soft-deleted.
     #[arg(long)]
-    pub name: String,
+    pub name: Option<String>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
@@ -36,7 +39,7 @@ struct ReadResponse {
     body_hash: String,
     session_id: Option<String>,
     source: String,
-    metadata: String,
+    metadata: serde_json::Value,
     /// Versão mais recente da memória, útil para controle otimista via `--expected-updated-at`.
     version: i64,
     created_at: i64,
@@ -55,6 +58,10 @@ fn epoch_to_iso(epoch: i64) -> String {
 
 pub fn run(args: ReadArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    // Resolve name from positional or --name flag; both are optional, at least one is required.
+    let name = args.name_positional.or(args.name).ok_or_else(|| {
+        AppError::Validation("name required: pass as positional argument or via --name".to_string())
+    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
@@ -64,7 +71,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
     }
     let conn = open_ro(&paths.db)?;
 
-    match memories::read_by_name(&conn, &namespace, &args.name)? {
+    match memories::read_by_name(&conn, &namespace, &name)? {
         Some(row) => {
             // Resolver versão atual via tabela memory_versions (maior version para este memory_id).
             let version: i64 = conn
@@ -87,7 +94,8 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
                 body_hash: row.body_hash,
                 session_id: row.session_id,
                 source: row.source,
-                metadata: row.metadata,
+                metadata: serde_json::from_str::<serde_json::Value>(&row.metadata)
+                    .unwrap_or(serde_json::Value::Null),
                 version,
                 created_at: row.created_at,
                 created_at_iso: epoch_to_iso(row.created_at),
@@ -99,7 +107,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
         }
         None => {
             return Err(AppError::NotFound(erros::memoria_nao_encontrada(
-                &args.name, &namespace,
+                &name, &namespace,
             )))
         }
     }
@@ -152,7 +160,7 @@ mod testes {
             body_hash: "abc123".to_string(),
             session_id: None,
             source: "agent".to_string(),
-            metadata: "{}".to_string(),
+            metadata: serde_json::json!({}),
             version: 1,
             created_at: 1_705_320_000,
             created_at_iso: "2024-01-15T12:00:00Z".to_string(),
@@ -171,6 +179,11 @@ mod testes {
             json["session_id"].is_null(),
             "session_id None deve serializar como null"
         );
+        // metadata deve serializar como objeto JSON, não como string escapada
+        assert!(
+            json["metadata"].is_object(),
+            "metadata deve ser um objeto JSON"
+        );
     }
 
     #[test]
@@ -187,7 +200,7 @@ mod testes {
             body_hash: "h".to_string(),
             session_id: Some("sess-123".to_string()),
             source: "agent".to_string(),
-            metadata: "{}".to_string(),
+            metadata: serde_json::json!({}),
             version: 2,
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
@@ -214,7 +227,7 @@ mod testes {
             body_hash: "h".to_string(),
             session_id: None,
             source: "agent".to_string(),
-            metadata: "{}".to_string(),
+            metadata: serde_json::json!({}),
             version: 3,
             created_at: 1000,
             created_at_iso: "1970-01-01T00:16:40Z".to_string(),
@@ -227,5 +240,45 @@ mod testes {
         assert_eq!(json["elapsed_ms"], 123u64);
         assert!(json["created_at_iso"].is_string());
         assert!(json["updated_at_iso"].is_string());
+    }
+
+    #[test]
+    fn read_response_metadata_object_nao_string_escapada() {
+        // P2-A: metadata deve serializar como objeto JSON, não como string escapada.
+        let resp = ReadResponse {
+            id: 3,
+            memory_id: 3,
+            namespace: "ns".to_string(),
+            name: "meta-test".to_string(),
+            type_alias: "fact".to_string(),
+            memory_type: "fact".to_string(),
+            description: "d".to_string(),
+            body: "b".to_string(),
+            body_hash: "h".to_string(),
+            session_id: None,
+            source: "agent".to_string(),
+            metadata: serde_json::json!({"chave": "valor", "numero": 42}),
+            version: 1,
+            created_at: 0,
+            created_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            updated_at: 0,
+            updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            elapsed_ms: 1,
+        };
+
+        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        // Must be object, not a JSON string containing escaped JSON.
+        assert!(json["metadata"].is_object());
+        assert_eq!(json["metadata"]["chave"], "valor");
+        assert_eq!(json["metadata"]["numero"], 42);
+    }
+
+    #[test]
+    fn read_response_metadata_fallback_para_null_em_json_invalido() {
+        // P2-A: fallback quando metadata é string inválida.
+        let raw = "json-invalido{{{";
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::Value::Null);
+        assert!(parsed.is_null());
     }
 }
