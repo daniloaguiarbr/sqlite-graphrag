@@ -16,7 +16,6 @@ const MODEL_ID: &str = "Davlan/bert-base-multilingual-cased-ner-hrl";
 const MAX_SEQ_LEN: usize = 512;
 const STRIDE: usize = 256;
 const MAX_ENTS: usize = 30;
-const MAX_RELS: usize = 50;
 const TOP_K_RELATIONS: usize = 5;
 const DEFAULT_RELATION: &str = "mentions";
 const MIN_ENTITY_CHARS: usize = 2;
@@ -29,42 +28,90 @@ static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
 // v1.0.20: stopwords para filtrar palavras-regra PT-BR/EN comuns capturadas como ALL_CAPS.
 // Sem este filtro, corpus técnico em PT-BR contendo regras formatadas em CAPS (NUNCA, PROIBIDO, DEVE)
 // gerava ~70% de "entidades" lixo. Mantemos identificadores tipo MAX_RETRY (com underscore).
+// v1.0.22: lista expandida com termos observados em stress test 495 arquivos do flowaiper.
+// Inclui verbos (ADICIONAR, VALIDAR), adjetivos (ALTA, BAIXA), substantivos comuns (BANCO, CASO),
+// HTTP methods (GET, POST, DELETE) e formatos de dados genéricos (JSON, XML).
 const ALL_CAPS_STOPWORDS: &[&str] = &[
-    "NUNCA",
-    "SEMPRE",
-    "PROIBIDO",
-    "OBRIGATÓRIO",
+    "ACRESCENTADO",
+    "ADICIONAR",
+    "AGENTS",
+    "ALL",
+    "ALTA",
+    "ALWAYS",
+    "ARTEFATOS",
+    "ATIVO",
+    "BAIXA",
+    "BANCO",
+    "BLOQUEAR",
+    "BUG",
+    "CASO",
+    "CONFIRMADO",
+    "CONTRATO",
+    "CRÍTICO",
+    "CRITICAL",
+    "CSV",
     "DEVE",
-    "JAMAIS",
-    "USAR",
-    "EVITAR",
-    "TODOS",
-    "TODAS",
-    "VOCÊ",
+    "DISCO",
+    "EFEITO",
+    "ENTRADA",
+    "ERROR",
+    "ESSA",
+    "ESSE",
+    "ESSENCIAL",
     "ESTA",
     "ESTE",
-    "ESSE",
-    "ESSA",
-    "PADRÃO",
-    "REGRAS",
-    "CRÍTICO",
+    "EVITAR",
+    "EXPANDIR",
+    "EXPOR",
     "FALHA",
-    "NEVER",
-    "ALWAYS",
-    "FORBIDDEN",
-    "REQUIRED",
-    "MUST",
-    "SHOULD",
-    "SHALL",
-    "TODO",
     "FIXME",
+    "FORBIDDEN",
     "HACK",
-    "BUG",
+    "HEARTBEAT",
+    "INATIVO",
+    "JAMAIS",
+    "JSON",
+    "MUST",
+    "NEVER",
     "NOTE",
+    "NUNCA",
+    "OBRIGATÓRIO",
+    "PADRÃO",
+    "PROIBIDO",
+    "REGRAS",
+    "REQUIRED",
+    "REQUISITO",
+    "SEMPRE",
+    "SHALL",
+    "SHOULD",
+    "SOUL",
+    "TODAS",
+    "TODO",
+    "TODOS",
+    "TOOLS",
+    "TSV",
+    "USAR",
+    "VALIDAR",
+    "VOCÊ",
     "WARNING",
-    "CRITICAL",
-    "ERROR",
+    "XML",
+    "YAML",
 ];
+
+// v1.0.22: HTTP methods são verbos de protocolo, não entidades semanticamente úteis.
+// Filtrados em apply_regex_prefilter (regex_all_caps) e iob_to_entities (single-token).
+const HTTP_METHODS: &[&str] = &[
+    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
+];
+
+fn is_filtered_all_caps(token: &str) -> bool {
+    // Identificadores com underscore são preservados (ex: MAX_RETRY, FLOWAIPER_API_KEY)
+    let is_identifier = token.contains('_');
+    if is_identifier {
+        return false;
+    }
+    ALL_CAPS_STOPWORDS.contains(&token) || HTTP_METHODS.contains(&token)
+}
 
 fn regex_email() -> &'static Regex {
     REGEX_EMAIL
@@ -306,17 +353,26 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
     for m in regex_url().find_iter(body) {
-        add(&mut entities, &mut seen, m.as_str(), "concept");
+        // v1.0.22: URLs strip de sufixo de markdown (backtick fechando, parens, brackets).
+        // Mantidas como entity_type "concept" para preservar rastreabilidade de citações.
+        let raw = m.as_str();
+        let cleaned = raw
+            .trim_end_matches('`')
+            .trim_end_matches(',')
+            .trim_end_matches('.')
+            .trim_end_matches(';')
+            .trim_end_matches(')')
+            .trim_end_matches(']')
+            .trim_end_matches('}');
+        add(&mut entities, &mut seen, cleaned, "concept");
     }
     for m in regex_uuid().find_iter(body) {
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
     for m in regex_all_caps().find_iter(body) {
         let candidate = m.as_str();
-        // v1.0.20: aceita identificadores com underscore (MAX_RETRY) ou que NÃO sejam stopwords PT/EN.
-        let is_identifier = candidate.contains('_');
-        let is_stopword = ALL_CAPS_STOPWORDS.contains(&candidate);
-        if is_identifier || !is_stopword {
+        // v1.0.22: filtro consolidado (stopwords + HTTP methods); preserva identificadores com underscore.
+        if !is_filtered_all_caps(candidate) {
             add(&mut entities, &mut seen, candidate, "concept");
         }
     }
@@ -333,7 +389,14 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
         |parts: &mut Vec<String>, typ: &mut Option<String>, entities: &mut Vec<ExtractedEntity>| {
             if let Some(t) = typ.take() {
                 let name = parts.join(" ").trim().to_string();
-                if name.len() >= MIN_ENTITY_CHARS {
+                // v1.0.22: filtra single-token entities que sejam stopwords ALL CAPS ou HTTP methods.
+                // BERT NER classifica algumas dessas como B-MISC/B-ORG; pós-filtro aqui evita
+                // poluir o grafo com verbos/protocolos genéricos.
+                let is_single_caps = !name.contains(' ')
+                    && name == name.to_uppercase()
+                    && name.len() >= MIN_ENTITY_CHARS;
+                let should_skip = is_single_caps && is_filtered_all_caps(&name);
+                if name.len() >= MIN_ENTITY_CHARS && !should_skip {
                     entities.push(ExtractedEntity {
                         name,
                         entity_type: t,
@@ -415,13 +478,16 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
         return Vec::new();
     }
 
+    // v1.0.22: cap configurável via env var (constants::max_relationships_per_memory).
+    // Permite usuários com corpus denso aumentar além do default 50.
+    let max_rels = crate::constants::max_relationships_per_memory();
     let n = entities.len().min(MAX_ENTS);
     let mut rels: Vec<NewRelationship> = Vec::new();
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
 
     let mut hit_cap = false;
     'outer: for i in 0..n {
-        if rels.len() >= MAX_RELS {
+        if rels.len() >= max_rels {
             hit_cap = true;
             break;
         }
@@ -431,7 +497,7 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
             if for_entity >= TOP_K_RELATIONS {
                 break;
             }
-            if rels.len() >= MAX_RELS {
+            if rels.len() >= max_rels {
                 hit_cap = true;
                 break 'outer;
             }
@@ -459,7 +525,7 @@ fn build_relationships(entities: &[NewEntity]) -> Vec<NewRelationship> {
     // v1.0.20: avisar quando relacionamentos foram truncados antes de cobrir todos os pares possíveis.
     if hit_cap {
         tracing::warn!(
-            "relacionamentos truncados em {MAX_RELS} (com {n} entidades, máx teórico era ~{}× combinações)",
+            "relacionamentos truncados em {max_rels} (com {n} entidades, máx teórico era ~{}× combinações)",
             n.saturating_sub(1)
         );
     }
@@ -524,6 +590,40 @@ fn run_ner_sliding_window(
     Ok(entities)
 }
 
+/// v1.0.22 P1: estende entidades com sufixos numéricos hifenizados ou separados por espaço.
+/// Casos: GPT extraído mas body contém "GPT-5" → reescreve para "GPT-5".
+/// Casos: Claude extraído mas body contém "Claude 4" → reescreve para "Claude 4".
+/// Conservador: só estende se sufixo tiver até 6 caracteres e for puramente numérico.
+fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec<ExtractedEntity> {
+    static SUFFIX_RE: OnceLock<Regex> = OnceLock::new();
+    let suffix_re = SUFFIX_RE.get_or_init(|| Regex::new(r"^([\-\s]+\d+(?:\.\d+)?)").unwrap());
+
+    entities
+        .into_iter()
+        .map(|ent| {
+            // Encontra a primeira ocorrência case-sensitive da entidade no body
+            if let Some(pos) = body.find(&ent.name) {
+                let after_pos = pos + ent.name.len();
+                if after_pos < body.len() {
+                    let after = &body[after_pos..];
+                    if let Some(m) = suffix_re.find(after) {
+                        let suffix = m.as_str();
+                        // Conservador: limita comprimento total do sufixo a 6 chars
+                        if suffix.len() <= 6 {
+                            let extended = format!("{}{}", ent.name, suffix);
+                            return ExtractedEntity {
+                                name: extended,
+                                entity_type: ent.entity_type,
+                            };
+                        }
+                    }
+                }
+            }
+            ent
+        })
+        .collect()
+}
+
 fn merge_and_deduplicate(
     regex_ents: Vec<ExtractedEntity>,
     ner_ents: Vec<ExtractedEntity>,
@@ -584,7 +684,9 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     };
 
     let merged = merge_and_deduplicate(regex_entities, ner_entities);
-    let entities = to_new_entities(merged);
+    // v1.0.22: estender entidades NER com sufixos numéricos do body (GPT-5, Claude 4, Python 3).
+    let extended = extend_with_numeric_suffix(merged, body);
+    let entities = to_new_entities(extended);
     let relationships = build_relationships(&entities);
 
     let extraction_method = if bert_used {
@@ -781,7 +883,8 @@ mod tests {
             })
             .collect();
         let rels = build_relationships(&entities);
-        assert!(rels.len() <= MAX_RELS, "deve respeitar MAX_RELS={MAX_RELS}");
+        let max_rels = crate::constants::max_relationships_per_memory();
+        assert!(rels.len() <= max_rels, "deve respeitar max_rels={max_rels}");
     }
 
     #[test]

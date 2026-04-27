@@ -51,6 +51,12 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    // v1.0.22 P1: padroniza exit code 4 com mensagem amigável quando DB não existe.
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(
+            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+        ));
+    }
     let conn = open_ro(&paths.db)?;
 
     let memory_type_str = args.r#type.map(|t| t.as_str());

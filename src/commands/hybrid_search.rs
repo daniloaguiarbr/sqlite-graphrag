@@ -87,6 +87,11 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(
+            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+        ));
+    }
 
     output::emit_progress_i18n(
         "Computing query embedding...",

@@ -57,7 +57,7 @@ sqlite-graphrag --version
 
 ## Schema do Grafo
 ### Tipos de entidade, rótulos de relação e peso de aresta
-- `entity_type` aceita exatamente 9 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`
+- `entity_type` aceita exatamente 10 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - `relation` aceita exatamente 12 valores: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
 - `strength` é um float em `[0.0, 1.0]` representando o peso da aresta; mapeado para `weight` em todos os outputs de leitura
 - Valores de `entity_type` ou `relation` não listados são rejeitados na escrita com código de saída 1
@@ -136,6 +136,18 @@ sqlite-graphrag remember \
   --description "prefira Postgres real a mocks SQLite" \
   --body "Testes de integração devem usar banco real."
 ```
+### Pule auto-extração BERT NER para ingestão mais rápida
+- `--skip-extraction` desabilita `extract_graph_auto` apenas para a chamada atual
+- Use quando o body é curto, quando você fornece `--entities-file` upstream, ou quando memória do CI é restrita
+- O campo `extraction_method` é omitido da resposta JSON quando ativo
+```bash
+sqlite-graphrag remember \
+  --name notas-de-release-v1 \
+  --type concept \
+  --description "notas de release para v1.0.0" \
+  --skip-extraction \
+  --body-stdin < notas.md
+```
 ### Busque memórias por similaridade semântica
 ```bash
 sqlite-graphrag recall "testes integração postgres" --k 3 --json
@@ -171,7 +183,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 ### Ciclo de vida do conteúdo de memória
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` | Salva memória com grafo de entidades opcional |
+| `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Salva memória com grafo de entidades opcional |
 | `recall` | `<query>`, `--k`, `--type` | Busca memórias semanticamente via KNN |
 | `read` | `--name <nome>` | Recupera memória por nome kebab-case exato |
 | `list` | `--type`, `--limit`, `--offset` | Pagina memórias ordenadas por `updated_at` |

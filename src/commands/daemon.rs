@@ -5,10 +5,14 @@ use crate::paths::AppPaths;
 
 #[derive(clap::Args)]
 pub struct DaemonArgs {
+    /// Idle timeout in seconds before the daemon auto-shuts down to release the embedding model.
+    /// Default 600s; raise for long-running batch ingestion to avoid cold-start overhead.
     #[arg(long, default_value_t = DAEMON_IDLE_SHUTDOWN_SECS)]
     pub idle_shutdown_secs: u64,
+    /// Send a health-check ping to a running daemon and exit. Returns NotFound (exit 4) if no daemon.
     #[arg(long)]
     pub ping: bool,
+    /// Request graceful shutdown of a running daemon. Returns NotFound (exit 4) if no daemon.
     #[arg(long)]
     pub stop: bool,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]

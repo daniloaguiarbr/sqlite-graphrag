@@ -8,6 +8,8 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct ForgetArgs {
+    /// Memory name to soft-delete. The row is preserved with `deleted_at` set, recoverable via `restore`.
+    /// Use `purge` to permanently remove soft-deleted memories.
     #[arg(long)]
     pub name: String,
     #[arg(long, default_value = "global")]
@@ -31,6 +33,11 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
+        )));
+    }
 
     let conn = open_rw(&paths.db)?;
 

@@ -12,10 +12,14 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct RestoreArgs {
+    /// Memory name to restore (must exist, including soft-deleted/forgotten).
     #[arg(long)]
     pub name: String,
+    /// Version to restore. When omitted, defaults to the latest non-`restore` version
+    /// from `memory_versions`. This makes the forget+restore workflow work without
+    /// requiring the user to discover the version first.
     #[arg(long)]
-    pub version: i64,
+    pub version: Option<i64>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
@@ -73,6 +77,32 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         }
     }
 
+    // v1.0.22 P0: resolve `--version` opcional. Quando ausente, usa a maior versão
+    // cujo `change_reason` não seja 'restore' (recupera o estado real, não meta-restore).
+    // Permite o workflow forget+restore funcionar sem ler memory_versions manualmente.
+    let target_version: i64 = match args.version {
+        Some(v) => v,
+        None => {
+            let last: Option<i64> = conn
+                .query_row(
+                    "SELECT MAX(version) FROM memory_versions
+                     WHERE memory_id = ?1 AND change_reason != 'restore'",
+                    params![memory_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            let v = last.ok_or_else(|| {
+                AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace))
+            })?;
+            tracing::info!(
+                "restore --version omitido; usando última versão não-restore: {}",
+                v
+            );
+            v
+        }
+    };
+
     let version_row: (String, String, String, String, String) = {
         let mut stmt = conn.prepare(
             "SELECT name, type, description, body, metadata
@@ -80,10 +110,10 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
              WHERE memory_id = ?1 AND version = ?2",
         )?;
 
-        stmt.query_row(params![memory_id, args.version], |r| {
+        stmt.query_row(params![memory_id, target_version], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })
-        .map_err(|_| AppError::NotFound(erros::versao_nao_encontrada(args.version, &args.name)))?
+        .map_err(|_| AppError::NotFound(erros::versao_nao_encontrada(target_version, &args.name)))?
     };
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
@@ -160,7 +190,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         memory_id,
         name: old_name,
         version: next_v,
-        restored_from: args.version,
+        restored_from: target_version,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;
 

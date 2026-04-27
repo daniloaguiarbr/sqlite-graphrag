@@ -57,7 +57,7 @@ sqlite-graphrag --version
 
 ## Graph Schema
 ### Entity types, relation labels and edge strength
-- `entity_type` accepts exactly 9 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`
+- `entity_type` accepts exactly 10 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
 - `relation` accepts exactly 12 values: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
 - `strength` is a float in `[0.0, 1.0]` representing edge weight; mapped to `weight` in all read outputs
 - Unlisted `entity_type` or `relation` values are rejected at write time with exit code 1
@@ -136,6 +136,18 @@ sqlite-graphrag remember \
   --description "prefer real Postgres over SQLite mocks" \
   --body "Integration tests must hit a real database."
 ```
+### Skip BERT NER auto-extraction for faster ingestion
+- `--skip-extraction` disables `extract_graph_auto` for the current call only
+- Use it when the body is short, when you supply `--entities-file` upstream, or when CI memory is tight
+- The `extraction_method` field is omitted from the JSON response when active
+```bash
+sqlite-graphrag remember \
+  --name release-notes-v1 \
+  --type concept \
+  --description "release notes for v1.0.0" \
+  --skip-extraction \
+  --body-stdin < notes.md
+```
 ### Recall memories by semantic similarity
 ```bash
 sqlite-graphrag recall "postgres integration tests" --k 3 --json
@@ -171,7 +183,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` | Save a memory with optional entity graph |
+| `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Save a memory with optional entity graph |
 | `recall` | `<query>`, `--k`, `--type` | Search memories semantically via KNN |
 | `read` | `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |

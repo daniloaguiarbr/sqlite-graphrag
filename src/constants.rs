@@ -80,6 +80,19 @@ pub const MAX_ENTITIES_PER_MEMORY: usize = 30;
 /// Upper bound on distinct relationships persisted per memory.
 pub const MAX_RELATIONSHIPS_PER_MEMORY: usize = 50;
 
+/// Resolve o cap de relacionamentos por memória, respeitando override por env var.
+///
+/// v1.0.22: torna o cap (default 50) configurável via `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY`.
+/// Auditoria identificou que documentos ricos batiam o cap silenciosamente; usuários
+/// com corpus técnico denso podem aumentar via env. Valores fora de [1, 10000] caem no default.
+pub fn max_relationships_per_memory() -> usize {
+    std::env::var("SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (1..=10_000).contains(&n))
+        .unwrap_or(MAX_RELATIONSHIPS_PER_MEMORY)
+}
+
 /// Character length of the description preview shown in `list` output.
 pub const TEXT_DESCRIPTION_PREVIEW_LEN: usize = 100;
 

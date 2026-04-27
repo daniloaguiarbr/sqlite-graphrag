@@ -9,14 +9,19 @@ use std::io::Read as _;
 
 #[derive(clap::Args)]
 pub struct EditArgs {
+    /// Memory name to edit. Soft-deleted memories are not editable; use `restore` first.
     #[arg(long)]
     pub name: String,
+    /// New inline body content. Mutually exclusive with --body-file and --body-stdin.
     #[arg(long, conflicts_with_all = ["body_file", "body_stdin"])]
     pub body: Option<String>,
+    /// Read new body from a file. Mutually exclusive with --body and --body-stdin.
     #[arg(long, conflicts_with_all = ["body", "body_stdin"])]
     pub body_file: Option<std::path::PathBuf>,
+    /// Read new body from stdin until EOF. Mutually exclusive with --body and --body-file.
     #[arg(long, conflicts_with_all = ["body", "body_file"])]
     pub body_stdin: bool,
+    /// New description (≤500 chars) replacing the existing one.
     #[arg(long)]
     pub description: Option<String>,
     #[arg(
@@ -52,6 +57,11 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
+        )));
+    }
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _current_version) =

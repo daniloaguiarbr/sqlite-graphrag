@@ -10,6 +10,27 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.22] - 2026-04-27
+
+### Corrigido
+- Workflow `forget` + `restore` não fica mais sem saída. `history --name <X>` agora retorna versões de memórias soft-deleted (antes filtrava `deleted_at IS NULL`); resposta inclui novo campo booleano `deleted`. `restore --version` agora é opcional: quando omitido, a última versão não-`restore` é usada automaticamente. Juntos, esses fixes fazem o round-trip `forget` → `restore` funcionar sem exigir leitura de SQL (correção P0 em `src/commands/history.rs` e `src/commands/restore.rs`).
+- `list`, `forget`, `edit`, `read`, `rename`, `history`, `hybrid-search` agora verificam ausência de `graphrag.sqlite` antecipadamente e retornam `AppError::NotFound` (exit 4) com a mensagem amigável "Execute 'sqlite-graphrag init' primeiro", alinhando com `stats`/`recall`/`health`. Antes, `list` vazava o erro bruto do rusqlite e retornava exit 10 (correção de inconsistência P1).
+- `remember` agora rejeita `body` vazio ou só com whitespace (sem grafo externo) via `AppError::Validation` (exit 1). Evita persistir memórias com embeddings vazios que quebravam a semântica de recall (correção P1 em `src/commands/remember.rs`).
+- Pós-processamento BERT NER estendido para filtrar stopwords adicionais ALL CAPS PT-BR/EN observadas no stress de 495 documentos FlowAiper (verbos, adjetivos, substantivos comuns) e nomes de métodos HTTP (`GET`, `POST`, `DELETE`, etc.). Saídas NER de token único agora também são filtradas, não apenas matches do prefilter regex (correção P1 em `src/extraction.rs`).
+- Prefilter de URL do BERT NER agora remove pontuação markdown final (backticks, parênteses, colchetes, pontos, ponto-e-vírgulas) antes de persistir URLs como entidades. Antes, `https://example.com/`` era armazenado literalmente (correção P1 em `src/extraction.rs`).
+- Entidades BERT NER com sufixos numéricos hifenizados ou separados por espaço (ex: `GPT-5`, `Claude 4`, `Python 3.10`) agora são estendidas no pós-processamento em vez de truncadas. Lookup de sufixo é conservador: só estende quando ≤6 caracteres e puramente numéricos (correção P1 em `src/extraction.rs::extend_with_numeric_suffix`).
+- Enumeração `entity_type` em README EN e pt-BR corrigida de "9 valores" para "10 valores" com `issue_tracker` listado (correção P1 docs).
+
+### Adicionado
+- Variável de ambiente `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` para configurar o cap de relacionamentos-por-memória (padrão 50, intervalo [1, 10000]). A auditoria identificou que documentos com grafos ricos atingem o cap silenciosamente; usuários com corpora técnico agora podem ajustar (correção P1 via `src/constants.rs::max_relationships_per_memory()`).
+- Campo `HistoryResponse.deleted: bool` expondo se a memória está atualmente soft-deletada, permitindo aos clientes detectar estado esquecido sem inspecionar `memory_versions` diretamente.
+- 18 flags de CLI antes não documentadas agora possuem docstrings `///` visíveis em `--help`: `init --model`, `init --force`, `remember --name/--description/--body/--body-stdin/--metadata/--session-id`, `read --name`, `forget --name`, `edit --name/--body/--body-file/--body-stdin/--description`, `history --name`, `daemon --idle-shutdown-secs/--ping/--stop` (correção UX P1).
+
+### Modificado
+- `Cargo.toml` versão bumped de `1.0.21` para `1.0.22`.
+- Const `MAX_RELS=50` em `src/extraction.rs` consolidada em `crate::constants::max_relationships_per_memory()` removendo a definição duplicada.
+- Tipo do arg `restore --version` mudou de `i64` para `Option<i64>` (compatível com versão anterior: passar versão explícita continua funcionando).
+
 ## [1.0.21] - 2026-04-26
 
 ### Corrigido

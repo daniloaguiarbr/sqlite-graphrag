@@ -8,6 +8,7 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct ReadArgs {
+    /// Memory name to read. Returns NotFound (exit 4) if missing or soft-deleted.
     #[arg(long)]
     pub name: String,
     #[arg(long, default_value = "global")]
@@ -56,6 +57,11 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(
+            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+        ));
+    }
     let conn = open_ro(&paths.db)?;
 
     match memories::read_by_name(&conn, &namespace, &args.name)? {

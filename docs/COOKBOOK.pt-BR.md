@@ -923,3 +923,77 @@ sqlite-graphrag read --name plano-deploy --tz Europe/Berlin --json \
 ### See Also
 - Receita "Como Inicializar Banco De Dados De Memória Em 60 Segundos"
 - Receita "Como Configurar Saída de Idioma Com a Flag --lang"
+
+
+## Como Fazer Round-Trip De Forget E Restore Em Uma Memória
+### Problema
+- Você rodou `forget --name decisao-importante` e agora `recall` não retorna nada
+- Ler SQL de `memory_versions` para recuperar a linha não faz parte do seu trabalho
+- v1.0.21 deixava `history` rejeitando memórias esquecidas e `restore` exigindo `--version`
+
+
+### Solução
+```bash
+sqlite-graphrag forget --name decisao-importante
+sqlite-graphrag history --name decisao-importante --json | jaq '.deleted'
+sqlite-graphrag restore --name decisao-importante
+sqlite-graphrag recall "decisão" --json
+```
+
+
+### Explicação
+- `history` em v1.0.22 retorna versões de memórias soft-deletadas com flag `deleted: true`
+- `restore` sem `--version` escolhe automaticamente a última versão não-`restore`
+- Juntos tornam `forget` reversível ponta-a-ponta sem inspecionar SQL
+- `vec_memories` é re-embeddado no restore para que recall vetorial volte a encontrar a memória
+- Round-trip é idempotente: esquecer uma memória já esquecida é um no-op
+
+
+### Variantes
+- Passe `--version N` explicitamente quando precisar voltar a uma edição específica
+- Combine com `list --include-deleted --json | jaq '.items[] | select(.deleted)'` para auditar todas as esquecidas
+- Pipe `history --json` para detectar estado esquecido programaticamente antes de restaurar
+
+
+### Veja Também
+- Receita "Como Agendar Purge E Vacuum Em Cron Ou GitHub Actions"
+- Receita "Como Exportar Memórias Para NDJSON Para Backup"
+
+
+## Como Importar Em Massa Sem Extração Automática BERT
+### Problema
+- Seu pipeline de ingestão de 5000 arquivos demora horas porque BERT NER roda em todo body
+- Você já tem entidades extraídas por um LLM upstream e quer pular auto-extração
+- Carregar o modelo BERT de 676 MB no primeiro run estoura o orçamento de memória do CI
+
+
+### Solução
+```bash
+fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
+  sqlite-graphrag remember \
+    --name "$(basename {} .md)" \
+    --type concept \
+    --description "importado de {}" \
+    --skip-extraction \
+    --body-stdin < {}
+'
+```
+
+
+### Explicação
+- `--skip-extraction` desabilita `extract_graph_auto` apenas para a chamada atual
+- `extraction_method` é omitido da resposta JSON quando a flag está ativa
+- Pula download do modelo BERT, carga da classifier head e merge IOB inteiramente
+- Economiza ~150 ms por chamada em cache quente, ~30 segundos no primeiro run com cache frio
+- Use quando você já fornece `--entities-file` ou `--graph-stdin` de upstream
+
+
+### Variantes
+- Combine `--skip-extraction` com `--entities-file entidades.json` para persistir grafo curado sem ruído NER
+- Defina `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY=200` quando o grafo upstream for maior que o cap padrão
+- Use `--graph-stdin` para receber um único documento JSON com arrays `entities` e `relationships`
+
+
+### Veja Também
+- Receita "Como Importar Em Massa A Base De Conhecimento Via Pipeline Stdin"
+- Receita "Como Percorrer O Grafo De Entidades Para Recall Multi-Hop"

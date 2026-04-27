@@ -14,6 +14,8 @@ use std::io::Read as _;
 
 #[derive(clap::Args)]
 pub struct RememberArgs {
+    /// Memory name in kebab-case (lowercase letters, digits, hyphens).
+    /// Acts as unique key within the namespace; collisions trigger merge or rejection.
     #[arg(long)]
     pub name: String,
     #[arg(
@@ -22,8 +24,11 @@ pub struct RememberArgs {
         long_help = "Memory kind stored in `memories.type`. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill."
     )]
     pub r#type: MemoryType,
+    /// Short description (≤500 chars) summarizing the memory for use in `list` and `recall` snippets.
     #[arg(long)]
     pub description: String,
+    /// Inline body content. Mutually exclusive with --body-file, --body-stdin, --graph-stdin.
+    /// Maximum 512000 bytes; rejected if empty without an external graph.
     #[arg(
         long,
         conflicts_with_all = ["body_file", "body_stdin", "graph_stdin"]
@@ -35,6 +40,8 @@ pub struct RememberArgs {
         conflicts_with_all = ["body", "body_stdin", "graph_stdin"]
     )]
     pub body_file: Option<std::path::PathBuf>,
+    /// Read body from stdin until EOF. Useful in pipes (echo "..." | sqlite-graphrag remember ...).
+    /// Mutually exclusive with --body, --body-file, --graph-stdin.
     #[arg(
         long,
         conflicts_with_all = ["body", "body_file", "graph_stdin"]
@@ -64,6 +71,7 @@ pub struct RememberArgs {
     pub graph_stdin: bool,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
+    /// Inline JSON object with arbitrary metadata key-value pairs. Mutually exclusive with --metadata-file.
     #[arg(long)]
     pub metadata: Option<String>,
     #[arg(long, help = "JSON file containing metadata key-value pairs")]
@@ -83,6 +91,7 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
         help = "Disable automatic entity/relationship extraction from body"
     )]
     pub skip_extraction: bool,
+    /// Optional opaque session identifier for tracing memory provenance across multi-agent runs.
     #[arg(long)]
     pub session_id: Option<String>,
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
@@ -266,6 +275,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
         return Err(AppError::LimitExceeded(
             crate::i18n::validacao::body_excede(MAX_MEMORY_BODY_LEN),
+        ));
+    }
+
+    // v1.0.22 P1: rejeitar body vazio ou whitespace-only quando não há grafo externo.
+    // Sem este check, embeddings vazios eram persistidos quebrando a semântica de recall.
+    if !entities_provided_externally && graph.entities.is_empty() && raw_body.trim().is_empty() {
+        return Err(AppError::Validation(
+            "body não pode estar vazio: forneça --body, --body-file, --body-stdin com conteúdo, \
+             ou um grafo via --entities-file/--graph-stdin"
+                .to_string(),
         ));
     }
 

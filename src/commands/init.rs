@@ -7,10 +7,15 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct InitArgs {
+    /// Path to graphrag.sqlite. Defaults to `./graphrag.sqlite` in the current directory.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// Embedding model identifier. Currently only `multilingual-e5-small` is supported.
+    /// Reserved for future multi-model support; safe to omit.
     #[arg(long)]
     pub model: Option<String>,
+    /// Force re-initialization, overwriting any existing schema metadata.
+    /// Use only when the schema is corrupted; loses configuration but preserves data.
     #[arg(long)]
     pub force: bool,
     /// Namespace inicial a resolver. Alinhado à documentação bilíngue que prevê `init --namespace`.

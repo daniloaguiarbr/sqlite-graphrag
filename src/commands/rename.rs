@@ -92,6 +92,11 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     }
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    if !paths.db.exists() {
+        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+            &paths.db.display().to_string(),
+        )));
+    }
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &args.name)?
