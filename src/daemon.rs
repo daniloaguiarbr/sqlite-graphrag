@@ -17,6 +17,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -234,7 +236,7 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
         idle_shutdown_secs,
     })?;
 
-    let mut handled_embed_requests = 0_u64;
+    let handled_embed_requests = Arc::new(AtomicU64::new(0));
     let mut last_activity = Instant::now();
     let models_dir = models_dir.to_path_buf();
 
@@ -252,16 +254,14 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
             Ok(stream) => {
                 last_activity = Instant::now();
                 let models_dir_clone = models_dir.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut counter = 0_u64;
-                    handle_client(stream, &models_dir_clone, &mut counter)
-                        .map(|should_exit| (should_exit, counter))
+                let counter = Arc::clone(&handled_embed_requests);
+                let should_exit = tokio::task::spawn_blocking(move || {
+                    handle_client(stream, &models_dir_clone, &counter)
                 })
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("spawn_blocking panicked: {e}")))?;
-
-                let (should_exit, delta) = result?;
-                handled_embed_requests += delta;
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("spawn_blocking panicked: {e}"))
+                })??;
 
                 if should_exit {
                     break;
@@ -271,7 +271,7 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
                 if last_activity.elapsed() >= Duration::from_secs(idle_shutdown_secs) {
                     tracing::info!(
                         idle_shutdown_secs,
-                        handled_embed_requests,
+                        handled_embed_requests = handled_embed_requests.load(Ordering::Relaxed),
                         "daemon idle timeout reached"
                     );
                     break;
@@ -288,7 +288,7 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
 fn handle_client(
     stream: LocalSocketStream,
     models_dir: &Path,
-    handled_embed_requests: &mut u64,
+    handled_embed_requests: &AtomicU64,
 ) -> Result<bool, AppError> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -310,24 +310,24 @@ fn handle_client(
             DaemonResponse::Ok {
                 pid: std::process::id(),
                 version: SQLITE_GRAPHRAG_VERSION.to_string(),
-                handled_embed_requests: *handled_embed_requests,
+                handled_embed_requests: handled_embed_requests.load(Ordering::Relaxed),
             },
             false,
         ),
         DaemonRequest::Shutdown => (
             DaemonResponse::ShuttingDown {
-                handled_embed_requests: *handled_embed_requests,
+                handled_embed_requests: handled_embed_requests.load(Ordering::Relaxed),
             },
             true,
         ),
         DaemonRequest::EmbedPassage { text } => {
             let embedder = embedder::get_embedder(models_dir)?;
             let embedding = embedder::embed_passage(embedder, &text)?;
-            *handled_embed_requests += 1;
+            let count = handled_embed_requests.fetch_add(1, Ordering::Relaxed) + 1;
             (
                 DaemonResponse::PassageEmbedding {
                     embedding,
-                    handled_embed_requests: *handled_embed_requests,
+                    handled_embed_requests: count,
                 },
                 false,
             )
@@ -335,11 +335,11 @@ fn handle_client(
         DaemonRequest::EmbedQuery { text } => {
             let embedder = embedder::get_embedder(models_dir)?;
             let embedding = embedder::embed_query(embedder, &text)?;
-            *handled_embed_requests += 1;
+            let count = handled_embed_requests.fetch_add(1, Ordering::Relaxed) + 1;
             (
                 DaemonResponse::QueryEmbedding {
                     embedding,
-                    handled_embed_requests: *handled_embed_requests,
+                    handled_embed_requests: count,
                 },
                 false,
             )
@@ -352,11 +352,11 @@ fn handle_client(
             let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             let embeddings =
                 embedder::embed_passages_controlled(embedder, &text_refs, &token_counts)?;
-            *handled_embed_requests += 1;
+            let count = handled_embed_requests.fetch_add(1, Ordering::Relaxed) + 1;
             (
                 DaemonResponse::PassageEmbeddings {
                     embeddings,
-                    handled_embed_requests: *handled_embed_requests,
+                    handled_embed_requests: count,
                 },
                 false,
             )

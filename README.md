@@ -44,7 +44,7 @@ sqlite-graphrag --version
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
-- Every invocation can stay stateless, but heavy embedding commands now auto-start and reuse a persistent daemon when needed
+- Every invocation can stay stateless, but heavy commands auto-start a persistent daemon for embedding inference, reusing it across calls (this is daemon autostart, separate from automatic entity extraction)
 - `sqlite-graphrag daemon` still exists for explicit control, but the common path no longer requires manual startup
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one `{body?, entities, relationships}` object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
@@ -140,6 +140,8 @@ sqlite-graphrag init --namespace project-foo
 ```
 - Without `--db` or `SQLITE_GRAPHRAG_DB_PATH`, every CRUD command in that directory uses `./graphrag.sqlite`
 ### Remember a memory with an optional explicit entity graph
+- By default, `remember` automatically extracts entities and relationships from the body via local BERT NER and stores them in the entity graph
+- Pass `--skip-extraction` to disable extraction for that single call
 ```bash
 sqlite-graphrag remember \
   --name integration-tests-postgres \
@@ -149,6 +151,21 @@ sqlite-graphrag remember \
 ```
 - `remember` JSON response includes `urls_persisted` (URLs routed to `memory_urls` table) and `relationships_truncated` (bool, set when relationships were capped)
 - URLs are stored in `memory_urls` via schema V007 and never pollute the entity graph
+- Sample JSON output illustrating extracted entities and relationships:
+```json
+{
+  "memory": {"id": 42, "name": "audit-note", "type": "project"},
+  "extracted_entities": [
+    {"name": "OpenAI", "kind": "organization", "saliency": 0.92},
+    {"name": "Rust", "kind": "technology", "saliency": 0.85}
+  ],
+  "extracted_relationships": [
+    {"source": "OpenAI", "target": "GPT-4", "relation": "develops"}
+  ],
+  "urls_persisted": [],
+  "relationships_truncated": false
+}
+```
 ### Skip BERT NER auto-extraction for faster ingestion
 - `--skip-extraction` disables `extract_graph_auto` for the current call only
 - Use it when the body is short, when you supply `--entities-file` upstream, or when CI memory is tight
@@ -244,6 +261,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | Variable | Description | Default | Example |
 | --- | --- | --- | --- |
 | `SQLITE_GRAPHRAG_DB_PATH` | Path to the SQLite database file override | `./graphrag.sqlite` in the invocation directory | `/data/graphrag.sqlite` |
+| `SQLITE_GRAPHRAG_HOME` | Override base directory for `graphrag.sqlite` (used when `--db` and `SQLITE_GRAPHRAG_DB_PATH` are absent) | unset | `/var/lib/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Directory override for model cache and lock files | XDG cache dir | `~/.cache/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` (aliases: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
@@ -288,25 +306,25 @@ RUN cargo install --path .
 
 ## Exit Codes
 ### Deterministic status codes for orchestration
-| Code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Validation error or runtime failure |
-| `2` | Duplicate detected or invalid CLI argument |
-| `3` | Conflict during optimistic update |
-| `4` | Memory or entity not found |
-| `5` | Namespace could not be resolved |
-| `6` | Payload exceeded configured limits |
-| `10` | SQLite database error |
-| `11` | Embedding generation failed |
-| `12` | `sqlite-vec` extension failed to load |
-| `13` | Batch partial failure (import, reindex, stdin batch) |
-| `14` | Filesystem I/O error |
-| `15` | Database busy after retries (moved from 13 in the legacy line) |
-| `20` | Internal or JSON serialization error |
-| `73` | `EX_NOPERM`: memory guard rejected low RAM condition |
-| `75` | `EX_TEMPFAIL`: all concurrency slots busy |
-| `77` | Available RAM below minimum required to load the embedding model |
+| Code | Meaning | Possible Cause |
+| --- | --- | --- |
+| `0` | Success | Command completed and JSON payload printed when requested |
+| `1` | Validation error or runtime failure | Invalid `--type`, invalid `--relation`, kebab-case violation, generic anyhow error |
+| `2` | Duplicate detected, invalid CLI argument, or concurrency error | Existing `--name`, malformed flag, mutually exclusive options |
+| `3` | Conflict during optimistic update | `edit` or `restore` raced against another writer |
+| `4` | Memory or entity not found | `read`, `forget`, `edit`, `rename`, `restore` or `graph traverse` target missing |
+| `5` | Namespace could not be resolved | No `SQLITE_GRAPHRAG_NAMESPACE`, no flag, no detected default |
+| `6` | Payload exceeded configured limits | `--name` longer than 80 bytes, body over `512000` bytes, more than `512` chunks |
+| `10` | SQLite database error | Corrupted file, schema mismatch, missing migration |
+| `11` | Embedding generation failed | Model load error or daemon embedding RPC failure |
+| `12` | `sqlite-vec` extension failed to load | Missing native extension or unsupported SQLite build |
+| `13` | Batch partial failure | `import`, `reindex` or stdin batch with at least one failing record |
+| `14` | Filesystem I/O error | Cache or database directory not writable |
+| `15` | Database busy after retries | WAL contention exceeded `with_busy_retry` budget |
+| `20` | Internal or JSON serialization error | Unexpected serde failure or invariant violation |
+| `73` | `EX_NOPERM` memory guard rejected low RAM | Available RAM below safety threshold during slot acquisition |
+| `75` | `EX_TEMPFAIL` lock timeout or all concurrency slots busy | Five-plus concurrent invocations or `flock` waited longer than 300s |
+| `77` | Available RAM below minimum required | Less than 2 GB free RAM detected before model load |
 
 
 ## Performance

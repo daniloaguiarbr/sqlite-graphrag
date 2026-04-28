@@ -672,9 +672,7 @@ fn contract_15_link() {
         &[
             "action",
             "from",
-            "source",
             "to",
-            "target",
             "relation",
             "weight",
             "namespace",

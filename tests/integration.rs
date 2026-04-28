@@ -27,6 +27,112 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
 }
 
 // ---------------------------------------------------------------------------
+// Resolução de path do banco via SQLITE_GRAPHRAG_HOME
+// ---------------------------------------------------------------------------
+
+/// Helper isolado que NÃO injeta `SQLITE_GRAPHRAG_DB_PATH`, deixando a
+/// resolução cair em `SQLITE_GRAPHRAG_HOME` ou no `current_dir`. Usa
+/// `env_clear` para garantir que vars do ambiente do CI não vazem.
+fn home_isolated_cmd(cwd: &std::path::Path) -> Command {
+    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    c.env_clear();
+    // PATH é necessário em alguns ambientes para libs do binário; preserva minimamente.
+    if let Ok(path_var) = std::env::var("PATH") {
+        c.env("PATH", path_var);
+    }
+    if let Ok(home_var) = std::env::var("HOME") {
+        c.env("HOME", home_var);
+    }
+    c.current_dir(cwd);
+    c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+    c.env("SQLITE_GRAPHRAG_CACHE_DIR", cwd.join("cache"));
+    c
+}
+
+#[test]
+fn cli_home_env_creates_db_in_target_dir() {
+    let home_dir = TempDir::new().expect("home tempdir");
+    let cwd_dir = TempDir::new().expect("cwd tempdir");
+    let banco_no_home = home_dir.path().join("graphrag.sqlite");
+    let banco_no_cwd = cwd_dir.path().join("graphrag.sqlite");
+
+    home_isolated_cmd(cwd_dir.path())
+        .env("SQLITE_GRAPHRAG_HOME", home_dir.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(
+        banco_no_home.exists(),
+        "init com SQLITE_GRAPHRAG_HOME deve criar o banco no diretório indicado"
+    );
+    assert!(
+        !banco_no_cwd.exists(),
+        "init com SQLITE_GRAPHRAG_HOME NÃO deve criar banco no current_dir"
+    );
+}
+
+#[test]
+fn cli_home_traversal_rejected() {
+    let cwd_dir = TempDir::new().expect("cwd tempdir");
+
+    home_isolated_cmd(cwd_dir.path())
+        .env("SQLITE_GRAPHRAG_HOME", "/tmp/../etc")
+        .arg("init")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_db_path_overrides_home_env() {
+    let home_dir = TempDir::new().expect("home tempdir");
+    let db_dir = TempDir::new().expect("db tempdir");
+    let cwd_dir = TempDir::new().expect("cwd tempdir");
+    let db_explicito = db_dir.path().join("explicito.sqlite");
+    let banco_no_home = home_dir.path().join("graphrag.sqlite");
+
+    home_isolated_cmd(cwd_dir.path())
+        .env("SQLITE_GRAPHRAG_HOME", home_dir.path())
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_explicito)
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(
+        db_explicito.exists(),
+        "SQLITE_GRAPHRAG_DB_PATH deve vencer SQLITE_GRAPHRAG_HOME"
+    );
+    assert!(
+        !banco_no_home.exists(),
+        "HOME não deve ser usado quando DB_PATH está presente"
+    );
+}
+
+#[test]
+fn cli_flag_db_overrides_home_env() {
+    let home_dir = TempDir::new().expect("home tempdir");
+    let flag_dir = TempDir::new().expect("flag tempdir");
+    let cwd_dir = TempDir::new().expect("cwd tempdir");
+    let db_flag = flag_dir.path().join("via-flag.sqlite");
+    let banco_no_home = home_dir.path().join("graphrag.sqlite");
+
+    home_isolated_cmd(cwd_dir.path())
+        .env("SQLITE_GRAPHRAG_HOME", home_dir.path())
+        .args(["init", "--db", db_flag.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(
+        db_flag.exists(),
+        "flag --db deve vencer SQLITE_GRAPHRAG_HOME"
+    );
+    assert!(
+        !banco_no_home.exists(),
+        "HOME não deve ser usado quando --db está presente"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // init
 // ---------------------------------------------------------------------------
 

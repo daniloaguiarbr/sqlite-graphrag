@@ -44,7 +44,7 @@ sqlite-graphrag --version
 ## Superpoderes para Agentes de IA
 ### Contrato de CLI de primeira classe para orquestração
 - Todo subcomando aceita `--json` produzindo payloads determinísticos em stdout
-- Toda invocação pode continuar stateless, mas comandos pesados de embedding agora sobem e reutilizam `sqlite-graphrag daemon` automaticamente quando necessário
+- Toda invocação pode continuar stateless, mas comandos pesados sobem um daemon persistente para inferência de embeddings automaticamente, reutilizando-o entre chamadas (este é o autostart do daemon, separado da extração automática de entidades)
 - `sqlite-graphrag daemon` continua existindo para controle explícito, mas o caminho comum não exige mais startup manual
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin é explícito: use `--body-stdin` para texto ou `--graph-stdin` para um objeto `{body?, entities, relationships}`; arrays crus de entidades e relacionamentos usam `--entities-file` e `--relationships-file`
@@ -140,6 +140,8 @@ sqlite-graphrag init --namespace projeto-foo
 ```
 - Sem `--db` ou `SQLITE_GRAPHRAG_DB_PATH`, todo comando CRUD nessa pasta usa `./graphrag.sqlite`
 ### Grave uma memória com grafo de entidades explícito opcional
+- Por padrão, `remember` extrai entidades e relacionamentos automaticamente do corpo via BERT NER local e os armazena no grafo de entidades
+- Passe `--skip-extraction` para desabilitar a extração nessa chamada específica
 ```bash
 sqlite-graphrag remember \
   --name testes-integracao-postgres \
@@ -149,6 +151,21 @@ sqlite-graphrag remember \
 ```
 - A resposta JSON de `remember` inclui `urls_persisted` (URLs roteadas para a tabela `memory_urls`) e `relationships_truncated` (bool, ativo quando relacionamentos foram truncados)
 - URLs são armazenadas em `memory_urls` via schema V007 e nunca poluem o grafo de entidades
+- Exemplo de saída JSON ilustrando entidades e relacionamentos extraídos (chaves em inglês por convenção):
+```json
+{
+  "memory": {"id": 42, "name": "audit-note", "type": "project"},
+  "extracted_entities": [
+    {"name": "OpenAI", "kind": "organization", "saliency": 0.92},
+    {"name": "Rust", "kind": "technology", "saliency": 0.85}
+  ],
+  "extracted_relationships": [
+    {"source": "OpenAI", "target": "GPT-4", "relation": "develops"}
+  ],
+  "urls_persisted": [],
+  "relationships_truncated": false
+}
+```
 ### Pule auto-extração BERT NER para ingestão mais rápida
 - `--skip-extraction` desabilita `extract_graph_auto` apenas para a chamada atual
 - Use quando o body é curto, quando você fornece `--entities-file` upstream, ou quando memória do CI é restrita
@@ -244,6 +261,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | Variável | Descrição | Padrão | Exemplo |
 | --- | --- | --- | --- |
 | `SQLITE_GRAPHRAG_DB_PATH` | Caminho para override do arquivo SQLite | `./graphrag.sqlite` no diretório da invocação | `/dados/graphrag.sqlite` |
+| `SQLITE_GRAPHRAG_HOME` | Sobrescreve diretório base para `graphrag.sqlite` (usado quando `--db` e `SQLITE_GRAPHRAG_DB_PATH` estão ausentes) | indefinido | `/var/lib/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Diretório de override para cache do modelo e lock files | Diretório XDG cache | `~/.cache/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
@@ -288,25 +306,25 @@ RUN cargo install --path .
 
 ## Códigos de Saída
 ### Status determinísticos para orquestração
-| Código | Significado |
-| --- | --- |
-| `0` | Sucesso |
-| `1` | Erro de validação ou falha em runtime |
-| `2` | Duplicata detectada ou argumento CLI inválido |
-| `3` | Conflito durante atualização otimista |
-| `4` | Memória ou entidade não encontrada |
-| `5` | Namespace não pôde ser resolvido |
-| `6` | Payload excedeu limites configurados |
-| `10` | Erro do banco SQLite |
-| `11` | Geração de embedding falhou |
-| `12` | Extensão `sqlite-vec` falhou ao carregar |
-| `13` | Falha parcial em lote (import, reindex, stdin batch) |
-| `14` | Erro de I/O do sistema de arquivos |
-| `15` | Banco ocupado após tentativas (movido de 13 na linha legada) |
-| `20` | Erro interno ou de serialização JSON |
-| `73` | `EX_NOPERM`: guarda de memória rejeitou condição de pouca RAM |
-| `75` | `EX_TEMPFAIL`: todos os slots de concorrência ocupados |
-| `77` | RAM disponível abaixo do mínimo para carregar o modelo |
+| Código | Significado | Causa Possível |
+| --- | --- | --- |
+| `0` | Sucesso | Comando concluído e payload JSON impresso quando solicitado |
+| `1` | Erro de validação ou falha em runtime | `--type` inválido, `--relation` inválido, violação de kebab-case, erro genérico anyhow |
+| `2` | Duplicata, argumento CLI inválido ou erro de concorrência | `--name` existente, flag malformada, opções mutuamente exclusivas |
+| `3` | Conflito durante atualização otimista | `edit` ou `restore` competiu com outro escritor |
+| `4` | Memória ou entidade não encontrada | Alvo de `read`, `forget`, `edit`, `rename`, `restore` ou `graph traverse` ausente |
+| `5` | Namespace não pôde ser resolvido | Sem `SQLITE_GRAPHRAG_NAMESPACE`, sem flag, sem padrão detectado |
+| `6` | Payload excedeu limites configurados | `--name` maior que 80 bytes, body acima de `512000` bytes, mais de `512` chunks |
+| `10` | Erro do banco SQLite | Arquivo corrompido, schema divergente, migração ausente |
+| `11` | Geração de embedding falhou | Erro ao carregar modelo ou falha de RPC do daemon de embedding |
+| `12` | Extensão `sqlite-vec` falhou ao carregar | Extensão nativa ausente ou build do SQLite incompatível |
+| `13` | Falha parcial em lote | `import`, `reindex` ou stdin batch com pelo menos um registro com falha |
+| `14` | Erro de I/O do sistema de arquivos | Diretório de cache ou de banco sem permissão de escrita |
+| `15` | Banco ocupado após tentativas | Contenção do WAL excedeu o orçamento de `with_busy_retry` |
+| `20` | Erro interno ou de serialização JSON | Falha inesperada do serde ou violação de invariante |
+| `73` | `EX_NOPERM` guarda de memória rejeitou pouca RAM | RAM disponível abaixo do limite de segurança ao adquirir slot |
+| `75` | `EX_TEMPFAIL` lock timeout ou todos os slots ocupados | Cinco ou mais invocações concorrentes ou `flock` esperou mais de 300s |
+| `77` | RAM disponível abaixo do mínimo | Menos de 2 GB de RAM livre detectados antes do load do modelo |
 
 
 ## Desempenho

@@ -29,6 +29,8 @@ impl AppPaths {
         } else if let Ok(env_path) = std::env::var("SQLITE_GRAPHRAG_DB_PATH") {
             validate_path(&env_path)?;
             PathBuf::from(env_path)
+        } else if let Some(home_dir) = home_env_dir()? {
+            home_dir.join("graphrag.sqlite")
         } else {
             std::env::current_dir()
                 .map_err(AppError::Io)?
@@ -56,6 +58,23 @@ fn validate_path(p: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Resolve `SQLITE_GRAPHRAG_HOME` como diretório raiz para o banco padrão.
+///
+/// Retorna `Ok(Some(dir))` quando a env var está definida e válida,
+/// `Ok(None)` quando ausente ou vazia (cai para o fallback `current_dir`),
+/// e `Err(...)` quando o valor contém componentes de traversal.
+fn home_env_dir() -> Result<Option<PathBuf>, AppError> {
+    let raw = match std::env::var("SQLITE_GRAPHRAG_HOME") {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    validate_path(&raw)?;
+    Ok(Some(PathBuf::from(raw)))
+}
+
 pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
     path.parent().ok_or_else(|| {
         AppError::Validation(format!(
@@ -68,6 +87,109 @@ pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
 #[cfg(test)]
 mod testes {
     use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    /// Limpa todas as variáveis que afetam `AppPaths::resolve` para isolar o
+    /// teste do ambiente do desenvolvedor / CI.
+    fn limpar_env_paths() {
+        // SAFETY: testes marcados com #[serial] garantem ausência de concorrência.
+        unsafe {
+            std::env::remove_var("SQLITE_GRAPHRAG_HOME");
+            std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
+            std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn home_env_resolve_db_em_subdir() {
+        limpar_env_paths();
+        let tmp = TempDir::new().expect("tempdir");
+        // SAFETY: serial.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp.path());
+        }
+
+        let paths = AppPaths::resolve(None).expect("resolve com HOME valido");
+        assert_eq!(paths.db, tmp.path().join("graphrag.sqlite"));
+
+        limpar_env_paths();
+    }
+
+    #[test]
+    #[serial]
+    fn home_env_traversal_rejeitado() {
+        limpar_env_paths();
+        // SAFETY: serial.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_HOME", "/tmp/../etc");
+        }
+
+        let resultado = AppPaths::resolve(None);
+        assert!(
+            matches!(resultado, Err(AppError::Validation(_))),
+            "traversal em SQLITE_GRAPHRAG_HOME deve falhar como Validation, obteve {resultado:?}"
+        );
+
+        limpar_env_paths();
+    }
+
+    #[test]
+    #[serial]
+    fn db_path_vence_home() {
+        limpar_env_paths();
+        let tmp_home = TempDir::new().expect("tempdir home");
+        let tmp_db = TempDir::new().expect("tempdir db");
+        let db_explicito = tmp_db.path().join("explicito.sqlite");
+        // SAFETY: serial.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp_home.path());
+            std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", &db_explicito);
+        }
+
+        let paths = AppPaths::resolve(None).expect("resolve com DB_PATH e HOME");
+        assert_eq!(paths.db, db_explicito);
+
+        limpar_env_paths();
+    }
+
+    #[test]
+    #[serial]
+    fn flag_vence_home() {
+        limpar_env_paths();
+        let tmp_home = TempDir::new().expect("tempdir home");
+        let tmp_flag = TempDir::new().expect("tempdir flag");
+        let db_flag = tmp_flag.path().join("via-flag.sqlite");
+        // SAFETY: serial.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp_home.path());
+        }
+
+        let paths = AppPaths::resolve(Some(db_flag.to_str().expect("utf8")))
+            .expect("resolve com flag e HOME");
+        assert_eq!(paths.db, db_flag);
+
+        limpar_env_paths();
+    }
+
+    #[test]
+    #[serial]
+    fn home_env_vazio_cai_para_cwd() {
+        limpar_env_paths();
+        // SAFETY: serial.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_HOME", "");
+        }
+
+        let paths = AppPaths::resolve(None).expect("resolve com HOME vazio");
+        let esperado = std::env::current_dir()
+            .expect("cwd")
+            .join("graphrag.sqlite");
+        assert_eq!(paths.db, esperado);
+
+        limpar_env_paths();
+    }
 
     #[test]
     fn parent_or_err_aceita_path_normal() {

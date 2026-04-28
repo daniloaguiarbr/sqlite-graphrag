@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-04-28
+
+### Added
+- `SQLITE_GRAPHRAG_HOME` env var for setting the base directory for `graphrag.sqlite` (precedence: `--db` > `SQLITE_GRAPHRAG_DB_PATH` > `SQLITE_GRAPHRAG_HOME` > cwd).
+- README sample JSON output for `remember` showing `extracted_entities`, `extracted_relationships`, and `urls_persisted` fields.
+- Expanded exit-code table with sub-causes for exit 1 (Validation error or runtime failure).
+
+### Changed
+- README clarifies that GraphRAG entity extraction runs by default in `remember` (use `--skip-extraction` to disable per call).
+- Renamed reference to "automatic ingestion" in README to disambiguate "daemon autostart" from "automatic entity extraction".
+
+### Fixed
+- Daemon `handled_embed_requests` counter now correctly reports the cumulative count after `init` autospawn (was returning 0 since v1.0.24 due to a per-connection local counter shadowing the shared accumulator).
+- Test `contract_15_link` aligned with the actual `link --json` output keys (`action`, `from`, `to`, `relation`, `weight`, `namespace`); the obsolete expectations of `source`/`target` numeric IDs were stale since v1.0.24.
+
 ## [1.0.25] - 2026-04-28
 
 ### Added
