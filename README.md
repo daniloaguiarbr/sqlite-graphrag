@@ -224,6 +224,14 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `unlink` | `--relationship-id` | Remove a specific relationship between two entities |
 | `related` | `--name`, `--limit`, `--hops` | Traverse graph-connected memories from a seed memory |
 | `graph` | `--format`, `--output` | Export a graph snapshot in `json`, `dot` or `mermaid` |
+
+### Graph subcommands
+| Subcommand | Description | Key flags |
+| --- | --- | --- |
+| `graph traverse --from <ENTITY>` | Walk the entity graph from a starting node using BFS | `--depth` (default 2), `--namespace` |
+| `graph stats` | Print graph statistics (node count, edge count, degree distribution) | `--namespace` |
+| `graph entities` | List entities stored in the graph with optional filters | `--limit` (default 50), `--entity-type`, `--namespace` |
+
 ### Maintenance
 | Command | Arguments | Description |
 | --- | --- | --- |
@@ -307,12 +315,12 @@ RUN cargo install --path .
 - Stateless CLI invocations typically spend about one second reloading the embedding model per heavy command
 - Warm in-process recall can stay well below the stateless subprocess timing once the model is already resident
 - First `init` downloads the quantized model once and caches it locally
-- Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.3 RSS calibration
+- Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.18 daemon-based RSS calibration (52 GiB regression in v1.0.17 reduced to 1.03 GiB peak)
 
 
 ## Safe Parallel Invocation
 ### Counting semaphore with up to four simultaneous slots
-- Each invocation loads `multilingual-e5-small` consuming roughly 1100 MB of RAM after the v1.0.3 measurement pass
+- Each invocation loads `multilingual-e5-small` consuming roughly 1100 MB of RAM after the v1.0.18 measurement pass
 - `MAX_CONCURRENT_CLI_INSTANCES` remains the hard ceiling at 4 cooperating subprocesses
 - Heavy commands `init`, `remember`, `recall`, and `hybrid-search` are clamped lower dynamically when available RAM cannot sustain the requested parallelism safely
 - Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`

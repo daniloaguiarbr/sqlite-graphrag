@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-04-28
+
+### Added
+- `recall --all-namespaces` flag searches across all namespaces in a single query (P0-1).
+- BERT NER now emits `organization` (B-ORG), `location` (B-LOC), and `date` (B-DATE)
+  entity types aligned with V008 schema migration. Previous releases mapped ORG→`project`,
+  LOC→`concept`, and discarded DATE entirely (P0-2 + V008 alignment).
+- Schema migration V008: `entities.type` CHECK constraint expanded to include `organization`,
+  `location`, `date`. Additive migration; existing rows are preserved unchanged.
+- BRAND_NAME_REGEX captures CamelCase organization names such as "OpenAI", "PostgreSQL",
+  "ChatGPT" that BERT NER frequently misclassifies (P0-2).
+- Portuguese monosyllabic verb false-positive filter ("Lê", "Vê", "Cá", etc.) for BERT
+  outputs below confidence threshold 0.85 (P0-2).
+- SECTION_MARKER_REGEX filters text fragments like "Etapa 3", "Fase 1", "Passo 2",
+  "Seção 4", "Capítulo 1" from entity extraction (P0-4).
+- 12 new ALL_CAPS_STOPWORDS: `API`, `CAPÍTULO`, `CLI`, `ETAPA`, `FASE`, `HTTP`, `HTTPS`,
+  `JWT`, `LLM`, `PASSO`, `REST`, `UI`, `URL` (P0-4).
+- README documents `graph traverse|stats|entities` subcommands with flags table (P1-A).
+
+### Changed
+- `recall.graph_matches[].distance` now reflects graph hop count via proxy
+  `1.0 - 1.0 / (hop + 1)`. Previous releases used `0.0` placeholder. Real cosine
+  distance is reserved for v1.0.26 (P1-M).
+- `merge_and_deduplicate` longest-wins logic rewritten with composite key
+  `entity_type + name_lc` and bidirectional substring containment. Resolves
+  "Sonne"/"Sonnet" duplication and "Open"/"Paper" truncation issues (P0-3).
+- `Cargo.toml` version bumped from `1.0.24` to `1.0.25`.
+
+### Fixed
+- `is_valid_entity_type` now accepts new V008 types `organization`, `location`, `date` (P0-A) — without this fix, `remember` would reject any entity emitted by the V008-aligned IOB mapping with exit 1.
+- `augment_versioned_model_names` regex no longer captures Portuguese section markers like "Etapa 3" or "Fase 1" (P0-B) — defense-in-depth filter applied after augmentation and inside `iob_to_entities.flush()`.
+- `remember --name` longer than 80 bytes now returns exit code 6 (LimitExceeded)
+  instead of exit 1 (Validation). Restores the exit code contract used by
+  orchestrating agents (P1-J).
+
+### Notes
+- `recall.graph_matches[].distance` is approximate; semantic cosine distance reserved for v1.0.26.
+- Entity and relationship caps (30 and 50 respectively) remain silent in v1.0.25;
+  explicit `--limit-entities` / `--limit-relations` flags planned for v1.0.26.
+
 ## [1.0.24] - 2026-04-27
 
 ### Added
@@ -692,7 +732,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 58 simultaneous invocations locked the computer for 38 minutes (incident 2026-04-18).
 
 
-## [Unreleased]
+## [Legacy NeuroGraphRAG]
+<!-- This block predates the rename to sqlite-graphrag and is preserved for traceability -->
 
 ### Added
 

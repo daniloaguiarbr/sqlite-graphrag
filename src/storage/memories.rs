@@ -396,11 +396,12 @@ pub fn list(
     }
 }
 
-/// Runs a KNN search over `vec_memories` restricted to a namespace.
+/// Runs a KNN search over `vec_memories`, optionally restricted to namespaces.
 ///
 /// # Arguments
 ///
 /// - `embedding` — query vector of length [`crate::constants::EMBEDDING_DIM`].
+/// - `namespaces` — namespaces to search. Empty slice means "all namespaces".
 /// - `memory_type` — optional filter on the `type` column.
 /// - `k` — maximum number of hits to return.
 ///
@@ -414,35 +415,122 @@ pub fn list(
 pub fn knn_search(
     conn: &Connection,
     embedding: &[f32],
-    namespace: &str,
+    namespaces: &[String],
     memory_type: Option<&str>,
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
     let bytes = f32_to_bytes(embedding);
-    if let Some(mt) = memory_type {
-        let mut stmt = conn.prepare(
-            "SELECT memory_id, distance FROM vec_memories
-             WHERE embedding MATCH ?1 AND namespace = ?2 AND type = ?3
-             ORDER BY distance LIMIT ?4",
-        )?;
-        let rows = stmt
-            .query_map(params![bytes, namespace, mt, k as i64], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    } else {
-        let mut stmt = conn.prepare(
-            "SELECT memory_id, distance FROM vec_memories
-             WHERE embedding MATCH ?1 AND namespace = ?2
-             ORDER BY distance LIMIT ?3",
-        )?;
-        let rows = stmt
-            .query_map(params![bytes, namespace, k as i64], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+
+    match namespaces.len() {
+        0 => {
+            // No namespace filter — search all namespaces.
+            if let Some(mt) = memory_type {
+                let mut stmt = conn.prepare(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ?1 AND type = ?2 \
+                     ORDER BY distance LIMIT ?3",
+                )?;
+                let rows = stmt
+                    .query_map(params![bytes, mt, k as i64], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ?1 \
+                     ORDER BY distance LIMIT ?2",
+                )?;
+                let rows = stmt
+                    .query_map(params![bytes, k as i64], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }
+        }
+        1 => {
+            // Fast single-namespace path (preserved from previous implementation).
+            let ns = &namespaces[0];
+            if let Some(mt) = memory_type {
+                let mut stmt = conn.prepare(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ?1 AND namespace = ?2 AND type = ?3 \
+                     ORDER BY distance LIMIT ?4",
+                )?;
+                let rows = stmt
+                    .query_map(params![bytes, ns, mt, k as i64], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ?1 AND namespace = ?2 \
+                     ORDER BY distance LIMIT ?3",
+                )?;
+                let rows = stmt
+                    .query_map(params![bytes, ns, k as i64], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }
+        }
+        _ => {
+            // Multiple explicit namespaces: build IN clause with positional placeholders.
+            // rusqlite does not support array binding, so we generate "?,?,..." manually.
+            let placeholders = (0..namespaces.len())
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            if let Some(mt) = memory_type {
+                let query = format!(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ? AND type = ? AND namespace IN ({placeholders}) \
+                     ORDER BY distance LIMIT ?"
+                );
+                let mut stmt = conn.prepare(&query)?;
+                // Params: [bytes, mt, ns0, ns1, ..., k]
+                let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> =
+                    vec![Box::new(bytes), Box::new(mt.to_string())];
+                for ns in namespaces {
+                    raw_params.push(Box::new(ns.clone()));
+                }
+                raw_params.push(Box::new(k as i64));
+                let param_refs: Vec<&dyn rusqlite::ToSql> =
+                    raw_params.iter().map(|b| b.as_ref()).collect();
+                let rows = stmt
+                    .query_map(param_refs.as_slice(), |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            } else {
+                let query = format!(
+                    "SELECT memory_id, distance FROM vec_memories \
+                     WHERE embedding MATCH ? AND namespace IN ({placeholders}) \
+                     ORDER BY distance LIMIT ?"
+                );
+                let mut stmt = conn.prepare(&query)?;
+                // Params: [bytes, ns0, ns1, ..., k]
+                let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(bytes)];
+                for ns in namespaces {
+                    raw_params.push(Box::new(ns.clone()));
+                }
+                raw_params.push(Box::new(k as i64));
+                let param_refs: Vec<&dyn rusqlite::ToSql> =
+                    raw_params.iter().map(|b| b.as_ref()).collect();
+                let rows = stmt
+                    .query_map(param_refs.as_slice(), |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }
+        }
     }
 }
 
@@ -933,7 +1021,7 @@ mod testes {
         upsert_vec(&conn, id_b, "global", "user", &emb_b, "mem-knn-b", "s")?;
 
         let query: Vec<f32> = vec![1.0; 384];
-        let results = knn_search(&conn, &query, "global", None, 2)?;
+        let results = knn_search(&conn, &query, &["global".to_string()], None, 2)?;
         assert!(!results.is_empty());
         assert_eq!(results[0].0, id_a);
         Ok(())
@@ -970,10 +1058,10 @@ mod testes {
         )?;
 
         let query: Vec<f32> = vec![1.0; 384];
-        let results_user = knn_search(&conn, &query, "global", Some("user"), 5)?;
+        let results_user = knn_search(&conn, &query, &["global".to_string()], Some("user"), 5)?;
         assert!(results_user.iter().all(|(id, _)| *id == id_a));
 
-        let results_fb = knn_search(&conn, &query, "global", Some("feedback"), 5)?;
+        let results_fb = knn_search(&conn, &query, &["global".to_string()], Some("feedback"), 5)?;
         assert!(results_fb.iter().all(|(id, _)| *id == id_b));
         Ok(())
     }

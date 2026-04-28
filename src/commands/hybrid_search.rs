@@ -112,8 +112,13 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     let memory_type_str = args.r#type.map(|t| t.as_str());
 
-    let vec_results =
-        memories::knn_search(&conn, &embedding, &namespace, memory_type_str, args.k * 2)?;
+    let vec_results = memories::knn_search(
+        &conn,
+        &embedding,
+        &[namespace.clone()],
+        memory_type_str,
+        args.k * 2,
+    )?;
 
     // Mapear posição de ranking vetorial por memory_id (1-indexed conforme schema)
     let vec_rank_map: HashMap<i64, usize> = vec_results

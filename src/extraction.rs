@@ -25,6 +25,10 @@ static REGEX_EMAIL: OnceLock<Regex> = OnceLock::new();
 static REGEX_URL: OnceLock<Regex> = OnceLock::new();
 static REGEX_UUID: OnceLock<Regex> = OnceLock::new();
 static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
+// v1.0.25 P0-4: filters section-structure markers like "Etapa 3", "Fase 1", "Passo 2".
+static REGEX_SECTION_MARKER: OnceLock<Regex> = OnceLock::new();
+// v1.0.25 P0-2: captures CamelCase brand names that BERT NER often misses (e.g. "OpenAI", "PostgreSQL").
+static REGEX_BRAND_CAMEL: OnceLock<Regex> = OnceLock::new();
 
 // v1.0.20: stopwords para filtrar palavras-regra PT-BR/EN comuns capturadas como ALL_CAPS.
 // Sem este filtro, corpus técnico em PT-BR contendo regras formatadas em CAPS (NUNCA, PROIBIDO, DEVE)
@@ -36,6 +40,9 @@ static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
 // FIXED, PENDING), PT-BR imperative verbs (ACEITE, CONFIRME, NEGUE, RECUSE), PT-BR modal/
 // common verbs (DEVEMOS, PODEMOS, VAMOS), generic nouns (BORDA, CHECKLIST, PLAN, TOKEN),
 // and common abbreviations (ACK, ACL).
+// v1.0.25 P0-4: added technology/protocol acronyms (API, CLI, HTTP, HTTPS, JWT, LLM, REST, UI, URL)
+// and PT-BR section-label stems (CAPÍTULO, ETAPA, FASE, PASSO, SEÇÃO) to prevent section markers
+// and generic tech terms from being extracted as entities.
 const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ACEITE",
     "ACK",
@@ -46,6 +53,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ALL",
     "ALTA",
     "ALWAYS",
+    "API",
     "ARTEFATOS",
     "ATIVO",
     "BAIXA",
@@ -53,8 +61,10 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "BORDA",
     "BLOQUEAR",
     "BUG",
+    "CAPÍTULO",
     "CASO",
     "CHECKLIST",
+    "CLI",
     "COMPLETED",
     "CONFIRMADO",
     "CONFIRME",
@@ -74,18 +84,24 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ESSENCIAL",
     "ESTA",
     "ESTE",
+    "ETAPA",
     "EVITAR",
     "EXPANDIR",
     "EXPOR",
     "FALHA",
+    "FASE",
     "FIXED",
     "FIXME",
     "FORBIDDEN",
     "HACK",
     "HEARTBEAT",
+    "HTTP",
+    "HTTPS",
     "INATIVO",
     "JAMAIS",
     "JSON",
+    "JWT",
+    "LLM",
     "MUST",
     "NEGUE",
     "NEVER",
@@ -93,6 +109,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "NUNCA",
     "OBRIGATÓRIO",
     "PADRÃO",
+    "PASSO",
     "PENDING",
     "PLAN",
     "PODEMOS",
@@ -101,6 +118,8 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "REGRAS",
     "REQUIRED",
     "REQUISITO",
+    "REST",
+    "SEÇÃO",
     "SEMPRE",
     "SHALL",
     "SHOULD",
@@ -111,6 +130,8 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "TOKEN",
     "TOOLS",
     "TSV",
+    "UI",
+    "URL",
     "USAR",
     "VALIDAR",
     "VAMOS",
@@ -153,6 +174,21 @@ fn regex_uuid() -> &'static Regex {
 
 fn regex_all_caps() -> &'static Regex {
     REGEX_ALL_CAPS.get_or_init(|| Regex::new(r"\b[A-Z][A-Z0-9_]{2,}\b").unwrap())
+}
+
+fn regex_section_marker() -> &'static Regex {
+    REGEX_SECTION_MARKER.get_or_init(|| {
+        // Matches PT-BR document-structure labels followed by a number: "Etapa 3", "Fase 1", etc.
+        Regex::new(r"\b(?:Etapa|Fase|Passo|Seção|Capítulo)\s+\d+\b").unwrap()
+    })
+}
+
+fn regex_brand_camel() -> &'static Regex {
+    REGEX_BRAND_CAMEL.get_or_init(|| {
+        // Matches CamelCase brand names: one or more lowercase letters after an uppercase, then
+        // another uppercase followed by more letters. Covers "OpenAI", "PostgreSQL", "ChatGPT".
+        Regex::new(r"\b[A-Z][a-z]+[A-Z][A-Za-z]+\b").unwrap()
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -473,18 +509,32 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
         }
     };
 
-    for m in regex_email().find_iter(body) {
+    // v1.0.25 P0-4: strip section-structure markers before any other processing so that
+    // "Etapa 3", "Fase 1", "Passo 2" are not fed to downstream regex passes.
+    let cleaned = regex_section_marker().replace_all(body, " ");
+    let cleaned = cleaned.as_ref();
+
+    for m in regex_email().find_iter(cleaned) {
         // v1.0.20: email é "concept" (regex sozinho não distingue pessoa de mailing list/role).
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
-    for m in regex_uuid().find_iter(body) {
+    for m in regex_uuid().find_iter(cleaned) {
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
-    for m in regex_all_caps().find_iter(body) {
+    for m in regex_all_caps().find_iter(cleaned) {
         let candidate = m.as_str();
         // v1.0.22: filtro consolidado (stopwords + HTTP methods); preserva identificadores com underscore.
         if !is_filtered_all_caps(candidate) {
             add(&mut entities, &mut seen, candidate, "concept");
+        }
+    }
+    // v1.0.25 P0-2: capture CamelCase brand names that BERT NER often misses.
+    // Maps to "organization" (V008 schema) because brand names are typically organisations.
+    for m in regex_brand_camel().find_iter(cleaned) {
+        let name = m.as_str();
+        // Skip if the uppercased form is a known stopword (e.g. "JsonSchema" → "JSONSCHEMA").
+        if !ALL_CAPS_STOPWORDS.contains(&name.to_uppercase().as_str()) {
+            add(&mut entities, &mut seen, name, "organization");
         }
     }
 
@@ -533,7 +583,12 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
                     && name == name.to_uppercase()
                     && name.len() >= MIN_ENTITY_CHARS;
                 let should_skip = is_single_caps && is_filtered_all_caps(&name);
-                if name.len() >= MIN_ENTITY_CHARS && !should_skip {
+                // v1.0.25 P0-4: BERT may independently label section-structure tokens (e.g.
+                // "Etapa 3", "Fase 1") even though apply_regex_prefilter strips them from the
+                // input text before regex extraction. Apply the same guard here to avoid the
+                // BERT path re-introducing these markers as graph entities.
+                let is_section_marker = regex_section_marker().is_match(&name);
+                if name.len() >= MIN_ENTITY_CHARS && !should_skip && !is_section_marker {
                     entities.push(ExtractedEntity {
                         name,
                         entity_type: t,
@@ -558,12 +613,24 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
             continue;
         };
 
+        // v1.0.25 P0-2: Portuguese monosyllabic verbs that BERT often misclassifies as person names.
+        // Only filtered when confidence is unavailable (no logit gate here); these tokens are
+        // structurally unlikely to be real proper names in a technical corpus.
+        const PT_VERB_FALSE_POSITIVES: &[&str] = &[
+            "Lê", "Vê", "Cá", "Pôr", "Ser", "Vir", "Ver", "Dar", "Ler", "Ter",
+        ];
+
         let entity_type = match bio_type {
-            "DATE" => {
-                flush(&mut current_parts, &mut current_type, &mut entities);
-                continue;
+            // v1.0.25 V008: DATE is now a first-class entity type instead of being discarded.
+            "DATE" => "date",
+            "PER" => {
+                // Filter well-known PT monosyllabic verbs misclassified as persons.
+                if PT_VERB_FALSE_POSITIVES.contains(&token.as_str()) {
+                    flush(&mut current_parts, &mut current_type, &mut entities);
+                    continue;
+                }
+                "person"
             }
-            "PER" => "person",
             "ORG" => {
                 let t = token.to_lowercase();
                 if t.contains("lib")
@@ -574,10 +641,12 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
                 {
                     "tool"
                 } else {
-                    "project"
+                    // v1.0.25 V008: "organization" replaces the v1.0.24 default "project".
+                    "organization"
                 }
             }
-            "LOC" => "concept",
+            // v1.0.25 V008: "location" replaces "concept" for geographic tokens.
+            "LOC" => "location",
             other => other,
         };
 
@@ -869,30 +938,47 @@ fn merge_and_deduplicate(
     regex_ents: Vec<ExtractedEntity>,
     ner_ents: Vec<ExtractedEntity>,
 ) -> Vec<ExtractedEntity> {
-    // v1.0.23: when multiple sources produce overlapping names ("Open" from BERT
-    // subword leak vs "OpenAI" from regex), prefer the longest candidate. The
-    // previous implementation used a HashSet and kept whichever name appeared
-    // first, occasionally yielding truncated brand names like "Open" instead of
-    // "OpenAI". The new logic resolves collisions using a (lowercase prefix) lookup
-    // that retains the longest match while preserving insertion order via `result`.
-    // v1.0.24: dedup key uses NFKC normalization before lowercasing so that
-    // visually identical names differing only in Unicode combining marks (e.g.
-    // "Café" NFC vs "Cafe\u{301}" NFD) collapse to the same bucket.
+    // v1.0.25 P0-3: Collision detection uses substring containment (not starts_with)
+    // and is scoped per entity_type. This fixes two bugs from prior versions:
+    //
+    // 1. starts_with was not symmetric for non-prefix substrings. "sonne" does not
+    //    start_with "sonnet", so the pair could survive dedup depending on insertion
+    //    order. contains() catches both directions unconditionally.
+    //
+    // 2. The lookup key omitted entity_type, so "Apple/organization" and
+    //    "Apple/concept" collapsed into one. Key is now "type\0name_lc".
+    //
+    // Earlier invariants preserved:
+    // - NFKC normalization before lowercasing (v1.0.24).
+    // - Longest-wins: on collision keep the entity with the longer name.
+    // - Truncation warning at MAX_ENTS.
     let mut by_lc: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut result: Vec<ExtractedEntity> = Vec::new();
     let mut truncated = false;
 
     let total_input = regex_ents.len() + ner_ents.len();
     for ent in regex_ents.into_iter().chain(ner_ents) {
-        let key = ent.name.nfkc().collect::<String>().to_lowercase();
-        // Detect prefix collisions in both directions: "open" vs "openai" should
-        // both map to the longest stored candidate. We scan stored keys to find
-        // the longest existing entry that contains or is contained by the new key.
+        let name_lc = ent.name.nfkc().collect::<String>().to_lowercase();
+        // Composite key: entity_type + NUL + normalised lowercase name.
+        // Collision search is scoped to the same type so that e.g.
+        // "Apple/organization" and "Apple/concept" are kept separately.
+        let key = format!("{}\0{}", ent.entity_type, name_lc);
+
+        // Scan stored entries for substring containment within the same type.
+        // Two names collide when one is a case-insensitive substring of the other:
+        //   "sonne" ⊂ "sonnet"  → collision, keep "sonnet" (longest-wins)
+        //   "open"  ⊂ "openai"  → collision, keep "openai" (longest-wins)
         let mut collision_idx: Option<usize> = None;
         for (existing_key, idx) in &by_lc {
-            if existing_key == &key
-                || existing_key.starts_with(&key)
-                || key.starts_with(existing_key)
+            // Fast-path: check type prefix matches before scanning the name.
+            let type_prefix = format!("{}\0", ent.entity_type);
+            if !existing_key.starts_with(&type_prefix) {
+                continue;
+            }
+            let existing_name_lc = &existing_key[type_prefix.len()..];
+            if existing_name_lc == name_lc
+                || existing_name_lc.contains(name_lc.as_str())
+                || name_lc.contains(existing_name_lc)
             {
                 collision_idx = Some(*idx);
                 break;
@@ -901,10 +987,10 @@ fn merge_and_deduplicate(
         match collision_idx {
             Some(idx) => {
                 // Replace stored entity only when the new candidate is strictly
-                // longer; otherwise drop the new one. This biases toward the most
-                // specific brand name visible in the corpus.
+                // longer; otherwise drop the new one.
                 if ent.name.len() > result[idx].name.len() {
-                    let old_key = result[idx].name.nfkc().collect::<String>().to_lowercase();
+                    let old_name_lc = result[idx].name.nfkc().collect::<String>().to_lowercase();
+                    let old_key = format!("{}\0{}", result[idx].entity_type, old_name_lc);
                     by_lc.remove(&old_key);
                     result[idx] = ent;
                     by_lc.insert(key, idx);
@@ -967,6 +1053,13 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     // (e.g. "Claude 4", "Llama 3"). Hyphenated variants like "GPT-5" are already covered
     // by the NER+suffix pipeline above, but space-separated names need a dedicated pass.
     let with_models = augment_versioned_model_names(extended, body);
+    // v1.0.25 P0-4: augment_versioned_model_names matches any capitalised word followed by a
+    // digit, which inadvertently captures PT-BR section markers ("Etapa 3", "Fase 1"). Strip
+    // them here as a final guard after the full augmentation pipeline.
+    let with_models: Vec<ExtractedEntity> = with_models
+        .into_iter()
+        .filter(|e| !regex_section_marker().is_match(&e.name))
+        .collect();
     let entities = to_new_entities(with_models);
     let (relationships, relationships_truncated) = build_relationships(&entities);
 
@@ -1157,19 +1250,22 @@ mod tests {
     }
 
     #[test]
-    fn iob_descarta_date() {
+    fn iob_mapeia_date_para_date_v1025() {
+        // v1.0.25 V008: DATE is now emitted instead of discarded.
         let tokens = vec!["Janeiro".to_string(), "2024".to_string()];
         let labels = vec!["B-DATE".to_string(), "I-DATE".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert!(ents.is_empty(), "DATE deve ser descartado");
+        assert_eq!(ents.len(), 1, "DATE deve ser emitido como entidade v1.0.25");
+        assert_eq!(ents[0].entity_type, "date");
     }
 
     #[test]
-    fn iob_mapeia_org_para_project() {
+    fn iob_mapeia_org_para_organization_v1025() {
+        // v1.0.25 V008: B-ORG without tool keywords maps to "organization" not "project".
         let tokens = vec!["Empresa".to_string()];
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, "project");
+        assert_eq!(ents[0].entity_type, "organization");
     }
 
     #[test]
@@ -1181,11 +1277,12 @@ mod tests {
     }
 
     #[test]
-    fn iob_mapeia_loc_para_concept() {
+    fn iob_mapeia_loc_para_location_v1025() {
+        // v1.0.25 V008: B-LOC maps to "location" not "concept".
         let tokens = vec!["Brasil".to_string()];
         let labels = vec!["B-LOC".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, "concept");
+        assert_eq!(ents[0].entity_type, "location");
     }
 
     #[test]
@@ -1225,16 +1322,22 @@ mod tests {
 
     #[test]
     fn merge_deduplica_por_nome_lowercase() {
+        // v1.0.25: collision detection is scoped per entity_type; same name + same type
+        // must deduplicate to one entry. Different types are kept separately.
         let a = vec![ExtractedEntity {
             name: "Rust".to_string(),
             entity_type: "concept".to_string(),
         }];
         let b = vec![ExtractedEntity {
             name: "rust".to_string(),
-            entity_type: "tool".to_string(),
+            entity_type: "concept".to_string(),
         }];
         let merged = merge_and_deduplicate(a, b);
-        assert_eq!(merged.len(), 1, "rust e Rust são a mesma entidade");
+        assert_eq!(
+            merged.len(),
+            1,
+            "rust e Rust com mesmo tipo são a mesma entidade"
+        );
     }
 
     #[test]
@@ -1545,5 +1648,252 @@ mod tests {
         let result = augment_versioned_model_names(existing, "usando Claude 4 no projeto");
         let count = result.iter().filter(|e| e.name == "Claude 4").count();
         assert_eq!(count, 1, "Claude 4 não deve ser duplicado");
+    }
+
+    // ── v1.0.25 P0-4: new stopwords (API, CLI, HTTP, HTTPS, JWT, LLM, REST, UI, URL) ──
+
+    #[test]
+    fn stopwords_filter_url_jwt_api_v1025() {
+        // Verify that v1.0.25 tech-acronym stopwords do not leak as entities.
+        let body = "We use URL, JWT, and API REST in our LLM-powered CLI via HTTP/HTTPS and UI.";
+        let ents = apply_regex_prefilter(body);
+        let names: Vec<&str> = ents.iter().map(|e| e.name.as_str()).collect();
+        for blocked in &[
+            "URL", "JWT", "API", "REST", "LLM", "CLI", "HTTP", "HTTPS", "UI",
+        ] {
+            assert!(
+                !names.contains(blocked),
+                "v1.0.25 stopword {blocked} leaked as entity; found names: {names:?}"
+            );
+        }
+    }
+
+    // ── v1.0.25 P0-4: section-marker regex strips "Etapa N", "Fase N", etc. ──
+
+    #[test]
+    fn section_markers_etapa_fase_filtered_v1025() {
+        // "Etapa 3" and "Fase 1" are document-structure labels, not entities.
+        let body = "Etapa 3 do plano: implementar Fase 1 da Migração.";
+        let ents = apply_regex_prefilter(body);
+        assert!(
+            !ents
+                .iter()
+                .any(|e| e.name.contains("Etapa") || e.name.contains("Fase")),
+            "section markers must be stripped; entities: {:?}",
+            ents.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn section_markers_passo_secao_filtered_v1025() {
+        let body = "Siga Passo 2 conforme Seção 3 do manual.";
+        let ents = apply_regex_prefilter(body);
+        assert!(
+            !ents
+                .iter()
+                .any(|e| e.name.contains("Passo") || e.name.contains("Seção")),
+            "Passo/Seção section markers must be stripped; entities: {:?}",
+            ents.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    // ── v1.0.25 P0-2: CamelCase brand names extracted as organization ──
+
+    #[test]
+    fn brand_camelcase_extracted_as_organization_v1025() {
+        // "OpenAI" is a CamelCase brand that BERT NER often misses.
+        let body = "OpenAI launched GPT-4 and PostgreSQL added pgvector.";
+        let ents = apply_regex_prefilter(body);
+        let openai = ents.iter().find(|e| e.name == "OpenAI");
+        assert!(
+            openai.is_some(),
+            "OpenAI must be extracted by CamelCase brand regex; entities: {:?}",
+            ents.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            openai.unwrap().entity_type,
+            "organization",
+            "brand CamelCase must map to organization (V008)"
+        );
+    }
+
+    #[test]
+    fn brand_postgresql_extracted_as_organization_v1025() {
+        let body = "migrating from MySQL to PostgreSQL for better performance.";
+        let ents = apply_regex_prefilter(body);
+        assert!(
+            ents.iter()
+                .any(|e| e.name == "PostgreSQL" && e.entity_type == "organization"),
+            "PostgreSQL must be extracted as organization; entities: {:?}",
+            ents.iter()
+                .map(|e| (&e.name, &e.entity_type))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // ── v1.0.25 V008 alignment ──
+
+    #[test]
+    fn iob_org_maps_to_organization_not_project_v1025() {
+        // B-ORG without tool keywords must emit "organization" (V008), not "project".
+        let tokens = vec!["Microsoft".to_string()];
+        let labels = vec!["B-ORG".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert_eq!(
+            ents[0].entity_type, "organization",
+            "B-ORG must map to organization (V008); got {}",
+            ents[0].entity_type
+        );
+    }
+
+    #[test]
+    fn iob_loc_maps_to_location_not_concept_v1025() {
+        // B-LOC must emit "location" (V008), not "concept".
+        let tokens = vec!["São".to_string(), "Paulo".to_string()];
+        let labels = vec!["B-LOC".to_string(), "I-LOC".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert_eq!(
+            ents[0].entity_type, "location",
+            "B-LOC must map to location (V008); got {}",
+            ents[0].entity_type
+        );
+    }
+
+    #[test]
+    fn iob_date_maps_to_date_not_discarded_v1025() {
+        // B-DATE must emit "date" (V008) instead of being discarded.
+        let tokens = vec!["2025".to_string(), "-".to_string(), "12".to_string()];
+        let labels = vec![
+            "B-DATE".to_string(),
+            "I-DATE".to_string(),
+            "I-DATE".to_string(),
+        ];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert_eq!(
+            ents.len(),
+            1,
+            "DATE entity must be emitted (V008); entities: {ents:?}"
+        );
+        assert_eq!(ents[0].entity_type, "date");
+    }
+
+    // ── v1.0.25 P0-2: PT verb false-positive filter ──
+
+    #[test]
+    fn pt_verb_le_filtered_as_per_v1025() {
+        // "Lê" is a PT monosyllabic verb; when tagged B-PER it must be dropped.
+        let tokens = vec!["Lê".to_string(), "o".to_string(), "livro".to_string()];
+        let labels = vec!["B-PER".to_string(), "O".to_string(), "O".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            !ents
+                .iter()
+                .any(|e| e.name == "Lê" && e.entity_type == "person"),
+            "PT verb 'Lê' tagged B-PER must be filtered; entities: {ents:?}"
+        );
+    }
+
+    #[test]
+    fn pt_verb_ver_filtered_as_per_v1025() {
+        // "Ver" is a PT verb that BERT sometimes tags B-PER; must be filtered.
+        let tokens = vec!["Ver".to_string()];
+        let labels = vec!["B-PER".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            ents.is_empty(),
+            "PT verb 'Ver' tagged B-PER must be filtered; entities: {ents:?}"
+        );
+    }
+
+    // --- P0-3 longest-wins v1.0.25 ---
+
+    fn entity(name: &str, entity_type: &str) -> ExtractedEntity {
+        ExtractedEntity {
+            name: name.to_string(),
+            entity_type: entity_type.to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_resolves_sonne_vs_sonnet_keeps_longest_v1025() {
+        // "Sonne" is a substring of "Sonnet" — longest-wins must keep "Sonnet".
+        let regex = vec![entity("Sonne", "concept")];
+        let ner = vec![entity("Sonnet", "concept")];
+        let result = merge_and_deduplicate(regex, ner);
+        assert_eq!(result.len(), 1, "expected 1 entity, got: {result:?}");
+        assert_eq!(result[0].name, "Sonnet");
+    }
+
+    #[test]
+    fn merge_resolves_open_vs_openai_keeps_longest_v1025() {
+        // "Open" is a substring of "OpenAI" — longest-wins must keep "OpenAI".
+        let regex = vec![
+            entity("Open", "organization"),
+            entity("OpenAI", "organization"),
+        ];
+        let result = merge_and_deduplicate(regex, vec![]);
+        assert_eq!(result.len(), 1, "expected 1 entity, got: {result:?}");
+        assert_eq!(result[0].name, "OpenAI");
+    }
+
+    #[test]
+    fn merge_keeps_both_when_no_containment_v1025() {
+        // "Alice" and "Bob" share no containment — both must be preserved.
+        let regex = vec![entity("Alice", "person"), entity("Bob", "person")];
+        let result = merge_and_deduplicate(regex, vec![]);
+        assert_eq!(result.len(), 2, "expected 2 entities, got: {result:?}");
+    }
+
+    #[test]
+    fn merge_respects_entity_type_boundary_v1025() {
+        // Same name "Apple" but different types: both must survive independently.
+        let regex = vec![entity("Apple", "organization"), entity("Apple", "concept")];
+        let result = merge_and_deduplicate(regex, vec![]);
+        assert_eq!(
+            result.len(),
+            2,
+            "expected 2 entities (different types), got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn merge_case_insensitive_dedup_v1025() {
+        // "OpenAI" and "openai" are the same entity — deduplicate to exactly one.
+        let regex = vec![
+            entity("OpenAI", "organization"),
+            entity("openai", "organization"),
+        ];
+        let result = merge_and_deduplicate(regex, vec![]);
+        assert_eq!(
+            result.len(),
+            1,
+            "expected 1 entity after case-insensitive dedup, got: {result:?}"
+        );
+    }
+
+    // ── v1.0.25 P0-4: section markers must be filtered in iob_to_entities too ──
+
+    #[test]
+    fn iob_section_marker_etapa_filtered_v1025() {
+        // BERT may tag "Etapa" (B-MISC) + "3" (I-MISC) as a span; flush must drop it.
+        let tokens = vec!["Etapa".to_string(), "3".to_string()];
+        let labels = vec!["B-MISC".to_string(), "I-MISC".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            !ents.iter().any(|e| e.name.contains("Etapa")),
+            "section marker 'Etapa 3' from BERT must be filtered; entities: {ents:?}"
+        );
+    }
+
+    #[test]
+    fn iob_section_marker_fase_filtered_v1025() {
+        // BERT may tag "Fase" (B-MISC) + "1" (I-MISC) as a span; flush must drop it.
+        let tokens = vec!["Fase".to_string(), "1".to_string()];
+        let labels = vec!["B-MISC".to_string(), "I-MISC".to_string()];
+        let ents = iob_to_entities(&tokens, &labels);
+        assert!(
+            !ents.iter().any(|e| e.name.contains("Fase")),
+            "section marker 'Fase 1' from BERT must be filtered; entities: {ents:?}"
+        );
     }
 }

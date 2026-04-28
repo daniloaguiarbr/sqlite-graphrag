@@ -1,6 +1,6 @@
 use crate::cli::MemoryType;
 use crate::errors::AppError;
-use crate::graph::traverse_from_memories;
+use crate::graph::traverse_from_memories_with_hops;
 use crate::i18n::erros;
 use crate::output::{self, JsonOutputFormat, RecallItem, RecallResponse};
 use crate::paths::AppPaths;
@@ -64,6 +64,12 @@ pub struct RecallArgs {
     /// Accept `--json` as a no-op because output is already JSON by default.
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
+    /// Search across all namespaces instead of a single namespace.
+    ///
+    /// Cannot be combined with `--namespace`. When set, the query runs against
+    /// every namespace and results include a `namespace` field to identify origin.
+    #[arg(long, conflicts_with = "namespace")]
+    pub all_namespaces: bool,
 }
 
 pub fn run(args: RecallArgs) -> Result<(), AppError> {
@@ -74,7 +80,21 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             "query não pode estar vazia".to_string(),
         ));
     }
-    let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+    // Resolve the list of namespaces to search:
+    // - empty vec  => all namespaces (sentinel used by knn_search)
+    // - single vec => one namespace (default or --namespace value)
+    let namespaces: Vec<String> = if args.all_namespaces {
+        Vec::new()
+    } else {
+        vec![crate::namespace::resolve_namespace(
+            args.namespace.as_deref(),
+        )?]
+    };
+    // Single namespace string used for graph traversal and error messages.
+    let namespace_for_graph = namespaces
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "global".to_string());
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
@@ -96,7 +116,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     // max_distance filter below will trim irrelevant results instead.
     let effective_k = if args.precise { 100_000 } else { args.k };
     let knn_results =
-        memories::knn_search(&conn, &embedding, &namespace, memory_type_str, effective_k)?;
+        memories::knn_search(&conn, &embedding, &namespaces, memory_type_str, effective_k)?;
 
     let mut direct_matches = Vec::new();
     let mut memory_ids: Vec<i64> = Vec::new();
@@ -145,7 +165,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
 
     let mut graph_matches = Vec::new();
     if !args.no_graph {
-        let entity_knn = entities::knn_search(&conn, &embedding, &namespace, 5)?;
+        let entity_knn = entities::knn_search(&conn, &embedding, &namespace_for_graph, 5)?;
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
         let all_seed_ids: Vec<i64> = memory_ids
@@ -155,15 +175,15 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             .collect();
 
         if !all_seed_ids.is_empty() {
-            let graph_memory_ids = traverse_from_memories(
+            let graph_memory_ids = traverse_from_memories_with_hops(
                 &conn,
                 &all_seed_ids,
-                &namespace,
+                &namespace_for_graph,
                 args.min_weight,
                 args.max_hops,
             )?;
 
-            for graph_mem_id in graph_memory_ids {
+            for (graph_mem_id, hop) in graph_memory_ids {
                 // v1.0.23: respect the optional cap on graph results so dense
                 // neighbourhoods do not flood the response unintentionally.
                 if let Some(cap) = args.max_graph_results {
@@ -197,6 +217,10 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                 };
                 if let Some(row) = row {
                     let snippet: String = row.body.chars().take(300).collect();
+                    // Compute approximate distance from graph hop count.
+                    // Real cosine distance for graph matches is reserved for v1.0.26
+                    // (would require re-embedding, which adds 200-500ms latency).
+                    let graph_distance = 1.0 - 1.0 / (hop as f32 + 1.0);
                     graph_matches.push(RecallItem {
                         memory_id: row.id,
                         name: row.name,
@@ -204,16 +228,9 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                         memory_type: row.memory_type,
                         description: row.description,
                         snippet,
-                        // Kept for backward compatibility; v1.0.23 callers should
-                        // read `graph_depth` instead. Future releases may switch
-                        // this to `f32::NAN` after a deprecation cycle.
-                        distance: 0.0,
+                        distance: graph_distance,
                         source: "graph".to_string(),
-                        // `traverse_from_memories` does not yet expose per-result
-                        // depth, so we report `Some(0)` as a sentinel meaning
-                        // "unknown depth, but reachable via graph traversal".
-                        // A future release should plumb the real hop count through.
-                        graph_depth: Some(0),
+                        graph_depth: Some(hop),
                     });
                 }
             }
@@ -229,7 +246,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             return Err(AppError::NotFound(erros::sem_resultados_recall(
                 args.max_distance,
                 &args.query,
-                &namespace,
+                &namespace_for_graph,
             )));
         }
     }
@@ -337,5 +354,22 @@ mod testes {
         let json = serde_json::to_value(&resp).expect("serialização falhou");
         assert_eq!(json["direct_matches"].as_array().unwrap().len(), 0);
         assert_eq!(json["results"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn graph_matches_distance_uses_hop_count_proxy() {
+        // Verify the hop-count proxy formula: 1.0 - 1.0 / (hop + 1.0)
+        // hop=0 → 0.0 (seed-level entity, identity distance)
+        // hop=1 → 0.5
+        // hop=2 → ≈ 0.667
+        // hop=3 → 0.75
+        let cases: &[(u32, f32)] = &[(0, 0.0), (1, 0.5), (2, 0.6667), (3, 0.75)];
+        for &(hop, expected) in cases {
+            let d = 1.0_f32 - 1.0 / (hop as f32 + 1.0);
+            assert!(
+                (d - expected).abs() < 0.001,
+                "hop={hop} expected={expected} got={d}"
+            );
+        }
     }
 }

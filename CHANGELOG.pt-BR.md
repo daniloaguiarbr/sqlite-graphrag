@@ -10,6 +10,45 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.25] - 2026-04-28
+
+### Adicionado
+- Flag `recall --all-namespaces` busca em todos os namespaces numa única consulta (P0-1).
+- BERT NER agora emite tipos `organization` (B-ORG), `location` (B-LOC) e `date` (B-DATE)
+  alinhados com a migration V008. Releases anteriores mapeavam ORG→`project`,
+  LOC→`concept` e descartavam DATE completamente (P0-2 + alinhamento V008).
+- Migration de schema V008: CHECK constraint de `entities.type` expandida para incluir
+  `organization`, `location`, `date`. Migration aditiva; linhas existentes são preservadas.
+- BRAND_NAME_REGEX captura nomes de organizações em CamelCase como "OpenAI", "PostgreSQL",
+  "ChatGPT" que o BERT NER frequentemente classifica incorretamente (P0-2).
+- Filtro de falsos positivos para verbos monossilábicos em PT-BR ("Lê", "Vê", "Cá", etc.)
+  para saídas do BERT com confiança abaixo de 0.85 (P0-2).
+- SECTION_MARKER_REGEX filtra fragmentos de texto como "Etapa 3", "Fase 1", "Passo 2",
+  "Seção 4", "Capítulo 1" da extração de entidades (P0-4).
+- 12 novas ALL_CAPS_STOPWORDS: `API`, `CAPÍTULO`, `CLI`, `ETAPA`, `FASE`, `HTTP`, `HTTPS`,
+  `JWT`, `LLM`, `PASSO`, `REST`, `UI`, `URL` (P0-4).
+- README documenta subcomandos `graph traverse|stats|entities` com tabela de flags (P1-A).
+
+### Alterado
+- `recall.graph_matches[].distance` agora reflete o hop count via proxy
+  `1.0 - 1.0 / (hop + 1)`. Releases anteriores usavam placeholder `0.0`. Distância
+  cosseno real reservada para v1.0.26 (P1-M).
+- Lógica longest-wins de `merge_and_deduplicate` reescrita com chave composta
+  `entity_type + name_lc` e containment bidirecional de substring. Resolve duplicação
+  "Sonne"/"Sonnet" e truncamento "Open"/"Paper" (P0-3).
+- Versão do `Cargo.toml` bumped de `1.0.24` para `1.0.25`.
+
+### Corrigido
+- `is_valid_entity_type` agora aceita os novos tipos da V008 `organization`, `location`, `date` (P0-A) — sem esta correção, `remember` rejeitaria qualquer entidade emitida pelo mapeamento IOB alinhado à V008 com exit 1.
+- Regex `augment_versioned_model_names` não captura mais marcadores de seção em português como "Etapa 3" ou "Fase 1" (P0-B) — filtro de defesa em profundidade aplicado após augmentation e dentro de `iob_to_entities.flush()`.
+- `remember --name` com mais de 80 bytes agora retorna exit 6 (LimitExceeded) em vez de
+  exit 1 (Validation). Restaura o contrato de exit codes usado por agentes orquestradores (P1-J).
+
+### Notas
+- `recall.graph_matches[].distance` é aproximada; distância cosseno semântica reservada para v1.0.26.
+- Caps de entidades (30) e relacionamentos (50) permanecem silenciosos na v1.0.25;
+  flags `--limit-entities` / `--limit-relations` planejadas para v1.0.26.
+
 ## [1.0.24] - 2026-04-27
 
 ### Adicionado
@@ -695,7 +734,8 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 - 58 invocações simultâneas travaram o computador por 38 minutos (incidente 2026-04-18).
 
 
-## [Unreleased]
+## [Legacy NeuroGraphRAG]
+<!-- Bloco anterior ao rename para sqlite-graphrag, preservado para rastreabilidade -->
 
 ### Adicionado
 

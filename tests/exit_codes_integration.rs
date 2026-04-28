@@ -247,6 +247,31 @@ fn test_exit_06_limit_exceeded_body_gigante_via_cli() {
         .code(6);
 }
 
+#[test]
+fn remember_name_over_80_bytes_returns_exit_6() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let long_name = "a".repeat(81);
+    cmd_base(&tmp)
+        .args([
+            "remember",
+            "--name",
+            &long_name,
+            "--type",
+            "project",
+            "--description",
+            "x",
+            "--namespace",
+            "global",
+            "--body",
+            "y",
+        ])
+        .assert()
+        .failure()
+        .code(6);
+}
+
 // ---------------------------------------------------------------------------
 // Exit code 10 — Database (DB corrompido)
 // ---------------------------------------------------------------------------

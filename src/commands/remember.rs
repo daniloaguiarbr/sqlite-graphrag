@@ -155,6 +155,9 @@ fn is_valid_entity_type(entity_type: &str) -> bool {
             | "memory"
             | "dashboard"
             | "issue_tracker"
+            | "organization"
+            | "location"
+            | "date"
     )
 }
 
@@ -205,7 +208,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         ));
     }
     if normalized_name.len() > MAX_MEMORY_NAME_LEN {
-        return Err(AppError::Validation(
+        return Err(AppError::LimitExceeded(
             crate::i18n::validacao::nome_comprimento(MAX_MEMORY_NAME_LEN),
         ));
     }
@@ -945,5 +948,14 @@ mod testes {
         };
         let json_true = serde_json::to_value(&resp_true).expect("serialização falhou");
         assert_eq!(json_true["relationships_truncated"], true);
+    }
+
+    #[test]
+    fn is_valid_entity_type_accepts_v008_types() {
+        // V008 added organization, location, date — ensure the validator accepts them.
+        assert!(super::is_valid_entity_type("organization"));
+        assert!(super::is_valid_entity_type("location"));
+        assert!(super::is_valid_entity_type("date"));
+        assert!(!super::is_valid_entity_type("unknown_type_xyz"));
     }
 }

@@ -224,6 +224,14 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `unlink` | `--relationship-id` | Remove um relacionamento específico entre duas entidades |
 | `related` | `--name`, `--limit`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
 | `graph` | `--format`, `--output` | Exporta snapshot do grafo em `json`, `dot` ou `mermaid` |
+
+### Subcomandos do graph
+| Subcomando | Descrição | Flags principais |
+| --- | --- | --- |
+| `graph traverse --from <ENTIDADE>` | Percorre o grafo de entidades a partir de um nó inicial usando BFS | `--depth` (padrão 2), `--namespace` |
+| `graph stats` | Imprime estatísticas do grafo (nós, arestas, distribuição de grau) | `--namespace` |
+| `graph entities` | Lista entidades armazenadas no grafo com filtros opcionais | `--limit` (padrão 50), `--entity-type`, `--namespace` |
+
 ### Manutenção
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
@@ -307,12 +315,12 @@ RUN cargo install --path .
 - Invocações stateless da CLI tipicamente gastam cerca de um segundo recarregando o modelo em cada comando pesado
 - Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
-- Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.3
+- Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.18 com daemon (regressão de 52 GiB na v1.0.17 reduzida a pico de 1.03 GiB)
 
 
 ## Invocação Paralela Segura
 ### Semáforo de contagem com até quatro slots simultâneos
-- Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 1100 MB de RAM após a medição da v1.0.3
+- Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 1100 MB de RAM após a medição da v1.0.18
 - `MAX_CONCURRENT_CLI_INSTANCES` continua sendo o teto rígido de 4 subprocessos cooperantes
 - Comandos pesados `init`, `remember`, `recall` e `hybrid-search` podem ser reduzidos dinamicamente para baixo desse teto quando a RAM disponível não sustenta o paralelismo com segurança
 - Arquivos de lock em `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` usando `flock`

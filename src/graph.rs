@@ -123,6 +123,107 @@ pub fn traverse_from_memories(
     Ok(result_ids)
 }
 
+/// BFS graph traversal that also returns the hop distance for each reached memory.
+///
+/// Identical to [`traverse_from_memories`] but returns `(memory_id, hop_count)` tuples
+/// instead of bare IDs. `hop_count` is the BFS depth at which the entity was first
+/// discovered, starting from 1 for direct neighbours of the seed entities.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Database`] (exit 10) em falhas de consulta SQLite.
+pub fn traverse_from_memories_with_hops(
+    conn: &Connection,
+    seed_memory_ids: &[i64],
+    namespace: &str,
+    min_weight: f64,
+    max_hops: u32,
+) -> Result<Vec<(i64, u32)>, AppError> {
+    if seed_memory_ids.is_empty() || max_hops == 0 {
+        return Ok(vec![]);
+    }
+
+    // Collect seed entity IDs from seed memories
+    let mut seed_entities: Vec<i64> = Vec::new();
+    for &mem_id in seed_memory_ids {
+        let mut stmt =
+            conn.prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
+        let ids: Vec<i64> = stmt
+            .query_map(params![mem_id], |r| r.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        seed_entities.extend(ids);
+    }
+    seed_entities.sort_unstable();
+    seed_entities.dedup();
+
+    if seed_entities.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // BFS over relationships, tracking depth per entity
+    use std::collections::HashMap;
+    let mut entity_depth: HashMap<i64, u32> = seed_entities.iter().map(|&id| (id, 0)).collect();
+    let mut frontier = seed_entities.clone();
+
+    for hop in 1..=max_hops {
+        if frontier.is_empty() {
+            break;
+        }
+        let mut next_frontier = Vec::new();
+
+        for &entity_id in &frontier {
+            let mut stmt = conn.prepare_cached(
+                "SELECT target_id FROM relationships
+                 WHERE source_id = ?1 AND weight >= ?2 AND namespace = ?3",
+            )?;
+            let neighbors: Vec<i64> = stmt
+                .query_map(params![entity_id, min_weight, namespace], |r| r.get(0))?
+                .filter_map(|r| r.ok())
+                .filter(|id| !entity_depth.contains_key(id))
+                .collect();
+
+            for id in neighbors {
+                entity_depth.insert(id, hop);
+                next_frontier.push(id);
+            }
+        }
+        frontier = next_frontier;
+    }
+
+    // Find memories connected to traversed entities (excluding seeds), preserving hop depth
+    let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().cloned().collect();
+    let seed_entity_set: std::collections::HashSet<i64> = seed_entities.iter().cloned().collect();
+
+    let mut result: Vec<(i64, u32)> = Vec::new();
+    let mut seen_memories: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for (&entity_id, &hop) in &entity_depth {
+        if seed_entity_set.contains(&entity_id) {
+            continue;
+        }
+        let mut stmt = conn.prepare_cached(
+            "SELECT DISTINCT me.memory_id
+             FROM memory_entities me
+             JOIN memories m ON m.id = me.memory_id
+             WHERE me.entity_id = ?1 AND m.deleted_at IS NULL",
+        )?;
+        let mem_ids: Vec<i64> = stmt
+            .query_map(params![entity_id], |r| r.get(0))?
+            .filter_map(|r| r.ok())
+            .filter(|id| !seed_set.contains(id) && !seen_memories.contains(id))
+            .collect();
+
+        for mem_id in mem_ids {
+            seen_memories.insert(mem_id);
+            result.push((mem_id, hop));
+        }
+    }
+
+    result.sort_unstable_by_key(|&(id, _)| id);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
