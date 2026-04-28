@@ -106,8 +106,8 @@ sqlite-graphrag hybrid-search "postgres migration strategy" \
 
 ### Recipe Two — Graph Traversal for Multi-Hop Recall
 ```bash
-sqlite-graphrag link --source auth-design --target jwt-spec --relation depends-on
-sqlite-graphrag link --source jwt-spec --target rfc-7519 --relation mentions
+sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
+sqlite-graphrag link --from jwt-spec --to rfc-7519 --relation mentions
 sqlite-graphrag related auth-design --hops 2 --json \
   | jaq -r '.results[] | select(.hop_distance == 2) | .name'
 ```

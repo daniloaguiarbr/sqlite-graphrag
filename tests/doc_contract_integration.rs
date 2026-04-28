@@ -669,14 +669,7 @@ fn contract_15_link() {
     assert_has_keys(
         "link",
         &json,
-        &[
-            "action",
-            "from",
-            "to",
-            "relation",
-            "weight",
-            "namespace",
-        ],
+        &["action", "from", "to", "relation", "weight", "namespace"],
     );
     assert_eq!(json["action"], "created");
 }

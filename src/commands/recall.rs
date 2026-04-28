@@ -218,8 +218,10 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                 if let Some(row) = row {
                     let snippet: String = row.body.chars().take(300).collect();
                     // Compute approximate distance from graph hop count.
-                    // Real cosine distance for graph matches is reserved for v1.0.26
-                    // (would require re-embedding, which adds 200-500ms latency).
+                    // WARNING: graph_distance is a hop-count proxy, NOT real cosine distance.
+                    // For confident ranking, prefer the `graph_depth` field (set to Some(hop)
+                    // below). Real cosine distance for graph matches would require
+                    // re-embedding (200-500ms latency) and is reserved for v1.0.28.
                     let graph_distance = 1.0 - 1.0 / (hop as f32 + 1.0);
                     graph_matches.push(RecallItem {
                         memory_id: row.id,

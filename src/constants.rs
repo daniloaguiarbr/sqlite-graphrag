@@ -297,3 +297,30 @@ pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
 /// `user_version` é um campo auxiliar de diagnóstico para ferramentas
 /// externas (ex: `sqlite3 db.sqlite "PRAGMA user_version"`).
 pub const SCHEMA_USER_VERSION: i64 = 49;
+
+/// Versão atual do schema, igual ao maior número de migration em `migrations/Vnnn__*.sql`.
+///
+/// Adicionado em v1.0.27 para servir como sanity check em runtime e em testes.
+/// Deve ser bumpado em sincronia com novas migrations Refinery; teste unitário
+/// `schema_version_matches_migrations_count` valida isso automaticamente.
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+
+#[cfg(test)]
+mod tests_schema_version {
+    use super::CURRENT_SCHEMA_VERSION;
+
+    #[test]
+    fn schema_version_matches_migrations_count() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let migrations_dir = std::path::Path::new(manifest_dir).join("migrations");
+        let count = std::fs::read_dir(&migrations_dir)
+            .expect("migrations directory must exist")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with('V'))
+            .count() as u32;
+        assert_eq!(
+            CURRENT_SCHEMA_VERSION, count,
+            "CURRENT_SCHEMA_VERSION ({CURRENT_SCHEMA_VERSION}) must equal the number of V*.sql migrations ({count})"
+        );
+    }
+}

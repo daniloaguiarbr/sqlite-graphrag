@@ -106,8 +106,8 @@ sqlite-graphrag hybrid-search "estratégia migração postgres" \
 
 ### Receita Dois — Travessia de Grafo Para Recall Multi-Hop
 ```bash
-sqlite-graphrag link --source design-auth --target spec-jwt --relation depends-on
-sqlite-graphrag link --source spec-jwt --target rfc-7519 --relation mentions
+sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
+sqlite-graphrag link --from spec-jwt --to rfc-7519 --relation mentions
 sqlite-graphrag related design-auth --hops 2 --json \
   | jaq -r '.results[] | select(.hop_distance == 2) | .name'
 ```

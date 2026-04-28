@@ -45,6 +45,26 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
     }
 }
 
+/// Emite mensagem de erro localizada em stderr com prefixo `Error:`/`Erro:`.
+///
+/// Centraliza a saída de erro para humanos seguindo o Pattern 5 (`output.rs` é o
+/// ÚNICO ponto de I/O do CLI). Não loga via `tracing` — chame `tracing::error!`
+/// explicitamente antes desta função quando observabilidade estruturada for desejada.
+pub fn emit_error(localized_msg: &str) {
+    eprintln!("{}: {}", crate::i18n::prefixo_erro(), localized_msg);
+}
+
+/// Emite erro bilíngue em stderr respeitando `--lang` ou `SQLITE_GRAPHRAG_LANG`.
+/// Uso: `output::emit_error_i18n("invariant violated", "invariante violado")`.
+pub fn emit_error_i18n(en: &str, pt: &str) {
+    use crate::i18n::{current, Language};
+    let msg = match current() {
+        Language::English => en,
+        Language::Portugues => pt,
+    };
+    emit_error(msg);
+}
+
 /// Payload JSON emitido pelo subcomando `remember`.
 ///
 /// Todos os campos são obrigatórios no contrato JSON (ver `docs/schemas/remember.schema.json`).

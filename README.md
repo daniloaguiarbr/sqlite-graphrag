@@ -57,7 +57,7 @@ sqlite-graphrag --version
 
 ## Graph Schema
 ### Entity types, relation labels and edge strength
-- `entity_type` accepts exactly 10 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `entity_type` accepts exactly 13 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `relation` accepts exactly 12 values: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
 - `strength` is a float in `[0.0, 1.0]` representing edge weight; mapped to `weight` in all read outputs
 - Unlisted `entity_type` or `relation` values are rejected at write time with exit code 1
@@ -238,7 +238,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
 | `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
 | `link` | `--from`, `--to`, `--relation`, `--weight` | Create an explicit relationship between two entities |
-| `unlink` | `--relationship-id` | Remove a specific relationship between two entities |
+| `unlink` | `--from`, `--to`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `--name`, `--limit`, `--hops` | Traverse graph-connected memories from a seed memory |
 | `graph` | `--format`, `--output` | Export a graph snapshot in `json`, `dot` or `mermaid` |
 
@@ -265,6 +265,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Directory override for model cache and lock files | XDG cache dir | `~/.cache/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` (aliases: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
+| `SQLITE_GRAPHRAG_LOG_FORMAT` | Tracing output format on stderr (`pretty` or `json`) | `pretty` | `json` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override bypassing detection | none | `project-foo` |
 | `SQLITE_GRAPHRAG_DISPLAY_TZ` | IANA timezone for `*_iso` JSON fields | `UTC` | `America/Sao_Paulo` |
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Force daemon autostart even when guards would skip it | unset | `1` |

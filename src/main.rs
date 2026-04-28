@@ -124,21 +124,13 @@ fn main() {
 
     // Inicializar fuso de exibição (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
     if let Err(e) = sqlite_graphrag::tz::init(cli.tz) {
-        eprintln!(
-            "{}: {}",
-            sqlite_graphrag::i18n::prefixo_erro(),
-            e.localized_message()
-        );
+        sqlite_graphrag::output::emit_error(&e.localized_message());
         std::process::exit(e.exit_code());
     }
 
     // Validar flags antes de qualquer inicialização pesada.
     if let Err(msg) = cli.validate_flags() {
-        let prefix = match sqlite_graphrag::i18n::current() {
-            sqlite_graphrag::i18n::Language::English => "error",
-            sqlite_graphrag::i18n::Language::Portugues => "erro",
-        };
-        eprintln!("{prefix}: {msg}");
+        sqlite_graphrag::output::emit_error(&msg);
         std::process::exit(2);
     }
 
@@ -150,11 +142,7 @@ fn main() {
             match check_available_memory(MIN_AVAILABLE_MEMORY_MB) {
                 Ok(available_mb) => available_mb,
                 Err(e) => {
-                    eprintln!(
-                        "{}: {}",
-                        sqlite_graphrag::i18n::prefixo_erro(),
-                        e.localized_message()
-                    );
+                    sqlite_graphrag::output::emit_error(&e.localized_message());
                     std::process::exit(e.exit_code());
                 }
             }
@@ -175,9 +163,9 @@ fn main() {
         // because the block above (lines ~137-157) sets it to Some(available_mb) in that branch.
         // Using unwrap_or_else with exit instead of ? because main() returns ().
         let available_mb = measured_available_mb.unwrap_or_else(|| {
-            eprintln!(
-                "{}: embedding-heavy command must measure available RAM",
-                sqlite_graphrag::i18n::prefixo_erro()
+            sqlite_graphrag::output::emit_error_i18n(
+                "embedding-heavy command must measure available RAM",
+                "comando intensivo em embedding precisa medir RAM disponível",
             );
             std::process::exit(20);
         });
@@ -221,11 +209,7 @@ fn main() {
         Some(match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
             Ok(pair) => pair,
             Err(e) => {
-                eprintln!(
-                    "{}: {}",
-                    sqlite_graphrag::i18n::prefixo_erro(),
-                    e.localized_message()
-                );
+                sqlite_graphrag::output::emit_error(&e.localized_message());
                 std::process::exit(e.exit_code());
             }
         })
@@ -277,11 +261,7 @@ fn main() {
 
     if let Err(e) = result {
         tracing::error!(error = %e);
-        eprintln!(
-            "{}: {}",
-            sqlite_graphrag::i18n::prefixo_erro(),
-            e.localized_message()
-        );
+        sqlite_graphrag::output::emit_error(&e.localized_message());
         std::process::exit(e.exit_code());
     }
 }

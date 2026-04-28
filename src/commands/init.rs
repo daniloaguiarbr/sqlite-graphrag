@@ -19,6 +19,8 @@ pub enum EmbeddingModelChoice {
 #[derive(clap::Args)]
 pub struct InitArgs {
     /// Path to graphrag.sqlite. Defaults to `./graphrag.sqlite` in the current directory.
+    /// Resolution precedence (highest to lowest): `--db` flag > `SQLITE_GRAPHRAG_DB_PATH` env >
+    /// `SQLITE_GRAPHRAG_HOME` env (used as base directory) > cwd.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Embedding model identifier. Currently only `multilingual-e5-small` is supported.

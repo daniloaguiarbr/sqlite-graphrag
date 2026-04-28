@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-04-28
+
+### Added
+- `CURRENT_SCHEMA_VERSION: u32 = 8` constant in `src/constants.rs` with unit test that asserts equality with the count of `V*.sql` migration files.
+- `output::emit_error` and `output::emit_error_i18n` functions centralizing stderr error output (Pattern 5: ÚNICO ponto de I/O em `output.rs`).
+- `nextest` test-groups configuration in `.config/nextest.toml` to serialize cross-binary tests sharing the daemon socket and model cache. Eliminates `contract_15_link` flake observed since v1.0.24.
+
+### Changed
+- README EN+PT (`Graph Schema` section) now lists `entity_type` as exactly 13 values (was 10) — adds `organization`, `location`, `date` introduced in V008 schema migration of v1.0.25.
+- `init --help` docstring documents path resolution precedence (`--db` > `SQLITE_GRAPHRAG_DB_PATH` > `SQLITE_GRAPHRAG_HOME` > cwd).
+- `src/commands/recall.rs` graph-distance comment clarified: it remains a hop-count proxy (`1.0 - 1.0/(hop+1)`), real cosine distance is reserved for v1.0.28 (forward-dated reference fixed).
+- All 6 `eprintln!` calls in `src/main.rs` migrated to `output::emit_error*` to enforce Pattern 5.
+
+### Documentation
+- `SQLITE_GRAPHRAG_LOG_FORMAT` now documented in the env-var table of README EN+PT (was implemented since v1.0.x but undocumented).
+- README `unlink` row corrected from the non-existent `--relationship-id` flag to the actual `--from --to --relation` flags. The previous documentation could mislead agents into rejecting valid invocations.
+- `docs/MIGRATION.md` and `docs/MIGRATION.pt-BR.md` version reference updated from v1.0.17 to v1.0.27 (3 occurrences each).
+- `docs/HOW_TO_USE.md` and `docs/HOW_TO_USE.pt-BR.md` `link` recipe examples corrected to use `--from`/`--to` instead of the non-existent `--source`/`--target` flags.
+
+### Fixed
+- Formatting drift in `tests/doc_contract_integration.rs:669` resolved via `cargo fmt --all` (multi-line array → single-line as expected by rustfmt).
+
+### Notes
+- Investigation of the audit P1 finding `tokenizer.rs:101-103 std::fs::read in async path` concluded **false positive**: `get_tokenizer` and `get_model_max_length` are called only from `src/commands/remember.rs:389-391` inside `pub fn run()` which is synchronous. No `spawn_blocking` wrap is required. The blocking I/O is appropriate for the synchronous CLI command path.
+- Two `advisory-not-detected` warnings from `cargo deny` for ignored advisories `RUSTSEC-2024-0436` (paste) and `RUSTSEC-2025-0119` (number_prefix) were observed but kept in `deny.toml` — they protect against re-introduction via fastembed's transitive deps if upstream regresses. A scheduled cleanup is deferred to v1.0.28 after explicit verification of `cargo tree` confirming the deps are no longer present.
+
 ## [1.0.26] - 2026-04-28
 
 ### Added

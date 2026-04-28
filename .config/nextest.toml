@@ -54,3 +54,27 @@ fail-fast = false
 filter = 'test(/^loom_/)'
 threads-required = "num-cpus"
 slow-timeout = { period = "1800s", terminate-after = 2 }
+
+# v1.0.27: cross-binary serialization for tests sharing the daemon socket and model cache.
+# Eliminates `contract_15_link` flake observed since v1.0.24 (intermittent ~50% failure
+# when run in parallel with daemon_integration / cookbook_recipes binaries).
+# Validated against nextest 0.9.114 (CI pin) — filterset DSL `binary(...) & test(=...)`
+# stable since 0.9.48. See https://nexte.st/docs/configuration/test-groups/.
+[test-groups]
+graphrag-serial = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(doc_contract_integration) & test(=contract_15_link)'
+test-group = 'graphrag-serial'
+
+[[profile.default.overrides]]
+filter = 'binary(daemon_integration) | binary(cookbook_recipes)'
+test-group = 'graphrag-serial'
+
+[[profile.ci.overrides]]
+filter = 'binary(doc_contract_integration) & test(=contract_15_link)'
+test-group = 'graphrag-serial'
+
+[[profile.ci.overrides]]
+filter = 'binary(daemon_integration) | binary(cookbook_recipes)'
+test-group = 'graphrag-serial'

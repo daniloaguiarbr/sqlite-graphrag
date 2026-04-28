@@ -57,7 +57,7 @@ sqlite-graphrag --version
 
 ## Schema do Grafo
 ### Tipos de entidade, rótulos de relação e peso de aresta
-- `entity_type` aceita exatamente 10 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `entity_type` aceita exatamente 13 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `relation` aceita exatamente 12 valores: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
 - `strength` é um float em `[0.0, 1.0]` representando o peso da aresta; mapeado para `weight` em todos os outputs de leitura
 - Valores de `entity_type` ou `relation` não listados são rejeitados na escrita com código de saída 1
@@ -238,7 +238,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 combinado com vetor via Reciprocal Rank Fusion |
 | `namespace-detect` | `--namespace <nome>` | Resolve precedência de namespace para invocação |
 | `link` | `--from`, `--to`, `--relation`, `--weight` | Cria relacionamento explícito entre duas entidades |
-| `unlink` | `--relationship-id` | Remove um relacionamento específico entre duas entidades |
+| `unlink` | `--from`, `--to`, `--relation` | Remove um relacionamento específico entre duas entidades |
 | `related` | `--name`, `--limit`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
 | `graph` | `--format`, `--output` | Exporta snapshot do grafo em `json`, `dot` ou `mermaid` |
 
@@ -265,6 +265,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Diretório de override para cache do modelo e lock files | Diretório XDG cache | `~/.cache/sqlite-graphrag` |
 | `SQLITE_GRAPHRAG_LANG` | Idioma da saída da CLI como `en` ou `pt` (alias: `pt-BR`, `portuguese`) | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Nível do filtro de tracing para saída em stderr | `info` | `debug` |
+| `SQLITE_GRAPHRAG_LOG_FORMAT` | Formato da saída de tracing em stderr (`pretty` ou `json`) | `pretty` | `json` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
 | `SQLITE_GRAPHRAG_DISPLAY_TZ` | Fuso horário IANA para campos `*_iso` no JSON | `UTC` | `America/Sao_Paulo` |
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Força o autostart do daemon mesmo quando os guards o pulariam | indefinido | `1` |
