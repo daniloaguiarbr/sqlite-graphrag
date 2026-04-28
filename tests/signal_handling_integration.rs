@@ -1,11 +1,11 @@
 #![cfg(all(unix, feature = "slow-tests"))]
 //! Suite 6 — testes de signal handling (Unix only).
 //!
-//! Cada teste spawna o binário como subprocesso real, envia um sinal via
+//! Each test spawns the binary as a real subprocess, sends a signal via
 //! `libc::kill`, aguarda com `.wait()` e verifica o exit status e integridade
 //! do banco de dados.
 //!
-//! Esta suite é compilada e executada APENAS em sistemas Unix. Em Windows é
+//! This suite is compiled and executed ONLY on Unix systems. On Windows it is
 //! silenciosamente omitida pela diretiva `#![cfg(unix)]`.
 
 use std::os::unix::process::ExitStatusExt;
@@ -36,7 +36,7 @@ fn setup_db() -> TempDir {
     tmp
 }
 
-/// Constrói um Command para o binário com isolamento completo.
+/// Builds a Command for the binary with full isolation.
 fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
     let mut cmd = Command::new(bin_path());
     cmd.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
@@ -46,7 +46,7 @@ fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
 }
 
 /// Envia `signal` ao processo `child` usando `libc::kill`.
-/// Retorna `Ok(())` se o syscall retornou 0, `Err(errno)` caso contrário.
+/// Returns `Ok(())` if the syscall returned 0, `Err(errno)` otherwise.
 fn send_signal(child: &Child, signal: libc::c_int) -> Result<(), i32> {
     let pid = child.id() as libc::pid_t;
     let ret = unsafe { libc::kill(pid, signal) };
@@ -80,11 +80,11 @@ fn db_integro(tmp: &TempDir) -> bool {
 // Suite 6 — Testes de signal handling
 // ---------------------------------------------------------------------------
 
-/// SIGINT durante `health` deve terminar o processo e DB permanece íntegro.
+/// SIGINT during `health` must terminate the process and DB stays intact.
 ///
-/// O `health` é um comando leve que retorna rapidamente, mas validamos que
-/// após SIGINT o processo encerra com sinal (exit status mostra signal=2)
-/// e o banco continua válido.
+/// `health` is a lightweight command that returns quickly, but we validate that
+/// after SIGINT the process exits with signal (exit status shows signal=2)
+/// and the database remains valid.
 #[test]
 fn sigint_durante_health_exit_db_integro() {
     let tmp = setup_db();
@@ -118,11 +118,11 @@ fn sigint_durante_health_exit_db_integro() {
     );
 }
 
-/// SIGTERM durante `init` em banco já inicializado deve encerrar graciosamente.
+/// SIGTERM during `init` on an already-initialized database must shut down gracefully.
 ///
-/// Testa que o binário lida com SIGTERM sem corrupção do banco.
+/// Tests that the binary handles SIGTERM without database corruption.
 /// O processo pode encerrar com exit 0 (completou antes do sinal) ou
-/// com código de sinal — ambos são válidos, mas DB deve estar íntegro.
+/// with signal code — both are valid, but DB must be intact.
 #[test]
 fn sigterm_durante_init_graceful_exit_db_integro() {
     let tmp = TempDir::new().expect("TempDir falhou");
@@ -164,7 +164,7 @@ fn sigterm_durante_init_graceful_exit_db_integro() {
     }
 }
 
-/// Processo que recebe SIGTERM após `remember` com banco populado não corrompe o DB.
+/// A process receiving SIGTERM after `remember` with a populated database does not corrupt the DB.
 #[test]
 fn sigterm_apos_remember_nao_corrompe_db() {
     let tmp = setup_db();
@@ -227,9 +227,9 @@ fn sigterm_apos_remember_nao_corrompe_db() {
     );
 }
 
-/// Verifica que o processo não entra em loop infinito ou zombie após SIGKILL.
+/// Verifies that the process does not enter an infinite loop or zombie state after SIGKILL.
 ///
-/// SIGKILL não pode ser interceptado — o kernel encerra o processo
+/// SIGKILL cannot be intercepted — the kernel terminates the process
 /// imediatamente. O banco pode estar em estado parcial, mas `.wait()` deve
 /// retornar sem bloquear.
 #[test]

@@ -1,5 +1,7 @@
+//! Handler for the `read` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -24,13 +26,13 @@ pub struct ReadArgs {
 
 #[derive(Serialize)]
 struct ReadResponse {
-    /// Campo canônico do storage. Preservado para compatibilidade com clientes v2.0.0.
+    /// Canonical storage field. Preserved for compatibility with v2.0.0 clients.
     id: i64,
-    /// Alias semântico de `id` para contrato documentado em SKILL.md e AGENT_PROTOCOL.md.
+    /// Semantic alias of `id` for the contract documented in SKILL.md and AGENT_PROTOCOL.md.
     memory_id: i64,
     namespace: String,
     name: String,
-    /// Alias semântico de `memory_type` para contrato documentado.
+    /// Semantic alias of `memory_type` for the documented contract.
     #[serde(rename = "type")]
     type_alias: String,
     memory_type: String,
@@ -40,7 +42,7 @@ struct ReadResponse {
     session_id: Option<String>,
     source: String,
     metadata: serde_json::Value,
-    /// Versão mais recente da memória, útil para controle otimista via `--expected-updated-at`.
+    /// Most recent memory version, useful for optimistic control via `--expected-updated-at`.
     version: i64,
     created_at: i64,
     /// Timestamp RFC 3339 UTC paralelo a `created_at` para parsers ISO 8601.
@@ -48,12 +50,12 @@ struct ReadResponse {
     updated_at: i64,
     /// Timestamp RFC 3339 UTC paralelo a `updated_at` para parsers ISO 8601.
     updated_at_iso: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
 fn epoch_to_iso(epoch: i64) -> String {
-    crate::tz::epoch_para_iso(epoch)
+    crate::tz::epoch_to_iso(epoch)
 }
 
 pub fn run(args: ReadArgs) -> Result<(), AppError> {
@@ -66,7 +68,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
         return Err(AppError::NotFound(
-            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
         ));
     }
     let conn = open_ro(&paths.db)?;
@@ -106,7 +108,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
             output::emit_json(&response)?;
         }
         None => {
-            return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+            return Err(AppError::NotFound(errors_msg::memory_not_found(
                 &name, &namespace,
             )))
         }
@@ -116,7 +118,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

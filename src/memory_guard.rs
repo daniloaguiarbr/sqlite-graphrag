@@ -1,13 +1,13 @@
-//! Guarda de memória: verifica disponibilidade de RAM antes de carregar o modelo ONNX.
+//! Memory guard: checks RAM availability before loading the ONNX model.
 //!
-//! O carregamento do modelo via `fastembed` consome aproximadamente
-//! [`crate::constants::EMBEDDING_LOAD_EXPECTED_RSS_MB`] MiB de memória residente.
-//! Se o sistema não tiver memória suficiente disponível, múltiplas invocações
-//! paralelas podem esgotar a RAM e causar OOM (Out-Of-Memory), travando o sistema.
+//! Loading the model via `fastembed` consumes approximately
+//! [`crate::constants::EMBEDDING_LOAD_EXPECTED_RSS_MB`] MiB of resident memory.
+//! Without this guard, multiple parallel invocations can exhaust RAM and trigger
+//! OOM (Out-Of-Memory), stalling the system.
 //!
-//! Esta guard interroga o SO via `sysinfo` antes de qualquer inicialização pesada,
-//! abortando com [`crate::errors::AppError::LowMemory`] (exit 77) quando o piso
-//! configurado não é atingido.
+//! This guard queries the OS via `sysinfo` before any heavy initialisation,
+//! aborting with [`crate::errors::AppError::LowMemory`] (exit 77) when the
+//! configured floor is not met.
 
 use sysinfo::{
     get_current_pid, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
@@ -16,7 +16,7 @@ use sysinfo::{
 
 use crate::errors::AppError;
 
-/// Retorna a memória disponível atual em MiB.
+/// Returns the current available memory in MiB.
 pub fn available_memory_mb() -> u64 {
     let sys =
         System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
@@ -24,7 +24,7 @@ pub fn available_memory_mb() -> u64 {
     available_bytes / (1024 * 1024)
 }
 
-/// Retorna o RSS atual do processo em MiB quando disponível.
+/// Returns the current process RSS in MiB when available.
 pub fn current_process_memory_mb() -> Option<u64> {
     let pid = get_current_pid().ok()?;
     let mut sys =
@@ -39,12 +39,12 @@ pub fn current_process_memory_mb() -> Option<u64> {
     sys.process(pid).map(|p| p.memory() / (1024 * 1024))
 }
 
-/// Calcula o teto seguro de concorrência para cargas pesadas de embedding.
+/// Calculates the safe concurrency ceiling for heavy embedding workloads.
 ///
-/// Fórmula canônica:
-/// `permits = min(cpus, available_memory_mb / ram_por_task_mb) * 0.5`
+/// Canonical formula:
+/// `permits = min(cpus, available_memory_mb / ram_per_task_mb) * 0.5`
 ///
-/// O resultado é clampado entre `1` e `max_concurrency`.
+/// The result is clamped between `1` and `max_concurrency`.
 pub fn calculate_safe_concurrency(
     available_mb: u64,
     cpu_count: usize,
@@ -62,17 +62,17 @@ pub fn calculate_safe_concurrency(
     safe_with_margin.min(max_concurrency)
 }
 
-/// Verifica se há memória disponível suficiente para iniciar o carregamento do modelo.
+/// Checks whether sufficient memory is available to start loading the model.
 ///
-/// # Parâmetros
-/// - `min_mb`: piso mínimo em MiB de memória disponível (tipicamente
+/// # Parameters
+/// - `min_mb`: minimum floor in MiB of available memory (typically
 ///   [`crate::constants::MIN_AVAILABLE_MEMORY_MB`]).
 ///
-/// # Erros
-/// Retorna [`AppError::LowMemory`] quando `available_mb < min_mb`.
+/// # Errors
+/// Returns [`AppError::LowMemory`] when `available_mb < min_mb`.
 ///
-/// # Retorno
-/// Retorna `Ok(available_mb)` com o valor real de memória disponível em MiB.
+/// # Returns
+/// Returns `Ok(available_mb)` with the actual available memory in MiB.
 pub fn check_available_memory(min_mb: u64) -> Result<u64, AppError> {
     let available_mb = available_memory_mb();
 
@@ -87,7 +87,7 @@ pub fn check_available_memory(min_mb: u64) -> Result<u64, AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

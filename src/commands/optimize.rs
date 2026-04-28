@@ -1,5 +1,7 @@
+//! Handler for the `optimize` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -17,7 +19,7 @@ pub struct OptimizeArgs {
 struct OptimizeResponse {
     db_path: String,
     status: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -26,7 +28,7 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -44,7 +46,7 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use serial_test::serial;
     use tempfile::TempDir;

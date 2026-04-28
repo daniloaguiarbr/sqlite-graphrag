@@ -1,3 +1,8 @@
+//! Chunk storage CRUD for multi-chunk memories.
+//!
+//! Manages the `memory_chunks` table: insert embeddings for bodies that
+//! exceed the 512-token E5 limit and query chunks for vector search.
+
 // src/storage/chunks.rs
 // Chunk storage for bodies exceeding 512 tokens E5 limit
 

@@ -1,3 +1,5 @@
+//! Handler for the `init` CLI subcommand.
+
 use crate::errors::AppError;
 use crate::output;
 use crate::paths::AppPaths;
@@ -45,10 +47,10 @@ struct InitResponse {
     schema_version: String,
     model: String,
     dim: usize,
-    /// Namespace ativo resolvido durante a inicialização, alinhado à doc bilíngue.
+    /// Active namespace resolved during initialisation, aligned with the bilingual docs.
     namespace: String,
     status: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -133,7 +135,7 @@ fn latest_schema_version(conn: &rusqlite::Connection) -> Result<String, AppError
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

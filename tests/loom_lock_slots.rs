@@ -1,11 +1,11 @@
-//! Testes de concorrência via loom para o semáforo de slots do CLI.
+//! Concurrency tests via loom for the CLI slot semaphore.
 //!
-//! Modela a invariante central de `src/lock.rs`: no máximo `MAX_SLOTS` threads
+//! Models the central invariant of `src/lock.rs`: at most `MAX_SLOTS` threads
 //! podem deter um slot simultaneamente. Os testes usam `AtomicUsize` como
-//! contador de slots ativos — equivalente loom-visível do semáforo de `flock`.
+//! counter of active slots — loom-visible equivalent of the `flock` semaphore.
 //!
 //! O loom limita o total de threads (incluindo main) a `loom::MAX_THREADS = 5`.
-//! Por isso cada modelo usa no máximo 4 threads spawned.
+//! Therefore each model uses at most 4 spawned threads.
 //!
 //! Execute com:
 //! ```text
@@ -13,8 +13,8 @@
 //! ```
 //! Ou via script: `bash scripts/test-loom.sh`
 //!
-//! NÃO execute com `cargo test` sem `--test-threads=1` — loom em paralelo
-//! pode saturar a CPU e causar livelock térmico (incidente 2026-04-19).
+//! DO NOT run with `cargo test` without `--test-threads=1` — loom in parallel
+//! may saturate the CPU and cause thermal livelock (incident 2026-04-19).
 
 #![cfg(sqlite_graphrag_loom)]
 
@@ -22,11 +22,11 @@ use loom::sync::atomic::{AtomicUsize, Ordering};
 use loom::sync::Arc;
 use serial_test::serial;
 
-/// Semáforo de contagem sem bloqueio que espelha a lógica de `try_any_slot`.
+/// Non-blocking counting semaphore that mirrors the logic of `try_any_slot`.
 ///
-/// `try_acquire` usa CAS otimista: lê o contador atual e, se estiver abaixo de
-/// `max`, tenta incrementá-lo atomicamente. Retorna `true` em sucesso e
-/// `false` se todos os slots estiverem ocupados — idêntico ao comportamento
+/// `try_acquire` uses optimistic CAS: reads the current counter and, if below
+/// `max`, attempts to increment it atomically. Returns `true` on success and
+/// `false` if all slots are occupied — identical to the behavior
 /// de `try_lock_exclusive` retornando `WouldBlock`.
 struct SlotSemaforo {
     contador: Arc<AtomicUsize>,
@@ -76,19 +76,19 @@ impl SlotSemaforo {
         );
     }
 
-    /// Lê o número de slots ocupados no momento.
+    /// Reads the current number of occupied slots.
     fn ocupados(&self) -> usize {
         self.contador.load(Ordering::Acquire)
     }
 }
 
-/// Teste 1 — Invariante de capacidade máxima: 4 threads competem por 3 slots.
+/// Test 1 — Maximum capacity invariant: 4 threads compete for 3 slots.
 ///
-/// Com mais threads do que slots, ao menos 1 thread sempre falha na aquisição.
+/// With more threads than slots, at least 1 thread always fails acquisition.
 /// Verifica que o contador de slots ocupados NUNCA ultrapassa `max_slots`,
 /// independentemente do escalonamento concorrente explorado pelo loom.
 ///
-/// loom::MAX_THREADS = 5 (main + 4 spawned), portanto máximo de 4 spawns.
+/// loom::MAX_THREADS = 5 (main + 4 spawned), therefore maximum of 4 spawns.
 #[serial(loom_model)]
 #[test]
 fn quatro_threads_invariante_maximo_tres_slots() {
@@ -141,8 +141,8 @@ fn quatro_threads_invariante_maximo_tres_slots() {
 
 /// Teste 2 — Release libera slot e permite outra thread adquirir.
 ///
-/// Thread A adquire o único slot disponível. Thread B tenta adquirir e falha.
-/// Após A liberar, B adquire com sucesso em nova tentativa.
+/// Thread A acquires the single available slot. Thread B tries to acquire and fails.
+/// After A releases, B successfully acquires on the next attempt.
 /// Modela o comportamento de polling de `acquire_cli_slot` com `wait_seconds > 0`.
 #[serial(loom_model)]
 #[test]
@@ -211,10 +211,10 @@ fn release_libera_slot_para_proxima_thread() {
     });
 }
 
-/// Teste 3 — Shutdown limpo: todos os slots liberados após encerramento.
+/// Test 3 — Clean shutdown: all slots released after termination.
 ///
-/// 4 threads adquirem e liberam slots em paralelo. Após todas terminarem,
-/// o contador deve ser zero — invariante de shutdown do semáforo de `flock`.
+/// 4 threads acquire and release slots in parallel. After all finish,
+/// the counter must be zero — shutdown invariant of the `flock` semaphore.
 ///
 /// loom::MAX_THREADS = 5 (main + 4 spawned). Aqui usamos exatamente 4.
 #[serial(loom_model)]

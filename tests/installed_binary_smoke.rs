@@ -1,33 +1,33 @@
 #![cfg(feature = "slow-tests")]
 
-/// Suite 10 — Smoke tests contra ~/.cargo/bin/sqlite-graphrag publicado
+/// Suite 10 — Smoke tests against ~/.cargo/bin/sqlite-graphrag (published binary)
 ///
-/// Testa o happy path de cada um dos 25 subcomandos contra o binário já
-/// instalado. Skippa gracefully se:
-/// - Binário ausente em `~/.cargo/bin/sqlite-graphrag`
-/// - Variável `SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1` definida
+/// Tests the happy path of each of the 25 subcommands against the installed binary.
+/// Skips gracefully if:
+/// - Binary absent at `~/.cargo/bin/sqlite-graphrag`
+/// - Variable `SQLITE_GRAPHRAG_SKIP_INSTALLED_BINARY_SMOKE=1` is set
 ///
-/// Cada teste usa TempDir isolado.
-/// A maioria usa `SQLITE_GRAPHRAG_DB_PATH` explícito e o smoke final também valida
-/// o fallback padrão para `./graphrag.sqlite` no diretório da invocação.
-/// Todos os testes devem retornar exit code 0 e JSON válido no stdout.
+/// Each test uses an isolated TempDir.
+/// Most use an explicit `SQLITE_GRAPHRAG_DB_PATH`; the final smoke also validates
+/// the default fallback to `./graphrag.sqlite` in the invocation directory.
+/// All tests must return exit code 0 and valid JSON on stdout.
 ///
-/// Por padrão, a suíte exige que o binário instalado corresponda ao
-/// `CARGO_PKG_VERSION` do workspace atual. Isso evita falso positivo quando o
-/// código local evolui, mas `~/.cargo/bin/sqlite-graphrag` continua desatualizado.
-/// Use `SQLITE_GRAPHRAG_ALLOW_INSTALLED_VERSION_MISMATCH=1` para auditar um
-/// binário legado deliberadamente.
+/// By default, the suite requires the installed binary to match the
+/// `CARGO_PKG_VERSION` of the current workspace. This avoids false positives when
+/// local code evolves but `~/.cargo/bin/sqlite-graphrag` remains stale.
+/// Use `SQLITE_GRAPHRAG_ALLOW_INSTALLED_VERSION_MISMATCH=1` to audit a
+/// legacy binary intentionally.
 ///
-/// Contratos de API validados nesta suíte:
+/// API contracts validated in this suite:
 /// - `init`     → {status: "ok", db_path, schema_version, ...}
-/// - `remember` → {memory_id, name, action: "created", ...}   (sem `status`)
-/// - `forget`   → {forgotten: true, name, namespace}          (sem `status`)
-/// - `rename`   → {memory_id, name, version}                  (sem `status`)
-/// - `edit`     → {memory_id, name, action: "updated", ...}   (sem `status`)
-/// - `list`     → {items:[...], elapsed_ms}                   (não array root)
+/// - `remember` → {memory_id, name, action: "created", ...}   (no `status`)
+/// - `forget`   → {forgotten: true, name, namespace}          (no `status`)
+/// - `rename`   → {memory_id, name, version}                  (no `status`)
+/// - `edit`     → {memory_id, name, action: "updated", ...}   (no `status`)
+/// - `list`     → {items:[...], elapsed_ms}                   (not a root array)
 /// - `link`     → {action: "created", from, to, relation, ...}
 /// - `unlink`   → {action: "deleted", relationship_id, ...}
-/// - `__debug_schema` é testado quando o binário instalado o suporta
+/// - `__debug_schema` is tested when the installed binary supports it
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -60,7 +60,7 @@ fn skip_if_not_installed() -> PathBuf {
     }
 }
 
-/// Retorna a versão do binário instalado como string, ex: "1.2.3"
+/// Returns the installed binary version as a string, e.g. "1.2.3"
 fn installed_version(bin: &PathBuf) -> String {
     let out = Command::new(bin)
         .arg("--version")
@@ -164,8 +164,8 @@ impl Env {
         );
     }
 
-    /// Cria uma memória com duas entidades no grafo e retorna os nomes das entidades.
-    /// entities-file requer campo `entity_type` (não `kind`).
+    /// Creates a memory with two entities in the graph and returns the entity names.
+    /// entities-file requires `entity_type` field (not `kind`).
     fn remember_with_entities(&self, name: &str, body: &str) -> (String, String) {
         let ent_a = format!("Ent{name}A");
         let ent_b = format!("Ent{name}B");
@@ -217,7 +217,7 @@ fn assert_json_stdout(out: &Output) {
     assert!(parsed.is_ok(), "stdout não é JSON válido: {stdout}");
 }
 
-/// Aceitável para comandos que podem retornar 0 ou 4 (not found)
+/// Acceptable for commands that may return 0 or 4 (not found)
 fn assert_json_or_not_found(out: &Output) {
     let code = out.status.code().unwrap_or(1);
     assert!(

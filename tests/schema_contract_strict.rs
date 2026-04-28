@@ -111,7 +111,7 @@ impl Env {
 }
 
 /// Valida `instancia` contra o schema em `schema_str`.
-/// Coleta todos os erros e aborta com mensagem detalhada se houver violações.
+/// Collects all errors and aborts with a detailed message if any violations exist.
 fn validar_schema(cmd: &str, schema_str: &str, instancia: &Value) {
     let schema: Value =
         serde_json::from_str(schema_str).unwrap_or_else(|e| panic!("[{cmd}] schema inválido: {e}"));

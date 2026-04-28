@@ -1,3 +1,5 @@
+//! Handler for the `hybrid-search` CLI subcommand.
+
 use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::output::{self, JsonOutputFormat, RecallItem};
@@ -64,12 +66,12 @@ pub struct HybridSearchItem {
     pub vec_rank: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fts_rank: Option<usize>,
-    /// Score RRF combinado — alias explícito de `combined_score` para contratos de integração.
+    /// Combined RRF score — explicit alias of `combined_score` for integration contracts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rrf_score: Option<f64>,
 }
 
-/// Pesos RRF usados na busca híbrida: vec (vetorial) e fts (texto).
+/// RRF weights used in hybrid search: vec (vector) and fts (text).
 #[derive(serde::Serialize)]
 pub struct Weights {
     pub vec: f32,
@@ -80,13 +82,13 @@ pub struct Weights {
 pub struct HybridSearchResponse {
     pub query: String,
     pub k: usize,
-    /// Parâmetro k do RRF usado no ranking combinado.
+    /// RRF k parameter used in the combined ranking.
     pub rrf_k: u32,
     /// Pesos aplicados às fontes vec e fts no RRF.
     pub weights: Weights,
     pub results: Vec<HybridSearchItem>,
     pub graph_matches: Vec<RecallItem>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
 
@@ -98,7 +100,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
         return Err(AppError::NotFound(
-            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
         ));
     }
 
@@ -206,7 +208,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     fn resposta_vazia(

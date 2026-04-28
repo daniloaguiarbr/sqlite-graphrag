@@ -1,3 +1,8 @@
+//! IPC daemon: keeps the embedding model warm across CLI invocations.
+//!
+//! Manages the background process lifecycle, Unix-socket IPC protocol, and
+//! auto-start/backoff logic so embeddings are served without cold-start cost.
+
 use crate::constants::{
     DAEMON_AUTO_START_INITIAL_BACKOFF_MS, DAEMON_AUTO_START_MAX_BACKOFF_MS,
     DAEMON_AUTO_START_MAX_WAIT_MS, DAEMON_IDLE_SHUTDOWN_SECS, DAEMON_PING_TIMEOUT_MS,

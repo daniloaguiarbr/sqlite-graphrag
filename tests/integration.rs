@@ -30,9 +30,9 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
 // Resolução de path do banco via SQLITE_GRAPHRAG_HOME
 // ---------------------------------------------------------------------------
 
-/// Helper isolado que NÃO injeta `SQLITE_GRAPHRAG_DB_PATH`, deixando a
-/// resolução cair em `SQLITE_GRAPHRAG_HOME` ou no `current_dir`. Usa
-/// `env_clear` para garantir que vars do ambiente do CI não vazem.
+/// Isolated helper that does NOT inject `SQLITE_GRAPHRAG_DB_PATH`, letting
+/// resolution fall back to `SQLITE_GRAPHRAG_HOME` or `current_dir`. Uses
+/// `env_clear` to ensure CI environment vars do not leak.
 fn home_isolated_cmd(cwd: &std::path::Path) -> Command {
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.env_clear();
@@ -1343,7 +1343,7 @@ fn test_forget_purge_nao_corrompe_fts_index() {
 // Helpers para testes de grafo (link, unlink, related, graph, cleanup-orphans)
 // ---------------------------------------------------------------------------
 
-/// Cria uma memória com entidades anexadas via entities-file para popular o grafo.
+/// Creates a memory with entities attached via entities-file to populate the graph.
 fn seed_memory_with_entities(
     tmp: &TempDir,
     memory_name: &str,

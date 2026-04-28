@@ -1,3 +1,8 @@
+//! fastembed wrapper and per-process embedding cache.
+//!
+//! Owns the in-process `TextEmbedding` model and exposes batch encode/query
+//! helpers used by remember, recall, and related commands.
+
 use crate::constants::{
     EMBEDDING_DIM, EMBEDDING_MAX_TOKENS, FASTEMBED_BATCH_SIZE, PASSAGE_PREFIX, QUERY_PREFIX,
     REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS, REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS,
@@ -223,7 +228,7 @@ pub fn f32_to_bytes(v: &[f32]) -> &[u8] {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use crate::constants::{EMBEDDING_DIM, PASSAGE_PREFIX, QUERY_PREFIX};
 

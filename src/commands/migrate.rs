@@ -1,3 +1,5 @@
+//! Handler for the `migrate` CLI subcommand.
+
 use crate::errors::AppError;
 use crate::output;
 use crate::paths::AppPaths;
@@ -22,7 +24,7 @@ struct MigrateResponse {
     db_path: String,
     schema_version: String,
     status: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -125,7 +127,7 @@ fn latest_schema_version(conn: &rusqlite::Connection) -> Result<String, AppError
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use rusqlite::Connection;
 

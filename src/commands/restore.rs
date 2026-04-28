@@ -1,5 +1,7 @@
+//! Handler for the `restore` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
@@ -22,7 +24,7 @@ pub struct RestoreArgs {
     pub version: Option<i64>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
-    /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
+    /// Optimistic locking: reject if the current updated_at does not match (exit 3).
     #[arg(
         long,
         value_name = "EPOCH_OR_RFC3339",
@@ -46,7 +48,7 @@ struct RestoreResponse {
     name: String,
     version: i64,
     restored_from: i64,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -66,11 +68,11 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         )
         .optional()?;
     let (memory_id, current_updated_at) = result
-        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace)))?;
+        .ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&args.name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+            return Err(AppError::Conflict(errors_msg::optimistic_lock_conflict(
                 expected,
                 current_updated_at,
             )));
@@ -93,7 +95,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
                 .optional()?
                 .flatten();
             let v = last.ok_or_else(|| {
-                AppError::NotFound(erros::memoria_nao_encontrada(&args.name, &namespace))
+                AppError::NotFound(errors_msg::memory_not_found(&args.name, &namespace))
             })?;
             tracing::info!(
                 "restore --version omitido; usando última versão não-restore: {}",
@@ -113,7 +115,9 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         stmt.query_row(params![memory_id, target_version], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })
-        .map_err(|_| AppError::NotFound(erros::versao_nao_encontrada(target_version, &args.name)))?
+        .map_err(|_| {
+            AppError::NotFound(errors_msg::version_not_found(target_version, &args.name))
+        })?
     };
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
@@ -161,7 +165,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     };
 
     if affected == 0 {
-        return Err(AppError::Conflict(erros::conflito_processo_concorrente()));
+        return Err(AppError::Conflict(errors_msg::concurrent_process_conflict()));
     }
 
     let next_v = versions::next_version(&tx, memory_id)?;
@@ -198,7 +202,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use crate::errors::AppError;
 
     #[test]

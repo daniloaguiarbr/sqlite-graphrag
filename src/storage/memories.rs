@@ -667,7 +667,7 @@ pub fn fts_search(
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use rusqlite::Connection;
 

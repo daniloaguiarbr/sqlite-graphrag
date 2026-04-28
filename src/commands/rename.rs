@@ -1,5 +1,7 @@
+//! Handler for the `rename` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
@@ -20,7 +22,7 @@ pub struct RenameArgs {
     pub new_name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
-    /// Optimistic locking: rejeitar se updated_at atual não bater (exit 3).
+    /// Optimistic locking: reject if the current updated_at does not match (exit 3).
     #[arg(
         long,
         value_name = "EPOCH_OR_RFC3339",
@@ -47,7 +49,7 @@ struct RenameResponse {
     name: String,
     action: &'static str,
     version: i64,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -78,13 +80,13 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     if normalized_new_name.starts_with("__") {
         return Err(AppError::Validation(
-            crate::i18n::validacao::nome_reservado(),
+            crate::i18n::validation::reserved_name(),
         ));
     }
 
     if normalized_new_name.is_empty() || normalized_new_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::Validation(
-            crate::i18n::validacao::novo_nome_comprimento(MAX_MEMORY_NAME_LEN),
+            crate::i18n::validation::new_name_length(MAX_MEMORY_NAME_LEN),
         ));
     }
 
@@ -93,25 +95,25 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
         if !slug_re.is_match(&normalized_new_name) {
             return Err(AppError::Validation(
-                crate::i18n::validacao::novo_nome_kebab(&normalized_new_name),
+                crate::i18n::validation::new_name_kebab(&normalized_new_name),
             ));
         }
     }
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &name)?
-        .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
+        .ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+            return Err(AppError::Conflict(errors_msg::optimistic_lock_conflict(
                 expected,
                 current_updated_at,
             )));
@@ -175,7 +177,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use crate::storage::memories::{insert, NewMemory};
     use tempfile::TempDir;
 

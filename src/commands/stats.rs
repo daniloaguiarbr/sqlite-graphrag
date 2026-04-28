@@ -1,5 +1,7 @@
+//! Handler for the `stats` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -28,18 +30,18 @@ struct StatsResponse {
     relationships: i64,
     /// Alias de `relationships` para contrato documentado.
     relationships_total: i64,
-    /// Alias semântico de `relationships` conforme contrato em AGENT_PROTOCOL.md.
+    /// Semantic alias of `relationships` per the contract in AGENT_PROTOCOL.md.
     edges: i64,
-    /// Total de chunks indexados (linha por chunk em `memory_chunks`).
+    /// Total indexed chunks (one row per chunk in `memory_chunks`).
     chunks_total: i64,
-    /// Comprimento médio do campo body nas memórias ativas (não deletadas).
+    /// Average length of the body field in active (non-deleted) memories.
     avg_body_len: f64,
     namespaces: Vec<String>,
     db_size_bytes: u64,
-    /// Alias semântico de `db_size_bytes` para contrato documentado.
+    /// Semantic alias of `db_size_bytes` for the documented contract.
     db_bytes: u64,
     schema_version: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -50,7 +52,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -126,7 +128,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

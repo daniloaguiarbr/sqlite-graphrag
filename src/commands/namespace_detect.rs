@@ -1,3 +1,5 @@
+//! Handler for the `namespace-detect` CLI subcommand.
+
 use crate::errors::AppError;
 use crate::namespace;
 use crate::output;
@@ -20,7 +22,7 @@ struct NamespaceDetectResponse {
     namespace: String,
     source: namespace::NamespaceSource,
     cwd: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -39,7 +41,7 @@ pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use crate::namespace::NamespaceSource;
     use clap::Parser;

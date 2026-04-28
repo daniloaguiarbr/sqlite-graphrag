@@ -1,5 +1,7 @@
+//! Handler for the `vacuum` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
@@ -26,7 +28,7 @@ struct VacuumResponse {
     size_before_bytes: u64,
     size_after_bytes: u64,
     status: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -36,7 +38,7 @@ pub fn run(args: VacuumArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -69,7 +71,7 @@ pub fn run(args: VacuumArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

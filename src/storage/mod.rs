@@ -1,3 +1,5 @@
+//! SQLite persistence layer: sub-modules for each domain table group.
+
 pub mod chunks;
 pub mod connection;
 pub mod entities;

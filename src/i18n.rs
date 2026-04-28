@@ -1,13 +1,13 @@
-//! Camada bilíngue de mensagens humanas.
+//! Bilingual human-readable message layer.
 //!
-//! A CLI usa `--lang en|pt` (flag global) ou `SQLITE_GRAPHRAG_LANG` (env var) para escolher
-//! o idioma das mensagens stderr de progresso. JSON de stdout é determinístico e idêntico
-//! entre idiomas — apenas strings destinadas a humanos passam pelo módulo.
+//! The CLI uses `--lang en|pt` (global flag) or `SQLITE_GRAPHRAG_LANG` (env var) to choose
+//! the language of stderr progress messages. JSON stdout is deterministic and identical
+//! across languages — only strings intended for humans pass through this module.
 //!
-//! Detecção (do mais para o menos prioritário):
-//! 1. Flag `--lang` explícita
+//! Detection (highest to lowest priority):
+//! 1. Explicit `--lang` flag
 //! 2. Env var `SQLITE_GRAPHRAG_LANG`
-//! 3. Locale do SO (`LANG`, `LC_ALL`) com prefixo `pt`
+//! 3. OS locale (`LANG`, `LC_ALL`) with `pt` prefix
 //! 4. Fallback `English`
 
 use std::sync::OnceLock;
@@ -17,16 +17,16 @@ pub enum Language {
     #[value(name = "en", aliases = ["english", "EN"])]
     English,
     #[value(name = "pt", aliases = ["portugues", "portuguese", "pt-BR", "pt-br", "PT"])]
-    Portugues,
+    Portuguese,
 }
 
 impl Language {
-    /// Converte string de linha de comando em Language sem depender do clap.
-    /// Aceita os mesmos aliases definidos em `#[value(...)]`: "en", "pt", etc.
+    /// Parses a command-line string into a `Language` without relying on clap.
+    /// Accepts the same aliases defined in `#[value(...)]`: "en", "pt", etc.
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "en" | "english" => Some(Language::English),
-            "pt" | "pt-br" | "portugues" | "portuguese" => Some(Language::Portugues),
+            "pt" | "pt-br" | "portugues" | "portuguese" => Some(Language::Portuguese),
             _ => None,
         }
     }
@@ -35,7 +35,7 @@ impl Language {
         if let Ok(v) = std::env::var("SQLITE_GRAPHRAG_LANG") {
             let lower = v.to_lowercase();
             if lower.starts_with("pt") {
-                return Language::Portugues;
+                return Language::Portuguese;
             }
             if lower.starts_with("en") {
                 return Language::English;
@@ -49,7 +49,7 @@ impl Language {
         for var in &["LC_ALL", "LANG"] {
             if let Ok(v) = std::env::var(var) {
                 if v.to_lowercase().starts_with("pt") {
-                    return Language::Portugues;
+                    return Language::Portuguese;
                 }
             }
         }
@@ -57,250 +57,245 @@ impl Language {
     }
 }
 
-static IDIOMA_GLOBAL: OnceLock<Language> = OnceLock::new();
+static GLOBAL_LANGUAGE: OnceLock<Language> = OnceLock::new();
 
-/// Inicializa o idioma global. Chamadas subsequentes são ignoradas silenciosamente
-/// (OnceLock semantics) — garantindo thread-safety e determinismo.
+/// Initializes the global language. Subsequent calls are silently ignored
+/// (OnceLock semantics) — guaranteeing thread-safety and determinism.
 pub fn init(explicit: Option<Language>) {
     let resolved = explicit.unwrap_or_else(Language::from_env_or_locale);
-    let _ = IDIOMA_GLOBAL.set(resolved);
+    let _ = GLOBAL_LANGUAGE.set(resolved);
 }
 
-/// Retorna o idioma ativo ou fallback English se `init` nunca foi chamado.
+/// Returns the active language, or fallback English if `init` was never called.
 pub fn current() -> Language {
-    *IDIOMA_GLOBAL.get_or_init(Language::from_env_or_locale)
+    *GLOBAL_LANGUAGE.get_or_init(Language::from_env_or_locale)
 }
 
-/// Traduz uma mensagem bilíngue escolhendo a variante ativa.
+/// Translates a bilingual message by selecting the active variant.
 pub fn tr(en: &str, pt: &str) -> &'static str {
-    // SAFETY: Retornamos uma das duas strings estáticas passadas como &str.
-    // Como não temos como provar ao borrow checker que as referências sobrevivem,
-    // usamos Box::leak para transformar em &'static str. Custo mínimo (dezenas de
-    // strings distintas durante vida do processo CLI).
+    // SAFETY: We return one of the two static strings passed as &str.
+    // Since we cannot prove to the borrow checker that the references outlive,
+    // we use Box::leak to promote to &'static str. Minimal cost (tens of
+    // distinct strings during the CLI process lifetime).
     match current() {
         Language::English => Box::leak(en.to_string().into_boxed_str()),
-        Language::Portugues => Box::leak(pt.to_string().into_boxed_str()),
+        Language::Portuguese => Box::leak(pt.to_string().into_boxed_str()),
     }
 }
 
-/// Prefixo localizado para mensagens de erro exibidas ao usuário final.
-pub fn prefixo_erro() -> &'static str {
+/// Localized prefix for error messages displayed to the end user.
+pub fn error_prefix() -> &'static str {
     match current() {
         Language::English => "Error",
-        Language::Portugues => "Erro",
+        Language::Portuguese => "Erro",
     }
 }
 
-/// Mensagens de erro localizadas para as variantes de AppError.
-pub mod erros {
+/// Localized error messages for `AppError` variants.
+pub mod errors_msg {
     use super::current;
     use crate::i18n::Language;
 
-    pub fn memoria_nao_encontrada(nome: &str, namespace: &str) -> String {
+    pub fn memory_not_found(nome: &str, namespace: &str) -> String {
         match current() {
             Language::English => {
                 format!("memory '{nome}' not found in namespace '{namespace}'")
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("memória '{nome}' não encontrada no namespace '{namespace}'")
             }
         }
     }
 
-    pub fn banco_nao_encontrado(path: &str) -> String {
+    pub fn database_not_found(path: &str) -> String {
         match current() {
             Language::English => {
                 format!("database not found at {path}. Run 'sqlite-graphrag init' first.")
             }
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "banco de dados não encontrado em {path}. Execute 'sqlite-graphrag init' primeiro."
             ),
         }
     }
 
-    pub fn entidade_nao_encontrada(nome: &str, namespace: &str) -> String {
+    pub fn entity_not_found(nome: &str, namespace: &str) -> String {
         match current() {
             Language::English => {
                 format!("entity \"{nome}\" does not exist in namespace \"{namespace}\"")
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("entidade \"{nome}\" não existe no namespace \"{namespace}\"")
             }
         }
     }
 
-    pub fn relacionamento_nao_encontrado(
-        de: &str,
-        rel: &str,
-        para: &str,
-        namespace: &str,
-    ) -> String {
+    pub fn relationship_not_found(de: &str, rel: &str, para: &str, namespace: &str) -> String {
         match current() {
             Language::English => format!(
                 "relationship \"{de}\" --[{rel}]--> \"{para}\" does not exist in namespace \"{namespace}\""
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "relacionamento \"{de}\" --[{rel}]--> \"{para}\" não existe no namespace \"{namespace}\""
             ),
         }
     }
 
-    pub fn memoria_duplicada(nome: &str, namespace: &str) -> String {
+    pub fn duplicate_memory(nome: &str, namespace: &str) -> String {
         match current() {
             Language::English => format!(
                 "memory '{nome}' already exists in namespace '{namespace}'. Use --force-merge to update."
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "memória '{nome}' já existe no namespace '{namespace}'. Use --force-merge para atualizar."
             ),
         }
     }
 
-    pub fn conflito_optimistic_lock(expected: i64, current_ts: i64) -> String {
+    pub fn optimistic_lock_conflict(expected: i64, current_ts: i64) -> String {
         match current() {
             Language::English => format!(
                 "optimistic lock conflict: expected updated_at={expected}, but current is {current_ts}"
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "conflito de optimistic lock: esperava updated_at={expected}, mas atual é {current_ts}"
             ),
         }
     }
 
-    pub fn versao_nao_encontrada(versao: i64, nome: &str) -> String {
+    pub fn version_not_found(versao: i64, nome: &str) -> String {
         match current() {
             Language::English => format!("version {versao} not found for memory '{nome}'"),
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("versão {versao} não encontrada para a memória '{nome}'")
             }
         }
     }
 
-    pub fn sem_resultados_recall(max_distance: f32, query: &str, namespace: &str) -> String {
+    pub fn no_recall_results(max_distance: f32, query: &str, namespace: &str) -> String {
         match current() {
             Language::English => format!(
                 "no results within --max-distance {max_distance} for query '{query}' in namespace '{namespace}'"
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "nenhum resultado dentro de --max-distance {max_distance} para a consulta '{query}' no namespace '{namespace}'"
             ),
         }
     }
 
-    pub fn memoria_soft_deleted_nao_encontrada(nome: &str, namespace: &str) -> String {
+    pub fn soft_deleted_memory_not_found(nome: &str, namespace: &str) -> String {
         match current() {
             Language::English => {
                 format!("soft-deleted memory '{nome}' not found in namespace '{namespace}'")
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("memória soft-deleted '{nome}' não encontrada no namespace '{namespace}'")
             }
         }
     }
 
-    pub fn conflito_processo_concorrente() -> String {
+    pub fn concurrent_process_conflict() -> String {
         match current() {
             Language::English => {
                 "optimistic lock conflict: memory was modified by another process".to_string()
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 "conflito de optimistic lock: memória foi modificada por outro processo".to_string()
             }
         }
     }
 
-    pub fn limite_entidades(max: usize) -> String {
+    pub fn entity_limit_exceeded(max: usize) -> String {
         match current() {
             Language::English => format!("entities exceed limit of {max}"),
-            Language::Portugues => format!("entidades excedem o limite de {max}"),
+            Language::Portuguese => format!("entidades excedem o limite de {max}"),
         }
     }
 
-    pub fn limite_relacionamentos(max: usize) -> String {
+    pub fn relationship_limit_exceeded(max: usize) -> String {
         match current() {
             Language::English => format!("relationships exceed limit of {max}"),
-            Language::Portugues => format!("relacionamentos excedem o limite de {max}"),
+            Language::Portuguese => format!("relacionamentos excedem o limite de {max}"),
         }
     }
 }
 
-/// Mensagens de validação localizadas para os campos de memória.
-pub mod validacao {
+/// Localized validation messages for memory fields.
+pub mod validation {
     use super::current;
     use crate::i18n::Language;
 
-    pub fn nome_comprimento(max: usize) -> String {
+    pub fn name_length(max: usize) -> String {
         match current() {
             Language::English => format!("name must be 1-{max} chars"),
-            Language::Portugues => format!("nome deve ter entre 1 e {max} caracteres"),
+            Language::Portuguese => format!("nome deve ter entre 1 e {max} caracteres"),
         }
     }
 
-    pub fn nome_reservado() -> String {
+    pub fn reserved_name() -> String {
         match current() {
             Language::English => {
                 "names and namespaces starting with __ are reserved for internal use".to_string()
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 "nomes e namespaces iniciados com __ são reservados para uso interno".to_string()
             }
         }
     }
 
-    pub fn nome_kebab(nome: &str) -> String {
+    pub fn name_kebab(nome: &str) -> String {
         match current() {
             Language::English => format!(
                 "name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
             ),
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'")
             }
         }
     }
 
-    pub fn descricao_excede(max: usize) -> String {
+    pub fn description_exceeds(max: usize) -> String {
         match current() {
             Language::English => format!("description must be <= {max} chars"),
-            Language::Portugues => format!("descrição deve ter no máximo {max} caracteres"),
+            Language::Portuguese => format!("descrição deve ter no máximo {max} caracteres"),
         }
     }
 
-    pub fn body_excede(max: usize) -> String {
+    pub fn body_exceeds(max: usize) -> String {
         match current() {
             Language::English => format!("body exceeds {max} bytes"),
-            Language::Portugues => format!("corpo excede {max} bytes"),
+            Language::Portuguese => format!("corpo excede {max} bytes"),
         }
     }
 
-    pub fn novo_nome_comprimento(max: usize) -> String {
+    pub fn new_name_length(max: usize) -> String {
         match current() {
             Language::English => format!("new-name must be 1-{max} chars"),
-            Language::Portugues => format!("novo nome deve ter entre 1 e {max} caracteres"),
+            Language::Portuguese => format!("novo nome deve ter entre 1 e {max} caracteres"),
         }
     }
 
-    pub fn novo_nome_kebab(nome: &str) -> String {
+    pub fn new_name_kebab(nome: &str) -> String {
         match current() {
             Language::English => format!(
                 "new-name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "novo nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'"
             ),
         }
     }
 
-    pub fn namespace_comprimento() -> String {
+    pub fn namespace_length() -> String {
         match current() {
             Language::English => "namespace must be 1-80 chars".to_string(),
-            Language::Portugues => "namespace deve ter entre 1 e 80 caracteres".to_string(),
+            Language::Portuguese => "namespace deve ter entre 1 e 80 caracteres".to_string(),
         }
     }
 
-    pub fn namespace_formato() -> String {
+    pub fn namespace_format() -> String {
         match current() {
             Language::English => "namespace must be alphanumeric + hyphens/underscores".to_string(),
-            Language::Portugues => {
+            Language::Portuguese => {
                 "namespace deve ser alfanumérico com hífens/sublinhados".to_string()
             }
         }
@@ -309,63 +304,63 @@ pub mod validacao {
     pub fn path_traversal(p: &str) -> String {
         match current() {
             Language::English => format!("path traversal rejected: {p}"),
-            Language::Portugues => format!("traversal de caminho rejeitado: {p}"),
+            Language::Portuguese => format!("traversal de caminho rejeitado: {p}"),
         }
     }
 
-    pub fn tz_invalido(v: &str) -> String {
+    pub fn invalid_tz(v: &str) -> String {
         match current() {
             Language::English => format!(
                 "SQLITE_GRAPHRAG_DISPLAY_TZ invalid: '{v}'; use an IANA name like 'America/Sao_Paulo'"
             ),
-            Language::Portugues => format!(
+            Language::Portuguese => format!(
                 "SQLITE_GRAPHRAG_DISPLAY_TZ inválido: '{v}'; use um nome IANA como 'America/Sao_Paulo'"
             ),
         }
     }
 
-    pub fn config_namespace_invalido(path: &str, err: &str) -> String {
+    pub fn invalid_namespace_config(path: &str, err: &str) -> String {
         match current() {
             Language::English => {
                 format!("invalid project namespace config '{path}': {err}")
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("configuração de namespace de projeto inválida '{path}': {err}")
             }
         }
     }
 
-    pub fn projects_mapping_invalido(path: &str, err: &str) -> String {
+    pub fn invalid_projects_mapping(path: &str, err: &str) -> String {
         match current() {
             Language::English => format!("invalid projects mapping '{path}': {err}"),
-            Language::Portugues => format!("mapeamento de projetos inválido '{path}': {err}"),
+            Language::Portuguese => format!("mapeamento de projetos inválido '{path}': {err}"),
         }
     }
 
-    pub fn link_auto_referencial() -> String {
+    pub fn self_referential_link() -> String {
         match current() {
             Language::English => "--from and --to must be different entities — self-referential relationships are not supported".to_string(),
-            Language::Portugues => "--from e --to devem ser entidades diferentes — relacionamentos auto-referenciais não são suportados".to_string(),
+            Language::Portuguese => "--from e --to devem ser entidades diferentes — relacionamentos auto-referenciais não são suportados".to_string(),
         }
     }
 
-    pub fn link_peso_invalido(weight: f64) -> String {
+    pub fn invalid_link_weight(weight: f64) -> String {
         match current() {
             Language::English => {
                 format!("--weight: must be between 0.0 and 1.0 (actual: {weight})")
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 format!("--weight: deve estar entre 0.0 e 1.0 (atual: {weight})")
             }
         }
     }
 
-    pub fn sync_destino_igual_fonte() -> String {
+    pub fn sync_destination_equals_source() -> String {
         match current() {
             Language::English => {
                 "destination path must differ from the source database path".to_string()
             }
-            Language::Portugues => {
+            Language::Portuguese => {
                 "caminho de destino deve ser diferente do caminho do banco de dados fonte"
                     .to_string()
             }
@@ -374,13 +369,13 @@ pub mod validacao {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use serial_test::serial;
 
     #[test]
     #[serial]
-    fn fallback_english_quando_env_ausente() {
+    fn fallback_english_when_env_absent() {
         std::env::remove_var("SQLITE_GRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "C");
         std::env::set_var("LANG", "C");
@@ -391,50 +386,50 @@ mod testes {
 
     #[test]
     #[serial]
-    fn env_pt_seleciona_portugues() {
+    fn env_pt_selects_portuguese() {
         std::env::remove_var("LC_ALL");
         std::env::remove_var("LANG");
         std::env::set_var("SQLITE_GRAPHRAG_LANG", "pt");
-        assert_eq!(Language::from_env_or_locale(), Language::Portugues);
+        assert_eq!(Language::from_env_or_locale(), Language::Portuguese);
         std::env::remove_var("SQLITE_GRAPHRAG_LANG");
     }
 
     #[test]
     #[serial]
-    fn env_pt_br_seleciona_portugues() {
+    fn env_pt_br_selects_portuguese() {
         std::env::remove_var("LC_ALL");
         std::env::remove_var("LANG");
         std::env::set_var("SQLITE_GRAPHRAG_LANG", "pt-BR");
-        assert_eq!(Language::from_env_or_locale(), Language::Portugues);
+        assert_eq!(Language::from_env_or_locale(), Language::Portuguese);
         std::env::remove_var("SQLITE_GRAPHRAG_LANG");
     }
 
     #[test]
     #[serial]
-    fn locale_ptbr_utf8_seleciona_portugues() {
+    fn locale_ptbr_utf8_selects_portuguese() {
         std::env::remove_var("SQLITE_GRAPHRAG_LANG");
         std::env::set_var("LC_ALL", "pt_BR.UTF-8");
-        assert_eq!(Language::from_env_or_locale(), Language::Portugues);
+        assert_eq!(Language::from_env_or_locale(), Language::Portuguese);
         std::env::remove_var("LC_ALL");
     }
 
-    mod testes_validacao {
+    mod validation_tests {
         use super::*;
 
         #[test]
         fn nome_comprimento_en() {
             let msg = match Language::English {
                 Language::English => format!("name must be 1-{} chars", 80),
-                Language::Portugues => format!("nome deve ter entre 1 e {} caracteres", 80),
+                Language::Portuguese => format!("nome deve ter entre 1 e {} caracteres", 80),
             };
             assert!(msg.contains("name must be 1-80 chars"), "obtido: {msg}");
         }
 
         #[test]
         fn nome_comprimento_pt() {
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => format!("name must be 1-{} chars", 80),
-                Language::Portugues => format!("nome deve ter entre 1 e {} caracteres", 80),
+                Language::Portuguese => format!("nome deve ter entre 1 e {} caracteres", 80),
             };
             assert!(
                 msg.contains("nome deve ter entre 1 e 80 caracteres"),
@@ -443,13 +438,13 @@ mod testes {
         }
 
         #[test]
-        fn nome_kebab_en() {
+        fn name_kebab_en() {
             let nome = "Invalid_Name";
             let msg = match Language::English {
                 Language::English => format!(
                     "name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
                 ),
-                Language::Portugues => {
+                Language::Portuguese => {
                     format!("nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'")
                 }
             };
@@ -458,13 +453,13 @@ mod testes {
         }
 
         #[test]
-        fn nome_kebab_pt() {
+        fn name_kebab_pt() {
             let nome = "Invalid_Name";
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => format!(
                     "name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
                 ),
-                Language::Portugues => {
+                Language::Portuguese => {
                     format!("nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'")
                 }
             };
@@ -477,16 +472,16 @@ mod testes {
         fn descricao_excede_en() {
             let msg = match Language::English {
                 Language::English => format!("description must be <= {} chars", 500),
-                Language::Portugues => format!("descrição deve ter no máximo {} caracteres", 500),
+                Language::Portuguese => format!("descrição deve ter no máximo {} caracteres", 500),
             };
             assert!(msg.contains("description must be <= 500"), "obtido: {msg}");
         }
 
         #[test]
         fn descricao_excede_pt() {
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => format!("description must be <= {} chars", 500),
-                Language::Portugues => format!("descrição deve ter no máximo {} caracteres", 500),
+                Language::Portuguese => format!("descrição deve ter no máximo {} caracteres", 500),
             };
             assert!(
                 msg.contains("descrição deve ter no máximo 500"),
@@ -499,7 +494,7 @@ mod testes {
             let limite = crate::constants::MAX_MEMORY_BODY_LEN;
             let msg = match Language::English {
                 Language::English => format!("body exceeds {limite} bytes"),
-                Language::Portugues => format!("corpo excede {limite} bytes"),
+                Language::Portuguese => format!("corpo excede {limite} bytes"),
             };
             assert!(msg.contains("body exceeds 512000"), "obtido: {msg}");
         }
@@ -507,27 +502,27 @@ mod testes {
         #[test]
         fn body_excede_pt() {
             let limite = crate::constants::MAX_MEMORY_BODY_LEN;
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => format!("body exceeds {limite} bytes"),
-                Language::Portugues => format!("corpo excede {limite} bytes"),
+                Language::Portuguese => format!("corpo excede {limite} bytes"),
             };
             assert!(msg.contains("corpo excede 512000"), "obtido: {msg}");
         }
 
         #[test]
-        fn novo_nome_comprimento_en() {
+        fn new_name_length_en() {
             let msg = match Language::English {
                 Language::English => format!("new-name must be 1-{} chars", 80),
-                Language::Portugues => format!("novo nome deve ter entre 1 e {} caracteres", 80),
+                Language::Portuguese => format!("novo nome deve ter entre 1 e {} caracteres", 80),
             };
             assert!(msg.contains("new-name must be 1-80"), "obtido: {msg}");
         }
 
         #[test]
-        fn novo_nome_comprimento_pt() {
-            let msg = match Language::Portugues {
+        fn new_name_length_pt() {
+            let msg = match Language::Portuguese {
                 Language::English => format!("new-name must be 1-{} chars", 80),
-                Language::Portugues => format!("novo nome deve ter entre 1 e {} caracteres", 80),
+                Language::Portuguese => format!("novo nome deve ter entre 1 e {} caracteres", 80),
             };
             assert!(
                 msg.contains("novo nome deve ter entre 1 e 80"),
@@ -536,13 +531,13 @@ mod testes {
         }
 
         #[test]
-        fn novo_nome_kebab_en() {
+        fn new_name_kebab_en() {
             let nome = "Bad Name";
             let msg = match Language::English {
                 Language::English => format!(
                     "new-name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
                 ),
-                Language::Portugues => format!(
+                Language::Portuguese => format!(
                     "novo nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'"
                 ),
             };
@@ -550,13 +545,13 @@ mod testes {
         }
 
         #[test]
-        fn novo_nome_kebab_pt() {
+        fn new_name_kebab_pt() {
             let nome = "Bad Name";
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => format!(
                     "new-name must be kebab-case slug (lowercase letters, digits, hyphens): '{nome}'"
                 ),
-                Language::Portugues => format!(
+                Language::Portuguese => format!(
                     "novo nome deve estar em kebab-case (minúsculas, dígitos, hífens): '{nome}'"
                 ),
             };
@@ -573,7 +568,7 @@ mod testes {
                     "names and namespaces starting with __ are reserved for internal use"
                         .to_string()
                 }
-                Language::Portugues => {
+                Language::Portuguese => {
                     "nomes e namespaces iniciados com __ são reservados para uso interno"
                         .to_string()
                 }
@@ -583,12 +578,12 @@ mod testes {
 
         #[test]
         fn nome_reservado_pt() {
-            let msg = match Language::Portugues {
+            let msg = match Language::Portuguese {
                 Language::English => {
                     "names and namespaces starting with __ are reserved for internal use"
                         .to_string()
                 }
-                Language::Portugues => {
+                Language::Portuguese => {
                     "nomes e namespaces iniciados com __ são reservados para uso interno"
                         .to_string()
                 }

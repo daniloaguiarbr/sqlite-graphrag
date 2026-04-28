@@ -1,5 +1,7 @@
+//! Handler for the `forget` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -28,7 +30,7 @@ struct ForgetResponse {
     forgotten: bool,
     name: String,
     namespace: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -41,7 +43,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -52,7 +54,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let forgotten = memories::soft_delete(&conn, &namespace, &name)?;
 
     if !forgotten {
-        return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+        return Err(AppError::NotFound(errors_msg::memory_not_found(
             &name, &namespace,
         )));
     }
@@ -78,7 +80,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

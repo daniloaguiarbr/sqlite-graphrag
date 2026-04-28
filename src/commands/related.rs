@@ -1,9 +1,11 @@
+//! Handler for the `related` CLI subcommand.
+
 use crate::cli::RelationKind;
 use crate::constants::{
     DEFAULT_K_RECALL, DEFAULT_MAX_HOPS, DEFAULT_MIN_WEIGHT, TEXT_DESCRIPTION_PREVIEW_LEN,
 };
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -84,7 +86,7 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -100,7 +102,7 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     ) {
         Ok(id) => id,
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            return Err(AppError::NotFound(erros::memoria_nao_encontrada(
+            return Err(AppError::NotFound(errors_msg::memory_not_found(
                 &name, &namespace,
             )));
         }
@@ -381,7 +383,7 @@ fn fetch_neighbours(
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     fn setup_related_db() -> rusqlite::Connection {

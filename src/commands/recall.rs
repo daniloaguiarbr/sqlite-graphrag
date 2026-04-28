@@ -1,7 +1,9 @@
+//! Handler for the `recall` CLI subcommand.
+
 use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::graph::traverse_from_memories_with_hops;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output::{self, JsonOutputFormat, RecallItem, RecallResponse};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -98,7 +100,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -245,7 +247,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
             .iter()
             .any(|item| item.distance <= args.max_distance);
         if !has_relevant {
-            return Err(AppError::NotFound(erros::sem_resultados_recall(
+            return Err(AppError::NotFound(errors_msg::no_recall_results(
                 args.max_distance,
                 &args.query,
                 &namespace_for_graph,
@@ -272,7 +274,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use crate::output::{RecallItem, RecallResponse};
 
     fn make_item(name: &str, distance: f32, source: &str) -> RecallItem {

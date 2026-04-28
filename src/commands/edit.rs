@@ -1,5 +1,7 @@
+//! Handler for the `edit` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -49,7 +51,7 @@ struct EditResponse {
     name: String,
     action: String,
     version: i64,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -65,7 +67,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -73,11 +75,11 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 
     let (memory_id, current_updated_at, _current_version) =
         memories::find_by_name(&conn, &namespace, &name)?
-            .ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
+            .ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
-            return Err(AppError::Conflict(erros::conflito_optimistic_lock(
+            return Err(AppError::Conflict(errors_msg::optimistic_lock_conflict(
                 expected,
                 current_updated_at,
             )));
@@ -99,7 +101,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         };
         if b.len() > MAX_MEMORY_BODY_LEN {
             return Err(AppError::LimitExceeded(
-                crate::i18n::validacao::body_excede(MAX_MEMORY_BODY_LEN),
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
             ));
         }
         raw_body = Some(b);
@@ -108,7 +110,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     if let Some(ref desc) = args.description {
         if desc.len() > MAX_MEMORY_DESCRIPTION_LEN {
             return Err(AppError::Validation(
-                crate::i18n::validacao::descricao_excede(MAX_MEMORY_DESCRIPTION_LEN),
+                crate::i18n::validation::description_exceeds(MAX_MEMORY_DESCRIPTION_LEN),
             ));
         }
     }
@@ -173,7 +175,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

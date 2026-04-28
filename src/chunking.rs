@@ -1,3 +1,8 @@
+//! Semantic chunking for embedding inputs (Markdown-aware, 512-token limit).
+//!
+//! Splits bodies using [`text_splitter::MarkdownSplitter`] with overlap so
+//! multi-chunk memories preserve context across chunk boundaries.
+
 // src/chunking.rs
 // Token-based chunking for E5 model (512 token limit)
 
@@ -120,9 +125,9 @@ pub fn split_into_chunks_by_token_offsets(
     chunks
 }
 
-/// Divide body em chunks usando MarkdownSplitter com tokenizer real.
-/// Respeita limites semânticos de Markdown (H1-H6, parágrafos, blocos).
-/// Para texto puro sem marcadores Markdown, cai sobre quebras de parágrafo e sentenças.
+/// Splits body into chunks using MarkdownSplitter with a real tokenizer.
+/// Respects Markdown semantic boundaries (H1-H6, paragraphs, blocks).
+/// For plain text without Markdown markers, falls back to paragraph and sentence breaks.
 pub fn split_into_chunks_hierarchical(body: &str, tokenizer: &Tokenizer) -> Vec<Chunk> {
     if body.is_empty() {
         return Vec::new();

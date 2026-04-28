@@ -1,3 +1,8 @@
+//! Token-count utilities for embedding input sizing.
+//!
+//! Provides fast approximate token counting used to decide whether a body
+//! fits in a single chunk or requires the multi-chunk splitter.
+
 use crate::constants::PASSAGE_PREFIX;
 use crate::errors::AppError;
 use fastembed::{EmbeddingModel, TextEmbedding};

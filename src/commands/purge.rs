@@ -1,5 +1,7 @@
+//! Handler for the `purge` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -12,17 +14,17 @@ pub struct PurgeArgs {
     /// Namespace to purge. Defaults to the contextual namespace (SQLITE_GRAPHRAG_NAMESPACE env var or "global").
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Dias de retenção: memórias com deleted_at mais antigo que (now - retention_days*86400) serão
-    /// permanentemente removidas. Default: PURGE_RETENTION_DAYS_DEFAULT (90).
+    /// Retention days: memories with deleted_at older than (now - retention_days*86400) will be
+    /// permanently removed. Default: PURGE_RETENTION_DAYS_DEFAULT (90).
     #[arg(long, alias = "days", value_name = "DAYS", default_value_t = crate::constants::PURGE_RETENTION_DAYS_DEFAULT)]
     pub retention_days: u32,
     /// [DEPRECATED em v2.0.0] Alias legado — use --retention-days em vez disso.
     #[arg(long, hide = true)]
     pub older_than_seconds: Option<u64>,
-    /// Não executa DELETE: calcula e reporta o que SERIA purgado.
+    /// Does not execute DELETE: computes and reports what WOULD be purged.
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
-    /// Compatibilidade com ferramentas que passam --yes para confirmar operações destrutivas.
+    /// Compatibility with tools that pass --yes to confirm destructive operations.
     #[arg(long, hide = true, default_value_t = false)]
     pub yes: bool,
     #[arg(long, help = "No-op; JSON is always emitted on stdout")]
@@ -41,7 +43,7 @@ pub struct PurgeResponse {
     pub namespace: Option<String>,
     pub cutoff_epoch: i64,
     pub warnings: Vec<String>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
 
@@ -55,7 +57,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -81,7 +83,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
 
     if candidates_count == 0 && args.name.is_some() {
         return Err(AppError::NotFound(
-            erros::memoria_soft_deleted_nao_encontrada(
+            errors_msg::soft_deleted_memory_not_found(
                 args.name.as_deref().unwrap_or_default(),
                 &namespace,
             ),

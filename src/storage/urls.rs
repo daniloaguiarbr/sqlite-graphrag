@@ -1,7 +1,12 @@
+//! Persistence for URLs extracted from memory bodies.
+//!
+//! Manages the `memory_urls` table: insert, deduplicate, and query URLs
+//! linked to a specific memory record.
+
 use crate::errors::AppError;
 use rusqlite::Connection;
 
-/// URL extraída do corpo de uma memória.
+/// URL extracted from a memory body.
 pub struct MemoryUrl {
     pub url: String,
     pub offset: Option<i64>,
@@ -16,8 +21,8 @@ pub fn insert_url(conn: &Connection, memory_id: i64, entry: &MemoryUrl) -> Resul
     Ok(())
 }
 
-/// Insere múltiplas URLs para uma memória. Retorna a quantidade inserida (duplicatas ignoradas).
-/// Erros individuais são logados como warn e não propagados — caminho não crítico.
+/// Inserts multiple URLs for a memory. Returns the count inserted (duplicates ignored).
+/// Individual errors are logged as warn and not propagated — non-critical path.
 pub fn insert_urls(conn: &Connection, memory_id: i64, urls: &[MemoryUrl]) -> usize {
     let mut inserted = 0usize;
     for entry in urls {
@@ -36,7 +41,7 @@ pub fn insert_urls(conn: &Connection, memory_id: i64, urls: &[MemoryUrl]) -> usi
     inserted
 }
 
-/// Lista todas as URLs associadas a uma memória.
+/// Lists all URLs associated with a memory.
 pub fn list_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<MemoryUrl>, AppError> {
     let mut stmt =
         conn.prepare("SELECT url, url_offset FROM memory_urls WHERE memory_id = ?1 ORDER BY id")?;
@@ -53,7 +58,7 @@ pub fn list_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<MemoryUrl
     Ok(result)
 }
 
-/// Remove todas as URLs de uma memória.
+/// Removes all URLs for a memory.
 pub fn delete_by_memory(conn: &Connection, memory_id: i64) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM memory_urls WHERE memory_id = ?1",
@@ -63,7 +68,7 @@ pub fn delete_by_memory(conn: &Connection, memory_id: i64) -> Result<(), AppErro
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use rusqlite::Connection;
     use tempfile::TempDir;

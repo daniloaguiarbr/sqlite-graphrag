@@ -1,3 +1,8 @@
+//! Version history storage for memory records.
+//!
+//! Manages the `memory_versions` table: inserts a new version snapshot on
+//! every update so the `restore` command can roll back to any prior body.
+
 use crate::errors::AppError;
 use rusqlite::{params, Connection};
 

@@ -1,6 +1,8 @@
+//! Handler for the `unlink` CLI subcommand.
+
 use crate::cli::RelationKind;
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -35,7 +37,7 @@ struct UnlinkResponse {
     to_name: String,
     relation: String,
     namespace: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -45,7 +47,7 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -54,15 +56,14 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
 
     let mut conn = open_rw(&paths.db)?;
 
-    let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?.ok_or_else(|| {
-        AppError::NotFound(erros::entidade_nao_encontrada(&args.from, &namespace))
-    })?;
+    let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?
+        .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.from, &namespace)))?;
     let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?
-        .ok_or_else(|| AppError::NotFound(erros::entidade_nao_encontrada(&args.to, &namespace)))?;
+        .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.to, &namespace)))?;
 
     let rel = entities::find_relationship(&conn, source_id, target_id, relation_str)?.ok_or_else(
         || {
-            AppError::NotFound(erros::relacionamento_nao_encontrado(
+            AppError::NotFound(errors_msg::relationship_not_found(
                 &args.from,
                 relation_str,
                 &args.to,
@@ -101,7 +102,7 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use crate::cli::RelationKind;
 

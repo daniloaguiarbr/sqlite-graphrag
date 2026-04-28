@@ -38,23 +38,23 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Sinaliza que um sinal de encerramento (SIGINT / SIGTERM / SIGHUP) foi recebido.
+/// Signals that a shutdown signal (SIGINT / SIGTERM / SIGHUP) has been received.
 ///
-/// Definido em `main` via `ctrlc::set_handler`. Subcomandos de longa duração podem
-/// consultar [`shutdown_requested`] para encerrar gracefully antes do timeout.
+/// Set in `main` via `ctrlc::set_handler`. Long-running subcommands can
+/// poll [`shutdown_requested`] to shut down gracefully before timeout.
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-/// Retorna `true` se um sinal de encerramento foi recebido desde o início do processo.
+/// Returns `true` if a shutdown signal has been received since the process started.
 ///
-/// O valor reflete o estado de [`SHUTDOWN`]. Sem chamada a `ctrlc::set_handler`,
-/// o estado inicial é sempre `false`.
+/// The value reflects the state of [`SHUTDOWN`]. Without a `ctrlc::set_handler` call,
+/// the initial state is always `false`.
 ///
 /// # Examples
 ///
 /// ```
 /// use sqlite_graphrag::shutdown_requested;
 ///
-/// // Em condições normais de inicialização o sinal não foi recebido.
+/// // Under normal startup conditions the signal has not been received.
 /// assert!(!shutdown_requested());
 /// ```
 ///
@@ -62,10 +62,10 @@ pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// use std::sync::atomic::Ordering;
 /// use sqlite_graphrag::{SHUTDOWN, shutdown_requested};
 ///
-/// // Simula recebimento de sinal e verifica que a função reflete o estado.
+/// // Simulate receiving a signal and verify that the function reflects the state.
 /// SHUTDOWN.store(true, Ordering::SeqCst);
 /// assert!(shutdown_requested());
-/// // Restaura para não contaminar outros testes.
+/// // Restore to avoid contaminating other tests.
 /// SHUTDOWN.store(false, Ordering::SeqCst);
 /// ```
 pub fn shutdown_requested() -> bool {
@@ -102,10 +102,10 @@ pub mod graph;
 /// Bilingual message layer for human-facing stderr progress (`--lang en|pt`, `SQLITE_GRAPHRAG_LANG`).
 pub mod i18n;
 
-/// Semáforo de contagem via lock files para limitar invocações paralelas (veja [`lock::acquire_cli_slot`]).
+/// Counting semaphore via lock files to limit parallel invocations (see [`lock::acquire_cli_slot`]).
 pub mod lock;
 
-/// Guarda de memória: verifica disponibilidade de RAM antes de carregar o modelo ONNX.
+/// Memory guard: checks RAM availability before loading the ONNX model.
 pub mod memory_guard;
 
 /// Namespace resolution with precedence between flag, environment and markers.
@@ -114,7 +114,7 @@ pub mod namespace;
 /// Centralized stdout/stderr emitters for CLI output formatting.
 pub mod output;
 
-/// Parser de argumentos dual-format: aceita Unix epoch e RFC 3339.
+/// Dual-format argument parser: accepts Unix epoch and RFC 3339.
 pub mod parsers;
 
 /// Filesystem paths for the project-local database and app support directories.
@@ -126,10 +126,10 @@ pub mod pragmas;
 /// Persistence layer: memories, entities, chunks and version history.
 pub mod storage;
 
-/// Fuso horário de exibição para campos `*_iso` (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
+/// Display time zone for `*_iso` fields (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
 pub mod tz;
 
-/// Tokenizer real do modelo de embeddings para contagem e chunking por tokens reais.
+/// Real tokenizer of the embedding model for accurate token counting and chunking.
 pub mod tokenizer;
 
 mod embedded_migrations {

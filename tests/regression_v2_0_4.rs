@@ -1,12 +1,12 @@
-/// Testes de regressão que protegem os 3 fixes de inconsistência doc/código da v2.0.4 → v2.0.5.
+/// Regression tests guarding the 3 doc/code consistency fixes from v2.0.4 → v2.0.5.
 ///
-/// Inconsistência 1: exit 13 (BatchPartialFailure) e exit 15 (DbBusy) eram documentados como
-///   "exit 13 = Batch partial or DB busy" — agora são documentados separadamente.
+/// Inconsistency 1: exit 13 (BatchPartialFailure) and exit 15 (DbBusy) were documented as
+///   "exit 13 = Batch partial or DB busy" — they are now documented separately.
 ///
-/// Inconsistência 2: exit 73 aparecia em AGENTS.md como "lock busy across slots" mas o código
-///   usa exit 75 (LockBusy/AllSlotsFull) — a referência a 73 foi removida da documentação.
+/// Inconsistency 2: exit 73 appeared in AGENTS.md as "lock busy across slots" but the code
+///   uses exit 75 (LockBusy/AllSlotsFull) — the reference to 73 was removed from docs.
 ///
-/// Inconsistência 3: PURGE_RETENTION_DAYS era documentado como 30 dias mas o código usa 90.
+/// Inconsistency 3: PURGE_RETENTION_DAYS was documented as 30 days but the code uses 90.
 
 // ---------------------------------------------------------------------------
 // Regressão 1a — BatchPartialFailure DEVE ter exit code 13 (e não 15)

@@ -1,14 +1,14 @@
-//! Semáforo de contagem via lock files para limitar invocações paralelas do CLI.
+//! Counting semaphore via lock files to limit parallel CLI invocations.
 //!
-//! `acquire_cli_slot` tenta adquirir um dos `N` slots disponíveis abrindo o arquivo
-//! `cli-slot-{N}.lock` no diretório de cache do SO e obtendo um `flock` exclusivo.
-//! O [`std::fs::File`] retornado DEVE ser mantido vivo durante toda a execução de
-//! `main`; descartá-lo libera o slot automaticamente para a próxima invocação.
+//! `acquire_cli_slot` tries to acquire one of `N` available slots by opening the file
+//! `cli-slot-{N}.lock` in the OS cache directory and obtaining an exclusive `flock`.
+//! The returned [`std::fs::File`] MUST be kept alive for the entire duration of `main`;
+//! dropping it releases the slot automatically for the next invocation.
 //!
-//! Quando `wait_seconds` é `Some(n) > 0`, a função faz polling a cada
-//! [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] milissegundos até o deadline. Quando é `None`
-//! ou `Some(0)`, uma única tentativa é feita e `Err(AppError::AllSlotsFull)` é
-//! retornado imediatamente se todos os slots estiverem ocupados.
+//! When `wait_seconds` is `Some(n) > 0`, the function polls every
+//! [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] milliseconds until the deadline. When it
+//! is `None` or `Some(0)`, a single attempt is made and `Err(AppError::AllSlotsFull)` is
+//! returned immediately if all slots are occupied.
 
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
@@ -21,11 +21,11 @@ use fs4::fs_std::FileExt;
 use crate::constants::{CLI_LOCK_POLL_INTERVAL_MS, MAX_CONCURRENT_CLI_INSTANCES};
 use crate::errors::AppError;
 
-/// Retorna o caminho do arquivo de lock para o slot indicado.
+/// Returns the lock file path for the given slot.
 ///
-/// Honra `SQLITE_GRAPHRAG_CACHE_DIR` quando definida (útil para testes, containers
-/// e caches em NFS), caindo para o diretório de cache padrão do SO via
-/// `directories::ProjectDirs`. O slot deve ser 1-based.
+/// Honours `SQLITE_GRAPHRAG_CACHE_DIR` when set (useful for tests, containers,
+/// and NFS caches), falling back to the OS default cache directory via
+/// `directories::ProjectDirs`. The slot must be 1-based.
 fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
     let cache = if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {
         PathBuf::from(override_dir)
@@ -42,10 +42,10 @@ fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
     Ok(cache.join(format!("cli-slot-{slot}.lock")))
 }
 
-/// Tenta abrir e travar exclusivamente o arquivo de lock do slot indicado.
+/// Tries to open and exclusively lock the lock file for the given slot.
 ///
-/// Retorna `Ok(file)` se o slot estiver livre, ou `Err(io::Error)` se estiver
-/// ocupado por outra instância (sem bloquear).
+/// Returns `Ok(file)` if the slot is free, or `Err(io::Error)` if it is
+/// held by another instance (non-blocking).
 fn try_acquire_slot(slot: usize) -> Result<File, AppError> {
     let path = slot_path(slot)?;
     let file = OpenOptions::new()
@@ -58,20 +58,20 @@ fn try_acquire_slot(slot: usize) -> Result<File, AppError> {
     Ok(file)
 }
 
-/// Adquire um slot de concorrência no semáforo de `max_concurrency` posições.
+/// Acquires a concurrency slot from the `max_concurrency`-position semaphore.
 ///
-/// Itera os slots `1..=max_concurrency` tentando `try_lock_exclusive` em cada
-/// arquivo `cli-slot-N.lock`. Quando encontra um slot livre, retorna
-/// `(File, slot_number)`. Se todos os slots estiverem ocupados:
+/// Iterates slots `1..=max_concurrency` attempting `try_lock_exclusive` on each
+/// `cli-slot-N.lock` file. When a free slot is found, returns `(File, slot_number)`.
+/// If all slots are occupied:
 ///
-/// - Se `wait_seconds` for `None` ou `Some(0)`, retorna imediatamente com
+/// - If `wait_seconds` is `None` or `Some(0)`, returns immediately with
 ///   `AppError::AllSlotsFull { max, waited_secs: 0 }`.
-/// - Se `wait_seconds` for `Some(n) > 0`, entra em loop de polling a cada
-///   [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] ms até o deadline expirar, retornando
-///   `AppError::AllSlotsFull { max, waited_secs: n }` se nenhum slot abrir.
+/// - If `wait_seconds` is `Some(n) > 0`, enters a polling loop every
+///   [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] ms until the deadline expires, returning
+///   `AppError::AllSlotsFull { max, waited_secs: n }` if no slot opens.
 ///
-/// O `File` retornado DEVE ser mantido vivo até o processo encerrar; descartá-lo
-/// libera o slot automaticamente via `flock` implícito no fechamento.
+/// The returned `File` MUST be kept alive until the process exits; dropping it
+/// releases the slot automatically via the implicit `flock` on close.
 pub fn acquire_cli_slot(
     max_concurrency: usize,
     wait_seconds: Option<u64>,
@@ -107,10 +107,10 @@ pub fn acquire_cli_slot(
     }
 }
 
-/// Tenta adquirir qualquer slot livre em `1..=max`, retornando o primeiro disponível.
+/// Tries to acquire any free slot in `1..=max`, returning the first available one.
 ///
-/// Retorna `Ok(Some((file, slot)))` se um slot foi obtido, `Ok(None)` se todos
-/// estão ocupados (`EWOULDBLOCK`). Propaga erros de I/O distintos de "lock contended".
+/// Returns `Ok(Some((file, slot)))` if a slot was obtained, `Ok(None)` if all are
+/// occupied (`EWOULDBLOCK`). Propagates I/O errors other than "lock contended".
 fn try_any_slot(max: usize) -> Result<Option<(File, usize)>, AppError> {
     for slot in 1..=max {
         match try_acquire_slot(slot) {

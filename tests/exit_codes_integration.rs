@@ -508,7 +508,7 @@ fn test_exit_codes_mensagens_nao_vazias_em_todos_idiomas() {
 
     for variante in variantes {
         let msg_en = variante.localized_message_for(Language::English);
-        let msg_pt = variante.localized_message_for(Language::Portugues);
+        let msg_pt = variante.localized_message_for(Language::Portuguese);
         assert!(!msg_en.is_empty(), "mensagem EN vazia para: {variante:?}");
         assert!(!msg_pt.is_empty(), "mensagem PT vazia para: {variante:?}");
     }

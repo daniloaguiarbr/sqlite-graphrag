@@ -1,5 +1,7 @@
+//! Handler for the `cleanup-orphans` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -28,7 +30,7 @@ struct CleanupResponse {
     deleted: usize,
     dry_run: bool,
     namespace: Option<String>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -37,7 +39,7 @@ pub fn run(args: CleanupOrphansArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -84,7 +86,7 @@ pub fn run(args: CleanupOrphansArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

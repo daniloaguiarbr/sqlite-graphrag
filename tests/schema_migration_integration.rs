@@ -26,7 +26,7 @@ use tempfile::TempDir;
 // helpers
 // ---------------------------------------------------------------------------
 
-/// Executa `sqlite-graphrag init` em um banco temporário isolado e retorna
+/// Runs `sqlite-graphrag init` on an isolated temporary database and returns
 /// o `TempDir` (para manter o banco vivo) e o caminho do arquivo sqlite.
 fn init_db_isolado() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
@@ -43,7 +43,7 @@ fn init_db_isolado() -> (TempDir, std::path::PathBuf) {
     (tmp, db_path)
 }
 
-/// Abre o banco em modo leitura após o init (sem sqlite-vec no processo de teste).
+/// Opens the database read-only after init (without sqlite-vec in the test process).
 fn conn_ro(db_path: &std::path::Path) -> Connection {
     Connection::open(db_path).expect("conexão ao banco deve funcionar")
 }
@@ -72,7 +72,7 @@ fn trigger_existe(conn: &Connection, nome: &str) -> bool {
     count > 0
 }
 
-/// Verifica se um índice existe em `sqlite_master`.
+/// Checks if an index exists in `sqlite_master`.
 fn indice_existe(conn: &Connection, nome: &str) -> bool {
     let count: i64 = conn
         .query_row(

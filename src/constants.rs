@@ -4,18 +4,18 @@
 //! pragmas and retrieval tuning knobs. Values are taken from the PRD and
 //! must stay in sync with the migrations under `migrations/`.
 //!
-//! ## Cálculo dinâmico de permits de concorrência
+//! ## Dynamic concurrency permit calculation
 //!
-//! O número máximo de instâncias simultâneas pode ser ajustado em runtime
-//! usando a fórmula:
+//! The maximum number of simultaneous instances can be adjusted at runtime
+//! using the formula:
 //!
 //! ```text
 //! permits = min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5
 //! ```
 //!
-//! onde `available_memory_mb` é obtido via `sysinfo::System::available_memory()`
-//! convertido para MiB. O resultado é limitado superiormente por
-//! `MAX_CONCURRENT_CLI_INSTANCES` e inferiorizado em 1.
+//! where `available_memory_mb` is obtained via `sysinfo::System::available_memory()`
+//! converted to MiB. The result is capped at `MAX_CONCURRENT_CLI_INSTANCES`
+//! and floored at 1.
 
 /// Embedding vector dimensionality produced by `multilingual-e5-small`.
 pub const EMBEDDING_DIM: usize = 384;
@@ -86,11 +86,11 @@ pub const MAX_ENTITIES_PER_MEMORY: usize = 30;
 /// Upper bound on distinct relationships persisted per memory.
 pub const MAX_RELATIONSHIPS_PER_MEMORY: usize = 50;
 
-/// Resolve o cap de relacionamentos por memória, respeitando override por env var.
+/// Resolves the per-memory relationship cap, honouring the env-var override.
 ///
-/// v1.0.22: torna o cap (default 50) configurável via `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY`.
-/// Auditoria identificou que documentos ricos batiam o cap silenciosamente; usuários
-/// com corpus técnico denso podem aumentar via env. Valores fora de [1, 10000] caem no default.
+/// v1.0.22: makes the cap (default 50) configurable via `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY`.
+/// Audit found that rich documents silently hit the cap; users with dense technical corpora
+/// can raise it via env. Values outside [1, 10000] fall back to the default.
 pub fn max_relationships_per_memory() -> usize {
     std::env::var("SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY")
         .ok()
@@ -123,22 +123,22 @@ pub const CHUNK_SIZE_TOKENS: usize = 400;
 /// Token overlap between consecutive chunks.
 pub const CHUNK_OVERLAP_TOKENS: usize = 50;
 
-/// Guard operacional explícito para documentos multi-chunk no `remember`.
+/// Explicit operational guard for multi-chunk documents in `remember`.
 ///
-/// O caminho multi-chunk usa embeddings seriais para evitar amplificação de memória no ONNX.
-/// Este limite preserva um teto operacional claro para agentes e scripts.
+/// The multi-chunk path uses serial embeddings to avoid ONNX memory amplification.
+/// This limit preserves a clear operational ceiling for agents and scripts.
 pub const REMEMBER_MAX_SAFE_MULTI_CHUNKS: usize = 512;
 
-/// Teto de chunks por micro-batch controlado no `remember`.
+/// Ceiling on chunks per controlled micro-batch in `remember`.
 ///
-/// O runtime do `fastembed` usa padding `BatchLongest`, então batches muito grandes amplificam
-/// o custo do maior chunk. Este teto mantém batches pequenos mesmo quando os chunks são curtos.
+/// The `fastembed` runtime uses `BatchLongest` padding, so oversized batches amplify
+/// the cost of the longest chunk. This ceiling keeps batches small even when chunks are short.
 pub const REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS: usize = 4;
 
-/// Orçamento máximo de tokens preenchidos por micro-batch controlado no `remember`.
+/// Maximum padded-token budget per controlled micro-batch in `remember`.
 ///
-/// O orçamento usa `max_tokens_no_batch * tamanho_do_batch`, aproximando o custo real do
-/// padding `BatchLongest`. Valores acima disso voltam para batches menores ou serialização.
+/// The budget uses `max_tokens_no_batch * batch_size`, approximating the real cost of
+/// `BatchLongest` padding. Values exceeding this fall back to smaller batches or serialisation.
 pub const REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS: usize = 512;
 
 /// Timeout in milliseconds for a single ping probe against the daemon socket.
@@ -147,19 +147,19 @@ pub const DAEMON_PING_TIMEOUT_MS: u64 = 10;
 /// Idle duration in seconds before the daemon shuts itself down.
 pub const DAEMON_IDLE_SHUTDOWN_SECS: u64 = 600;
 
-/// Tempo máximo de espera para o daemon ficar saudável após auto-start.
+/// Maximum wait time for the daemon to become healthy after auto-start.
 pub const DAEMON_AUTO_START_MAX_WAIT_MS: u64 = 5_000;
 
-/// Intervalo inicial de polling para verificar se o daemon ficou saudável.
+/// Initial polling interval to check whether the daemon became healthy.
 pub const DAEMON_AUTO_START_INITIAL_BACKOFF_MS: u64 = 50;
 
-/// Teto do backoff entre tentativas automáticas de spawn do daemon.
+/// Ceiling on backoff between automatic daemon spawn attempts.
 pub const DAEMON_AUTO_START_MAX_BACKOFF_MS: u64 = 30_000;
 
-/// Backoff base usado após falhas de spawn/health do daemon.
+/// Base backoff used after daemon spawn/health failures.
 pub const DAEMON_SPAWN_BACKOFF_BASE_MS: u64 = 500;
 
-/// Tempo máximo de espera para obter o lock de spawn do daemon.
+/// Maximum wait time to acquire the daemon spawn lock.
 pub const DAEMON_SPAWN_LOCK_WAIT_MS: u64 = 2_000;
 
 /// Prefix prepended to bodies before embedding as required by E5 models.
@@ -190,21 +190,21 @@ pub fn ner_batch_size() -> usize {
         .clamp(1, 32)
 }
 
-/// PRD-canonical regex que valida nomes e namespaces. Permite 1 char `[a-z0-9]`
-/// OU string de 2-80 chars começando com letra e terminando com letra/dígito,
-/// contendo apenas `[a-z0-9-]`. Rejeita prefixo `__` (internal reserved).
+/// PRD-canonical regex that validates names and namespaces. Allows 1 char `[a-z0-9]`
+/// OR a 2-80 char string starting with a letter and ending with a letter/digit,
+/// containing only `[a-z0-9-]`. Rejects the `__` prefix (internal reserved).
 pub const NAME_SLUG_REGEX: &str = r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$";
 
-/// Retenção padrão (dias) usada por `purge` quando `--retention-days` é omitido.
+/// Default retention period (days) used by `purge` when `--retention-days` is omitted.
 pub const PURGE_RETENTION_DAYS_DEFAULT: u32 = 90;
 
-/// Limite máximo de namespaces ativos (deleted_at IS NULL) simultâneos. Exit 5 ao exceder.
+/// Maximum number of simultaneously active namespaces (deleted_at IS NULL). Exit 5 when exceeded.
 pub const MAX_NAMESPACES_ACTIVE: u32 = 100;
 
-/// Máximo de tokens aceito por embedding input antes de chunking.
+/// Maximum tokens accepted by an embedding input before chunking.
 pub const EMBEDDING_MAX_TOKENS: usize = 512;
 
-/// Limite máximo de resultados da CTE recursiva de grafo em `recall`.
+/// Maximum result count from the recursive graph CTE in `recall`.
 pub const K_GRAPH_MATCHES_LIMIT: usize = 20;
 
 /// Default `--limit` para `list` quando omitido.
@@ -219,26 +219,26 @@ pub const K_RELATED_DEFAULT_LIMIT: usize = 10;
 /// Default `--limit` para `history` quando omitido.
 pub const K_HISTORY_DEFAULT_LIMIT: usize = 20;
 
-/// Peso padrão da contribuição vetorial na fórmula RRF de `hybrid-search`.
+/// Default weight for the vector contribution in the `hybrid-search` RRF formula.
 pub const WEIGHT_VEC_DEFAULT: f64 = 1.0;
 
-/// Peso padrão da contribuição textual BM25 na fórmula RRF de `hybrid-search`.
+/// Default weight for the BM25 text contribution in the `hybrid-search` RRF formula.
 pub const WEIGHT_FTS_DEFAULT: f64 = 1.0;
 
-/// Tamanho em caracteres do preview do body emitido em formatos text/markdown.
+/// Character size of the body preview emitted in text/markdown formats.
 pub const TEXT_BODY_PREVIEW_LEN: usize = 200;
 
-/// Valor default injetado em ORT_NUM_THREADS quando não definido pelo usuário.
+/// Default value injected into ORT_NUM_THREADS when not set by the user.
 pub const ORT_NUM_THREADS_DEFAULT: &str = "1";
 
-/// Valor default injetado em ORT_INTRA_OP_NUM_THREADS quando não definido.
+/// Default value injected into ORT_INTRA_OP_NUM_THREADS when not set.
 pub const ORT_INTRA_OP_NUM_THREADS_DEFAULT: &str = "1";
 
-/// Valor default injetado em OMP_NUM_THREADS quando não definido pelo usuário.
+/// Default value injected into OMP_NUM_THREADS when not set by the user.
 pub const OMP_NUM_THREADS_DEFAULT: &str = "1";
 
-/// Exit code para falha parcial de batch (PRD linha 1822). Conflita com DbBusy em v1.x;
-/// em v2.0.0 DbBusy migra para 15 e este código assume 13 conforme PRD.
+/// Exit code for partial batch failure (PRD line 1822). Conflicts with DbBusy in v1.x;
+/// in v2.0.0 DbBusy migrates to 15 and this code takes 13 per PRD.
 pub const BATCH_PARTIAL_FAILURE_EXIT_CODE: i32 = 13;
 
 /// Exit code para DbBusy em v2.0.0 (migrado de 13 para liberar 13 para batch failure).
@@ -247,62 +247,61 @@ pub const DB_BUSY_EXIT_CODE: i32 = 15;
 /// Filename used for the advisory exclusive lock that prevents parallel invocations.
 pub const CLI_LOCK_FILE: &str = "cli.lock";
 
-/// Polling interval em milliseconds usado por `--wait-lock` entre tentativas de `try_lock_exclusive`.
+/// Polling interval in milliseconds used by `--wait-lock` between `try_lock_exclusive` attempts.
 pub const CLI_LOCK_POLL_INTERVAL_MS: u64 = 500;
 
 /// Process exit code returned when the lock is busy and no wait was requested (EX_TEMPFAIL).
 pub const CLI_LOCK_EXIT_CODE: i32 = 75;
 
-/// Número máximo de instâncias CLI em execução simultânea.
+/// Maximum number of CLI instances running simultaneously.
 ///
-/// Alinhado com `DAEMON_MAX_CONCURRENT_CLIENTS` do PRD. Limita o semáforo de
-/// contagem em [`crate::lock`] para evitar sobrecarga de memória quando múltiplas
-/// invocações paralelas tentam carregar o modelo ONNX simultaneamente.
+/// Aligned with `DAEMON_MAX_CONCURRENT_CLIENTS` from the PRD. Limits the counting
+/// semaphore in [`crate::lock`] to prevent memory overload when multiple parallel
+/// invocations attempt to load the ONNX model simultaneously.
 pub const MAX_CONCURRENT_CLI_INSTANCES: usize = 4;
 
-/// Memória disponível mínima em MiB exigida antes de iniciar o carregamento do modelo.
+/// Minimum available memory in MiB required before starting model loading.
 ///
-/// Se `sysinfo::System::available_memory() / 1_048_576` estiver abaixo deste
-/// valor, a invocação é abortada com [`crate::errors::AppError::LowMemory`]
+/// If `sysinfo::System::available_memory() / 1_048_576` falls below this value,
+/// the invocation is aborted with [`crate::errors::AppError::LowMemory`]
 /// (exit code [`LOW_MEMORY_EXIT_CODE`]).
 pub const MIN_AVAILABLE_MEMORY_MB: u64 = 2_048;
 
-/// Tempo máximo em segundos que uma instância aguarda para adquirir um slot de concorrência.
+/// Maximum time in seconds an instance waits to acquire a concurrency slot.
 ///
-/// Passado como default de `--max-wait-secs` na CLI. Após esgotar este limite,
-/// a invocação retorna [`crate::errors::AppError::AllSlotsFull`] com exit code
+/// Passed as the default for `--max-wait-secs` in the CLI. After exhausting this limit,
+/// the invocation returns [`crate::errors::AppError::AllSlotsFull`] with exit code
 /// [`CLI_LOCK_EXIT_CODE`] (75).
 pub const CLI_LOCK_DEFAULT_WAIT_SECS: u64 = 300;
 
-/// RSS esperado em MiB de uma única instância com o modelo ONNX carregado via fastembed.
+/// Expected RSS in MiB for a single instance with the ONNX model loaded via fastembed.
 ///
-/// Usado na fórmula `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
-/// para calcular o número dinâmico de permits.
+/// Used in the formula `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
+/// to compute the dynamic permit count.
 ///
-/// Valor calibrado em 2026-04-23 com `/usr/bin/time -v` sobre `sqlite-graphrag v1.0.3`
-/// nos comandos pesados `remember`, `recall` e `hybrid-search`, todos com pico de RSS
-/// próximo de 1.03 GiB por processo. O valor abaixo arredonda para cima com margem defensiva.
+/// Value calibrated on 2026-04-23 with `/usr/bin/time -v` against `sqlite-graphrag v1.0.3`
+/// on the heavy commands `remember`, `recall`, and `hybrid-search`, all peaking near
+/// 1.03 GiB RSS per process. The constant below rounds up with a defensive margin.
 pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 1_100;
 
-/// Process exit code retornado quando memória disponível está abaixo de [`MIN_AVAILABLE_MEMORY_MB`].
+/// Process exit code returned when available memory is below [`MIN_AVAILABLE_MEMORY_MB`].
 ///
-/// Valor `77` é `EX_NOPERM` na glibc sysexits, reutilizado aqui para indicar
-/// "recurso de sistema insuficiente para prosseguir".
+/// Value `77` is `EX_NOPERM` in glibc sysexits, reused here to indicate
+/// "insufficient system resource to proceed".
 pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
 
-/// Valor canônico de `PRAGMA user_version` gravado após migrações.
+/// Canonical value of `PRAGMA user_version` written after migrations.
 ///
-/// Deve permanecer em sincronia com o identificador legível-por-humanos
-/// da versão do schema. Refinery usa sua própria tabela de histórico;
-/// `user_version` é um campo auxiliar de diagnóstico para ferramentas
-/// externas (ex: `sqlite3 db.sqlite "PRAGMA user_version"`).
+/// Must stay in sync with the human-readable schema version identifier.
+/// Refinery uses its own history table; `user_version` is an auxiliary
+/// diagnostic field for external tools (e.g. `sqlite3 db.sqlite "PRAGMA user_version"`).
 pub const SCHEMA_USER_VERSION: i64 = 49;
 
-/// Versão atual do schema, igual ao maior número de migration em `migrations/Vnnn__*.sql`.
+/// Current schema version, equal to the highest migration number in `migrations/Vnnn__*.sql`.
 ///
-/// Adicionado em v1.0.27 para servir como sanity check em runtime e em testes.
-/// Deve ser bumpado em sincronia com novas migrations Refinery; teste unitário
-/// `schema_version_matches_migrations_count` valida isso automaticamente.
+/// Added in v1.0.27 as a runtime and test sanity check.
+/// Must be bumped in sync with new Refinery migrations; the unit test
+/// `schema_version_matches_migrations_count` validates this automatically.
 pub const CURRENT_SCHEMA_VERSION: u32 = 8;
 
 #[cfg(test)]

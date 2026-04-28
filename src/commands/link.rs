@@ -1,7 +1,9 @@
+//! Handler for the `link` CLI subcommand.
+
 use crate::cli::RelationKind;
 use crate::constants::DEFAULT_RELATION_WEIGHT;
 use crate::errors::AppError;
-use crate::i18n::{erros, validacao};
+use crate::i18n::{errors_msg, validation};
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -38,7 +40,7 @@ struct LinkResponse {
     relation: String,
     weight: f64,
     namespace: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -48,16 +50,18 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if args.from == args.to {
-        return Err(AppError::Validation(validacao::link_auto_referencial()));
+        return Err(AppError::Validation(validation::self_referential_link()));
     }
 
     let weight = args.weight.unwrap_or(DEFAULT_RELATION_WEIGHT);
     if !(0.0..=1.0).contains(&weight) {
-        return Err(AppError::Validation(validacao::link_peso_invalido(weight)));
+        return Err(AppError::Validation(validation::invalid_link_weight(
+            weight,
+        )));
     }
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -66,11 +70,10 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 
     let mut conn = open_rw(&paths.db)?;
 
-    let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?.ok_or_else(|| {
-        AppError::NotFound(erros::entidade_nao_encontrada(&args.from, &namespace))
-    })?;
+    let source_id = entities::find_entity_id(&conn, &namespace, &args.from)?
+        .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.from, &namespace)))?;
     let target_id = entities::find_entity_id(&conn, &namespace, &args.to)?
-        .ok_or_else(|| AppError::NotFound(erros::entidade_nao_encontrada(&args.to, &namespace)))?;
+        .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.to, &namespace)))?;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let (_rel_id, was_created) = entities::create_or_fetch_relationship(
@@ -119,7 +122,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

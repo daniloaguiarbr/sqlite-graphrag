@@ -1,3 +1,5 @@
+//! Handler for the `list` CLI subcommand.
+
 use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::output::{self, OutputFormat};
@@ -30,7 +32,7 @@ pub struct ListArgs {
 #[derive(Serialize)]
 struct ListItem {
     id: i64,
-    /// Alias semântico de `id` para contrato documentado em SKILL.md e AGENT_PROTOCOL.md.
+    /// Semantic alias of `id` for the contract documented in SKILL.md and AGENT_PROTOCOL.md.
     memory_id: i64,
     name: String,
     namespace: String,
@@ -46,7 +48,7 @@ struct ListItem {
 #[derive(Serialize)]
 struct ListResponse {
     items: Vec<ListItem>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -57,7 +59,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     // v1.0.22 P1: padroniza exit code 4 com mensagem amigável quando DB não existe.
     if !paths.db.exists() {
         return Err(AppError::NotFound(
-            crate::i18n::erros::banco_nao_encontrado(&paths.db.display().to_string()),
+            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
         ));
     }
     let conn = open_ro(&paths.db)?;
@@ -69,7 +71,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         .into_iter()
         .map(|r| {
             let snippet: String = r.body.chars().take(200).collect();
-            let updated_at_iso = crate::tz::epoch_para_iso(r.updated_at);
+            let updated_at_iso = crate::tz::epoch_to_iso(r.updated_at);
             ListItem {
                 id: r.id,
                 memory_id: r.id,
@@ -99,7 +101,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
@@ -167,7 +169,7 @@ mod testes {
 
     #[test]
     fn updated_at_iso_epoch_zero_gera_utc_valido() {
-        let iso = crate::tz::epoch_para_iso(0);
+        let iso = crate::tz::epoch_to_iso(0);
         assert!(
             iso.starts_with("1970-01-01T00:00:00"),
             "epoch 0 deve mapear para 1970-01-01, obtido: {iso}"

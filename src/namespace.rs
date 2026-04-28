@@ -1,5 +1,10 @@
+//! Namespace resolution layer (flag > env > "global" fallback).
+//!
+//! Validates and resolves the active namespace used to scope all SQLite
+//! operations, enforcing safe characters and traversal-free names.
+
 use crate::errors::AppError;
-use crate::i18n::validacao;
+use crate::i18n::validation;
 use serde::Serialize;
 use std::path::Path;
 
@@ -18,23 +23,23 @@ pub struct NamespaceResolution {
     pub cwd: String,
 }
 
-/// Resolve o namespace ativo retornando apenas o nome final.
+/// Resolves the active namespace, returning only the final name.
 ///
-/// Atalho sobre [`detect_namespace`] quando a origem não importa.
-/// Com flag explícita válida, o namespace retornado é exatamente o valor passado.
-/// Sem flag, o fallback final é `"global"`.
+/// Shortcut over [`detect_namespace`] when the source does not matter.
+/// With a valid explicit flag, the returned namespace is exactly the passed value.
+/// Without a flag, the final fallback is `"global"`.
 ///
 /// # Errors
 ///
-/// Retorna [`AppError::Validation`] se `explicit` contiver caracteres inválidos
-/// ou ultrapassar 80 caracteres.
+/// Returns [`AppError::Validation`] if `explicit` contains invalid characters
+/// or exceeds 80 characters.
 ///
 /// # Examples
 ///
 /// ```
 /// use sqlite_graphrag::namespace::resolve_namespace;
 ///
-/// // Flag explícita válida é aceita e refletida no resultado.
+/// // A valid explicit flag is accepted and reflected in the result.
 /// let ns = resolve_namespace(Some("meu-projeto")).unwrap();
 /// assert_eq!(ns, "meu-projeto");
 /// ```
@@ -43,28 +48,28 @@ pub struct NamespaceResolution {
 /// use sqlite_graphrag::namespace::resolve_namespace;
 /// use sqlite_graphrag::errors::AppError;
 ///
-/// // Namespace com caracteres inválidos causa erro de validação (exit 1).
-/// let err = resolve_namespace(Some("ns com espaço")).unwrap_err();
+/// // Namespace with invalid characters causes a validation error (exit 1).
+/// let err = resolve_namespace(Some("ns with space")).unwrap_err();
 /// assert_eq!(err.exit_code(), 1);
 /// ```
 pub fn resolve_namespace(explicit: Option<&str>) -> Result<String, AppError> {
     Ok(detect_namespace(explicit)?.namespace)
 }
 
-/// Resolve o namespace ativo retornando estrutura com origem e diretório atual.
+/// Resolves the active namespace, returning a struct with the source and current directory.
 ///
-/// A precedência é: flag explícita > `SQLITE_GRAPHRAG_NAMESPACE` > fallback `"global"`.
+/// Precedence: explicit flag > `SQLITE_GRAPHRAG_NAMESPACE` > fallback `"global"`.
 ///
 /// # Errors
 ///
-/// Retorna [`AppError::Validation`] se o namespace resolvido contiver caracteres inválidos.
+/// Returns [`AppError::Validation`] if the resolved namespace contains invalid characters.
 ///
 /// # Examples
 ///
 /// ```
 /// use sqlite_graphrag::namespace::{detect_namespace, NamespaceSource};
 ///
-/// // Com flag explícita, a fonte é `ExplicitFlag`.
+/// // With an explicit flag, the source is `ExplicitFlag`.
 /// let res = detect_namespace(Some("producao")).unwrap();
 /// assert_eq!(res.namespace, "producao");
 /// assert_eq!(res.source, NamespaceSource::ExplicitFlag);
@@ -73,8 +78,8 @@ pub fn resolve_namespace(explicit: Option<&str>) -> Result<String, AppError> {
 /// ```
 /// use sqlite_graphrag::namespace::{detect_namespace, NamespaceSource};
 ///
-/// // Sem nenhuma configuração explícita, fallback é "global".
-/// // Desativa env var para garantir comportamento determinístico.
+/// // Without any explicit configuration, fallback is "global".
+/// // Removes env var to guarantee deterministic behaviour.
 /// std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
 /// let res = detect_namespace(None).unwrap();
 /// assert_eq!(res.namespace, "global");
@@ -113,13 +118,13 @@ pub fn detect_namespace(explicit: Option<&str>) -> Result<NamespaceResolution, A
 
 fn validate_namespace(ns: &str) -> Result<(), AppError> {
     if ns.is_empty() || ns.len() > 80 {
-        return Err(AppError::Validation(validacao::namespace_comprimento()));
+        return Err(AppError::Validation(validation::namespace_length()));
     }
     if !ns
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(AppError::Validation(validacao::namespace_formato()));
+        return Err(AppError::Validation(validation::namespace_format()));
     }
     Ok(())
 }

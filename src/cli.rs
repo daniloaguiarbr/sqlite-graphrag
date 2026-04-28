@@ -1,8 +1,12 @@
+//! CLI argument structs and command surface (clap-based).
+//!
+//! Defines `Cli` and all subcommand enums; contains no business logic.
+
 use crate::commands::*;
 use crate::i18n::{current, Language};
 use clap::{Parser, Subcommand};
 
-/// Retorna o número máximo de invocações simultâneas permitidas pela heurística de CPU.
+/// Returns the maximum simultaneous invocations allowed by the CPU heuristic.
 fn max_concurrency_ceiling() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get() * 2)
@@ -71,9 +75,9 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "SECONDS")]
     pub wait_lock: Option<u64>,
 
-    /// Pular a verificação de memória disponível antes de carregar o modelo.
+    /// Skip the available-memory check before loading the model.
     ///
-    /// Uso exclusivo em testes automatizados onde a alocação real não ocorre.
+    /// Exclusive use in automated tests where real allocation does not occur.
     #[arg(long, global = true, hide = true, default_value_t = false)]
     pub skip_memory_guard: bool,
 
@@ -217,16 +221,16 @@ mod testes_formato_json_only {
 }
 
 impl Cli {
-    /// Valida flags de concorrência e retorna erro descritivo localizado se inválidas.
+    /// Validates concurrency flags and returns a localised descriptive error if invalid.
     ///
-    /// Requer que `crate::i18n::init()` já tenha sido chamado (ocorre antes desta função
-    /// no fluxo de `main`). Em inglês emite mensagens EN; em português emite PT.
+    /// Requires that `crate::i18n::init()` has already been called (happens before this
+    /// function in the `main` flow). In English it emits EN messages; in Portuguese it emits PT.
     pub fn validate_flags(&self) -> Result<(), String> {
         if let Some(n) = self.max_concurrency {
             if n == 0 {
                 return Err(match current() {
                     Language::English => "--max-concurrency must be >= 1".to_string(),
-                    Language::Portugues => "--max-concurrency deve ser >= 1".to_string(),
+                    Language::Portuguese => "--max-concurrency deve ser >= 1".to_string(),
                 });
             }
             let teto = max_concurrency_ceiling();
@@ -235,7 +239,7 @@ impl Cli {
                     Language::English => format!(
                         "--max-concurrency {n} exceeds the ceiling of {teto} (2×nCPUs) on this system"
                     ),
-                    Language::Portugues => format!(
+                    Language::Portuguese => format!(
                         "--max-concurrency {n} excede o teto de {teto} (2×nCPUs) neste sistema"
                     ),
                 });

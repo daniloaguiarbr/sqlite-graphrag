@@ -1,6 +1,8 @@
+//! Handler for the `graph-export` CLI subcommand.
+
 use crate::cli::GraphExportFormat;
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -203,7 +205,7 @@ fn run_entities_snapshot(
     let paths = AppPaths::resolve(db)?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -277,7 +279,7 @@ fn run_traverse(args: GraphTraverseArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -348,7 +350,7 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -429,7 +431,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -590,7 +592,7 @@ fn render_mermaid(nodes: &[NodeOut], edges: &[EdgeOut]) -> String {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use crate::cli::{Cli, Commands};
     use clap::Parser;

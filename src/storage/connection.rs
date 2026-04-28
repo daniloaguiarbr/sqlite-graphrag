@@ -1,3 +1,8 @@
+//! SQLite connection setup with PRAGMAs and 0600 permissions.
+//!
+//! Opens (or creates) the database file, loads the `sqlite-vec` extension,
+//! applies WAL/journal PRAGMAs, and enforces 0600 file permissions on Unix.
+
 use crate::errors::AppError;
 use crate::pragmas::apply_connection_pragmas;
 use rusqlite::Connection;
@@ -33,10 +38,10 @@ pub fn ensure_schema(conn: &mut Connection) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Aplica permissões 600 (owner read/write only) ao arquivo SQLite e aos arquivos WAL/SHM
-/// associados no Unix para evitar vazamento de memórias privadas em diretórios compartilhados
-/// (ex: /tmp multi-user, Dropbox, NFS). No-op em Windows. Falhas silenciosas para não
-/// bloquear operação quando o processo não é o dono do arquivo (ex: montagem read-only).
+/// Applies 600 permissions (owner read/write only) to the SQLite file and its WAL/SHM
+/// companion files on Unix to prevent leaking private memories in shared directories
+/// (e.g. multi-user /tmp, Dropbox, NFS). No-op on Windows. Failures are silent to avoid
+/// blocking the operation when the process does not own the file (e.g. read-only mount).
 #[allow(unused_variables)]
 fn apply_secure_permissions(path: &Path) {
     #[cfg(unix)]

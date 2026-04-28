@@ -1,83 +1,83 @@
-//! Fuso horário de exibição para campos `*_iso` do JSON de saída.
+//! Display timezone for `*_iso` fields in JSON output.
 //!
-//! Precedência (do mais para o menos prioritário):
-//! 1. Flag `--tz <IANA>` passada na CLI
+//! Precedence (highest to lowest priority):
+//! 1. `--tz <IANA>` flag passed on the CLI
 //! 2. Env var `SQLITE_GRAPHRAG_DISPLAY_TZ`
 //! 3. Fallback UTC
 //!
-//! A timezone é inicializada UMA vez via [`init`][crate::tz::init] e armazenada em
-//! `FUSO_GLOBAL` (OnceLock). Após a inicialização, [`formatar_iso`][crate::tz::formatar_iso] e
-//! [`epoch_para_iso`][crate::tz::epoch_para_iso] convertem timestamps aplicando o fuso escolhido.
+//! The timezone is initialized once via [`init`][crate::tz::init] and stored in
+//! `GLOBAL_TZ` (OnceLock). After initialization, [`format_iso`][crate::tz::format_iso] and
+//! [`epoch_to_iso`][crate::tz::epoch_to_iso] convert timestamps applying the chosen timezone.
 
 use crate::errors::AppError;
-use crate::i18n::validacao;
+use crate::i18n::validation;
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use std::sync::OnceLock;
 
-static FUSO_GLOBAL: OnceLock<Tz> = OnceLock::new();
+static GLOBAL_TZ: OnceLock<Tz> = OnceLock::new();
 
-/// Resolve o fuso a partir do env var `SQLITE_GRAPHRAG_DISPLAY_TZ`.
+/// Resolves the timezone from the `SQLITE_GRAPHRAG_DISPLAY_TZ` env var.
 ///
-/// Retorna `Tz::UTC` se a variável estiver ausente ou vazia.
-/// Retorna erro de validação se o valor for um nome IANA inválido.
-fn resolver_tz_de_env() -> Result<Tz, AppError> {
+/// Returns `Tz::UTC` if the variable is absent or empty.
+/// Returns a validation error if the value is an invalid IANA name.
+fn resolve_tz_from_env() -> Result<Tz, AppError> {
     match std::env::var("SQLITE_GRAPHRAG_DISPLAY_TZ") {
         Ok(v) if !v.trim().is_empty() => v
             .trim()
             .parse::<Tz>()
-            .map_err(|_| AppError::Validation(validacao::tz_invalido(v.trim()))),
+            .map_err(|_| AppError::Validation(validation::invalid_tz(v.trim()))),
         _ => Ok(Tz::UTC),
     }
 }
 
-/// Inicializa o fuso global.
+/// Initializes the global timezone.
 ///
-/// `explicit` — valor vindo da flag `--tz` da CLI (já parseado).
-/// Se `explicit` for `None`, tenta `SQLITE_GRAPHRAG_DISPLAY_TZ`, depois UTC.
+/// `explicit` — value from the `--tz` CLI flag (already parsed).
+/// If `explicit` is `None`, tries `SQLITE_GRAPHRAG_DISPLAY_TZ`, then UTC.
 ///
-/// Chamadas subsequentes são ignoradas silenciosamente (OnceLock semantics).
-/// Retorna erro apenas se `explicit` for `None` e o env var for inválido.
+/// Subsequent calls are silently ignored (OnceLock semantics).
+/// Returns an error only if `explicit` is `None` and the env var is invalid.
 pub fn init(explicit: Option<Tz>) -> Result<(), AppError> {
     let fuso = match explicit {
         Some(tz) => tz,
-        None => resolver_tz_de_env()?,
+        None => resolve_tz_from_env()?,
     };
-    let _ = FUSO_GLOBAL.set(fuso);
+    let _ = GLOBAL_TZ.set(fuso);
     Ok(())
 }
 
-/// Retorna o fuso ativo.
+/// Returns the active timezone.
 ///
-/// Se [`init`] nunca foi chamado, tenta ler o env var; fallback UTC.
-pub fn fuso_atual() -> Tz {
-    *FUSO_GLOBAL.get_or_init(|| resolver_tz_de_env().unwrap_or(Tz::UTC))
+/// If [`init`] was never called, tries to read the env var; fallback UTC.
+pub fn current_tz() -> Tz {
+    *GLOBAL_TZ.get_or_init(|| resolve_tz_from_env().unwrap_or(Tz::UTC))
 }
 
-/// Formata um `DateTime<Utc>` usando o fuso global.
+/// Formats a `DateTime<Utc>` using the global timezone.
 ///
-/// Formato: `%Y-%m-%dT%H:%M:%S%:z` (ex: `2026-04-19T10:00:00+00:00` para UTC,
-/// `2026-04-19T07:00:00-03:00` para `America/Sao_Paulo`).
-pub fn formatar_iso(ts: DateTime<Utc>) -> String {
-    let fuso = fuso_atual();
+/// Format: `%Y-%m-%dT%H:%M:%S%:z` (e.g. `2026-04-19T10:00:00+00:00` for UTC,
+/// `2026-04-19T07:00:00-03:00` for `America/Sao_Paulo`).
+pub fn format_iso(ts: DateTime<Utc>) -> String {
+    let fuso = current_tz();
     ts.with_timezone(&fuso)
         .format("%Y-%m-%dT%H:%M:%S%:z")
         .to_string()
 }
 
-/// Converte um Unix epoch (segundos) para string ISO 8601 com fuso global.
+/// Converts a Unix epoch (seconds) to an ISO 8601 string with the global timezone.
 ///
-/// Valores fora do intervalo representável retornam o fallback
+/// Values outside the representable range return the fallback
 /// `"1970-01-01T00:00:00+00:00"`.
-pub fn epoch_para_iso(epoch: i64) -> String {
+pub fn epoch_to_iso(epoch: i64) -> String {
     Utc.timestamp_opt(epoch, 0)
         .single()
-        .map(formatar_iso)
+        .map(format_iso)
         .unwrap_or_else(|| "1970-01-01T00:00:00+00:00".to_string())
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use serial_test::serial;
 
@@ -86,7 +86,7 @@ mod testes {
     fn utc_default_quando_env_ausente() {
         // Remove variável para garantir fallback UTC
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
-        let resultado = resolver_tz_de_env().expect("não deve falhar com env ausente");
+        let resultado = resolve_tz_from_env().expect("não deve falhar com env ausente");
         assert_eq!(resultado, Tz::UTC);
     }
 
@@ -94,7 +94,7 @@ mod testes {
     #[serial]
     fn env_valido_aplica_timezone() {
         std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "America/Sao_Paulo");
-        let resultado = resolver_tz_de_env().expect("America/Sao_Paulo é válido");
+        let resultado = resolve_tz_from_env().expect("America/Sao_Paulo é válido");
         assert_eq!(resultado.name(), "America/Sao_Paulo");
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
     }
@@ -103,7 +103,7 @@ mod testes {
     #[serial]
     fn env_invalido_retorna_erro_validation() {
         std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "Invalido/Naoexiste");
-        let resultado = resolver_tz_de_env();
+        let resultado = resolve_tz_from_env();
         assert!(resultado.is_err(), "timezone inválida deve retornar Err");
         match resultado {
             Err(AppError::Validation(msg)) => {
@@ -123,10 +123,10 @@ mod testes {
 
     #[test]
     fn epoch_zero_gera_utc_iso() {
-        // Testa epoch_para_iso diretamente sem estado global
+        // Testa epoch_to_iso diretamente sem estado global
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
         let resultado = {
-            // Aplica UTC diretamente sem usar FUSO_GLOBAL
+            // Aplica UTC diretamente sem usar GLOBAL_TZ
             let tz = Tz::UTC;
             Utc.timestamp_opt(0, 0)
                 .single()
@@ -141,7 +141,7 @@ mod testes {
     }
 
     #[test]
-    fn formatar_iso_utc_preserva_offset_zero() {
+    fn format_iso_utc_preserves_zero_offset() {
         let ts = Utc.timestamp_opt(1_705_320_000, 0).single().unwrap();
         // Aplica UTC diretamente
         let resultado = ts
@@ -152,7 +152,7 @@ mod testes {
     }
 
     #[test]
-    fn formatar_iso_sao_paulo_aplica_offset() {
+    fn format_iso_sao_paulo_applies_offset() {
         let ts = Utc.timestamp_opt(1_705_320_000, 0).single().unwrap();
         let sao_paulo: Tz = "America/Sao_Paulo".parse().unwrap();
         let resultado = ts

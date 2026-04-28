@@ -1,5 +1,7 @@
+//! Handler for the `health` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -51,14 +53,14 @@ struct HealthResponse {
     counts: HealthCounts,
     db_path: String,
     db_size_bytes: u64,
-    /// MAX(version) da tabela refinery_schema_history — número da última migração aplicada.
-    /// Distinto de PRAGMA schema_version (DDL counter SQLite) e PRAGMA user_version
-    /// (valor canônico SCHEMA_USER_VERSION de __debug_schema).
+    /// MAX(version) from refinery_schema_history — number of the last applied migration.
+    /// Distinct from PRAGMA schema_version (SQLite DDL counter) and PRAGMA user_version
+    /// (canonical SCHEMA_USER_VERSION from __debug_schema).
     schema_version: u32,
-    /// Lista de entidades referenciadas por memórias mas ausentes na tabela de entidades.
-    /// Vazio em DB saudável. Conforme contrato documentado em AGENT_PROTOCOL.md.
+    /// List of entities referenced by memories but absent from the entities table.
+    /// Empty in a healthy DB. Per the contract documented in AGENT_PROTOCOL.md.
     missing_entities: Vec<String>,
-    /// Tamanho do WAL file em MB (0.0 se WAL não existe ou journal_mode != wal).
+    /// WAL file size in MB (0.0 if WAL does not exist or journal_mode != wal).
     wal_size_mb: f64,
     /// Modo de journaling do SQLite (wal, delete, truncate, persist, memory, off).
     journal_mode: String,
@@ -84,7 +86,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -297,7 +299,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

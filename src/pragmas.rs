@@ -1,3 +1,5 @@
+//! SQLite PRAGMA helpers applied at connection open and on each transaction.
+
 use crate::errors::AppError;
 use rusqlite::Connection;
 

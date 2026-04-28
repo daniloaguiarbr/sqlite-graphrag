@@ -1,3 +1,8 @@
+//! Entity and URL extraction pipeline (NER + regex prefilter).
+//!
+//! Runs named-entity recognition and regex heuristics to extract structured
+//! entities and hyperlinks from raw memory bodies before embedding.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -197,11 +202,11 @@ pub struct ExtractedEntity {
     pub entity_type: String,
 }
 
-/// URL com offset de origem extraída do corpo da memória.
+/// URL with source offset extracted from the memory body.
 #[derive(Debug, Clone)]
 pub struct ExtractedUrl {
     pub url: String,
-    /// Posição em bytes no corpo onde a URL foi encontrada.
+    /// Byte position in the body where the URL was found.
     pub offset: usize,
 }
 
@@ -212,10 +217,10 @@ pub struct ExtractionResult {
     /// True when build_relationships hit the cap before covering all entity pairs.
     /// Exposed in RememberResponse so callers can detect when relationships were cut.
     pub relationships_truncated: bool,
-    /// Método usado para extração: "bert+regex" ou "regex-only".
-    /// Útil para auditoria, métricas e reportes ao usuário.
+    /// Extraction method used: "bert+regex" or "regex-only".
+    /// Useful for auditing, metrics and user reports.
     pub extraction_method: String,
-    /// URLs extraídas do corpo — armazenadas separadamente das entidades do grafo.
+    /// URLs extracted from the body — stored separately from graph entities.
     pub urls: Vec<ExtractedUrl>,
 }
 
@@ -433,7 +438,7 @@ fn get_or_init_model(paths: &AppPaths) -> Option<&'static BertNerModel> {
         .get_or_init(|| match load_model(paths) {
             Ok(m) => Some(m),
             Err(e) => {
-                tracing::warn!("NER model não disponível (graceful degradation): {e:#}");
+                tracing::warn!("NER model unavailable (graceful degradation): {e:#}");
                 None
             }
         })
@@ -457,7 +462,7 @@ fn ensure_model_files(paths: &AppPaths) -> Result<PathBuf> {
         return Ok(dir);
     }
 
-    tracing::info!("Baixando modelo NER (primeira execução, ~676 MB)...");
+    tracing::info!("Downloading NER model (first run, ~676 MB)...");
     crate::output::emit_progress_i18n(
         "Downloading NER model (first run, ~676 MB)...",
         "Baixando modelo NER (primeira execução, ~676 MB)...",
@@ -541,9 +546,9 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     entities
 }
 
-/// Extrai URLs do corpo de uma memória, desduplicadas por texto.
-/// URLs são armazenadas na tabela `memory_urls` separadamente do grafo de entidades.
-/// v1.0.24: split do bloco URL que poluía apply_regex_prefilter com entity_type='concept'.
+/// Extracts URLs from a memory body, deduplicated by text.
+/// URLs are stored in the `memory_urls` table separately from graph entities.
+/// v1.0.24: split of the URL block that polluted apply_regex_prefilter with entity_type='concept'.
 pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result = Vec::new();
@@ -817,7 +822,7 @@ fn run_ner_sliding_window(
                             }
                         }
                         Err(e2) => {
-                            tracing::warn!("janela NER fallback também falhou: {e2:#}");
+                            tracing::warn!("NER window fallback also failed: {e2:#}");
                         }
                     }
                 }
@@ -828,12 +833,12 @@ fn run_ner_sliding_window(
     Ok(entities)
 }
 
-/// v1.0.22 P1: estende entidades com sufixos numéricos hifenizados ou separados por espaço.
-/// Casos: GPT extraído mas body contém "GPT-5" → reescreve para "GPT-5".
-/// Casos: Claude extraído mas body contém "Claude 4" → reescreve para "Claude 4".
-/// Conservador: só estende se sufixo tiver até 7 caracteres.
-/// v1.0.24 P2-E: sufixo aceita letra ASCII minúscula opcional após dígitos para cobrir
-/// modelos como "GPT-4o", "Llama-5b", "Mistral-8x" (dígitos + [a-z]? + [x\d+]?).
+/// v1.0.22 P1: extends entities with hyphenated or space-separated numeric suffixes.
+/// Cases: GPT extracted but body contains "GPT-5" → rewrites to "GPT-5".
+/// Cases: Claude extracted but body contains "Claude 4" → rewrites to "Claude 4".
+/// Conservative: only extends when the suffix is at most 7 characters.
+/// v1.0.24 P2-E: suffix accepts an optional lowercase ASCII letter after digits to cover
+/// models such as "GPT-4o", "Llama-5b", "Mistral-8x" (digits + [a-z]? + [x\d+]?).
 fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec<ExtractedEntity> {
     static SUFFIX_RE: OnceLock<Regex> = OnceLock::new();
     // Matches: separator + digits + optional decimal + optional lowercase letter

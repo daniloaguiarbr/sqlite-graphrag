@@ -1,7 +1,9 @@
+//! Handler for the `remember` CLI subcommand.
+
 use crate::chunking;
 use crate::cli::MemoryType;
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output::{self, JsonOutputFormat, RememberResponse};
 use crate::paths::AppPaths;
 use crate::storage::chunks as storage_chunks;
@@ -209,13 +211,13 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
     if normalized_name.len() > MAX_MEMORY_NAME_LEN {
         return Err(AppError::LimitExceeded(
-            crate::i18n::validacao::nome_comprimento(MAX_MEMORY_NAME_LEN),
+            crate::i18n::validation::name_length(MAX_MEMORY_NAME_LEN),
         ));
     }
 
     if normalized_name.starts_with("__") {
         return Err(AppError::Validation(
-            crate::i18n::validacao::nome_reservado(),
+            crate::i18n::validation::reserved_name(),
         ));
     }
 
@@ -223,7 +225,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
         if !slug_re.is_match(&normalized_name) {
-            return Err(AppError::Validation(crate::i18n::validacao::nome_kebab(
+            return Err(AppError::Validation(crate::i18n::validation::name_kebab(
                 &normalized_name,
             )));
         }
@@ -231,7 +233,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     if args.description.len() > MAX_MEMORY_DESCRIPTION_LEN {
         return Err(AppError::Validation(
-            crate::i18n::validacao::descricao_excede(MAX_MEMORY_DESCRIPTION_LEN),
+            crate::i18n::validation::description_exceeds(MAX_MEMORY_DESCRIPTION_LEN),
         ));
     }
 
@@ -269,20 +271,20 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
-        return Err(AppError::LimitExceeded(erros::limite_entidades(
+        return Err(AppError::LimitExceeded(errors_msg::entity_limit_exceeded(
             MAX_ENTITIES_PER_MEMORY,
         )));
     }
     if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
-        return Err(AppError::LimitExceeded(erros::limite_relacionamentos(
-            MAX_RELATIONSHIPS_PER_MEMORY,
-        )));
+        return Err(AppError::LimitExceeded(
+            errors_msg::relationship_limit_exceeded(MAX_RELATIONSHIPS_PER_MEMORY),
+        ));
     }
     normalize_and_validate_graph_input(&mut graph)?;
 
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
         return Err(AppError::LimitExceeded(
-            crate::i18n::validacao::body_excede(MAX_MEMORY_BODY_LEN),
+            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
         ));
     }
 
@@ -367,7 +369,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let existing_memory = memories::find_by_name(&conn, &namespace, &normalized_name)?;
     if existing_memory.is_some() && !args.force_merge {
-        return Err(AppError::Duplicate(erros::memoria_duplicada(
+        return Err(AppError::Duplicate(errors_msg::duplicate_memory(
             &normalized_name,
             &namespace,
         )));
@@ -653,7 +655,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     };
 
     let created_at_epoch = chrono::Utc::now().timestamp();
-    let created_at_iso = crate::tz::formatar_iso(chrono::Utc::now());
+    let created_at_iso = crate::tz::format_iso(chrono::Utc::now());
 
     output::emit_json(&RememberResponse {
         memory_id,
@@ -680,7 +682,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use crate::output::RememberResponse;
 
     #[test]
@@ -787,7 +789,7 @@ mod testes {
         let nome = "__reservado";
         let resultado: Result<(), AppError> = if nome.starts_with("__") {
             Err(AppError::Validation(
-                crate::i18n::validacao::nome_reservado(),
+                crate::i18n::validation::reserved_name(),
             ))
         } else {
             Ok(())
@@ -804,9 +806,9 @@ mod testes {
         let nome_longo = "a".repeat(crate::constants::MAX_MEMORY_NAME_LEN + 1);
         let resultado: Result<(), AppError> =
             if nome_longo.is_empty() || nome_longo.len() > crate::constants::MAX_MEMORY_NAME_LEN {
-                Err(AppError::Validation(
-                    crate::i18n::validacao::nome_comprimento(crate::constants::MAX_MEMORY_NAME_LEN),
-                ))
+                Err(AppError::Validation(crate::i18n::validation::name_length(
+                    crate::constants::MAX_MEMORY_NAME_LEN,
+                )))
             } else {
                 Ok(())
             };

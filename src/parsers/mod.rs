@@ -1,3 +1,5 @@
+//! Input format parsers (Markdown, YAML, plain text, timestamp).
+
 use chrono::DateTime;
 
 /// Aceita Unix epoch (inteiro >= 0) ou RFC 3339 e retorna Unix epoch.
@@ -17,7 +19,7 @@ pub fn parse_expected_updated_at(s: &str) -> Result<i64, String> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

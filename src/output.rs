@@ -1,3 +1,8 @@
+//! Single point of terminal I/O for the CLI (stdout JSON, stderr human).
+//!
+//! All user-visible output must go through this module; direct `println!` in
+//! other modules is forbidden.
+
 use crate::errors::AppError;
 use serde::Serialize;
 
@@ -35,40 +40,40 @@ pub fn emit_progress(msg: &str) {
     tracing::info!(message = msg);
 }
 
-/// Emite mensagem de progresso bilíngue respeitando `--lang` ou `SQLITE_GRAPHRAG_LANG`.
-/// Uso: `output::emit_progress_i18n("Computing embedding...", "Calculando embedding...")`.
+/// Emits a bilingual progress message honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
+/// Usage: `output::emit_progress_i18n("Computing embedding...", "Calculando embedding...")`.
 pub fn emit_progress_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
     match current() {
         Language::English => tracing::info!(message = en),
-        Language::Portugues => tracing::info!(message = pt),
+        Language::Portuguese => tracing::info!(message = pt),
     }
 }
 
-/// Emite mensagem de erro localizada em stderr com prefixo `Error:`/`Erro:`.
+/// Emits a localised error message to stderr with the `Error:`/`Erro:` prefix.
 ///
-/// Centraliza a saída de erro para humanos seguindo o Pattern 5 (`output.rs` é o
-/// ÚNICO ponto de I/O do CLI). Não loga via `tracing` — chame `tracing::error!`
-/// explicitamente antes desta função quando observabilidade estruturada for desejada.
+/// Centralises human-readable error output following Pattern 5 (`output.rs` is the
+/// SOLE I/O point of the CLI). Does not log via `tracing` — call `tracing::error!`
+/// explicitly before this function when structured observability is desired.
 pub fn emit_error(localized_msg: &str) {
-    eprintln!("{}: {}", crate::i18n::prefixo_erro(), localized_msg);
+    eprintln!("{}: {}", crate::i18n::error_prefix(), localized_msg);
 }
 
-/// Emite erro bilíngue em stderr respeitando `--lang` ou `SQLITE_GRAPHRAG_LANG`.
-/// Uso: `output::emit_error_i18n("invariant violated", "invariante violado")`.
+/// Emits a bilingual error to stderr honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
+/// Usage: `output::emit_error_i18n("invariant violated", "invariante violado")`.
 pub fn emit_error_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
     let msg = match current() {
         Language::English => en,
-        Language::Portugues => pt,
+        Language::Portuguese => pt,
     };
     emit_error(msg);
 }
 
-/// Payload JSON emitido pelo subcomando `remember`.
+/// JSON payload emitted by the `remember` subcommand.
 ///
-/// Todos os campos são obrigatórios no contrato JSON (ver `docs/schemas/remember.schema.json`).
-/// `operation` é alias de `action` para compatibilidade com clientes que usam o campo antigo.
+/// All fields are required by the JSON contract (see `docs/schemas/remember.schema.json`).
+/// `operation` is an alias of `action` for compatibility with clients using the old field name.
 ///
 /// # Examples
 ///
@@ -109,7 +114,7 @@ pub struct RememberResponse {
     pub name: String,
     pub namespace: String,
     pub action: String,
-    /// Alias semântico de `action` para compatibilidade com contrato documentado em SKILL.md e AGENT_PROTOCOL.md.
+    /// Semantic alias of `action` for compatibility with the contract documented in SKILL.md and AGENT_PROTOCOL.md.
     pub operation: String,
     pub version: i64,
     pub entities_persisted: usize,
@@ -133,24 +138,24 @@ pub struct RememberResponse {
     /// Added in v1.0.24 — split URLs out of the entity graph (P0-2 fix).
     #[serde(default)]
     pub urls_persisted: usize,
-    /// Método de extração usado: "bert+regex" ou "regex-only". None se skip-extraction.
+    /// Extraction method used: "bert+regex" or "regex-only". None when skip-extraction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction_method: Option<String>,
     pub merged_into_memory_id: Option<i64>,
     pub warnings: Vec<String>,
     /// Timestamp Unix epoch seconds.
     pub created_at: i64,
-    /// Timestamp RFC 3339 UTC string paralelo a `created_at` para parsers ISO 8601.
+    /// RFC 3339 UTC timestamp string parallel to `created_at` for ISO 8601 parsers.
     pub created_at_iso: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
 
-/// Item individual retornado pela consulta `recall`.
+/// Individual item returned by the `recall` query.
 ///
-/// O campo `memory_type` é serializado como `"type"` no JSON para manter
-/// compatibilidade com clientes externos — o nome Rust usa `memory_type`
-/// para evitar conflito com a palavra reservada.
+/// The `memory_type` field is serialised as `"type"` in JSON to maintain
+/// compatibility with external clients — the Rust name uses `memory_type`
+/// to avoid conflict with the reserved keyword.
 ///
 /// # Examples
 ///
@@ -170,7 +175,7 @@ pub struct RememberResponse {
 /// };
 ///
 /// let json = serde_json::to_string(&item).unwrap();
-/// // Campo Rust `memory_type` aparece como `"type"` no JSON.
+/// // Rust field `memory_type` appears as `"type"` in JSON.
 /// assert!(json.contains("\"type\":\"user\""));
 /// assert!(!json.contains("memory_type"));
 /// assert!(json.contains("\"distance\":0.12"));
@@ -203,9 +208,9 @@ pub struct RecallResponse {
     pub k: usize,
     pub direct_matches: Vec<RecallItem>,
     pub graph_matches: Vec<RecallItem>,
-    /// Alias agregado de `direct_matches` + `graph_matches` para contrato documentado em SKILL.md.
+    /// Aggregated alias of `direct_matches` + `graph_matches` for the contract documented in SKILL.md.
     pub results: Vec<RecallItem>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
 

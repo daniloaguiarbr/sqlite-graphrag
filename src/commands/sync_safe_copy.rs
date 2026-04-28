@@ -1,5 +1,7 @@
+//! Handler for the `sync-safe-copy` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::{erros, validacao};
+use crate::i18n::{errors_msg, validation};
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -25,7 +27,7 @@ struct SyncSafeCopyResponse {
     dest_path: String,
     bytes_copied: u64,
     status: String,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -35,13 +37,15 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
 
     if args.dest == paths.db {
-        return Err(AppError::Validation(validacao::sync_destino_igual_fonte()));
+        return Err(AppError::Validation(
+            validation::sync_destination_equals_source(),
+        ));
     }
 
     if let Some(parent) = args.dest.parent() {
@@ -75,7 +79,7 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]

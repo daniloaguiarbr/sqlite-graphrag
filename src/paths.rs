@@ -1,5 +1,10 @@
+//! XDG/cwd path resolution and traversal-safe overrides.
+//!
+//! Resolves data directories via [`directories::ProjectDirs`] and validates
+//! that user-supplied paths cannot escape the project root.
+
 use crate::errors::AppError;
-use crate::i18n::validacao;
+use crate::i18n::validation;
 use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
 
@@ -53,16 +58,16 @@ impl AppPaths {
 
 fn validate_path(p: &str) -> Result<(), AppError> {
     if p.contains("..") {
-        return Err(AppError::Validation(validacao::path_traversal(p)));
+        return Err(AppError::Validation(validation::path_traversal(p)));
     }
     Ok(())
 }
 
-/// Resolve `SQLITE_GRAPHRAG_HOME` como diretório raiz para o banco padrão.
+/// Resolves `SQLITE_GRAPHRAG_HOME` as the root directory for the default database.
 ///
-/// Retorna `Ok(Some(dir))` quando a env var está definida e válida,
-/// `Ok(None)` quando ausente ou vazia (cai para o fallback `current_dir`),
-/// e `Err(...)` quando o valor contém componentes de traversal.
+/// Returns `Ok(Some(dir))` when the env var is set and valid,
+/// `Ok(None)` when absent or empty (falls back to `current_dir`),
+/// and `Err(...)` when the value contains traversal components.
 fn home_env_dir() -> Result<Option<PathBuf>, AppError> {
     let raw = match std::env::var("SQLITE_GRAPHRAG_HOME") {
         Ok(v) => v,
@@ -85,13 +90,13 @@ pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use serial_test::serial;
     use tempfile::TempDir;
 
-    /// Limpa todas as variáveis que afetam `AppPaths::resolve` para isolar o
-    /// teste do ambiente do desenvolvedor / CI.
+    /// Clears all variables that affect `AppPaths::resolve` to isolate the
+    /// test from the developer/CI environment.
     fn limpar_env_paths() {
         // SAFETY: testes marcados com #[serial] garantem ausência de concorrência.
         unsafe {

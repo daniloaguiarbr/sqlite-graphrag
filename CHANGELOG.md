@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-04-28
+
+### Changed
+- Enforces the English-only Language Policy across the entire codebase. All `///` and `//!` doc comments, all `tracing::*!` log strings, and all identifiers (functions, statics, modules, enum variants, test names) outside `src/i18n.rs` translation tables are now in English. PT-BR strings remain only in `Language::Portuguese` branches inside `i18n::errors_msg`, `i18n::validation`, and `errors::to_string_pt()`.
+- `Language::Portugues` enum variant renamed to `Language::Portuguese` (CLI aliases `pt`, `pt-br`, `pt-BR`, `portugues`, `portuguese` preserved for backward compatibility).
+- `IDIOMA_GLOBAL` static renamed to `GLOBAL_LANGUAGE` (`src/i18n.rs`).
+- `FUSO_GLOBAL` static renamed to `GLOBAL_TZ` (`src/tz.rs`).
+- ~30 PT-named functions renamed to English equivalents in `src/i18n.rs` and `src/tz.rs` (e.g., `formatar_iso` → `format_iso`, `epoch_para_iso` → `epoch_to_iso`, `memoria_nao_encontrada` → `memory_not_found`, `nome_kebab` → `name_kebab`, `validacao` module → `validation`, `erros` module → `errors_msg`).
+- 32 internal `mod testes` test modules renamed to `mod tests` for consistency with Rust convention.
+- All call-sites in `src/commands/*.rs` and tests propagated to use the renamed identifiers.
+
+### Added
+- `//!` crate-level documentation in 37 modules that previously lacked it: `src/cli.rs`, `src/main.rs`, `src/extraction.rs`, `src/embedder.rs`, `src/daemon.rs`, `src/output.rs`, `src/paths.rs`, `src/chunking.rs`, `src/graph.rs`, `src/namespace.rs`, `src/parsers/mod.rs`, `src/tokenizer.rs`, `src/storage/{connection,urls,chunks,versions,mod}.rs`, `src/pragmas.rs`, and 22 handlers in `src/commands/`.
+- `language-check` CI job in `.github/workflows/ci.yml` that fails the build when Portuguese diacritics are detected in `///`, `//!`, `tracing::*!` calls, or `#[error(...)]` attributes — automated guardrail against regression.
+
+### Documentation
+- Two broken intra-doc links (`[Cli]`, `[TextEmbedding]`) fixed in `src/lib.rs` and `src/embedder.rs` (surfaced when `cargo doc -D warnings` was first run with the new doc coverage).
+
+### Notes
+- This is a **non-breaking** change for the CLI and JSON contracts: subcommand names, flags, env vars, exit codes, and JSON field names remain unchanged. Internal Rust identifiers were renamed but the crate is a binary, not a library consumed via `pub use`.
+- 65 files changed, +872/-715 lines. All 9 cargo gates pass (fmt, clippy, test, doc, audit, deny, publish dry-run, package list, llvm-cov).
+
 ## [1.0.27] - 2026-04-28
 
 ### Added

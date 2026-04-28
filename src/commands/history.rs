@@ -1,5 +1,7 @@
+//! Handler for the `history` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -43,11 +45,11 @@ struct HistoryVersion {
 struct HistoryResponse {
     name: String,
     namespace: String,
-    /// True quando a memória está atualmente soft-deleted (forgotten).
-    /// Permite ao usuário descobrir a versão para `restore` mesmo após `forget`.
+    /// True when the memory is currently soft-deleted (forgotten).
+    /// Allows the user to discover the version for `restore` even after `forget`.
     deleted: bool,
     versions: Vec<HistoryVersion>,
-    /// Tempo total de execução em milissegundos desde início do handler até serialização.
+    /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
 
@@ -60,7 +62,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -77,7 +79,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
         )
         .optional()?;
     let (memory_id, deleted_at) =
-        row.ok_or_else(|| AppError::NotFound(erros::memoria_nao_encontrada(&name, &namespace)))?;
+        row.ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&name, &namespace)))?;
     let deleted = deleted_at.is_some();
 
     let mut stmt = conn.prepare(
@@ -91,7 +93,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     let versions = stmt
         .query_map(params![memory_id], |r| {
             let created_at: i64 = r.get(8)?;
-            let created_at_iso = crate::tz::epoch_para_iso(created_at);
+            let created_at_iso = crate::tz::epoch_to_iso(created_at);
             Ok(HistoryVersion {
                 version: r.get(0)?,
                 name: r.get(1)?,
@@ -119,18 +121,18 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     #[test]
     fn epoch_zero_gera_iso_valido() {
-        // epoch_para_iso usa chrono-tz com offset explícito (+00:00 para UTC)
-        let iso = crate::tz::epoch_para_iso(0);
+        // epoch_to_iso uses chrono-tz with explicit offset (+00:00 for UTC)
+        let iso = crate::tz::epoch_to_iso(0);
         assert!(iso.starts_with("1970-01-01T00:00:00"), "obtido: {iso}");
         assert!(iso.contains("00:00"), "deve conter offset, obtido: {iso}");
     }
 
     #[test]
     fn epoch_tipico_gera_iso_rfc3339() {
-        let iso = crate::tz::epoch_para_iso(1_745_000_000);
+        let iso = crate::tz::epoch_to_iso(1_745_000_000);
         assert!(!iso.is_empty(), "created_at_iso não deve ser vazio");
         assert!(iso.contains('T'), "created_at_iso deve conter separador T");
         // Com UTC o offset é +00:00; verifica formato geral sem depender do fuso global
@@ -142,7 +144,7 @@ mod testes {
 
     #[test]
     fn epoch_invalido_retorna_fallback() {
-        let iso = crate::tz::epoch_para_iso(i64::MIN);
+        let iso = crate::tz::epoch_to_iso(i64::MIN);
         assert!(
             !iso.is_empty(),
             "epoch inválido deve retornar fallback não-vazio"

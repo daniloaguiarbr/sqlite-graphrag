@@ -1,15 +1,20 @@
+//! Entity graph traversal (BFS over memory_entities + relations).
+//!
+//! Queries the SQLite entity and relation tables to expand neighbourhood
+//! sets used by the `related` and `recall` commands.
+
 // src/graph.rs
 
 use crate::errors::AppError;
 use rusqlite::{params, Connection};
 
-/// Percorre o grafo de entidades por BFS a partir de memórias-semente.
+/// Traverses the entity graph by BFS from seed memories.
 ///
-/// Retorna `memory_id`s alcançáveis pelo grafo de entidades e relacionamentos,
-/// excluindo as próprias sementes. O algoritmo:
-/// 1. Coleta entidades associadas às sementes via `memory_entities`.
-/// 2. Executa BFS sobre `relationships` filtrando por `weight >= min_weight` e `namespace`.
-/// 3. Retorna memórias ligadas às entidades descobertas (excluindo soft-deleted).
+/// Returns `memory_id`s reachable through entity and relationship edges,
+/// excluding the seeds themselves. The algorithm:
+/// 1. Collects entities associated with seeds via `memory_entities`.
+/// 2. Runs BFS over `relationships` filtered by `weight >= min_weight` and `namespace`.
+/// 3. Returns memories linked to discovered entities (excluding soft-deleted).
 ///
 /// # Errors
 ///

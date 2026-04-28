@@ -87,7 +87,7 @@ fn paridade_localized_message_todas_variantes_apperror() {
 
     for variante in &variantes {
         let msg_en = variante.localized_message_for(Language::English);
-        let msg_pt = variante.localized_message_for(Language::Portugues);
+        let msg_pt = variante.localized_message_for(Language::Portuguese);
 
         assert!(
             !msg_en.is_empty(),
@@ -159,7 +159,7 @@ fn localized_message_pt_cada_variante_contem_termo_portugues() {
     ];
 
     for (variante, esperado) in &casos {
-        let msg = variante.localized_message_for(Language::Portugues);
+        let msg = variante.localized_message_for(Language::Portuguese);
         assert!(
             msg.contains(esperado),
             "PT: esperado '{esperado}' em '{msg}' (variante: {variante:?})"

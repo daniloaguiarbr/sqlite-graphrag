@@ -1,5 +1,7 @@
+//! Handler for the `debug-schema` CLI subcommand.
+
 use crate::errors::AppError;
-use crate::i18n::erros;
+use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -30,12 +32,12 @@ struct MigrationRecord {
 
 #[derive(Serialize)]
 struct DebugSchemaResponse {
-    /// Contador interno do SQLite incrementado a cada DDL (PRAGMA schema_version).
-    /// Distinto de `user_version`: este é gerenciado automaticamente pelo SQLite.
+    /// Internal SQLite counter incremented on each DDL (PRAGMA schema_version).
+    /// Distinct from `user_version`: this one is managed automatically by SQLite.
     schema_version: i64,
-    /// Valor canônico SCHEMA_USER_VERSION definido explicitamente pelas migrações
-    /// (PRAGMA user_version). Distinto de `schema_version` (DDL counter SQLite)
-    /// e de `health.schema_version` (MAX version em refinery_schema_history).
+    /// Canonical SCHEMA_USER_VERSION value set explicitly by migrations
+    /// (PRAGMA user_version). Distinct from `schema_version` (SQLite DDL counter)
+    /// and from `health.schema_version` (MAX version in refinery_schema_history).
     user_version: i64,
     objects: Vec<SchemaObject>,
     migrations: Vec<MigrationRecord>,
@@ -47,7 +49,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     if !paths.db.exists() {
-        return Err(AppError::NotFound(erros::banco_nao_encontrado(
+        return Err(AppError::NotFound(errors_msg::database_not_found(
             &paths.db.display().to_string(),
         )));
     }
@@ -119,7 +121,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use serde_json::Value;
 

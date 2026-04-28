@@ -1,3 +1,5 @@
+//! Process entry point: signal handling, language/timezone init, dispatch.
+
 use std::sync::atomic::Ordering;
 
 use clap::Parser;
@@ -223,7 +225,7 @@ fn main() {
         SHUTDOWN.store(true, Ordering::SeqCst);
         tracing::warn!("recebido sinal de shutdown; aguardando comando encerrar gracefully");
     }) {
-        tracing::warn!("não foi possível registrar handler de sinal: {e}");
+        tracing::warn!("failed to register signal handler: {e}");
     }
 
     let result = match cli.command {

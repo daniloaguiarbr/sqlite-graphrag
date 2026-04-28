@@ -183,6 +183,38 @@ jobs:
           fi
           echo "No forbidden co-authors detected"
 
+  language-check:
+    name: Language policy (English-only outside i18n)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Forbid Portuguese in /// doc comments
+        run: |
+          if rg '///.*[áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ]' src/ tests/; then
+            echo "::error::Portuguese characters found in /// doc comments. Policy: English-only outside i18n.rs."
+            exit 1
+          fi
+      - name: Forbid Portuguese in //! crate-level docs
+        run: |
+          if rg '//!.*[áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ]' src/ tests/; then
+            echo "::error::Portuguese characters found in //! crate-level docs."
+            exit 1
+          fi
+      - name: Forbid Portuguese in tracing logs
+        run: |
+          if rg 'tracing::(info|warn|error|debug|trace)!.*[áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ]' src/; then
+            echo "::error::Portuguese in tracing logs. Use English keys/messages."
+            exit 1
+          fi
+      - name: Forbid Portuguese in #[error(...)] attributes
+        run: |
+          if rg '#\[error.*[áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ]' src/; then
+            echo "::error::Portuguese in thiserror attributes. Use English."
+            exit 1
+          fi
+
   loom:
     name: Loom Concurrency
     runs-on: ubuntu-latest

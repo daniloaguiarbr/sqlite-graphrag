@@ -186,7 +186,7 @@ pub fn find_entity_id(
     }
 }
 
-/// Estrutura representando uma relação existente.
+/// Structure representing an existing relation.
 #[derive(Debug, Serialize)]
 pub struct RelationshipRow {
     pub id: i64,
@@ -198,7 +198,7 @@ pub struct RelationshipRow {
     pub description: Option<String>,
 }
 
-/// Busca uma relação específica por (source_id, target_id, relation).
+/// Looks up a specific relation by (source_id, target_id, relation).
 pub fn find_relationship(
     conn: &Connection,
     source_id: i64,
@@ -227,8 +227,8 @@ pub fn find_relationship(
     }
 }
 
-/// Cria uma relação se não existir (retorna action="created")
-/// ou retorna a relação existente (action="already_exists") com peso atualizado.
+/// Creates a relation if it does not exist (returns action="created")
+/// or returns the existing relation (action="already_exists") with updated weight.
 pub fn create_or_fetch_relationship(
     conn: &Connection,
     namespace: &str,
@@ -263,7 +263,7 @@ pub fn create_or_fetch_relationship(
     Ok((id, true))
 }
 
-/// Remove uma relação pelo id e limpa memory_relationships.
+/// Removes a relation by id and cleans up memory_relationships.
 pub fn delete_relationship_by_id(conn: &Connection, relationship_id: i64) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM memory_relationships WHERE relationship_id = ?1",
@@ -276,7 +276,7 @@ pub fn delete_relationship_by_id(conn: &Connection, relationship_id: i64) -> Res
     Ok(())
 }
 
-/// Recalcula o campo `degree` de uma entidade.
+/// Recalculates the `degree` field of an entity.
 pub fn recalculate_degree(conn: &Connection, entity_id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE entities
@@ -288,7 +288,7 @@ pub fn recalculate_degree(conn: &Connection, entity_id: i64) -> Result<(), AppEr
     Ok(())
 }
 
-/// Linha de entidade com dados suficientes para exportação/consulta de grafo.
+/// Entity row with enough data for graph export/query.
 #[derive(Debug, Serialize, Clone)]
 pub struct EntityNode {
     pub id: i64,
@@ -297,7 +297,7 @@ pub struct EntityNode {
     pub kind: String,
 }
 
-/// Lista entidades, filtrando por namespace se fornecido.
+/// Lists entities, filtering by namespace if provided.
 pub fn list_entities(
     conn: &Connection,
     namespace: Option<&str>,
@@ -334,7 +334,7 @@ pub fn list_entities(
     }
 }
 
-/// Lista relações filtradas por namespace (das entidades de origem/destino).
+/// Lists relations filtered by namespace (of source/target entities).
 pub fn list_relationships_by_namespace(
     conn: &Connection,
     namespace: Option<&str>,
@@ -383,7 +383,7 @@ pub fn list_relationships_by_namespace(
     }
 }
 
-/// Localiza entidades órfãs: sem vínculo em memory_entities e sem relações.
+/// Locates orphan entities: no link in memory_entities and no relations.
 pub fn find_orphan_entity_ids(
     conn: &Connection,
     namespace: Option<&str>,
@@ -418,7 +418,7 @@ pub fn find_orphan_entity_ids(
     }
 }
 
-/// Deleta entidades e seus vetores associados. Retorna o número de entidades removidas.
+/// Deletes entities and their associated vectors. Returns the number of entities removed.
 pub fn delete_entities_by_ids(conn: &Connection, entity_ids: &[i64]) -> Result<usize, AppError> {
     if entity_ids.is_empty() {
         return Ok(0);
