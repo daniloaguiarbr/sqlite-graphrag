@@ -19,7 +19,7 @@ pub struct ForgetArgs {
     pub name: Option<String>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,

@@ -6,7 +6,7 @@
 use crate::errors::AppError;
 use crate::i18n::validation;
 use directories::ProjectDirs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
 pub struct AppPaths {
@@ -17,9 +17,7 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn resolve(db_override: Option<&str>) -> Result<Self, AppError> {
         let proj = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
-            AppError::Io(std::io::Error::other(
-                "não foi possível determinar o diretório home",
-            ))
+            AppError::Io(std::io::Error::other("could not determine home directory"))
         })?;
 
         let cache_root = if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {
@@ -57,7 +55,7 @@ impl AppPaths {
 }
 
 fn validate_path(p: &str) -> Result<(), AppError> {
-    if p.contains("..") {
+    if Path::new(p).components().any(|c| c == Component::ParentDir) {
         return Err(AppError::Validation(validation::path_traversal(p)));
     }
     Ok(())
@@ -83,7 +81,7 @@ fn home_env_dir() -> Result<Option<PathBuf>, AppError> {
 pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
     path.parent().ok_or_else(|| {
         AppError::Validation(format!(
-            "caminho '{}' não possui componente pai válido",
+            "path '{}' has no valid parent component",
             path.display()
         ))
     })
@@ -98,7 +96,7 @@ mod tests {
     /// Clears all variables that affect `AppPaths::resolve` to isolate the
     /// test from the developer/CI environment.
     fn limpar_env_paths() {
-        // SAFETY: testes marcados com #[serial] garantem ausência de concorrência.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::remove_var("SQLITE_GRAPHRAG_HOME");
             std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
@@ -111,7 +109,7 @@ mod tests {
     fn home_env_resolve_db_em_subdir() {
         limpar_env_paths();
         let tmp = TempDir::new().expect("tempdir");
-        // SAFETY: serial.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp.path());
         }
@@ -126,7 +124,7 @@ mod tests {
     #[serial]
     fn home_env_traversal_rejeitado() {
         limpar_env_paths();
-        // SAFETY: serial.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", "/tmp/../etc");
         }
@@ -147,7 +145,7 @@ mod tests {
         let tmp_home = TempDir::new().expect("tempdir home");
         let tmp_db = TempDir::new().expect("tempdir db");
         let db_explicito = tmp_db.path().join("explicito.sqlite");
-        // SAFETY: serial.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp_home.path());
             std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", &db_explicito);
@@ -166,7 +164,7 @@ mod tests {
         let tmp_home = TempDir::new().expect("tempdir home");
         let tmp_flag = TempDir::new().expect("tempdir flag");
         let db_flag = tmp_flag.path().join("via-flag.sqlite");
-        // SAFETY: serial.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp_home.path());
         }
@@ -182,7 +180,7 @@ mod tests {
     #[serial]
     fn home_env_vazio_cai_para_cwd() {
         limpar_env_paths();
-        // SAFETY: serial.
+        // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", "");
         }

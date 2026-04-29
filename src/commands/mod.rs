@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod cleanup_orphans;
 pub mod daemon;
 pub mod debug_schema;

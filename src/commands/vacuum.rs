@@ -10,7 +10,7 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct VacuumArgs {
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     /// Run a WAL checkpoint before and after `VACUUM`.
     #[arg(long, default_value_t = true)]

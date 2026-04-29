@@ -44,7 +44,7 @@ pub struct HybridSearchArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
     /// Accept `--json` as a no-op because output is already JSON by default.
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
 }
 

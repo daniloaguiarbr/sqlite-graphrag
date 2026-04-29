@@ -12,7 +12,7 @@ pub struct SyncSafeCopyArgs {
     /// Snapshot destination path. Also accepts the aliases `--to` and `--output`.
     #[arg(long, alias = "to", alias = "output")]
     pub dest: std::path::PathBuf,
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     /// Output format: `json` or `text`. JSON is always emitted on stdout regardless of the value.
     #[arg(long, value_parser = ["json", "text"], hide = true)]

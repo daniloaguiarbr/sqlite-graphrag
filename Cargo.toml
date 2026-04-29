@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.28"
+version = "1.0.29"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -24,9 +24,9 @@ exclude = [
     "docs/CLAUDE.pt-BR.md",
     "docs/AGENT_PROTOCOL.md",
     "docs/AGENT_PROTOCOL.pt-BR.md",
-    "/CLAUDE.md",
-    "/AGENTS.md",
-    "/MEMORY.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "MEMORY.md",
     "ralph-loop.local.md",
     "*.profraw",
     "*.profdata",

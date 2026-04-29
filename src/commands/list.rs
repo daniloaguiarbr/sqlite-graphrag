@@ -10,22 +10,42 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct ListArgs {
-    #[arg(long, default_value = "global")]
+    /// Namespace to list memories from. Defaults to "global".
+    #[arg(
+        long,
+        default_value = "global",
+        help = "Namespace to list memories from"
+    )]
     pub namespace: Option<String>,
     /// Filter by memory.type. Note: distinct from graph entity_type
     /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
     /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
-    #[arg(long, default_value = "50")]
+    /// Maximum number of memories to return (default: 50).
+    #[arg(
+        long,
+        default_value = "50",
+        help = "Maximum number of memories to return"
+    )]
     pub limit: usize,
-    #[arg(long, default_value = "0")]
+    /// Number of memories to skip before returning results.
+    #[arg(long, default_value = "0", help = "Number of memories to skip")]
     pub offset: usize,
-    #[arg(long, value_enum, default_value = "json")]
+    /// Output format: json (default), text, or markdown.
+    #[arg(long, value_enum, default_value = "json", help = "Output format")]
     pub format: OutputFormat,
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    /// Include soft-deleted memories in the listing (deleted_at IS NOT NULL).
+    #[arg(long, default_value_t = false, help = "Include soft-deleted memories")]
+    pub include_deleted: bool,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    /// Path to graphrag.sqlite (overrides SQLITE_GRAPHRAG_DB_PATH and default CWD).
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_DB_PATH",
+        help = "Path to graphrag.sqlite"
+    )]
     pub db: Option<String>,
 }
 
@@ -65,7 +85,14 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let conn = open_ro(&paths.db)?;
 
     let memory_type_str = args.r#type.map(|t| t.as_str());
-    let rows = memories::list(&conn, &namespace, memory_type_str, args.limit, args.offset)?;
+    let rows = memories::list(
+        &conn,
+        &namespace,
+        memory_type_str,
+        args.limit,
+        args.offset,
+        args.include_deleted,
+    )?;
 
     let items: Vec<ListItem> = rows
         .into_iter()

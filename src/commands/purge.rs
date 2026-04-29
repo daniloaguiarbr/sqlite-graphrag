@@ -18,7 +18,7 @@ pub struct PurgeArgs {
     /// permanently removed. Default: PURGE_RETENTION_DAYS_DEFAULT (90).
     #[arg(long, alias = "days", value_name = "DAYS", default_value_t = crate::constants::PURGE_RETENTION_DAYS_DEFAULT)]
     pub retention_days: u32,
-    /// [DEPRECATED em v2.0.0] Alias legado — use --retention-days em vez disso.
+    /// [DEPRECATED in v2.0.0] Legacy alias — use --retention-days instead.
     #[arg(long, hide = true)]
     pub older_than_seconds: Option<u64>,
     /// Does not execute DELETE: computes and reports what WOULD be purged.
@@ -27,7 +27,7 @@ pub struct PurgeArgs {
     /// Compatibility with tools that pass --yes to confirm destructive operations.
     #[arg(long, hide = true, default_value_t = false)]
     pub yes: bool,
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -67,7 +67,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
 
     let cutoff_epoch = if let Some(secs) = args.older_than_seconds {
         warnings.push(
-            "--older-than-seconds está deprecado; use --retention-days em v2.0.0+".to_string(),
+            "--older-than-seconds is deprecated; use --retention-days in v2.0.0+".to_string(),
         );
         now - secs as i64
     } else {
@@ -120,7 +120,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
 fn current_epoch() -> Result<i64, AppError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|err| AppError::Internal(anyhow::anyhow!("erro de relógio do sistema: {err}")))?;
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("system clock error: {err}")))?;
     Ok(now.as_secs() as i64)
 }
 
@@ -190,7 +190,7 @@ fn execute_purge(
             rusqlite::params![memory_id],
         ) {
             warnings.push(format!(
-                "falha ao limpar vec_chunks para memory_id {memory_id}: {err}"
+                "failed to clean vec_chunks for memory_id {memory_id}: {err}"
             ));
         }
         if let Err(err) = tx.execute(
@@ -198,7 +198,7 @@ fn execute_purge(
             rusqlite::params![memory_id],
         ) {
             warnings.push(format!(
-                "falha ao limpar vec_memories para memory_id {memory_id}: {err}"
+                "failed to clean vec_memories for memory_id {memory_id}: {err}"
             ));
         }
         tx.execute(

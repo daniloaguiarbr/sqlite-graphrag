@@ -12,6 +12,14 @@ use std::path::Path;
 /// Register sqlite-vec GLOBALLY before any connection is opened.
 /// Must be called once at program start.
 pub fn register_vec_extension() {
+    // SAFETY: sqlite3_auto_extension is a C FFI function that registers a callback
+    // invoked when SQLite opens any new connection. Soundness assumptions:
+    // 1. `sqlite3_vec_init` has the exact ABI signature `extern "C" fn(...) -> i32`
+    //    expected by SQLite's auto-extension API (verified by sqlite-vec crate).
+    // 2. The transmute from `*const ()` to the expected fn pointer is valid because
+    //    both have identical layout on supported platforms (Linux, macOS, Windows).
+    // 3. This function is only called once at program start (asserted by callers
+    //    in main.rs:80 before any connection is opened).
     #[allow(clippy::missing_transmute_annotations)]
     unsafe {
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(

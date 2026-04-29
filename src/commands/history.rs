@@ -18,11 +18,24 @@ pub struct HistoryArgs {
     /// so that `restore --version <V>` workflow remains discoverable after `forget`.
     #[arg(long)]
     pub name: Option<String>,
-    #[arg(long, default_value = "global")]
+    /// Namespace to query history from. Defaults to "global".
+    #[arg(long, default_value = "global", help = "Namespace to query")]
     pub namespace: Option<String>,
-    #[arg(long, help = "No-op; JSON is always emitted on stdout")]
+    /// Omit body content from each version to reduce response size.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Omit body content from response"
+    )]
+    pub no_body: bool,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
-    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    /// Path to graphrag.sqlite (overrides SQLITE_GRAPHRAG_DB_PATH and default CWD).
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_DB_PATH",
+        help = "Path to graphrag.sqlite"
+    )]
     pub db: Option<String>,
 }
 
@@ -33,8 +46,9 @@ struct HistoryVersion {
     #[serde(rename = "type")]
     memory_type: String,
     description: String,
-    body: String,
-    metadata: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<String>,
+    metadata: serde_json::Value,
     change_reason: String,
     changed_by: Option<String>,
     created_at: i64,
@@ -90,17 +104,22 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
          ORDER BY version ASC",
     )?;
 
+    let no_body = args.no_body;
     let versions = stmt
         .query_map(params![memory_id], |r| {
             let created_at: i64 = r.get(8)?;
             let created_at_iso = crate::tz::epoch_to_iso(created_at);
+            let body_str: String = r.get(4)?;
+            let metadata_str: String = r.get(5)?;
+            let metadata_value: serde_json::Value = serde_json::from_str(&metadata_str)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             Ok(HistoryVersion {
                 version: r.get(0)?,
                 name: r.get(1)?,
                 memory_type: r.get(2)?,
                 description: r.get(3)?,
-                body: r.get(4)?,
-                metadata: r.get(5)?,
+                body: if no_body { None } else { Some(body_str) },
+                metadata: metadata_value,
                 change_reason: r.get(6)?,
                 changed_by: r.get(7)?,
                 created_at,

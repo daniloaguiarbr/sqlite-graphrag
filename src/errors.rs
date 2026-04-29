@@ -299,7 +299,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("7"));
         assert!(msg.contains("50"));
-        // to_string() usa o #[error] em inglês; PT está em localized_message_for
+        // to_string() uses the English #[error] attr; PT is in localized_message_for
         assert!(msg.contains("batch partial failure"));
     }
 

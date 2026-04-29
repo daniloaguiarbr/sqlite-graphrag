@@ -340,14 +340,21 @@ pub fn list(
     memory_type: Option<&str>,
     limit: usize,
     offset: usize,
+    include_deleted: bool,
 ) -> Result<Vec<MemoryRow>, AppError> {
+    let deleted_clause = if include_deleted {
+        ""
+    } else {
+        " AND deleted_at IS NULL"
+    };
     if let Some(mt) = memory_type {
-        let mut stmt = conn.prepare(
+        let sql = format!(
             "SELECT id, namespace, name, type, description, body, body_hash,
                     session_id, source, metadata, created_at, updated_at
-             FROM memories WHERE namespace=?1 AND type=?2 AND deleted_at IS NULL
-             ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4",
-        )?;
+             FROM memories WHERE namespace=?1 AND type=?2{deleted_clause}
+             ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params![namespace, mt, limit as i64, offset as i64], |r| {
                 Ok(MemoryRow {
@@ -368,12 +375,13 @@ pub fn list(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
-        let mut stmt = conn.prepare(
+        let sql = format!(
             "SELECT id, namespace, name, type, description, body, body_hash,
                     session_id, source, metadata, created_at, updated_at
-             FROM memories WHERE namespace=?1 AND deleted_at IS NULL
-             ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3",
-        )?;
+             FROM memories WHERE namespace=?1{deleted_clause}
+             ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params![namespace, limit as i64, offset as i64], |r| {
                 Ok(MemoryRow {
@@ -900,7 +908,7 @@ mod tests {
         insert(&conn, &nova_memoria("mem-list-a"))?;
         insert(&conn, &nova_memoria("mem-list-b"))?;
 
-        let rows = list(&conn, "global", None, 10, 0)?;
+        let rows = list(&conn, "global", None, 10, 0, false)?;
         assert!(rows.len() >= 2);
         let nomes: Vec<_> = rows.iter().map(|r| r.name.as_str()).collect();
         assert!(nomes.contains(&"mem-list-a"));
@@ -917,10 +925,10 @@ mod tests {
         m2.memory_type = "feedback".to_string();
         insert(&conn, &m2)?;
 
-        let rows_user = list(&conn, "global", Some("user"), 10, 0)?;
+        let rows_user = list(&conn, "global", Some("user"), 10, 0, false)?;
         assert!(rows_user.iter().all(|r| r.memory_type == "user"));
 
-        let rows_fb = list(&conn, "global", Some("feedback"), 10, 0)?;
+        let rows_fb = list(&conn, "global", Some("feedback"), 10, 0, false)?;
         assert!(rows_fb.iter().all(|r| r.memory_type == "feedback"));
         Ok(())
     }
@@ -932,7 +940,7 @@ mod tests {
         insert(&conn, &m)?;
         soft_delete(&conn, "global", "mem-excluida")?;
 
-        let rows = list(&conn, "global", None, 10, 0)?;
+        let rows = list(&conn, "global", None, 10, 0, false)?;
         assert!(rows.iter().all(|r| r.name != "mem-excluida"));
         Ok(())
     }
@@ -944,8 +952,8 @@ mod tests {
             insert(&conn, &nova_memoria(&format!("mem-pag-{i}")))?;
         }
 
-        let pagina1 = list(&conn, "global", None, 2, 0)?;
-        let pagina2 = list(&conn, "global", None, 2, 2)?;
+        let pagina1 = list(&conn, "global", None, 2, 0, false)?;
+        let pagina2 = list(&conn, "global", None, 2, 2, false)?;
         assert!(pagina1.len() <= 2);
         assert!(pagina2.len() <= 2);
         if !pagina1.is_empty() && !pagina2.is_empty() {

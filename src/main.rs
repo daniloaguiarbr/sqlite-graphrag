@@ -59,8 +59,31 @@ fn main() {
         }
     }
 
-    let log_level =
-        std::env::var("SQLITE_GRAPHRAG_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string());
+    // Pre-parse --verbose / -v before tracing init so the flag overrides the env var.
+    // We avoid full Cli::parse() here because it would fail on missing required args
+    // when --help is requested. Counts the number of `-v` occurrences (or `--verbose`).
+    let verbose_count: u8 = std::env::args()
+        .skip(1)
+        .map(|a| {
+            if a == "--verbose" || a == "-v" {
+                1u8
+            } else if a.starts_with("-v") && a.chars().skip(1).all(|c| c == 'v') {
+                (a.len() - 1).try_into().unwrap_or(u8::MAX)
+            } else {
+                0u8
+            }
+        })
+        .sum();
+
+    let log_level = if verbose_count > 0 {
+        match verbose_count {
+            1 => "info".to_string(),
+            2 => "debug".to_string(),
+            _ => "trace".to_string(),
+        }
+    } else {
+        std::env::var("SQLITE_GRAPHRAG_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string())
+    };
     let log_format =
         std::env::var("SQLITE_GRAPHRAG_LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
 
@@ -223,7 +246,9 @@ fn main() {
     // O handler sinaliza SHUTDOWN e loga o evento; a limpeza do slot ocorre pelo Drop do File.
     if let Err(e) = ctrlc::set_handler(move || {
         SHUTDOWN.store(true, Ordering::SeqCst);
-        tracing::warn!("recebido sinal de shutdown; aguardando comando encerrar gracefully");
+        tracing::warn!(
+            "shutdown signal received; waiting for current command to finish gracefully"
+        );
     }) {
         tracing::warn!("failed to register signal handler: {e}");
     }
@@ -258,11 +283,11 @@ fn main() {
         sqlite_graphrag::cli::Commands::CleanupOrphans(args) => {
             commands::cleanup_orphans::run(args)
         }
+        sqlite_graphrag::cli::Commands::Cache(args) => commands::cache::run(args),
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };
 
     if let Err(e) = result {
-        tracing::error!(error = %e);
         sqlite_graphrag::output::emit_error(&e.localized_message());
         std::process::exit(e.exit_code());
     }

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-04-29
+
+### Fixed (Critical — Language Policy Violations in Production Code)
+- `src/paths.rs:21` — Portuguese error message `"não foi possível determinar o diretório home"` in `AppError::Io` translated to `"could not determine home directory"`. Was emitted in `tracing::error!` and CLI stderr regardless of `--lang` flag.
+- `src/paths.rs:85-89` — Portuguese error message `"caminho '{}' não possui componente pai válido"` in `AppError::Validation` translated to `"path '{}' has no valid parent component"`.
+- `src/main.rs:227` — Portuguese `tracing::warn!("recebido sinal de shutdown...")` translated to `"shutdown signal received; waiting for current command to finish gracefully"`. Tracing logs are required to be English regardless of locale.
+- `src/commands/purge.rs:21` — Portuguese doc comment `"[DEPRECATED em v2.0.0]"` translated to `"[DEPRECATED in v2.0.0]"`.
+- `src/commands/purge.rs:70-71` — Portuguese warning string `"--older-than-seconds está deprecado..."` (emitted in JSON `warnings` field) translated to `"--older-than-seconds is deprecated; use --retention-days in v2.0.0+"`. JSON output must be language-neutral.
+- `src/commands/purge.rs:123` — Portuguese `anyhow!("erro de relógio do sistema: {err}")` translated to `"system clock error: {err}"`.
+- `src/commands/purge.rs:192-193` — Portuguese warning `"falha ao limpar vec_chunks..."` (in JSON `warnings`) translated to `"failed to clean vec_chunks for memory_id {memory_id}: {err}"`.
+- `src/commands/purge.rs:198-201` — Portuguese warning `"falha ao limpar vec_memories..."` (in JSON `warnings`) translated to `"failed to clean vec_memories for memory_id {memory_id}: {err}"`.
+- `src/main.rs:265` — Removed duplicate `tracing::error!(error = %e)` that emitted localized error string into structured logs (line 266 `emit_error(&e.localized_message())` already handles user-visible output). Eliminates the i18n→tracing leakage where Portuguese error payloads were polluting EN-only log channels.
+
+### Fixed (Security — Path Traversal & Unsafe Audit)
+- `src/paths.rs:60` — `validate_path` now uses `Path::components().any(|c| c == Component::ParentDir)` instead of substring `.contains("..")`, preventing both false positives on filenames containing `..` (e.g., `..config`) and potential bypass via non-standard path encodings.
+- `src/extraction.rs:271` — Added comprehensive `SAFETY:` comment to `unsafe { VarBuilder::from_mmaped_safetensors(...) }` documenting the three soundness invariants (file not concurrently modified, mmaped region lifetime tracking, safetensors format validation).
+- `src/storage/connection.rs:14-21` — Added `SAFETY:` comment to `unsafe { rusqlite::ffi::sqlite3_auto_extension(...) }` documenting FFI ABI compatibility, transmute layout invariants, and single-call invocation guarantee.
+- `src/paths.rs` (6 SAFETY comments in tests) — Translated from Portuguese (`"SAFETY: testes marcados com #[serial] garantem ausência de concorrência."`) to English (`"SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution."`).
+
+### Added (UX Improvements)
+- `list --include-deleted` flag to surface soft-deleted memories. Without this flag, `forget` followed by `list` would create a workflow dead-end where soft-deleted entries became invisible.
+- `history --no-body` flag to omit version body content from the JSON response. Useful for memories with large body content where only metadata/version sequence is needed.
+- `MemoryType::Document` and `MemoryType::Note` variants added to the `--type` enum (`remember`, `list`, `recall`). Documentation-style content no longer needs to abuse the `Reference` type.
+- `help =` text added to ~10 previously bare flags (`--namespace`, `--limit`, `--offset`, `--format`, `--db`, `--include-deleted`, `--no-body`) across `list`, `history`, and other subcommands.
+- README Quick Start now explicitly documents that `sqlite-graphrag init` is the first required command and that `graphrag.sqlite` is created in the current working directory by default.
+
+### Changed (Schema & UX)
+- `--json` flag is now hidden in 21 subcommands via `#[arg(long, hide = true)]`. The flag was a no-op (JSON is the default output format) but appeared in `--help` causing confusion. The flag remains accepted for backward compatibility with tools that pass it explicitly.
+- `history` JSON response: `metadata` field type changed from `String` (raw JSON-encoded) to `serde_json::Value` (parsed object), aligning with `read` which already exposed it as `Value`. Consumers parsing `metadata` as a JSON string must now read it as an object directly. Empty/invalid metadata defaults to `{}`.
+- `history` JSON response: `body` field is now `Option<String>` (omitted when `--no-body` is set). When the field is present (default), the existing schema is unchanged.
+- `Cargo.toml` `exclude` list: `/CLAUDE.md`, `/AGENTS.md`, `/MEMORY.md` rewritten without leading `/` for idiomatic relative-path semantics matching cargo conventions.
+
+### Notes
+- This is a **patch release** focused on policy compliance and UX fixes detected in the v1.0.28 audit (`/tmp/sqlite-graphrag-audit/reports/audit-v1.0.28.md`).
+- One JSON schema change: `history.metadata` from string to object. Consumers that parsed `metadata` as a string must now read it as an object. All other JSON contracts (commands, fields, exit codes) remain unchanged.
+- Empirically validated against real Markdown documents from a 495-file corpus during the v1.0.28 audit. CRUD cycle (init → remember → recall → read → edit → forget → purge) verified end-to-end.
+
 ## [1.0.28] - 2026-04-28
 
 ### Changed

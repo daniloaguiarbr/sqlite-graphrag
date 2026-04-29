@@ -268,6 +268,13 @@ impl BertNerModel {
 
         let device = Device::Cpu;
 
+        // SAFETY: VarBuilder::from_mmaped_safetensors requires unsafe because it relies on
+        // memory-mapping the weights file. Soundness assumptions:
+        // 1. The file at `weights_path` is not concurrently modified during model lifetime
+        //    (we only read; the cache directory is owned by the current process via 0600 perms).
+        // 2. The mmaped region remains valid for the lifetime of the `VarBuilder` and any
+        //    derived tensors (enforced by candle's internal lifetime tracking).
+        // 3. The safetensors format is well-formed (verified by candle's parser before mmap).
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
                 .with_context(|| format!("mapeando {weights_path:?}"))?

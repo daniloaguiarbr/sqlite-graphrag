@@ -97,6 +97,13 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "IANA")]
     pub tz: Option<chrono_tz::Tz>,
 
+    /// Increase logging verbosity (-v=info, -vv=debug, -vvv=trace).
+    ///
+    /// Overrides `SQLITE_GRAPHRAG_LOG_LEVEL` env var when present. Logs are emitted
+    /// to stderr; JSON stdout is unaffected.
+    #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -266,12 +273,37 @@ impl Commands {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize database and download embedding model
+    #[command(after_long_help = "EXAMPLES:\n  \
+        # Initialize in current directory (default behavior)\n  \
+        sqlite-graphrag init\n\n  \
+        # Initialize at a specific path\n  \
+        sqlite-graphrag init --db /path/to/graphrag.sqlite\n\n  \
+        # Initialize using SQLITE_GRAPHRAG_HOME env var\n  \
+        SQLITE_GRAPHRAG_HOME=/data sqlite-graphrag init")]
     Init(init::InitArgs),
     /// Run or control the persistent embedding daemon
     Daemon(daemon::DaemonArgs),
     /// Save a memory with optional entity graph
+    #[command(after_long_help = "EXAMPLES:\n  \
+        # Inline body\n  \
+        sqlite-graphrag remember --name onboarding --type user --description \"intro\" --body \"hello\"\n\n  \
+        # Body from file\n  \
+        sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-file ./README.md\n\n  \
+        # Body from stdin (pipe)\n  \
+        cat README.md | sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-stdin\n\n  \
+        # Skip BERT entity extraction (faster)\n  \
+        sqlite-graphrag remember --name quick --type note --description \"...\" --body \"...\" --skip-extraction")]
     Remember(remember::RememberArgs),
     /// Search memories semantically
+    #[command(after_long_help = "EXAMPLES:\n  \
+        # Top 10 semantic matches (default)\n  \
+        sqlite-graphrag recall \"agent memory\"\n\n  \
+        # Top 3 only\n  \
+        sqlite-graphrag recall \"agent memory\" -k 3\n\n  \
+        # Search across all namespaces\n  \
+        sqlite-graphrag recall \"agent memory\" --all-namespaces\n\n  \
+        # Disable graph traversal (vector-only)\n  \
+        sqlite-graphrag recall \"agent memory\" --no-graph")]
     Recall(recall::RecallArgs),
     /// Read a memory by exact name
     Read(read::ReadArgs),
@@ -290,6 +322,11 @@ pub enum Commands {
     /// Restore a memory to a previous version
     Restore(restore::RestoreArgs),
     /// Search using hybrid vector + full-text search
+    #[command(after_long_help = "EXAMPLES:\n  \
+        # Hybrid search combining KNN + FTS5 BM25 with RRF\n  \
+        sqlite-graphrag hybrid-search \"agent memory architecture\"\n\n  \
+        # Custom weights for vector vs full-text components\n  \
+        sqlite-graphrag hybrid-search \"agent\" --weight-vec 0.7 --weight-fts 0.3")]
     HybridSearch(hybrid_search::HybridSearchArgs),
     /// Show database health
     Health(health::HealthArgs),
@@ -315,6 +352,8 @@ pub enum Commands {
     Graph(graph_export::GraphArgs),
     /// Remove entities that have no memories and no relationships
     CleanupOrphans(cleanup_orphans::CleanupOrphansArgs),
+    /// Manage cached resources (embedding models, etc.)
+    Cache(cache::CacheArgs),
     #[command(name = "__debug_schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
 }
@@ -328,6 +367,8 @@ pub enum MemoryType {
     Decision,
     Incident,
     Skill,
+    Document,
+    Note,
 }
 
 #[cfg(test)]
@@ -378,6 +419,8 @@ impl MemoryType {
             Self::Decision => "decision",
             Self::Incident => "incident",
             Self::Skill => "skill",
+            Self::Document => "document",
+            Self::Note => "note",
         }
     }
 }
