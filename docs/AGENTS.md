@@ -549,7 +549,7 @@ let output = Command::new("sqlite-graphrag")
 - Each entity object MUST include `name` and `entity_type`
 - The alias field `type` is accepted as a synonym for `entity_type`
 - Agents MUST NOT send both `entity_type` and `type` in the same entity object
-- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`
+- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, and `date`
 - `--relationships-file` accepts a JSON array of relationship objects
 - Each relationship object MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` MUST be a floating-point number in the inclusive range `[0.0, 1.0]`

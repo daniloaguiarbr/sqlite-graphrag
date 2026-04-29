@@ -367,7 +367,7 @@ sqlite-graphrag graph entities --entity-type person --namespace meu-projeto --js
 sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```
 - Pré-requisitos: ao menos uma entidade deve existir — criada via `remember` ou `link` explícito
-- `--entity-type <TIPO>` filtra resultados por um único tipo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--entity-type <TIPO>` filtra resultados por um único tipo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--limit <N>` limita a contagem de resultados (padrão: 50); `--offset <N>` habilita paginação por cursor
 - Schema de saída: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
 - Cada item contém `id`, `name`, `entity_type`, `namespace` e `created_at`
@@ -466,7 +466,7 @@ sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends
 ```
 - Pré-requisitos: a aresta deve existir; os três argumentos `--from`, `--to` e `--relation` são obrigatórios
 - Valores válidos para `--relation`: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
-- Ambas as entidades `--from`/`--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Ambas as entidades `--from`/`--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: aresta removida
 - Exit code 4: aresta não encontrada
 
@@ -476,7 +476,7 @@ sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends
 - Pré-requisito: as entidades devem existir no grafo antes de criar links explícitos
 - Crie primeiro memórias com payloads explícitos de grafo e depois chame `link` para tipar arestas adicionais
 - Use `--from`/`--source` e `--to`/`--target` de forma intercambiável; aliases legados continuam suportados
-- Ambas as entidades `--from` e `--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Ambas as entidades `--from` e `--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Tentar vincular entidades cujos nomes não correspondam a nó tipado retorna exit code 4
 - Saída JSON: `{action, from, source, to, target, relation, weight, namespace}`
 ```bash
@@ -510,7 +510,7 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
 - O campo alias `type` também é aceito como sinônimo de `entity_type`
 - NÃO envie `entity_type` e `type` no mesmo objeto porque o parser trata isso como campo duplicado
-- Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valores válidos para `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Valores inválidos de `entity_type` são rejeitados na ingestão com erro de validação descritivo
 - `--relationships-file` aceita um array JSON onde cada objeto deve incluir `source`, `target`, `relation` e `strength`; `from` e `to` são aceitos como aliases de `source` e `target`
 - `--graph-stdin` aceita um objeto JSON com `body` opcional, `entities` e `relationships`; JSON inválido falha e não é salvo como texto do body

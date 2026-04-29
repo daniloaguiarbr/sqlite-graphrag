@@ -315,14 +315,14 @@ impl BertNerModel {
         let sequence_output = self
             .bert
             .forward(&input_ids, &token_type_ids, Some(&attn_mask))
-            .context("forward pass do BertModel")?;
+            .context("BertModel forward pass")?;
 
         let logits = self
             .classifier
             .forward(&sequence_output)
-            .context("forward pass do classificador")?;
+            .context("classifier forward pass")?;
 
-        let logits_2d = logits.squeeze(0).context("removendo dimensão batch")?;
+        let logits_2d = logits.squeeze(0).context("removing batch dimension")?;
 
         let num_tokens = logits_2d.dim(0).context("dim(0)")?;
 
@@ -372,17 +372,17 @@ impl BertNerModel {
             let ids_i64: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
             // Build 1-D token tensor then pad to max_len
             let t = Tensor::from_vec(ids_i64, len, &self.device)
-                .context("criando tensor de ids para batch")?;
+                .context("creating id tensor for batch")?;
             let t = t
                 .pad_with_zeros(0, 0, pad_right)
-                .context("padding tensor de ids")?;
+                .context("padding id tensor")?;
             padded_ids.push(t);
 
             // Attention mask: 1 for real tokens, 0 for padding
             let mut mask_i64 = vec![1i64; len];
             mask_i64.extend(vec![0i64; pad_right]);
             let m = Tensor::from_vec(mask_i64, max_len, &self.device)
-                .context("criando tensor de máscara para batch")?;
+                .context("creating mask tensor for batch")?;
             padded_masks.push(m);
         }
 
@@ -390,13 +390,13 @@ impl BertNerModel {
         let input_ids = Tensor::stack(&padded_ids, 0).context("stack input_ids")?;
         let attn_mask = Tensor::stack(&padded_masks, 0).context("stack attn_mask")?;
         let token_type_ids = Tensor::zeros((batch_size, max_len), DType::I64, &self.device)
-            .context("criando token_type_ids batch")?;
+            .context("creating token_type_ids tensor for batch")?;
 
         // Single forward pass for the entire batch
         let sequence_output = self
             .bert
             .forward(&input_ids, &token_type_ids, Some(&attn_mask))
-            .context("forward pass batch BertModel")?;
+            .context("BertModel batch forward pass")?;
         // sequence_output: (batch_size, max_len, hidden_size)
 
         let logits = self
@@ -458,8 +458,7 @@ fn model_dir(paths: &AppPaths) -> PathBuf {
 
 fn ensure_model_files(paths: &AppPaths) -> Result<PathBuf> {
     let dir = model_dir(paths);
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("criando diretório do modelo: {dir:?}"))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating model directory: {dir:?}"))?;
 
     let weights = dir.join("model.safetensors");
     let config = dir.join("config.json");
@@ -743,10 +742,10 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
         }
     }
 
-    // v1.0.20: avisar quando relacionamentos foram truncados antes de cobrir todos os pares possíveis.
+    // v1.0.20: warn when relationships were truncated before covering all possible pairs.
     if hit_cap {
         tracing::warn!(
-            "relacionamentos truncados em {max_rels} (com {n} entidades, máx teórico era ~{}× combinações)",
+            "relationships truncated to {max_rels} (with {n} entities, theoretical max was ~{}x combinations)",
             n.saturating_sub(1)
         );
     }
@@ -761,11 +760,11 @@ fn run_ner_sliding_window(
 ) -> Result<Vec<ExtractedEntity>> {
     let tokenizer_path = model_dir(paths).join("tokenizer.json");
     let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-        .map_err(|e| anyhow::anyhow!("carregando tokenizer NER: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("loading NER tokenizer: {e}"))?;
 
     let encoding = tokenizer
         .encode(body, false)
-        .map_err(|e| anyhow::anyhow!("encoding NER: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("encoding NER input: {e}"))?;
 
     let all_ids: Vec<u32> = encoding.get_ids().to_vec();
     let all_tokens: Vec<String> = encoding
@@ -1019,10 +1018,10 @@ fn merge_and_deduplicate(
         }
     }
 
-    // v1.0.20: avisar quando truncamento silencioso descarta entidades acima do MAX_ENTS.
+    // v1.0.20: warn when silent truncation discards entities above MAX_ENTS.
     if truncated {
         tracing::warn!(
-            "extração truncada em {MAX_ENTS} entidades (entrada tinha {total_input} candidatos antes da deduplicação)"
+            "extraction truncated at {MAX_ENTS} entities (input had {total_input} candidates before deduplication)"
         );
     }
 
@@ -1150,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_all_caps_aceita_constante_com_underscore() {
+    fn regex_all_caps_accepts_underscored_constant() {
         // Constantes técnicas tipo MAX_RETRY, TIMEOUT_MS sempre devem ser aceitas.
         let ents = apply_regex_prefilter("configure MAX_RETRY=3 e API_TIMEOUT=30");
         assert!(ents.iter().any(|e| e.name == "MAX_RETRY"));
@@ -1158,7 +1157,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_all_caps_aceita_acronimo_dominio() {
+    fn regex_all_caps_accepts_domain_acronym() {
         // Acrônimos legítimos (não-stopword) devem passar: OPENAI, NVIDIA, GOOGLE.
         let ents = apply_regex_prefilter("OPENAI lançou GPT-5 com NVIDIA H100");
         assert!(ents.iter().any(|e| e.name == "OPENAI"));
@@ -1166,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_url_nao_aparece_em_apply_regex_prefilter() {
+    fn regex_url_does_not_appear_in_apply_regex_prefilter() {
         // v1.0.24 P0-2: URLs foram removidas de apply_regex_prefilter e agora vão para extract_urls.
         let ents = apply_regex_prefilter("veja https://docs.rs/crate para detalhes");
         assert!(
@@ -1223,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_decodifica_per_para_person() {
+    fn iob_decodes_per_to_person() {
         let tokens = vec![
             "John".to_string(),
             "Doe".to_string(),
@@ -1262,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_mapeia_date_para_date_v1025() {
+    fn iob_maps_date_to_date_v1025() {
         // v1.0.25 V008: DATE is now emitted instead of discarded.
         let tokens = vec!["Janeiro".to_string(), "2024".to_string()];
         let labels = vec!["B-DATE".to_string(), "I-DATE".to_string()];
@@ -1272,7 +1271,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_mapeia_org_para_organization_v1025() {
+    fn iob_maps_org_to_organization_v1025() {
         // v1.0.25 V008: B-ORG without tool keywords maps to "organization" not "project".
         let tokens = vec!["Empresa".to_string()];
         let labels = vec!["B-ORG".to_string()];
@@ -1281,7 +1280,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_mapeia_org_sdk_para_tool() {
+    fn iob_maps_org_sdk_to_tool() {
         let tokens = vec!["tokio-sdk".to_string()];
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
@@ -1289,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_mapeia_loc_para_location_v1025() {
+    fn iob_maps_loc_to_location_v1025() {
         // v1.0.25 V008: B-LOC maps to "location" not "concept".
         let tokens = vec!["Brasil".to_string()];
         let labels = vec!["B-LOC".to_string()];
@@ -1315,7 +1314,7 @@ mod tests {
     }
 
     #[test]
-    fn build_relationships_sem_duplicatas() {
+    fn build_relationships_without_duplicates() {
         let entities: Vec<NewEntity> = (0..5)
             .map(|i| NewEntity {
                 name: format!("ent_{i}"),
@@ -1333,7 +1332,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_deduplica_por_nome_lowercase() {
+    fn merge_dedupes_by_lowercase_name() {
         // v1.0.25: collision detection is scoped per entity_type; same name + same type
         // must deduplicate to one entry. Different types are kept separately.
         let a = vec![ExtractedEntity {
@@ -1362,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_retorna_ok_sem_modelo() {
+    fn extract_returns_ok_without_model() {
         // Sem modelo baixado, deve retornar Ok com apenas entidades regex
         let paths = make_paths();
         let body = "contato: teste@exemplo.com com MAX_RETRY=3";

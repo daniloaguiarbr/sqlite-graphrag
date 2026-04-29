@@ -35,7 +35,7 @@ fn slot_path(tmp: &TempDir, slot: usize) -> std::path::PathBuf {
 
 #[test]
 #[serial]
-fn slot_liberado_apos_processo_sair() {
+fn slot_released_after_process_exits() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     // Primeira invocação — deve adquirir e liberar o slot 1.
@@ -63,7 +63,7 @@ fn slot_liberado_apos_processo_sair() {
 
 #[test]
 #[serial]
-fn arquivo_slot_criado_em_cache_dir() {
+fn slot_file_created_in_cache_dir() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     Command::cargo_bin("sqlite-graphrag")
@@ -88,7 +88,7 @@ fn arquivo_slot_criado_em_cache_dir() {
 
 #[test]
 #[serial]
-fn wait_lock_zero_retorna_75_quando_slots_ocupados() {
+fn wait_lock_zero_returns_75_when_slots_busy() {
     use fs4::fs_std::FileExt;
     use std::fs::OpenOptions;
 

@@ -344,7 +344,7 @@ fn env_var_sqlite_graphrag_lang_pt_br_aplica_portugues() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn flag_lang_en_vence_env_lang_pt() {
+fn flag_lang_en_overrides_env_lang_pt() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -364,7 +364,7 @@ fn flag_lang_en_vence_env_lang_pt() {
 }
 
 #[test]
-fn flag_lang_pt_vence_env_lang_en() {
+fn flag_lang_pt_overrides_env_lang_en() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -466,7 +466,7 @@ fn json_stdout_identico_em_en_e_pt() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn alias_english_aceito_pela_cli() {
+fn alias_english_accepted_by_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -492,7 +492,7 @@ fn alias_english_aceito_pela_cli() {
 }
 
 #[test]
-fn alias_pt_br_aceito_pela_cli() {
+fn alias_pt_br_accepted_by_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

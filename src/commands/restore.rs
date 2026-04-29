@@ -98,7 +98,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
                 AppError::NotFound(errors_msg::memory_not_found(&args.name, &namespace))
             })?;
             tracing::info!(
-                "restore --version omitido; usando última versão não-restore: {}",
+                "restore --version omitted; using latest non-restore version: {}",
                 v
             );
             v

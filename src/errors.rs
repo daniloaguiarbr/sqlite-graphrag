@@ -222,7 +222,7 @@ mod tests {
     use std::io;
 
     #[test]
-    fn exit_code_validation_retorna_1() {
+    fn exit_code_validation_returns_1() {
         assert_eq!(AppError::Validation("campo inválido".into()).exit_code(), 1);
     }
 
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn display_validation_inclui_mensagem() {
+    fn display_validation_includes_message() {
         let err = AppError::Validation("cpf inválido".into());
         assert!(err.to_string().contains("cpf inválido"));
         assert!(err.to_string().contains("validation error"));
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_en_igual_to_string() {
+    fn localized_message_en_equals_to_string() {
         let err = AppError::NotFound("mem-x".into());
         assert_eq!(
             err.localized_message_for(crate::i18n::Language::English),
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_not_found_em_portugues() {
+    fn localized_message_pt_not_found_in_portuguese() {
         let err = AppError::NotFound("mem-x".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(msg.contains("não encontrado"), "esperado PT, obtido: {msg}");
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_validation_em_portugues() {
+    fn localized_message_pt_validation_in_portuguese() {
         let err = AppError::Validation("campo x".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(
@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_duplicate_em_portugues() {
+    fn localized_message_pt_duplicate_in_portuguese() {
         let err = AppError::Duplicate("ns/mem".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(
@@ -434,14 +434,14 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_conflict_em_portugues() {
+    fn localized_message_pt_conflict_in_portuguese() {
         let err = AppError::Conflict("ts mudou".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(msg.contains("conflito"), "esperado PT, obtido: {msg}");
     }
 
     #[test]
-    fn localized_message_pt_namespace_em_portugues() {
+    fn localized_message_pt_namespace_in_portuguese() {
         let err = AppError::NamespaceError("sem marcador".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(
@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_limit_exceeded_em_portugues() {
+    fn localized_message_pt_limit_exceeded_in_portuguese() {
         let err = AppError::LimitExceeded("corpo enorme".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(
@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_embedding_em_portugues() {
+    fn localized_message_pt_embedding_in_portuguese() {
         let err = AppError::Embedding("dim errada".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(
@@ -471,14 +471,14 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_db_busy_em_portugues() {
+    fn localized_message_pt_db_busy_in_portuguese() {
         let err = AppError::DbBusy("retries esgotados".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(msg.contains("banco ocupado"), "esperado PT, obtido: {msg}");
     }
 
     #[test]
-    fn localized_message_pt_batch_partial_failure_em_portugues() {
+    fn localized_message_pt_batch_partial_failure_in_portuguese() {
         let err = AppError::BatchPartialFailure {
             total: 10,
             failed: 3,
@@ -490,14 +490,14 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_lock_busy_em_portugues() {
+    fn localized_message_pt_lock_busy_in_portuguese() {
         let err = AppError::LockBusy("pid 42".into());
         let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
         assert!(msg.contains("lock ocupado"), "esperado PT, obtido: {msg}");
     }
 
     #[test]
-    fn localized_message_pt_all_slots_full_em_portugues() {
+    fn localized_message_pt_all_slots_full_in_portuguese() {
         let err = AppError::AllSlotsFull {
             max: 4,
             waited_secs: 60,
@@ -510,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_message_pt_low_memory_em_portugues() {
+    fn localized_message_pt_low_memory_in_portuguese() {
         let err = AppError::LowMemory {
             available_mb: 100,
             required_mb: 500,

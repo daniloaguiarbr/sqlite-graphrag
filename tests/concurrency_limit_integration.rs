@@ -68,7 +68,7 @@ fn limite_respeitado_sob_carga() {
 
 #[test]
 #[serial]
-fn max_concurrency_zero_rejeitado_com_exit_2() {
+fn max_concurrency_zero_rejected_with_exit_2() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     Command::cargo_bin("sqlite-graphrag")
@@ -146,7 +146,7 @@ fn todos_slots_ocupados_retornam_75() {
 
 #[test]
 #[serial]
-fn skip_memory_guard_bypassa_verificacao_de_ram() {
+fn skip_memory_guard_bypasses_ram_check() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     // Com --skip-memory-guard, o comando deve completar com sucesso mesmo em

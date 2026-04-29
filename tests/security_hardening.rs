@@ -21,7 +21,7 @@ fn init_db(tmp: &TempDir) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_path_traversal_rejeitado_em_db_path() {
+fn test_path_traversal_rejected_in_db_path() {
     let tmp = TempDir::new().unwrap();
     let traversal = format!("{}/../../../etc/passwd", tmp.path().display());
 
@@ -36,7 +36,7 @@ fn test_path_traversal_rejeitado_em_db_path() {
 }
 
 #[test]
-fn test_path_traversal_duplo_ponto_rejeitado() {
+fn test_path_traversal_double_dot_rejected() {
     let tmp = TempDir::new().unwrap();
 
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
@@ -50,7 +50,7 @@ fn test_path_traversal_duplo_ponto_rejeitado() {
 }
 
 #[test]
-fn test_path_traversal_validate_path_direto() {
+fn test_path_traversal_validate_path_direct() {
     use sqlite_graphrag::paths::AppPaths;
     let resultado = AppPaths::resolve(Some("../../../etc/passwd"));
     assert!(
@@ -65,7 +65,7 @@ fn test_path_traversal_validate_path_direto() {
 }
 
 #[test]
-fn test_path_normal_aceito_por_validate_path() {
+fn test_normal_path_accepted_by_validate_path() {
     let tmp = TempDir::new().unwrap();
     let caminho_valido = tmp.path().join("valido.sqlite");
     let resultado =
@@ -82,7 +82,7 @@ fn test_path_normal_aceito_por_validate_path() {
 
 #[test]
 #[cfg(unix)]
-fn test_symlink_para_etc_rejeitado() {
+fn test_symlink_to_etc_rejected() {
     let tmp = TempDir::new().unwrap();
     let link_path = tmp.path().join("link_malicioso.sqlite");
 
@@ -108,7 +108,7 @@ fn test_symlink_para_etc_rejeitado() {
 
 #[test]
 #[cfg(unix)]
-fn test_chmod_600_apos_init_unix() {
+fn test_chmod_600_after_init_unix() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -127,7 +127,7 @@ fn test_chmod_600_apos_init_unix() {
 
 #[test]
 #[cfg(unix)]
-fn test_chmod_600_nao_permite_leitura_por_grupo() {
+fn test_chmod_600_does_not_allow_group_read() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -202,7 +202,7 @@ fn test_sqlite_wal_shm_chmod_600() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_blake3_hash_idempotente() {
+fn test_blake3_hash_idempotent() {
     let corpo = "conteudo de teste para hash determinístico";
     let hash1 = blake3::hash(corpo.as_bytes()).to_hex().to_string();
     let hash2 = blake3::hash(corpo.as_bytes()).to_hex().to_string();
@@ -213,7 +213,7 @@ fn test_blake3_hash_idempotente() {
 }
 
 #[test]
-fn test_blake3_hash_diferente_para_corpos_distintos() {
+fn test_blake3_hash_differs_for_distinct_bodies() {
     let corpo1 = "primeiro conteudo";
     let corpo2 = "segundo conteudo diferente";
     let hash1 = blake3::hash(corpo1.as_bytes()).to_hex().to_string();
@@ -225,7 +225,7 @@ fn test_blake3_hash_diferente_para_corpos_distintos() {
 }
 
 #[test]
-fn test_blake3_hash_length_correto() {
+fn test_blake3_hash_length_correct() {
     let hash = blake3::hash(b"qualquer corpo").to_hex().to_string();
     assert_eq!(
         hash.len(),
@@ -235,7 +235,7 @@ fn test_blake3_hash_length_correto() {
 }
 
 #[test]
-fn test_blake3_deduplicacao_via_cli() {
+fn test_blake3_deduplication_via_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -291,7 +291,7 @@ fn test_blake3_deduplicacao_via_cli() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cli_slot_lock_files_tamanho_pequeno() {
+fn test_cli_slot_lock_files_small_size() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -317,7 +317,7 @@ fn test_cli_slot_lock_files_tamanho_pequeno() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cache_dir_sem_traversal_no_override() {
+fn test_cache_dir_without_traversal_in_override() {
     use sqlite_graphrag::paths::AppPaths;
 
     let resultado = AppPaths::resolve(Some("/tmp/teste-seguro/banco.sqlite"));
@@ -332,7 +332,7 @@ fn test_cache_dir_sem_traversal_no_override() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_erro_nao_vaza_caminho_absoluto_no_stderr() {
+fn test_error_does_not_leak_absolute_path_in_stderr() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -360,7 +360,7 @@ fn test_erro_nao_vaza_caminho_absoluto_no_stderr() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_sql_injection_em_nome_rejeitado() {
+fn test_sql_injection_in_name_rejected() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -390,7 +390,7 @@ fn test_sql_injection_em_nome_rejeitado() {
 }
 
 #[test]
-fn test_sql_injection_em_namespace_rejeitado() {
+fn test_sql_injection_in_namespace_rejected() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

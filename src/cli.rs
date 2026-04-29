@@ -109,12 +109,12 @@ pub struct Cli {
 }
 
 #[cfg(test)]
-mod testes_formato_json_only {
+mod json_only_format_tests {
     use super::Cli;
     use clap::Parser;
 
     #[test]
-    fn restore_aceita_apenas_format_json() {
+    fn restore_accepts_only_format_json() {
         assert!(Cli::try_parse_from([
             "sqlite-graphrag",
             "restore",
@@ -141,7 +141,7 @@ mod testes_formato_json_only {
     }
 
     #[test]
-    fn hybrid_search_aceita_apenas_format_json() {
+    fn hybrid_search_accepts_only_format_json() {
         assert!(Cli::try_parse_from([
             "sqlite-graphrag",
             "hybrid-search",
@@ -294,6 +294,8 @@ pub enum Commands {
         # Skip BERT entity extraction (faster)\n  \
         sqlite-graphrag remember --name quick --type note --description \"...\" --body \"...\" --skip-extraction")]
     Remember(remember::RememberArgs),
+    /// Bulk-ingest every file under a directory as separate memories (NDJSON output)
+    Ingest(ingest::IngestArgs),
     /// Search memories semantically
     #[command(after_long_help = "EXAMPLES:\n  \
         # Top 10 semantic matches (default)\n  \
@@ -372,11 +374,11 @@ pub enum MemoryType {
 }
 
 #[cfg(test)]
-mod testes_concorrencia_pesada {
+mod heavy_concurrency_tests {
     use super::*;
 
     #[test]
-    fn command_heavy_detecta_init_e_embeddings() {
+    fn command_heavy_detects_init_and_embeddings() {
         let init = Cli::try_parse_from(["sqlite-graphrag", "init"]).expect("parse init");
         assert!(init.command.is_embedding_heavy());
 
@@ -384,7 +386,7 @@ mod testes_concorrencia_pesada {
             "sqlite-graphrag",
             "remember",
             "--name",
-            "memoria-teste",
+            "test-memory",
             "--type",
             "project",
             "--description",
@@ -394,16 +396,16 @@ mod testes_concorrencia_pesada {
         assert!(remember.command.is_embedding_heavy());
 
         let recall =
-            Cli::try_parse_from(["sqlite-graphrag", "recall", "consulta"]).expect("parse recall");
+            Cli::try_parse_from(["sqlite-graphrag", "recall", "query"]).expect("parse recall");
         assert!(recall.command.is_embedding_heavy());
 
-        let hybrid = Cli::try_parse_from(["sqlite-graphrag", "hybrid-search", "consulta"])
+        let hybrid = Cli::try_parse_from(["sqlite-graphrag", "hybrid-search", "query"])
             .expect("parse hybrid");
         assert!(hybrid.command.is_embedding_heavy());
     }
 
     #[test]
-    fn command_light_nao_marca_stats() {
+    fn command_light_does_not_mark_stats() {
         let stats = Cli::try_parse_from(["sqlite-graphrag", "stats"]).expect("parse stats");
         assert!(!stats.command.is_embedding_heavy());
     }

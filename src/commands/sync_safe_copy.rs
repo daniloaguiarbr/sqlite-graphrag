@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_safe_copy_rejeita_dest_igual_source() {
+    fn sync_safe_copy_rejects_dest_equal_to_source() {
         let db_path = std::path::PathBuf::from("/tmp/mesmo.sqlite");
         let args = SyncSafeCopyArgs {
             dest: db_path.clone(),

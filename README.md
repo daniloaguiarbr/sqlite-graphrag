@@ -175,7 +175,7 @@ sqlite-graphrag remember \
 ```bash
 sqlite-graphrag remember \
   --name release-notes-v1 \
-  --type concept \
+  --type document \
   --description "release notes for v1.0.0" \
   --skip-extraction \
   --body-stdin < notes.md

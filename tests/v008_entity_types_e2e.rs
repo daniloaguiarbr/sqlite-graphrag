@@ -100,8 +100,7 @@ fn v008_entity_types_organization_location_date_round_trip() {
         .expect("graph runs");
     assert!(graph.status.success(), "graph export failed: {graph:?}");
 
-    let payload: Value =
-        serde_json::from_slice(&graph.stdout).expect("graph output is valid JSON");
+    let payload: Value = serde_json::from_slice(&graph.stdout).expect("graph output is valid JSON");
     let nodes = payload
         .get("nodes")
         .and_then(|n| n.as_array())

@@ -8,6 +8,7 @@ pub mod graph_export;
 pub mod health;
 pub mod history;
 pub mod hybrid_search;
+pub mod ingest;
 pub mod init;
 pub mod link;
 pub mod list;

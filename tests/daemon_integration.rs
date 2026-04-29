@@ -264,7 +264,7 @@ fn daemon_respawns_automatically_after_stop() {
 }
 
 #[test]
-fn skip_memory_guard_nao_autostarta_daemon_sem_force() {
+fn skip_memory_guard_does_not_autostart_daemon_without_force() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
     let db_path = tmp.path().join("graphrag.sqlite");
@@ -297,7 +297,7 @@ fn skip_memory_guard_nao_autostarta_daemon_sem_force() {
 }
 
 #[test]
-fn daemon_encerra_quando_cache_dir_some() {
+fn daemon_shuts_down_when_cache_dir_disappears() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
     std::fs::create_dir_all(&cache_dir).unwrap();

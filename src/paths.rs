@@ -95,7 +95,7 @@ mod tests {
 
     /// Clears all variables that affect `AppPaths::resolve` to isolate the
     /// test from the developer/CI environment.
-    fn limpar_env_paths() {
+    fn clean_env_paths() {
         // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::remove_var("SQLITE_GRAPHRAG_HOME");
@@ -106,61 +106,61 @@ mod tests {
 
     #[test]
     #[serial]
-    fn home_env_resolve_db_em_subdir() {
-        limpar_env_paths();
+    fn home_env_resolves_db_in_subdir() {
+        clean_env_paths();
         let tmp = TempDir::new().expect("tempdir");
         // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp.path());
         }
 
-        let paths = AppPaths::resolve(None).expect("resolve com HOME valido");
+        let paths = AppPaths::resolve(None).expect("resolve with valid HOME");
         assert_eq!(paths.db, tmp.path().join("graphrag.sqlite"));
 
-        limpar_env_paths();
+        clean_env_paths();
     }
 
     #[test]
     #[serial]
-    fn home_env_traversal_rejeitado() {
-        limpar_env_paths();
+    fn home_env_traversal_rejected() {
+        clean_env_paths();
         // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", "/tmp/../etc");
         }
 
-        let resultado = AppPaths::resolve(None);
+        let result = AppPaths::resolve(None);
         assert!(
-            matches!(resultado, Err(AppError::Validation(_))),
-            "traversal em SQLITE_GRAPHRAG_HOME deve falhar como Validation, obteve {resultado:?}"
+            matches!(result, Err(AppError::Validation(_))),
+            "traversal in SQLITE_GRAPHRAG_HOME must fail as Validation, got {result:?}"
         );
 
-        limpar_env_paths();
+        clean_env_paths();
     }
 
     #[test]
     #[serial]
-    fn db_path_vence_home() {
-        limpar_env_paths();
+    fn db_path_overrides_home() {
+        clean_env_paths();
         let tmp_home = TempDir::new().expect("tempdir home");
         let tmp_db = TempDir::new().expect("tempdir db");
-        let db_explicito = tmp_db.path().join("explicito.sqlite");
+        let explicit_db = tmp_db.path().join("explicit.sqlite");
         // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", tmp_home.path());
-            std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", &db_explicito);
+            std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", &explicit_db);
         }
 
-        let paths = AppPaths::resolve(None).expect("resolve com DB_PATH e HOME");
-        assert_eq!(paths.db, db_explicito);
+        let paths = AppPaths::resolve(None).expect("resolve with DB_PATH and HOME");
+        assert_eq!(paths.db, explicit_db);
 
-        limpar_env_paths();
+        clean_env_paths();
     }
 
     #[test]
     #[serial]
-    fn flag_vence_home() {
-        limpar_env_paths();
+    fn flag_overrides_home() {
+        clean_env_paths();
         let tmp_home = TempDir::new().expect("tempdir home");
         let tmp_flag = TempDir::new().expect("tempdir flag");
         let db_flag = tmp_flag.path().join("via-flag.sqlite");
@@ -170,55 +170,55 @@ mod tests {
         }
 
         let paths = AppPaths::resolve(Some(db_flag.to_str().expect("utf8")))
-            .expect("resolve com flag e HOME");
+            .expect("resolve with flag and HOME");
         assert_eq!(paths.db, db_flag);
 
-        limpar_env_paths();
+        clean_env_paths();
     }
 
     #[test]
     #[serial]
-    fn home_env_vazio_cai_para_cwd() {
-        limpar_env_paths();
+    fn home_env_empty_falls_back_to_cwd() {
+        clean_env_paths();
         // SAFETY: tests are annotated with #[serial], guaranteeing single-threaded execution.
         unsafe {
             std::env::set_var("SQLITE_GRAPHRAG_HOME", "");
         }
 
-        let paths = AppPaths::resolve(None).expect("resolve com HOME vazio");
-        let esperado = std::env::current_dir()
+        let paths = AppPaths::resolve(None).expect("resolve with empty HOME");
+        let expected = std::env::current_dir()
             .expect("cwd")
             .join("graphrag.sqlite");
-        assert_eq!(paths.db, esperado);
+        assert_eq!(paths.db, expected);
 
-        limpar_env_paths();
+        clean_env_paths();
     }
 
     #[test]
-    fn parent_or_err_aceita_path_normal() {
-        let p = PathBuf::from("/home/usuario/db.sqlite");
-        let pai = parent_or_err(&p).expect("parent valido");
-        assert_eq!(pai, Path::new("/home/usuario"));
+    fn parent_or_err_accepts_normal_path() {
+        let p = PathBuf::from("/home/user/db.sqlite");
+        let parent = parent_or_err(&p).expect("valid parent");
+        assert_eq!(parent, Path::new("/home/user"));
     }
 
     #[test]
-    fn parent_or_err_aceita_path_relativo() {
-        let p = PathBuf::from("subpasta/arquivo.sqlite");
-        let pai = parent_or_err(&p).expect("parent relativo");
-        assert_eq!(pai, Path::new("subpasta"));
+    fn parent_or_err_accepts_relative_path() {
+        let p = PathBuf::from("subdir/file.sqlite");
+        let parent = parent_or_err(&p).expect("relative parent");
+        assert_eq!(parent, Path::new("subdir"));
     }
 
     #[test]
-    fn parent_or_err_rejeita_raiz_unix() {
+    fn parent_or_err_rejects_unix_root() {
         let p = PathBuf::from("/");
-        let resultado = parent_or_err(&p);
-        assert!(matches!(resultado, Err(AppError::Validation(_))));
+        let result = parent_or_err(&p);
+        assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
     #[test]
-    fn parent_or_err_rejeita_path_vazio() {
+    fn parent_or_err_rejects_empty_path() {
         let p = PathBuf::from("");
-        let resultado = parent_or_err(&p);
-        assert!(matches!(resultado, Err(AppError::Validation(_))));
+        let result = parent_or_err(&p);
+        assert!(matches!(result, Err(AppError::Validation(_))));
     }
 }

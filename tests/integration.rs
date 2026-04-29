@@ -137,7 +137,7 @@ fn cli_flag_db_overrides_home_env() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_init_cria_arquivo_sqlite() {
+fn test_init_creates_sqlite_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.sqlite");
     assert!(!db_path.exists(), "banco nao deve existir antes do init");
@@ -148,7 +148,7 @@ fn test_init_cria_arquivo_sqlite() {
 }
 
 #[test]
-fn test_init_cria_banco_local_no_diretorio_da_invocacao() {
+fn test_init_creates_local_db_in_invocation_directory() {
     let pasta_a = TempDir::new().unwrap();
     let pasta_b = TempDir::new().unwrap();
     let banco_a = pasta_a.path().join("graphrag.sqlite");
@@ -177,7 +177,7 @@ fn test_init_cria_banco_local_no_diretorio_da_invocacao() {
 }
 
 #[test]
-fn test_crud_usa_graphrag_sqlite_no_diretorio_da_invocacao() {
+fn test_crud_uses_graphrag_sqlite_in_invocation_directory() {
     let pasta = TempDir::new().unwrap();
     let banco = pasta.path().join("graphrag.sqlite");
 
@@ -250,7 +250,7 @@ fn test_crud_usa_graphrag_sqlite_no_diretorio_da_invocacao() {
 }
 
 #[test]
-fn test_remember_sem_init_cria_banco_local_migrado() {
+fn test_remember_without_init_creates_migrated_local_db() {
     let pasta = TempDir::new().unwrap();
     let banco = pasta.path().join("graphrag.sqlite");
 
@@ -294,7 +294,7 @@ fn test_remember_sem_init_cria_banco_local_migrado() {
 }
 
 #[test]
-fn test_init_retorna_json_com_status_ok() {
+fn test_init_returns_json_with_status_ok() {
     let tmp = TempDir::new().unwrap();
     let output = cmd(&tmp)
         .arg("init")
@@ -315,13 +315,13 @@ fn test_init_retorna_json_com_status_ok() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_health_falha_sem_init() {
+fn test_health_fails_without_init() {
     let tmp = TempDir::new().unwrap();
     cmd(&tmp).arg("health").assert().failure();
 }
 
 #[test]
-fn test_health_ok_apos_init() {
+fn test_health_ok_after_init() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -343,7 +343,7 @@ fn test_health_ok_apos_init() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_daemon_help_lista_db_e_json() {
+fn test_daemon_help_lists_db_and_json() {
     let tmp = TempDir::new().unwrap();
 
     let output = Command::cargo_bin("sqlite-graphrag")
@@ -363,7 +363,7 @@ fn test_daemon_help_lista_db_e_json() {
 }
 
 #[test]
-fn test_daemon_aceita_db_ping_json_sem_erro_de_parse() {
+fn test_daemon_accepts_db_ping_json_without_parse_error() {
     let tmp = TempDir::new().unwrap();
 
     Command::cargo_bin("sqlite-graphrag")
@@ -381,7 +381,7 @@ fn test_daemon_aceita_db_ping_json_sem_erro_de_parse() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_remember_cria_memoria() {
+fn test_remember_creates_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -410,7 +410,7 @@ fn test_remember_cria_memoria() {
 }
 
 #[test]
-fn test_remember_duplicata_retorna_exit_2() {
+fn test_remember_duplicate_returns_exit_2() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -447,7 +447,7 @@ fn test_remember_duplicata_retorna_exit_2() {
 }
 
 #[test]
-fn test_remember_force_merge_atualiza() {
+fn test_remember_force_merge_updates() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -491,7 +491,7 @@ fn test_remember_force_merge_atualiza() {
 }
 
 #[test]
-fn test_remember_rejeita_body_e_body_stdin_juntos() {
+fn test_remember_rejects_body_and_body_stdin_together() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -515,7 +515,7 @@ fn test_remember_rejeita_body_e_body_stdin_juntos() {
 }
 
 #[test]
-fn test_remember_graph_stdin_invalido_falha_sem_salvar_memoria() {
+fn test_remember_graph_stdin_invalid_fails_without_saving_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -543,7 +543,7 @@ fn test_remember_graph_stdin_invalido_falha_sem_salvar_memoria() {
 }
 
 #[test]
-fn test_remember_graph_stdin_semantico_invalido_falha_sem_salvar_memoria() {
+fn test_remember_graph_stdin_semantic_invalid_fails_without_saving_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -597,7 +597,7 @@ fn test_remember_graph_stdin_semantico_invalido_falha_sem_salvar_memoria() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_read_memoria_existente() {
+fn test_read_existing_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -631,7 +631,7 @@ fn test_read_memoria_existente() {
 }
 
 #[test]
-fn test_read_inexistente_retorna_exit_4() {
+fn test_read_nonexistent_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -647,7 +647,7 @@ fn test_read_inexistente_retorna_exit_4() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_list_memorias() {
+fn test_list_memories() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -736,7 +736,7 @@ fn test_forget_soft_delete() {
 }
 
 #[test]
-fn test_forget_inexistente_retorna_exit_4() {
+fn test_forget_nonexistent_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -752,7 +752,7 @@ fn test_forget_inexistente_retorna_exit_4() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_purge_remove_memoria_soft_deleted() {
+fn test_purge_removes_soft_deleted_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -789,7 +789,7 @@ fn test_purge_remove_memoria_soft_deleted() {
 }
 
 #[test]
-fn test_purge_yes_flag_e_noop() {
+fn test_purge_yes_flag_is_noop() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -837,7 +837,7 @@ fn test_purge_yes_flag_e_noop() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_namespace_detect_retorna_global_sem_config_local() {
+fn test_namespace_detect_returns_global_without_local_config() {
     let tmp = TempDir::new().unwrap();
 
     let output = isolated_cmd_in(tmp.path())
@@ -858,7 +858,7 @@ fn test_namespace_detect_retorna_global_sem_config_local() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_sync_safe_copy_cria_snapshot_consistente() {
+fn test_sync_safe_copy_creates_consistent_snapshot() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
     let dest = tmp.path().join("snapshot.sqlite");
@@ -882,7 +882,7 @@ fn test_sync_safe_copy_cria_snapshot_consistente() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_stats_retorna_contagens() {
+fn test_stats_returns_counts() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -916,7 +916,7 @@ fn test_stats_retorna_contagens() {
 }
 
 #[test]
-fn test_stats_falha_sem_init() {
+fn test_stats_fails_without_init() {
     let tmp = TempDir::new().unwrap();
     cmd(&tmp).arg("stats").assert().failure();
 }
@@ -926,7 +926,7 @@ fn test_stats_falha_sem_init() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_rename_memoria_funciona() {
+fn test_rename_memory_works() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -965,7 +965,7 @@ fn test_rename_memoria_funciona() {
 }
 
 #[test]
-fn test_rename_inexistente_retorna_exit_4() {
+fn test_rename_nonexistent_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -977,7 +977,7 @@ fn test_rename_inexistente_retorna_exit_4() {
 }
 
 #[test]
-fn test_rename_new_name_invalido_retorna_exit_1() {
+fn test_rename_new_name_invalid_returns_exit_1() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1014,7 +1014,7 @@ fn test_rename_new_name_invalido_retorna_exit_1() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_edit_memoria_funciona() {
+fn test_edit_memory_works() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1052,7 +1052,7 @@ fn test_edit_memoria_funciona() {
 }
 
 #[test]
-fn test_edit_rejeita_body_e_body_stdin_juntos() {
+fn test_edit_rejects_body_and_body_stdin_together() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1209,7 +1209,7 @@ fn test_history_inexistente_retorna_exit_4() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_restore_memoria_funciona() {
+fn test_restore_memory_works() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1289,7 +1289,7 @@ fn test_restore_versao_inexistente_retorna_exit_4() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_forget_purge_nao_corrompe_fts_index() {
+fn test_forget_purge_does_not_corrupt_fts_index() {
     // Regressão: forget.rs previamente executava `DELETE FROM fts_memories WHERE rowid=?`
     // direto, corrompendo índice FTS5 external-content. A corrupção só aparecia
     // quando purge executava DELETE físico em memories disparando trg_fts_ad.
@@ -1377,7 +1377,7 @@ fn seed_memory_with_entities(
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_link_cria_relacao_explicita() {
+fn test_link_creates_explicit_relationship() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1528,7 +1528,7 @@ fn test_link_peso_invalido_retorna_exit_1() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_unlink_remove_relacao_existente() {
+fn test_unlink_removes_existing_relationship() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1630,7 +1630,7 @@ fn test_unlink_entidade_ausente_retorna_exit_4() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_remember_nao_duplica_vec_entities_para_entidade_compartilhada() {
+fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1662,7 +1662,7 @@ fn test_remember_nao_duplica_vec_entities_para_entidade_compartilhada() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_related_encontra_memorias_via_grafo() {
+fn test_related_finds_memories_via_graph() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1723,7 +1723,7 @@ fn test_related_encontra_memorias_via_grafo() {
 }
 
 #[test]
-fn test_related_memoria_inexistente_retorna_exit_4() {
+fn test_related_nonexistent_memory_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1735,7 +1735,7 @@ fn test_related_memoria_inexistente_retorna_exit_4() {
 }
 
 #[test]
-fn test_related_retorna_vazio_quando_memoria_sem_entidades() {
+fn test_related_returns_empty_when_memory_has_no_entities() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1812,7 +1812,7 @@ fn test_graph_export_json_estrutura_correta() {
 }
 
 #[test]
-fn test_graph_stdin_preserva_entity_type_ao_criar_relationships() {
+fn test_graph_stdin_preserves_entity_type_when_creating_relationships() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1865,7 +1865,7 @@ fn test_graph_stdin_preserva_entity_type_ao_criar_relationships() {
 }
 
 #[test]
-fn test_graph_stdin_aceita_aliases_from_to_e_relacao_com_hifen() {
+fn test_graph_stdin_accepts_from_to_aliases_and_hyphenated_relation() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1967,7 +1967,7 @@ fn test_graph_stdin_com_skip_extraction_persiste_grafo_explicito() {
 }
 
 #[test]
-fn test_graph_stdin_aceita_body_no_mesmo_payload() {
+fn test_graph_stdin_accepts_body_in_same_payload() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -2020,7 +2020,7 @@ fn test_graph_stdin_aceita_body_no_mesmo_payload() {
 }
 
 #[test]
-fn test_remember_aceita_documento_acima_do_limite_antigo_com_chunks() {
+fn test_remember_accepts_document_above_old_limit_with_chunks() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -2057,7 +2057,7 @@ fn test_remember_aceita_documento_acima_do_limite_antigo_com_chunks() {
 }
 
 #[test]
-fn test_remember_rejeita_body_acima_do_limite_operacional_novo() {
+fn test_remember_rejects_body_above_new_operational_limit() {
     let tmp = TempDir::new().unwrap();
     let body_path = tmp.path().join("body-grande.txt");
     std::fs::write(&body_path, "x".repeat(512_001)).unwrap();
@@ -2292,7 +2292,7 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
 }
 
 #[test]
-fn test_cleanup_orphans_sem_orfaos_retorna_zero() {
+fn test_cleanup_orphans_without_orphans_returns_zero() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

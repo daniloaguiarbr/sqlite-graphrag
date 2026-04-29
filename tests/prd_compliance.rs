@@ -116,7 +116,7 @@ fn prd_cross_namespace_link_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_soft_delete_recall_nao_retorna_esquecida() {
+fn prd_soft_delete_recall_does_not_return_forgotten() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -163,7 +163,7 @@ fn prd_soft_delete_recall_nao_retorna_esquecida() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_trg_fts_ad_idempotente_double_delete() {
+fn prd_trg_fts_ad_idempotent_double_delete() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -209,7 +209,7 @@ fn prd_trg_fts_ad_idempotente_double_delete() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_remember_duplicata_retorna_merged_into_memory_id() {
+fn prd_remember_duplicate_returns_merged_into_memory_id() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -251,7 +251,7 @@ fn prd_remember_duplicata_retorna_merged_into_memory_id() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_remember_json_contem_entities_e_relationships_persisted() {
+fn prd_remember_json_contains_entities_and_relationships_persisted() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -352,7 +352,7 @@ fn prd_vec_memories_distance_metric_cosine() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_edit_expected_updated_at_stale_retorna_exit_3() {
+fn prd_edit_expected_updated_at_stale_returns_exit_3() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -382,7 +382,7 @@ fn prd_edit_expected_updated_at_stale_retorna_exit_3() {
 
 #[test]
 #[serial]
-fn prd_cinco_instancias_quinta_retorna_exit_75() {
+fn prd_five_instances_fifth_returns_exit_75() {
     use fs4::fs_std::FileExt;
     use std::fs::OpenOptions;
 
@@ -429,7 +429,7 @@ fn prd_cinco_instancias_quinta_retorna_exit_75() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_max_body_len_excedido_retorna_exit_6() {
+fn prd_max_body_len_exceeded_returns_exit_6() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -460,7 +460,7 @@ fn prd_max_body_len_excedido_retorna_exit_6() {
 
 #[test]
 #[serial]
-fn prd_sqlite_graphrag_namespace_env_funciona() {
+fn prd_sqlite_graphrag_namespace_env_works() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -503,7 +503,7 @@ fn prd_sqlite_graphrag_namespace_env_funciona() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_health_emite_integrity_ok_e_schema_ok() {
+fn prd_health_emits_integrity_ok_and_schema_ok() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -531,7 +531,7 @@ fn prd_health_emite_integrity_ok_e_schema_ok() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_history_inclui_created_at_iso() {
+fn prd_history_includes_created_at_iso() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -565,7 +565,7 @@ fn prd_history_inclui_created_at_iso() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_link_cria_memory_relationships() {
+fn prd_link_creates_memory_relationships() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -623,7 +623,7 @@ fn prd_link_cria_memory_relationships() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_unlink_remove_apenas_relacao_especifica() {
+fn prd_unlink_removes_only_specific_relation() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -701,7 +701,7 @@ fn prd_unlink_remove_apenas_relacao_especifica() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_graph_json_contem_nodes_e_edges() {
+fn prd_graph_json_contains_nodes_and_edges() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -730,7 +730,7 @@ fn prd_graph_json_contem_nodes_e_edges() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_graph_dot_e_digraph_valido() {
+fn prd_graph_dot_is_valid_digraph() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -754,7 +754,7 @@ fn prd_graph_dot_e_digraph_valido() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_graph_mermaid_comeca_com_graph_lr() {
+fn prd_graph_mermaid_starts_with_graph_lr() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -914,7 +914,7 @@ fn prd_chmod_600_aplicado_apos_init() {
 
 #[test]
 #[serial]
-fn prd_path_traversal_rejeitado_em_db_path() {
+fn prd_path_traversal_rejected_in_db_path() {
     let tmp = TempDir::new().unwrap();
 
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
@@ -1135,7 +1135,7 @@ fn prd_restore_reverte_soft_delete() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_cleanup_orphans_remove_entities_sem_memorias() {
+fn prd_cleanup_orphans_removes_entities_without_memories() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

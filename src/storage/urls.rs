@@ -73,7 +73,7 @@ mod tests {
     use rusqlite::Connection;
     use tempfile::TempDir;
 
-    type Resultado = Result<(), Box<dyn std::error::Error>>;
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn setup_db() -> Result<(TempDir, Connection), Box<dyn std::error::Error>> {
         crate::storage::connection::register_vec_extension();
@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_url_persiste_e_list_retorna() -> Resultado {
+    fn insert_url_persists_and_list_returns() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_url_duplicata_ignorada() -> Resultado {
+    fn insert_url_duplicata_ignorada() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_urls_retorna_contagem_inseridas() -> Resultado {
+    fn insert_urls_retorna_contagem_inseridas() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_by_memory_remove_todas_urls() -> Resultado {
+    fn delete_by_memory_remove_todas_urls() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 

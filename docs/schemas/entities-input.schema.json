@@ -14,12 +14,12 @@
       },
       "entity_type": {
         "type": "string",
-        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker"],
+        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker", "organization", "location", "date"],
         "description": "Canonical semantic type label for the entity."
       },
       "type": {
         "type": "string",
-        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker"],
+        "enum": ["project", "tool", "person", "file", "concept", "incident", "decision", "memory", "dashboard", "issue_tracker", "organization", "location", "date"],
         "description": "Alias accepted by the parser as a synonym for `entity_type`."
       },
       "description": {

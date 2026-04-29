@@ -139,7 +139,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn init_response_serializa_todos_campos() {
+    fn init_response_serializes_all_fields() {
         let resp = InitResponse {
             db_path: "/tmp/test.sqlite".to_string(),
             schema_version: "6".to_string(),
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn latest_schema_version_retorna_zero_para_banco_vazio() {
+    fn latest_schema_version_returns_zero_for_empty_db() {
         let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
         conn.execute_batch("CREATE TABLE refinery_schema_history (version INTEGER NOT NULL);")
             .expect("falha ao criar tabela");
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn latest_schema_version_retorna_versao_maxima() {
+    fn latest_schema_version_returns_max_version() {
         let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (version INTEGER NOT NULL);
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn init_response_dim_alinhado_com_constante() {
+    fn init_response_dim_aligned_with_constant() {
         assert_eq!(
             crate::constants::EMBEDDING_DIM,
             384,
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn init_response_namespace_alinhado_com_schema() {
+    fn init_response_namespace_aligned_with_schema() {
         // Verify namespace field survives round-trip serialization with correct value.
         let resp = InitResponse {
             db_path: "/tmp/x.sqlite".to_string(),

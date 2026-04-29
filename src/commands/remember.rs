@@ -23,7 +23,7 @@ pub struct RememberArgs {
     #[arg(
         long,
         value_enum,
-        long_help = "Memory kind stored in `memories.type`. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill."
+        long_help = "Memory kind stored in `memories.type`. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill, document, note."
     )]
     pub r#type: MemoryType,
     /// Short description (≤500 chars) summarizing the memory for use in `list` and `recall` snippets.
@@ -119,7 +119,7 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
     for entity in &graph.entities {
         if !is_valid_entity_type(&entity.entity_type) {
             return Err(AppError::Validation(format!(
-                "entity_type '{}' inválido para entidade '{}'",
+                "invalid entity_type '{}' for entity '{}'",
                 entity.entity_type, entity.name
             )));
         }
@@ -129,13 +129,13 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
         rel.relation = rel.relation.replace('-', "_");
         if !is_valid_relation(&rel.relation) {
             return Err(AppError::Validation(format!(
-                "relation '{}' inválida para relacionamento '{}' -> '{}'",
+                "invalid relation '{}' for relationship '{}' -> '{}'",
                 rel.relation, rel.source, rel.target
             )));
         }
         if !(0.0..=1.0).contains(&rel.strength) {
             return Err(AppError::Validation(format!(
-                "strength {} inválido para relacionamento '{}' -> '{}'; esperado valor em [0.0, 1.0]",
+                "invalid strength {} for relationship '{}' -> '{}'; expected value in [0.0, 1.0]",
                 rel.strength, rel.source, rel.target
             )));
         }
@@ -265,7 +265,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
     if args.graph_stdin {
         graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
-            AppError::Validation(format!("payload JSON inválido em --graph-stdin: {e}"))
+            AppError::Validation(format!("invalid JSON payload on --graph-stdin: {e}"))
         })?;
         raw_body = graph.body.take().unwrap_or_default();
     }
@@ -292,7 +292,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     // Sem este check, embeddings vazios eram persistidos quebrando a semântica de recall.
     if !entities_provided_externally && graph.entities.is_empty() && raw_body.trim().is_empty() {
         return Err(AppError::Validation(
-            "body não pode estar vazio: forneça --body, --body-file, --body-stdin com conteúdo, \
+            "body cannot be empty: provide --body, --body-file, --body-stdin with content, \
              ou um grafo via --entities-file/--graph-stdin"
                 .to_string(),
         ));
@@ -417,7 +417,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     if chunks_created > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS {
         return Err(AppError::LimitExceeded(format!(
-            "documento gera {chunks_created} chunks; limite operacional seguro atual é {} chunks; divida o documento antes de usar remember",
+            "document produces {chunks_created} chunks; current safe operational limit is {} chunks; split the document before using remember",
             crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS
         )));
     }

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.30] - 2026-04-29
+
+### Added (New Subcommand — Bulk Ingestion)
+- `sqlite-graphrag ingest <DIR> --type <TYPE>` subcommand for bulk-indexing every file in a directory as a separate memory. Supports `--pattern` (default `*.md`), `--recursive`, `--skip-extraction`, `--fail-fast`, `--max-files` (safety cap default 10000), `--namespace`, `--db`. Output is line-delimited JSON: one event per file (`{file, name, status, memory_id, action}`) followed by a final summary (`{summary: true, files_total, files_succeeded, files_failed, files_skipped, elapsed_ms}`). Names are derived from file basenames in kebab-case. Each file is processed by spawning a child `remember --body-file` invocation, so concurrency slots, lock semantics, and error semantics match standalone `remember`. Resolves the long-standing UX gap where users had to shell-script over `for f in *.md; do remember ...; done` to ingest a corpus.
+
+### Changed (Help Text Clarity — `link` / `unlink`)
+- `link --help` and `unlink --help` now make explicit that `--from` and `--to` accept ENTITY names (graph nodes auto-extracted by BERT NER, or created implicitly by prior `link` calls), NOT memory names. Includes an `EXAMPLES:` block and a `NOTES:` block in `after_long_help`. Previously the bare doc-comment "Source entity" was easily misread as "memory name" by new users; the resulting `Erro: entidade '<name>' não existe` was confusing because the user thought they were passing a valid memory name. Field doc comments now mention `graph --format json | jaq '.nodes[].name'` as the canonical way to list eligible entity names.
+
+### Changed (Dependencies — rusqlite/refinery upgrade)
+- `rusqlite` bumped from `0.32` to `0.37` and `refinery` bumped from `0.8` to `0.9`. Cargo.lock now resolves `rusqlite v0.37.0`, `refinery v0.9.1`, `refinery-core v0.9.1`, `refinery-macros v0.9.1`, and `libsqlite3-sys v0.35.0`. Zero source code changes were required — both crates kept the public APIs we use stable across these versions. Reach for rusqlite 0.39 was blocked by `refinery-core 0.9.0` capping `rusqlite = ">=0.23, <=0.37"`; revisit when refinery raises that ceiling.
+
+### Fixed (Critical — Schema/CLI Contract Mismatch)
+- `migrations/V009__expand_memory_types.sql` — new migration that recreates the `memories` table (and its FK children: `memory_versions`, `memory_chunks`, `memory_entities`, `memory_relationships`, `memory_urls`) to expand the `type` CHECK constraint from 7 to 9 values, adding `'document'` and `'note'`. Without this migration, `--type document` and `--type note` (added to the CLI enum in v1.0.29) were always rejected at runtime with `exit 10` — `CHECK constraint failed: type IN ('user','feedback','project','reference','decision','incident','skill')`. The CLI Clap layer accepted nine values while the database enforced seven, breaking every README example that used `--type document`.
+- `tests/schema_migration_integration.rs` updated to assert exactly 9 migrations applied (previously expected 6) and `schema_version = "9"`.
+
+### Fixed (Critical — Language Policy Violations Missed by v1.0.28 Audit)
+The v1.0.28 audit used a single-line regex (`rg "tracing::(info|warn|error|debug)!.*[áéíóúâêôãõç]"`) and reported zero violations. Multi-line macro invocations and identifiers without diacritics escaped detection. Fixed in this release:
+
+- `src/extraction.rs:749` — Portuguese `tracing::warn!("relacionamentos truncados em {max_rels} (com {n} entidades, máx teórico era ~{}× combinações)", ...)` translated to `"relationships truncated to {max_rels} (with {n} entities, theoretical max was ~{}x combinations)"`.
+- `src/extraction.rs:1025` — Portuguese `tracing::warn!("extração truncada em {MAX_ENTS} entidades (entrada tinha {total_input} candidatos antes da deduplicação)")` translated to `"extraction truncated at {MAX_ENTS} entities (input had {total_input} candidates before deduplication)"`.
+- `src/extraction.rs` — Eight `.context("...")`, `.with_context(|| format!("..."))` and `anyhow::anyhow!("...")` calls translated from Portuguese to English: `"forward pass do BertModel"` → `"BertModel forward pass"`, `"forward pass do classificador"` → `"classifier forward pass"`, `"removendo dimensão batch"` → `"removing batch dimension"`, `"criando tensor de ids para batch"` → `"creating id tensor for batch"`, `"padding tensor de ids"` → `"padding id tensor"`, `"criando tensor de máscara para batch"` → `"creating mask tensor for batch"`, `"criando token_type_ids batch"` → `"creating token_type_ids tensor for batch"`, `"forward pass batch BertModel"` → `"BertModel batch forward pass"`, `"criando diretório do modelo"` → `"creating model directory"`, `"carregando tokenizer NER"` → `"loading NER tokenizer"`, `"encoding NER"` → `"encoding NER input"`.
+- `src/daemon.rs` — Two `tracing::*!` strings translated: `"falha ao remover lock file de spawn ao encerrar daemon"` → `"failed to remove spawn lock file while shutting down daemon"`; `"daemon encerrado graciosamente; socket será limpo pelo OS ou pelo próximo daemon via try_overwrite"` → `"daemon shut down gracefully; socket will be cleaned up by OS or by the next daemon via try_overwrite"`.
+- `src/commands/restore.rs` — `tracing::info!("restore --version omitido; usando última versão não-restore: {}", v)` translated to `"restore --version omitted; using latest non-restore version: {}"`.
+
+### Fixed (Test Identifiers — English-only Policy)
+~80 test identifiers (function names, helper names, `mod` names, type aliases) renamed from Portuguese to English. Phase 1 audit only flagged the diacritic subset (`*ção`, `*á`); identifiers without accents (`*_aceita_`, `*_rejeita`, `*_funciona`, `*_retorna`, etc.) were missed. Touched files:
+
+- `src/cli.rs` — `mod testes_concorrencia_pesada` → `mod heavy_concurrency_tests`; `mod testes_formato_json_only` → `mod json_only_format_tests`; 3 inner test fns renamed.
+- `src/paths.rs` — `limpar_env_paths` helper + 5 test fns renamed (`home_env_resolve_db_em_subdir`, `home_env_traversal_rejeitado`, `db_path_vence_home`, `flag_vence_home`, `home_env_vazio_cai_para_cwd`, `parent_or_err_aceita/rejeita_*`).
+- `src/errors.rs` — 11 test fns renamed (the `_em_portugues` suffix family + 3 others).
+- `src/commands/init.rs` — 5 test fns renamed (`init_response_serializa_*`, `latest_schema_version_retorna_*`, `init_response_dim/namespace_alinhado_*`).
+- `src/commands/migrate.rs` — 5 test fns + 2 helper fns renamed.
+- `src/extraction.rs` — 11 internal test fns renamed (the `iob_mapeia_*`, `regex_*_aceita_*`, `build_relationships_sem_duplicatas`, etc.).
+- `src/output.rs`, `src/memory_guard.rs`, `src/commands/{sync_safe_copy, cleanup_orphans, list, vacuum}.rs` — 7 test fns renamed.
+- `src/storage/{urls, memories, entities}.rs` — `type Resultado` → `type TestResult` (3 modules, ~70 occurrences).
+- `tests/security_hardening.rs` — 16 test fns renamed (`test_path_traversal_rejeitado_*`, `test_chmod_*_apos_init_*`, `test_blake3_*_diferente_*`, `test_sql_injection_em_*`, etc.).
+- `tests/integration.rs` — ~28 test fns renamed (the `test_remember_cria/rejeita/aceita_*`, `test_link_cria_relacao_*`, `test_graph_stdin_aceita_*`, etc.).
+- `tests/prd_compliance.rs` — ~15 test fns renamed.
+- `tests/concurrency_*.rs`, `tests/i18n_bilingual_integration.rs`, `tests/signal_handling_integration.rs`, `tests/v2_breaking_integration.rs`, `tests/lock_integration.rs`, `tests/property_based.rs`, `tests/loom_lock_slots.rs`, `tests/regression_positional_args.rs`, `tests/recall_integration.rs`, `tests/daemon_integration.rs`, `tests/schema_migration_integration.rs` — remaining test fns and helpers translated.
+
+### Notes
+- `errors::to_string_pt()` and `main::emit_progress_i18n(en, pt)` continue to hold legitimate Portuguese strings — these are the i18n branch invoked when `--lang pt` (or detected locale) is active. They are not violations.
+- Default behaviour `./graphrag.sqlite` in CWD (resolved via `paths.rs:35-41`) confirmed empirically against the v1.0.29 audit corpus (29 of 30 flowaiper Markdown documents indexed end-to-end; recall p50 ~50ms, hybrid-search p50 ~52ms; one stress-test failure was an external 60s timeout, not a tool defect).
+- Empirical evidence: the bug was reproducible with one CLI invocation: `sqlite-graphrag remember --type document --name x --description y --body z` returned exit 10 with the schema CHECK error message in v1.0.29.
+
 ## [1.0.29] - 2026-04-29
 
 ### Fixed (Critical — Language Policy Violations in Production Code)

@@ -86,7 +86,7 @@ fn db_integro(tmp: &TempDir) -> bool {
 /// after SIGINT the process exits with signal (exit status shows signal=2)
 /// and the database remains valid.
 #[test]
-fn sigint_durante_health_exit_db_integro() {
+fn sigint_during_health_exits_with_db_integrity() {
     let tmp = setup_db();
 
     let mut child: Child = sqlite_graphrag_cmd(&tmp)
@@ -124,7 +124,7 @@ fn sigint_durante_health_exit_db_integro() {
 /// O processo pode encerrar com exit 0 (completou antes do sinal) ou
 /// with signal code — both are valid, but DB must be intact.
 #[test]
-fn sigterm_durante_init_graceful_exit_db_integro() {
+fn sigterm_during_init_graceful_exit_db_integrity() {
     let tmp = TempDir::new().expect("TempDir falhou");
 
     let mut child: Child = sqlite_graphrag_cmd(&tmp)
@@ -166,7 +166,7 @@ fn sigterm_durante_init_graceful_exit_db_integro() {
 
 /// A process receiving SIGTERM after `remember` with a populated database does not corrupt the DB.
 #[test]
-fn sigterm_apos_remember_nao_corrompe_db() {
+fn sigterm_after_remember_does_not_corrupt_db() {
     let tmp = setup_db();
 
     // Primeiro remember sem sinal — deve completar normalmente
@@ -233,7 +233,7 @@ fn sigterm_apos_remember_nao_corrompe_db() {
 /// imediatamente. O banco pode estar em estado parcial, mas `.wait()` deve
 /// retornar sem bloquear.
 #[test]
-fn sigkill_processo_nao_vira_zombie() {
+fn sigkill_process_does_not_become_zombie() {
     let tmp = setup_db();
 
     let mut child: Child = sqlite_graphrag_cmd(&tmp)

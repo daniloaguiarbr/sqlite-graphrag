@@ -180,7 +180,7 @@
 - Agents MUST treat `--entities-file` and `--relationships-file` as JSON array payloads.
 - Entity objects MUST include `name` plus `entity_type` or alias `type`.
 - Agents MUST NOT send both `entity_type` and `type` in the same entity object.
-- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, and `issue_tracker`.
+- Valid `entity_type` values are `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, and `date`.
 - Relationship objects MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`.
 - `strength` MUST be a float in `[0.0, 1.0]`.
 - Relationship payloads MAY use canonical stored relation labels with underscores: `applies_to`, `depends_on`, `tracked_in`; dashed aliases are normalized before storage.

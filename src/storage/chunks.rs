@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_chunks_fk_invalida_falha() {
+    fn test_insert_chunks_invalid_fk_fails() {
         let (_tmp, conn) = setup_db();
         let chunk = Chunk {
             memory_id: 99999,

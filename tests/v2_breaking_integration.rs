@@ -37,7 +37,7 @@ fn remember(tmp: &TempDir, name: &str, memory_type: &str, description: &str, bod
 // ---------------------------------------------------------------------------
 
 #[test]
-fn purge_dry_run_nao_deleta_nada() {
+fn purge_dry_run_deletes_nothing() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -285,7 +285,7 @@ fn batch_partial_failure_exit_code_13() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn name_slug_regex_permite_single_digit() {
+fn name_slug_regex_allows_single_digit() {
     use regex::Regex;
     use sqlite_graphrag::constants::NAME_SLUG_REGEX;
 
@@ -302,7 +302,7 @@ fn name_slug_regex_permite_single_digit() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn name_slug_regex_rejeita_prefixo_digito_multichar() {
+fn name_slug_regex_rejects_multichar_digit_prefix() {
     use regex::Regex;
     use sqlite_graphrag::constants::NAME_SLUG_REGEX;
 

@@ -10,6 +10,39 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.30] - 2026-04-29
+
+### Adicionado (Novo Subcomando — Ingestão em Massa)
+- `sqlite-graphrag ingest <DIR> --type <TYPE>` para indexar em massa todo arquivo de uma pasta como memória separada. Flags: `--pattern` (default `*.md`), `--recursive`, `--skip-extraction`, `--fail-fast`, `--max-files` (cap default 10000), `--namespace`, `--db`. Saída NDJSON: um objeto por arquivo (`{file, name, status, memory_id, action}`) seguido de summary final (`{summary, files_total, files_succeeded, files_failed, files_skipped, elapsed_ms}`). Nome derivado do basename em kebab-case. Cada arquivo é processado por subprocesso `remember --body-file`, preservando slots de concorrência, locks e semântica de erro do `remember` standalone. Resolve gap UX de longa data onde usuário precisava `for f in *.md; do remember ...; done`.
+
+### Alterado (Help mais Claro — `link` / `unlink`)
+- `link --help` e `unlink --help` agora deixam EXPLÍCITO que `--from` e `--to` aceitam nomes de ENTIDADES (nós do grafo extraídos por BERT NER, ou criados implicitamente por `link` anterior), NÃO nomes de memória. Inclui blocos `EXAMPLES:` e `NOTES:` em `after_long_help`. O help anterior "Source entity" era facilmente mal interpretado como "nome de memória"; o erro `Erro: entidade '<name>' não existe` confundia o usuário. Doc comments agora apontam `graph --format json | jaq '.nodes[].name'` como forma canônica de listar entidades elegíveis.
+
+### Alterado (Dependências — upgrade rusqlite/refinery)
+- `rusqlite` 0.32 → 0.37 e `refinery` 0.8 → 0.9. Cargo.lock agora resolve `rusqlite v0.37.0`, `refinery v0.9.1`, `refinery-core v0.9.1`, `refinery-macros v0.9.1`, `libsqlite3-sys v0.35.0`. Zero mudanças de código fonte — ambos crates mantiveram APIs públicas estáveis. Tentativa de chegar a rusqlite 0.39 foi bloqueada por `refinery-core 0.9.0` com cap `rusqlite = ">=0.23, <=0.37"`; revisitar quando refinery elevar esse teto.
+
+### Corrigido (Crítico — Inconsistência de Schema/Contrato CLI)
+- `migrations/V009__expand_memory_types.sql` — nova migration que recria a tabela `memories` (e suas filhas com FK: `memory_versions`, `memory_chunks`, `memory_entities`, `memory_relationships`, `memory_urls`) para expandir o CHECK do campo `type` de 7 para 9 valores, adicionando `'document'` e `'note'`. Sem essa migration, `--type document` e `--type note` (adicionados ao enum da CLI em v1.0.29) eram sempre rejeitados em runtime com `exit 10` — `CHECK constraint failed: type IN ('user','feedback','project','reference','decision','incident','skill')`. A camada Clap aceitava nove valores enquanto o banco impunha apenas sete, quebrando todos os exemplos do README que usavam `--type document`.
+- `tests/schema_migration_integration.rs` atualizado para assert exatamente 9 migrations aplicadas (antes esperava 6) e `schema_version = "9"`.
+
+### Corrigido (Crítico — Violações de Política Linguística Não Detectadas em v1.0.28)
+A auditoria v1.0.28 usou regex de linha única e reportou zero violações; macros multi-linha e identificadores sem acentos escaparam. Corrigido nesta versão:
+
+- `src/extraction.rs:749, 1025` — 2 `tracing::warn!` em PT traduzidos para EN.
+- `src/extraction.rs` — 8 chamadas `.context(...)`, `.with_context(...)` e `anyhow::anyhow!` em PT traduzidas (forward pass, removendo dimensão batch, criando tensor de ids/máscara/diretório do modelo, carregando tokenizer NER, encoding NER).
+- `src/daemon.rs` — 2 strings `tracing::*!` traduzidas (lock file de spawn, daemon encerrado graciosamente).
+- `src/commands/restore.rs` — 1 `tracing::info!` traduzido (`restore --version omitido`).
+
+### Corrigido (Identificadores de Teste — Política Inglês-Apenas)
+~80 identificadores de teste (nomes de função, helpers, módulos `mod`, type aliases) renomeados de PT para EN. Phase 1 só pegou subset com diacríticos; identificadores sem acento (`*_aceita_`, `*_rejeita`, `*_funciona`, `*_retorna`, etc.) foram missed. Arquivos tocados:
+
+- `src/cli.rs`, `src/paths.rs`, `src/errors.rs`, `src/commands/{init, migrate, sync_safe_copy, cleanup_orphans, list, vacuum}.rs`, `src/extraction.rs`, `src/output.rs`, `src/memory_guard.rs`, `src/storage/{urls, memories, entities}.rs`.
+- `tests/security_hardening.rs` (16 fns), `tests/integration.rs` (~28 fns), `tests/prd_compliance.rs` (~15 fns), `tests/concurrency_*.rs`, `tests/i18n_bilingual_integration.rs`, `tests/signal_handling_integration.rs`, `tests/v2_breaking_integration.rs`, `tests/lock_integration.rs`, `tests/property_based.rs`, `tests/loom_lock_slots.rs`, `tests/regression_positional_args.rs`, `tests/recall_integration.rs`, `tests/daemon_integration.rs`, `tests/schema_migration_integration.rs`.
+
+### Notas
+- `errors::to_string_pt()` e `main::emit_progress_i18n(en, pt)` mantêm strings PT legítimas — são o branch i18n acionado quando `--lang pt` (ou locale detectado) está ativo. Não são violações.
+- Comportamento default `./graphrag.sqlite` em CWD (`paths.rs:35-41`) confirmado empiricamente contra o corpus de auditoria v1.0.29 (29 de 30 documentos Markdown flowaiper indexados end-to-end; recall p50 ~50ms, hybrid-search p50 ~52ms; uma falha do stress test foi timeout externo de 60s, não defeito da ferramenta).
+
 ## [1.0.25] - 2026-04-28
 
 ### Adicionado

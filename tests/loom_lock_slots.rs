@@ -146,7 +146,7 @@ fn quatro_threads_invariante_maximo_tres_slots() {
 /// Modela o comportamento de polling de `acquire_cli_slot` com `wait_seconds > 0`.
 #[serial(loom_model)]
 #[test]
-fn release_libera_slot_para_proxima_thread() {
+fn release_frees_slot_for_next_thread() {
     let mut builder = loom::model::Builder::new();
     builder.preemption_bound = Some(1);
     builder.max_branches = 100;

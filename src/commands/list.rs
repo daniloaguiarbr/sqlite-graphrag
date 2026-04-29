@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn list_item_memory_id_igual_a_id() {
+    fn list_item_memory_id_equals_id() {
         let item = ListItem {
             id: 42,
             memory_id: 42,

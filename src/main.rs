@@ -257,6 +257,7 @@ fn main() {
         sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
         sqlite_graphrag::cli::Commands::Daemon(args) => commands::daemon::run(args),
         sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
+        sqlite_graphrag::cli::Commands::Ingest(args) => commands::ingest::run(args),
         sqlite_graphrag::cli::Commands::Recall(args) => commands::recall::run(args),
         sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
         sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),

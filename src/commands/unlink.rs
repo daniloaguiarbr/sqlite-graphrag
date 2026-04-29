@@ -10,11 +10,19 @@ use crate::storage::entities;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Remove a relationship between two existing graph entities\n  \
+    sqlite-graphrag unlink --from oauth-flow --to refresh-tokens --relation related\n\n  \
+    # If either entity or the relationship does not exist, the command exits with code 4.\n\n  \
+NOTE:\n  \
+    --from and --to expect ENTITY names (graph nodes), not memory names.\n  \
+    To inspect current entities and relationships, run: sqlite-graphrag graph --format json")]
 pub struct UnlinkArgs {
-    /// Source entity. Also accepts the alias `--source`.
+    /// Source ENTITY name (graph node, not memory). Also accepts the alias `--source`.
+    /// To list current entities run `graph --format json | jaq '.nodes[].name'`.
     #[arg(long, alias = "source")]
     pub from: String,
-    /// Target entity. Also accepts the alias `--target`.
+    /// Target ENTITY name (graph node, not memory). Also accepts the alias `--target`.
     #[arg(long, alias = "target")]
     pub to: String,
     #[arg(long, value_enum)]

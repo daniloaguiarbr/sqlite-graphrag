@@ -11,11 +11,24 @@ use crate::storage::entities;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Link two existing graph entities (extracted by BERT NER or created via prior `link`)\n  \
+    sqlite-graphrag link --from oauth-flow --to refresh-tokens --relation related\n\n  \
+    # If the entity does not exist, the command fails with exit 4.\n  \
+    # Entity names come from BERT NER extraction during `remember` (see `graph --format json`),\n  \
+    # NOT from memory names. To list current entities run:\n  \
+    sqlite-graphrag graph --format json | jaq '.nodes[].name'\n\n  \
+NOTE:\n  \
+    --from and --to expect ENTITY names (graph nodes), not memory names.\n  \
+    Memory names are managed via remember/read/edit/forget; entities are auto-extracted\n  \
+    by BERT NER from memory bodies (or created implicitly by prior `link` calls).")]
 pub struct LinkArgs {
-    /// Source entity.
+    /// Source ENTITY name (graph node, not memory). Entities are extracted by BERT NER during
+    /// `remember` or created implicitly by prior `link` calls. Use `graph --format json` to list
+    /// available entity names.
     #[arg(long)]
     pub from: String,
-    /// Target entity.
+    /// Target ENTITY name (graph node, not memory). See `--from` for sourcing entity names.
     #[arg(long)]
     pub to: String,
     #[arg(long, value_enum)]

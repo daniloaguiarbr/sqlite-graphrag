@@ -364,7 +364,7 @@ sqlite-graphrag graph entities --entity-type person --namespace my-project --jso
 sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```
 - Prerequisites: at least one entity must exist — created via `remember` or explicit `link`
-- `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--limit <N>` caps the result count (default: 50); `--offset <N>` enables cursor-style pagination
 - Output schema: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
 - Each item carries `id`, `name`, `entity_type`, `namespace`, and `created_at`
@@ -463,7 +463,7 @@ sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends
 ```
 - Prerequisites: the edge must exist; all three of `--from`, `--to`, and `--relation` are required
 - Valid `--relation` values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
-- Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: edge removed
 - Exit code 4: edge not found
 
@@ -473,7 +473,7 @@ sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends
 - Prerequisite: entities must exist in the graph before creating explicit links
 - Create memories with explicit graph payloads first, then call `link` to type additional edges
 - Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
-- Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Attempting to link entities whose names do not match a typed node returns exit code 4
 - JSON output: `{action, from, source, to, target, relation, weight, namespace}`
 - Both `from` and `source` carry the same value; both `to` and `target` carry the same value
@@ -512,7 +512,7 @@ sqlite-graphrag remember --name config-notes --type project \
 - `--entities-file` accepts a JSON file where each object must include an `entity_type` field
 - The alias field `type` is also accepted as a synonym for `entity_type`
 - Do not send both `entity_type` and `type` in the same object because Serde treats that as a duplicate field
-- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
 - `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`; `from` and `to` are accepted as aliases for `source` and `target`
 - `--graph-stdin` accepts one JSON object with optional `body`, `entities`, and `relationships`; invalid JSON fails and is not saved as body text

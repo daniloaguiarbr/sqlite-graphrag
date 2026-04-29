@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn vacuum_response_size_after_menor_ou_igual_before() {
+    fn vacuum_response_size_after_less_than_or_equal_to_before() {
         let resp = VacuumResponse {
             db_path: "/data/db.sqlite".to_string(),
             size_before_bytes: 65536,

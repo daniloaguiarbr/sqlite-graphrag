@@ -131,11 +131,11 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    fn cria_db_sem_historico() -> Connection {
+    fn create_db_without_history() -> Connection {
         Connection::open_in_memory().expect("falha ao abrir banco em memória")
     }
 
-    fn cria_db_com_historico(versao: i64) -> Connection {
+    fn create_db_with_history(versao: i64) -> Connection {
         let conn = Connection::open_in_memory().expect("falha ao abrir banco em memória");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (
@@ -155,8 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn latest_schema_version_retorna_erro_sem_tabela() {
-        let conn = cria_db_sem_historico();
+    fn latest_schema_version_returns_error_without_table() {
+        let conn = create_db_without_history();
         // Sem tabela refinery_schema_history, SQLite retorna Unknown (código 1) → AppError::Database
         let resultado = latest_schema_version(&conn);
         assert!(
@@ -166,8 +166,8 @@ mod tests {
     }
 
     #[test]
-    fn latest_schema_version_retorna_versao_maxima() {
-        let conn = cria_db_com_historico(6);
+    fn latest_schema_version_returns_max_version() {
+        let conn = create_db_with_history(6);
         let version = latest_schema_version(&conn).unwrap();
         assert_eq!(version, "6");
     }
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn latest_schema_version_retorna_zero_quando_tabela_vazia() {
+    fn latest_schema_version_returns_zero_when_table_empty() {
         let conn = Connection::open_in_memory().expect("banco em memória");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (

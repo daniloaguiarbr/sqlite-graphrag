@@ -974,7 +974,7 @@ sqlite-graphrag recall "decision" --json
 fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
   sqlite-graphrag remember \
     --name "$(basename {} .md)" \
-    --type concept \
+    --type document \
     --description "imported from {}" \
     --skip-extraction \
     --body-stdin < {}

@@ -188,13 +188,13 @@ impl Drop for DaemonSpawnGuard {
                     tracing::warn!(
                         error = %err,
                         path = %lock_path.display(),
-                        "falha ao remover lock file de spawn ao encerrar daemon"
+                        "failed to remove spawn lock file while shutting down daemon"
                     );
                 }
             }
         }
         tracing::info!(
-            "daemon encerrado graciosamente; socket será limpo pelo OS ou pelo próximo daemon via try_overwrite"
+            "daemon shut down gracefully; socket will be cleaned up by OS or by the next daemon via try_overwrite"
         );
     }
 }

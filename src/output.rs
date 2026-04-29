@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_item_clone_produz_valor_igual() {
+    fn recall_item_clone_produces_equal_value() {
         let item = RecallItem {
             memory_id: 99,
             name: "clone".to_string(),

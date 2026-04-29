@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_response_deleted_igual_orphan_count_quando_executado() {
+    fn cleanup_response_deleted_equals_orphan_count_when_executed() {
         let resp = CleanupResponse {
             orphan_count: 3,
             deleted: 3,

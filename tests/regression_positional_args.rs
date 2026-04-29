@@ -12,7 +12,7 @@ use sqlite_graphrag::cli::{Cli, Commands};
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_read_args_aceita_name_positional() {
+fn regression_read_args_accepts_name_positional() {
     // Simulate: sqlite-graphrag read minha-memoria
     let cli = Cli::try_parse_from(["sqlite-graphrag", "read", "minha-memoria"]).unwrap();
     if let Commands::Read(args) = cli.command {
@@ -31,7 +31,7 @@ fn regression_read_args_aceita_name_positional() {
 }
 
 #[test]
-fn regression_read_args_aceita_flag_name() {
+fn regression_read_args_accepts_flag_name() {
     // Simulate: sqlite-graphrag read --name minha-memoria (back-compat)
     let cli = Cli::try_parse_from(["sqlite-graphrag", "read", "--name", "minha-memoria"]).unwrap();
     if let Commands::Read(args) = cli.command {
@@ -54,7 +54,7 @@ fn regression_read_args_aceita_flag_name() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_forget_args_aceita_name_positional() {
+fn regression_forget_args_accepts_name_positional() {
     let cli = Cli::try_parse_from(["sqlite-graphrag", "forget", "minha-memoria"]).unwrap();
     if let Commands::Forget(args) = cli.command {
         assert_eq!(
@@ -72,7 +72,7 @@ fn regression_forget_args_aceita_name_positional() {
 }
 
 #[test]
-fn regression_forget_args_aceita_flag_name() {
+fn regression_forget_args_accepts_flag_name() {
     let cli =
         Cli::try_parse_from(["sqlite-graphrag", "forget", "--name", "minha-memoria"]).unwrap();
     if let Commands::Forget(args) = cli.command {
@@ -92,7 +92,7 @@ fn regression_forget_args_aceita_flag_name() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_history_args_aceita_name_positional() {
+fn regression_history_args_accepts_name_positional() {
     let cli = Cli::try_parse_from(["sqlite-graphrag", "history", "minha-memoria"]).unwrap();
     if let Commands::History(args) = cli.command {
         assert_eq!(
@@ -107,7 +107,7 @@ fn regression_history_args_aceita_name_positional() {
 }
 
 #[test]
-fn regression_history_args_aceita_flag_name() {
+fn regression_history_args_accepts_flag_name() {
     let cli =
         Cli::try_parse_from(["sqlite-graphrag", "history", "--name", "minha-memoria"]).unwrap();
     if let Commands::History(args) = cli.command {
@@ -127,7 +127,7 @@ fn regression_history_args_aceita_flag_name() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_edit_args_aceita_name_positional() {
+fn regression_edit_args_accepts_name_positional() {
     let cli = Cli::try_parse_from([
         "sqlite-graphrag",
         "edit",
@@ -149,7 +149,7 @@ fn regression_edit_args_aceita_name_positional() {
 }
 
 #[test]
-fn regression_edit_args_aceita_flag_name() {
+fn regression_edit_args_accepts_flag_name() {
     let cli = Cli::try_parse_from([
         "sqlite-graphrag",
         "edit",
@@ -176,7 +176,7 @@ fn regression_edit_args_aceita_flag_name() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_rename_args_aceita_name_positional() {
+fn regression_rename_args_accepts_name_positional() {
     let cli = Cli::try_parse_from([
         "sqlite-graphrag",
         "rename",
@@ -202,7 +202,7 @@ fn regression_rename_args_aceita_name_positional() {
 }
 
 #[test]
-fn regression_rename_args_aceita_flag_name() {
+fn regression_rename_args_accepts_flag_name() {
     let cli = Cli::try_parse_from([
         "sqlite-graphrag",
         "rename",
@@ -225,7 +225,7 @@ fn regression_rename_args_aceita_flag_name() {
 }
 
 #[test]
-fn regression_rename_args_aceita_alias_old() {
+fn regression_rename_args_accepts_alias_old() {
     // --old alias must still work (back-compat)
     let cli = Cli::try_parse_from([
         "sqlite-graphrag",

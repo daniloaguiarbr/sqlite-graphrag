@@ -1,21 +1,22 @@
 #![cfg(feature = "slow-tests")]
 
-// Suite 3 — Validação de schema e migrations V001-V006
+// Suite 3 — Schema and migrations validation V001-V009
 //
-// ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_DB_PATH` apontando para um arquivo
-// SQLite em `TempDir` exclusivo. A introspecção é feita via rusqlite diretamente,
-// sem depender de nenhum output do binário.
+// ISOLATION: each test uses `SQLITE_GRAPHRAG_DB_PATH` pointing to a SQLite
+// file in an exclusive `TempDir`. Introspection runs through rusqlite directly,
+// without depending on any binary output.
 //
-// NOTA: sqlite-vec usa `sqlite3_auto_extension`, que é global ao processo.
-// Para evitar que a extensão seja registrada múltiplas vezes em testes paralelos,
-// TODOS os testes que abrem um banco com sqlite-vec fazem isso via `sqlite-graphrag init`
-// (binário externo), que carrega a extensão no seu próprio processo. Os testes de
-// introspecção pura (sqlite_master, triggers, FTS) abrem o banco via rusqlite após
-// o init para consultar somente — não carregam sqlite-vec no processo de teste.
+// NOTE: sqlite-vec uses `sqlite3_auto_extension`, which is process-global.
+// To avoid registering the extension multiple times in parallel tests,
+// every test that opens a sqlite-vec database does so via `sqlite-graphrag init`
+// (external binary), which loads the extension in its own process. Pure
+// introspection tests (sqlite_master, triggers, FTS) open the database via
+// rusqlite after init for read-only queries — they do not load sqlite-vec
+// in the test process.
 //
-// `#[serial]` é obrigatório: embora cada teste use DB próprio, o compilado é
-// compartilhado e `TempDir` só é liberado após o teste encerrar; serializar
-// elimina corridas no filesystem e torna timings previsíveis.
+// `#[serial]` is mandatory: although each test uses its own DB, the compiled
+// artefact is shared and `TempDir` is only released after the test ends;
+// serialising eliminates filesystem races and makes timings predictable.
 
 use assert_cmd::Command;
 use rusqlite::Connection;
@@ -27,13 +28,13 @@ use tempfile::TempDir;
 // ---------------------------------------------------------------------------
 
 /// Runs `sqlite-graphrag init` on an isolated temporary database and returns
-/// o `TempDir` (para manter o banco vivo) e o caminho do arquivo sqlite.
-fn init_db_isolado() -> (TempDir, std::path::PathBuf) {
-    let tmp = TempDir::new().expect("TempDir deve ser criado");
+/// the `TempDir` (to keep the database alive) and the SQLite file path.
+fn init_isolated_db() -> (TempDir, std::path::PathBuf) {
+    let tmp = TempDir::new().expect("TempDir must be created");
     let db_path = tmp.path().join("test.sqlite");
 
     Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+        .expect("sqlite-graphrag binary not found")
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -45,27 +46,27 @@ fn init_db_isolado() -> (TempDir, std::path::PathBuf) {
 
 /// Opens the database read-only after init (without sqlite-vec in the test process).
 fn conn_ro(db_path: &std::path::Path) -> Connection {
-    Connection::open(db_path).expect("conexão ao banco deve funcionar")
+    Connection::open(db_path).expect("database connection must work")
 }
 
-/// Verifica se uma tabela ou view existe em `sqlite_master`.
-fn tabela_existe(conn: &Connection, nome: &str) -> bool {
+/// Checks whether a table or view exists in `sqlite_master`.
+fn table_exists(conn: &Connection, name: &str) -> bool {
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view') AND name = ?1",
-            rusqlite::params![nome],
+            rusqlite::params![name],
             |row| row.get(0),
         )
         .unwrap_or(0);
     count > 0
 }
 
-/// Verifica se um trigger existe em `sqlite_master`.
-fn trigger_existe(conn: &Connection, nome: &str) -> bool {
+/// Checks whether a trigger exists in `sqlite_master`.
+fn trigger_exists(conn: &Connection, name: &str) -> bool {
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
-            rusqlite::params![nome],
+            rusqlite::params![name],
             |row| row.get(0),
         )
         .unwrap_or(0);
@@ -73,11 +74,11 @@ fn trigger_existe(conn: &Connection, nome: &str) -> bool {
 }
 
 /// Checks if an index exists in `sqlite_master`.
-fn indice_existe(conn: &Connection, nome: &str) -> bool {
+fn index_exists(conn: &Connection, name: &str) -> bool {
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
-            rusqlite::params![nome],
+            rusqlite::params![name],
             |row| row.get(0),
         )
         .unwrap_or(0);
@@ -85,98 +86,98 @@ fn indice_existe(conn: &Connection, nome: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 1 — init aplica exatamente 6 migrations V001 a V006
+// Test 1 — init applies exactly 9 migrations V001 through V009
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn init_cria_6_migrations_v001_a_v006() {
-    let (_tmp, db_path) = init_db_isolado();
+fn init_creates_9_migrations_v001_to_v009() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let versoes: Vec<i64> = {
+    let versions: Vec<i64> = {
         let mut stmt = conn
             .prepare("SELECT version FROM refinery_schema_history ORDER BY version ASC")
-            .expect("prepare deve funcionar");
+            .expect("prepare must work");
         stmt.query_map([], |row| row.get(0))
-            .expect("query deve funcionar")
-            .map(|r| r.expect("row deve ser lida"))
+            .expect("query must work")
+            .map(|r| r.expect("row must be readable"))
             .collect()
     };
 
     assert_eq!(
-        versoes.len(),
-        6,
-        "deve haver exatamente 6 migrations aplicadas, encontrou: {versoes:?}"
+        versions.len(),
+        9,
+        "exactly 9 migrations must be applied, found: {versions:?}"
     );
     assert_eq!(
-        versoes,
-        vec![1, 2, 3, 4, 5, 6],
-        "versões V001-V006 esperadas"
+        versions,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "expected versions V001-V009"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 2 — trigger trg_fts_ai existe após V004
+// Test 2 — trigger trg_fts_ai exists after V004
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn trigger_trg_fts_ai_existe() {
-    let (_tmp, db_path) = init_db_isolado();
+fn trigger_trg_fts_ai_exists() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     assert!(
-        trigger_existe(&conn, "trg_fts_ai"),
-        "trigger trg_fts_ai deve existir após V004"
+        trigger_exists(&conn, "trg_fts_ai"),
+        "trigger trg_fts_ai must exist after V004"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 3 — trigger trg_fts_ad existe após V004
+// Test 3 — trigger trg_fts_ad exists after V004
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn trigger_trg_fts_ad_existe() {
-    let (_tmp, db_path) = init_db_isolado();
+fn trigger_trg_fts_ad_exists() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     assert!(
-        trigger_existe(&conn, "trg_fts_ad"),
-        "trigger trg_fts_ad deve existir após V004"
+        trigger_exists(&conn, "trg_fts_ad"),
+        "trigger trg_fts_ad must exist after V004"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 4 — trigger trg_fts_au está AUSENTE (conflito sqlite-vec intencional)
+// Test 4 — trigger trg_fts_au is INTENTIONALLY ABSENT (sqlite-vec conflict)
 // ---------------------------------------------------------------------------
-// V004 documenta explicitamente que trg_fts_au é omitido porque sqlite-vec
-// carregado via sqlite3_auto_extension conflita com FTS5 em AFTER UPDATE triggers.
-// A sincronização de edição/rename é feita no código Rust (edit.rs, rename.rs).
+// V004 explicitly documents that trg_fts_au is omitted because sqlite-vec
+// loaded via sqlite3_auto_extension conflicts with FTS5 on AFTER UPDATE
+// triggers. Edit/rename synchronisation lives in Rust code (edit.rs, rename.rs).
 
 #[test]
 #[serial]
-fn trigger_trg_fts_au_ausente_conflito_vec() {
-    let (_tmp, db_path) = init_db_isolado();
+fn trigger_trg_fts_au_absent_due_to_vec_conflict() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     assert!(
-        !trigger_existe(&conn, "trg_fts_au"),
-        "trigger trg_fts_au NÃO deve existir — sqlite-vec conflita com FTS5 em AFTER UPDATE"
+        !trigger_exists(&conn, "trg_fts_au"),
+        "trigger trg_fts_au must NOT exist — sqlite-vec conflicts with FTS5 AFTER UPDATE"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 5 — vec_memories usa float[384] e distance_metric=cosine
+// Test 5 — vec_memories uses float[384] and distance_metric=cosine
 // ---------------------------------------------------------------------------
-// Verifica via DDL do sqlite_master que a definição da tabela vec0 inclui
-// os parâmetros corretos de dimensão e métrica de distância.
+// Verifies via DDL from sqlite_master that the vec0 table definition includes
+// the correct dimension and distance metric parameters.
 
 #[test]
 #[serial]
 fn vec_memories_dim_384_cosine() {
-    let (_tmp, db_path) = init_db_isolado();
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     let ddl: String = conn
@@ -185,26 +186,26 @@ fn vec_memories_dim_384_cosine() {
             [],
             |row| row.get(0),
         )
-        .expect("vec_memories deve existir no sqlite_master");
+        .expect("vec_memories must exist in sqlite_master");
 
     assert!(
         ddl.contains("float[384]"),
-        "vec_memories deve declarar float[384], DDL obtido: {ddl}"
+        "vec_memories must declare float[384], DDL was: {ddl}"
     );
     assert!(
         ddl.contains("distance_metric=cosine"),
-        "vec_memories deve usar distance_metric=cosine, DDL obtido: {ddl}"
+        "vec_memories must use distance_metric=cosine, DDL was: {ddl}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 6 — vec_memories tem 2 partition keys (namespace, type)
+// Test 6 — vec_memories has 2 partition keys (namespace, type)
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
 fn vec_memories_partition_keys_namespace_type() {
-    let (_tmp, db_path) = init_db_isolado();
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     let ddl: String = conn
@@ -213,30 +214,30 @@ fn vec_memories_partition_keys_namespace_type() {
             [],
             |row| row.get(0),
         )
-        .expect("vec_memories deve existir no sqlite_master");
+        .expect("vec_memories must exist in sqlite_master");
 
-    // Ambas as colunas devem aparecer com 'partition key' no DDL
+    // Both columns must appear with 'partition key' in the DDL
     let namespace_pk = ddl.contains("namespace") && ddl.to_lowercase().contains("partition key");
     let type_pk = ddl.contains("type") && ddl.to_lowercase().contains("partition key");
 
     assert!(
         namespace_pk,
-        "vec_memories deve ter 'namespace' como partition key, DDL: {ddl}"
+        "vec_memories must declare 'namespace' as partition key, DDL: {ddl}"
     );
     assert!(
         type_pk,
-        "vec_memories deve ter 'type' como partition key, DDL: {ddl}"
+        "vec_memories must declare 'type' as partition key, DDL: {ddl}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 7 — fts_memories usa tokenizer unicode61 remove_diacritics 1
+// Test 7 — fts_memories uses tokenizer unicode61 with remove_diacritics 1
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
 fn fts_memories_tokenizer_unicode61_remove_diacritics() {
-    let (_tmp, db_path) = init_db_isolado();
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     let ddl: String = conn
@@ -245,42 +246,42 @@ fn fts_memories_tokenizer_unicode61_remove_diacritics() {
             [],
             |row| row.get(0),
         )
-        .expect("fts_memories deve existir no sqlite_master");
+        .expect("fts_memories must exist in sqlite_master");
 
     assert!(
         ddl.contains("unicode61"),
-        "fts_memories deve usar tokenizer unicode61, DDL: {ddl}"
+        "fts_memories must use the unicode61 tokenizer, DDL: {ddl}"
     );
     assert!(
         ddl.contains("remove_diacritics"),
-        "fts_memories deve declarar remove_diacritics, DDL: {ddl}"
+        "fts_memories must declare remove_diacritics, DDL: {ddl}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 8 — FTS5 busca 'cafe' encontra texto com 'café' (remove_diacritics)
+// Test 8 — FTS5 search 'cafe' matches text containing 'café' (remove_diacritics)
 // ---------------------------------------------------------------------------
-// Insere uma memória com acento via CLI e verifica que a busca sem acento
-// funciona — confirma que o tokenizer remove_diacritics está ativo.
+// Inserts a memory with an accented body via the CLI and verifies that an
+// unaccented search succeeds, confirming that remove_diacritics is active.
 
 #[test]
 #[serial]
-fn fts5_matching_com_acentos_cafe_cafe() {
-    let tmp = TempDir::new().expect("TempDir deve ser criado");
+fn fts5_matching_with_accents_cafe_cafe() {
+    let tmp = TempDir::new().expect("TempDir must be created");
     let db_path = tmp.path().join("test.sqlite");
 
-    // Init do banco
+    // DB init
     Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+        .expect("binary not found")
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
-    // Inserir memória com texto acentuado
+    // Insert memory with accented text
     Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+        .expect("binary not found")
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_NAMESPACE", "global")
@@ -292,14 +293,14 @@ fn fts5_matching_com_acentos_cafe_cafe() {
             "--type",
             "user",
             "--description",
-            "nota sobre café",
+            "note about café",
             "--body",
-            "O café brasileiro é famoso mundialmente por sua qualidade",
+            "Brazilian café is famous worldwide for its quality",
         ])
         .assert()
         .success();
 
-    // Busca sem acento deve encontrar a memória (remove_diacritics=1)
+    // Unaccented search must find the accented memory (remove_diacritics=1)
     let conn = conn_ro(&db_path);
     let count: i64 = conn
         .query_row(
@@ -307,26 +308,26 @@ fn fts5_matching_com_acentos_cafe_cafe() {
             [],
             |row| row.get(0),
         )
-        .expect("query FTS5 deve funcionar");
+        .expect("FTS5 query must work");
 
     assert!(
         count >= 1,
-        "FTS5 com remove_diacritics deve encontrar 'café' ao buscar 'cafe', count={count}"
+        "FTS5 with remove_diacritics must match 'café' when searching 'cafe', count={count}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Teste 9 — tabelas principais existem após init
+// Test 9 — main tables exist after init
 // ---------------------------------------------------------------------------
-// Verifica todas as 7 tabelas regulares + vec/fts virtuais criadas pelas migrations.
+// Verifies all 7 regular tables plus virtual vec/fts tables created by migrations.
 
 #[test]
 #[serial]
-fn todas_tabelas_principais_existem_apos_init() {
-    let (_tmp, db_path) = init_db_isolado();
+fn all_main_tables_exist_after_init() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let tabelas = [
+    let tables = [
         "schema_meta",
         "memories",
         "memory_versions",
@@ -338,25 +339,25 @@ fn todas_tabelas_principais_existem_apos_init() {
         "fts_memories",
     ];
 
-    for nome in tabelas {
+    for name in tables {
         assert!(
-            tabela_existe(&conn, nome),
-            "tabela '{nome}' deve existir após init"
+            table_exists(&conn, name),
+            "table '{name}' must exist after init"
         );
     }
 }
 
 // ---------------------------------------------------------------------------
-// Teste 10 — índices principais de V001 e V005 existem
+// Test 10 — main indexes from V001 and V005 exist
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn indices_principais_existem_apos_init() {
-    let (_tmp, db_path) = init_db_isolado();
+fn main_indexes_exist_after_init() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let indices = [
+    let indexes = [
         "idx_memories_ns_type",
         "idx_memories_ns_live",
         "idx_memories_body_hash",
@@ -370,25 +371,25 @@ fn indices_principais_existem_apos_init() {
         "idx_memory_relationships_relationship_id",
     ];
 
-    for nome in indices {
+    for name in indexes {
         assert!(
-            indice_existe(&conn, nome),
-            "índice '{nome}' deve existir após init"
+            index_exists(&conn, name),
+            "index '{name}' must exist after init"
         );
     }
 }
 
 // ---------------------------------------------------------------------------
-// Teste 11 — schema_meta contém campos esperados após init
+// Test 11 — schema_meta contains required keys after init
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn schema_meta_campos_obrigatorios_existem() {
-    let (_tmp, db_path) = init_db_isolado();
+fn schema_meta_required_keys_exist() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let chaves_esperadas = [
+    let expected_keys = [
         "schema_version",
         "model",
         "dim",
@@ -396,42 +397,39 @@ fn schema_meta_campos_obrigatorios_existem() {
         "namespace_initial",
     ];
 
-    for chave in chaves_esperadas {
+    for key in expected_keys {
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
-                rusqlite::params![chave],
+                rusqlite::params![key],
                 |row| row.get(0),
             )
-            .expect("query schema_meta deve funcionar");
+            .expect("schema_meta query must work");
 
-        assert!(
-            count > 0,
-            "schema_meta deve conter chave '{chave}' após init"
-        );
+        assert!(count > 0, "schema_meta must contain key '{key}' after init");
     }
 }
 
 // ---------------------------------------------------------------------------
-// Teste 12 — schema_version em schema_meta corresponde a V006 (6)
+// Test 12 — schema_version in schema_meta matches V009 (9)
 // ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
-fn schema_version_meta_igual_a_6() {
-    let (_tmp, db_path) = init_db_isolado();
+fn schema_version_meta_equals_9() {
+    let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let versao: String = conn
+    let version: String = conn
         .query_row(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'",
             [],
             |row| row.get(0),
         )
-        .expect("schema_version deve existir em schema_meta");
+        .expect("schema_version must exist in schema_meta");
 
     assert_eq!(
-        versao, "6",
-        "schema_version em schema_meta deve ser '6' após V006"
+        version, "9",
+        "schema_version in schema_meta must be '9' after V009"
     );
 }

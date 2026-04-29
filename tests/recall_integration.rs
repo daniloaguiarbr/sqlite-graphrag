@@ -39,7 +39,7 @@ fn remember(tmp: &TempDir, name: &str, memory_type: &str, description: &str, bod
 
 #[test]
 #[serial]
-fn test_recall_falha_sem_init() {
+fn test_recall_fails_without_init() {
     let tmp = TempDir::new().unwrap();
     cmd(&tmp)
         .args(["recall", "qualquer-query"])
@@ -191,7 +191,7 @@ fn test_recall_k_limita_resultados() {
 
 #[test]
 #[serial]
-fn test_recall_no_graph_desativa_expansao() {
+fn test_recall_no_graph_disables_expansion() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -294,7 +294,7 @@ fn test_recall_namespace_filtra_resultados() {
 
 #[test]
 #[serial]
-fn test_recall_type_filtra_por_tipo() {
+fn test_recall_type_filters_by_type() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

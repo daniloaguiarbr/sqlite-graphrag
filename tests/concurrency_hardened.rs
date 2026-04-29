@@ -228,7 +228,7 @@ fn optimistic_locking_conflito_exit_3() {
 
 #[test]
 #[serial]
-fn purge_durante_recall_nao_corrompe() {
+fn purge_during_recall_does_not_corrupt() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
     let db_path = tmp.path().join("test.sqlite");
 
