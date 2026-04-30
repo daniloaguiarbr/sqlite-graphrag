@@ -16,7 +16,16 @@ use crate::cli::MemoryType;
 use crate::errors::AppError;
 use crate::output::{self, JsonOutputFormat};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// Maximum length of a derived kebab-case name. Longer basenames are truncated
+/// (with a `tracing::warn!`) to keep the `memories.name` column bounded.
+const DERIVED_NAME_MAX_LEN: usize = 60;
+
+/// Hard cap on the numeric suffix appended for collision resolution. If 1000
+/// candidates collide we surface an error rather than loop forever.
+const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
 
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
@@ -140,12 +149,20 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     })?;
     let type_str = args.r#type.as_str();
 
+    // v1.0.31 A10: track names produced during this run so two files with the
+    // same kebab basename (after truncation, transliteration, etc.) get
+    // distinct `-1`, `-2` suffixes within the same ingest invocation. Cross-run
+    // collisions are intentionally left to the child `remember` so re-ingesting
+    // an identical corpus still surfaces duplicates instead of silently
+    // creating shadow copies.
+    let mut taken_names: BTreeSet<String> = BTreeSet::new();
+
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();
-        let derived_name = derive_kebab_name(path);
+        let derived_base = derive_kebab_name(path);
 
-        if derived_name.is_empty() {
-            output::emit_json(&IngestFileEvent {
+        if derived_base.is_empty() {
+            output::emit_json_compact(&IngestFileEvent {
                 file: &file_str,
                 name: "",
                 status: "skipped",
@@ -158,6 +175,23 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             skipped += 1;
             continue;
         }
+
+        let derived_name = match unique_name(&derived_base, &taken_names) {
+            Ok(n) => n,
+            Err(e) => {
+                output::emit_json_compact(&IngestFileEvent {
+                    file: &file_str,
+                    name: &derived_base,
+                    status: "skipped",
+                    error: Some(e.to_string()),
+                    memory_id: None,
+                    action: None,
+                })?;
+                skipped += 1;
+                continue;
+            }
+        };
+        taken_names.insert(derived_name.clone());
 
         let description = format!("ingested from {}", path.display());
 
@@ -192,7 +226,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         if output_res.status.success() {
             let memory_id = parse_memory_id(&output_res.stdout);
             let action = parse_action(&output_res.stdout);
-            output::emit_json(&IngestFileEvent {
+            output::emit_json_compact(&IngestFileEvent {
                 file: &file_str,
                 name: &derived_name,
                 status: "indexed",
@@ -203,7 +237,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             succeeded += 1;
         } else {
             let err_msg = first_error_line(&output_res.stderr);
-            output::emit_json(&IngestFileEvent {
+            output::emit_json_compact(&IngestFileEvent {
                 file: &file_str,
                 name: &derived_name,
                 status: "failed",
@@ -213,7 +247,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             })?;
             failed += 1;
             if args.fail_fast {
-                output::emit_json(&IngestSummary {
+                output::emit_json_compact(&IngestSummary {
                     summary: true,
                     dir: args.dir.display().to_string(),
                     pattern: args.pattern.clone(),
@@ -231,7 +265,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         }
     }
 
-    output::emit_json(&IngestSummary {
+    output::emit_json_compact(&IngestSummary {
         summary: true,
         dir: args.dir.display().to_string(),
         pattern: args.pattern.clone(),
@@ -296,12 +330,57 @@ fn derive_kebab_name(path: &Path) -> String {
         .collect();
     let collapsed = collapse_dashes(&lowered);
     let trimmed = collapsed.trim_matches('-').to_string();
-    let max_len = 60;
-    if trimmed.len() > max_len {
-        trimmed[..max_len].trim_matches('-').to_string()
+    if trimmed.len() > DERIVED_NAME_MAX_LEN {
+        let truncated = trimmed[..DERIVED_NAME_MAX_LEN]
+            .trim_matches('-')
+            .to_string();
+        // v1.0.31 A10: surface the truncation so users can fix overly long file
+        // basenames before they collide with siblings sharing the same prefix.
+        tracing::warn!(
+            target: "ingest",
+            original = %trimmed,
+            truncated_to = %truncated,
+            max_len = DERIVED_NAME_MAX_LEN,
+            "derived memory name truncated to fit length cap; collisions will be resolved with numeric suffixes"
+        );
+        truncated
     } else {
         trimmed
     }
+}
+
+/// v1.0.31 A10: returns the first non-colliding kebab name by appending a
+/// numeric suffix (`-1`, `-2`, …) when needed.
+///
+/// `taken` is the set of names already consumed in the current ingest run.
+/// The caller is expected to insert the returned name into `taken` so the
+/// next call observes the consumption. Cross-run collisions are intentionally
+/// left to the child `remember`, which surfaces them as duplicates and
+/// preserves idempotent re-ingestion of identical corpora.
+///
+/// Returns `Err(AppError::Validation)` after `MAX_NAME_COLLISION_SUFFIX`
+/// candidates collide, signalling a pathological corpus that should be
+/// renamed manually.
+fn unique_name(base: &str, taken: &BTreeSet<String>) -> Result<String, AppError> {
+    if !taken.contains(base) {
+        return Ok(base.to_string());
+    }
+    for suffix in 1..=MAX_NAME_COLLISION_SUFFIX {
+        let candidate = format!("{base}-{suffix}");
+        if !taken.contains(&candidate) {
+            tracing::warn!(
+                target: "ingest",
+                base = %base,
+                resolved = %candidate,
+                suffix,
+                "memory name collision resolved with numeric suffix"
+            );
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::Validation(format!(
+        "too many name collisions for base '{base}' (>{MAX_NAME_COLLISION_SUFFIX}); rename source files to disambiguate"
+    )))
 }
 
 fn collapse_dashes(s: &str) -> String {
@@ -441,5 +520,46 @@ mod tests {
     fn parse_memory_id_returns_none_for_invalid_json() {
         let stdout = b"not json";
         assert_eq!(parse_memory_id(stdout), None);
+    }
+
+    // ── v1.0.31 A10: name truncation warns and collisions are auto-resolved ──
+
+    #[test]
+    fn derive_kebab_long_basename_truncated_within_cap() {
+        let p = PathBuf::from(format!("/tmp/{}.md", "a".repeat(120)));
+        let name = derive_kebab_name(&p);
+        assert!(
+            name.len() <= DERIVED_NAME_MAX_LEN,
+            "truncated name must respect cap; got {} chars",
+            name.len()
+        );
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn unique_name_returns_base_when_free() {
+        let taken: BTreeSet<String> = BTreeSet::new();
+        let resolved = unique_name("note", &taken).expect("must resolve");
+        assert_eq!(resolved, "note");
+    }
+
+    #[test]
+    fn unique_name_appends_first_free_suffix_on_collision() {
+        let mut taken: BTreeSet<String> = BTreeSet::new();
+        taken.insert("note".to_string());
+        taken.insert("note-1".to_string());
+        let resolved = unique_name("note", &taken).expect("must resolve");
+        assert_eq!(resolved, "note-2");
+    }
+
+    #[test]
+    fn unique_name_errors_after_collision_cap() {
+        let mut taken: BTreeSet<String> = BTreeSet::new();
+        taken.insert("note".to_string());
+        for i in 1..=MAX_NAME_COLLISION_SUFFIX {
+            taken.insert(format!("note-{i}"));
+        }
+        let err = unique_name("note", &taken).expect_err("must surface error");
+        assert!(matches!(err, AppError::Validation(_)));
     }
 }

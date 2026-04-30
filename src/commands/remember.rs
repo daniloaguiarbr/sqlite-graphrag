@@ -686,7 +686,7 @@ mod tests {
     use crate::output::RememberResponse;
 
     #[test]
-    fn remember_response_serializa_campos_obrigatorios() {
+    fn remember_response_serializes_required_fields() {
         let resp = RememberResponse {
             memory_id: 42,
             name: "minha-mem".to_string(),
@@ -783,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_invalido_prefixo_reservado_retorna_validation_error() {
+    fn invalid_name_reserved_prefix_returns_validation_error() {
         use crate::errors::AppError;
         // Valida a lógica de rejeição de nomes com prefixo "__" diretamente
         let nome = "__reservado";
@@ -801,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_muito_longo_retorna_validation_error() {
+    fn name_too_long_returns_validation_error() {
         use crate::errors::AppError;
         let nome_longo = "a".repeat(crate::constants::MAX_MEMORY_NAME_LEN + 1);
         let resultado: Result<(), AppError> =
@@ -816,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_response_merged_into_memory_id_some_serializa_inteiro() {
+    fn remember_response_merged_into_memory_id_some_serializes_integer() {
         let resp = RememberResponse {
             memory_id: 10,
             name: "mem-mergeada".to_string(),
@@ -843,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_response_urls_persisted_serializa_campo() {
+    fn remember_response_urls_persisted_serializes_field() {
         // v1.0.24 P0-2: garante que urls_persisted aparece no JSON e aceita valor > 0.
         let resp = RememberResponse {
             memory_id: 3,
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_vazio_apos_normalizacao_retorna_mensagem_especifica() {
+    fn empty_name_after_normalization_returns_specific_message() {
         // P0-4 regression: name consisting only of hyphens normalizes to empty string;
         // must produce a distinct error message, not the "too long" message.
         use crate::errors::AppError;
@@ -893,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_so_underscores_apos_normalizacao_retorna_mensagem_especifica() {
+    fn name_only_underscores_after_normalization_returns_specific_message() {
         // P0-4 regression: name consisting only of underscores normalizes to empty string.
         use crate::errors::AppError;
         let normalized = "___".to_lowercase().replace(['_', ' '], "-");
@@ -919,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_response_relationships_truncated_serializa_campo() {
+    fn remember_response_relationships_truncated_serializes_field() {
         // P1-D: garante que relationships_truncated aparece no JSON como bool.
         let resp_false = RememberResponse {
             memory_id: 1,

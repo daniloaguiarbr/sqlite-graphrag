@@ -9,7 +9,7 @@ const MAX_MEMORY_NAME_LEN: usize = 80;
 const MAX_MEMORY_BODY_LEN: usize = 512_000;
 const NAME_SLUG_REGEX: &str = r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$";
 
-// Número de casos proptest. Em CI pode ser reduzido via PROPTEST_CASES=32.
+// Number of proptest cases. In CI it can be reduced via PROPTEST_CASES=32.
 fn proptest_config() -> ProptestConfig {
     let cases = std::env::var("PROPTEST_CASES")
         .ok()
@@ -161,7 +161,7 @@ proptest! {
         a in "[a-z]{10,50}",
         b in "[A-Z]{10,50}"
     ) {
-        // a é minúsculo, b é maiúsculo — garantidamente distintos.
+        // a is lowercase, b is uppercase — guaranteed to be distinct.
         let hash_a = blake3::hash(a.as_bytes());
         let hash_b = blake3::hash(b.as_bytes());
         prop_assert_ne!(
@@ -208,7 +208,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Testes unitários complementares (não-proptest)
+// Complementary unit tests (non-proptest)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

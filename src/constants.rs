@@ -190,6 +190,30 @@ pub fn ner_batch_size() -> usize {
         .clamp(1, 32)
 }
 
+/// Default cap on tokens fed to BERT NER per memory body.
+///
+/// v1.0.31: large markdown documents (>50 KB) tokenise into thousands of
+/// 512-token windows, each requiring a CPU forward pass that takes hundreds
+/// of milliseconds. A 68 KB document was observed taking 5+ minutes.
+/// Truncating the input before sliding-window construction caps the worst-case
+/// latency while preserving extraction quality for the leading body region.
+///
+/// Regex prefilter still runs on the full body, so URLs, emails, UUIDs,
+/// all-caps identifiers and CamelCase brand names are extracted regardless.
+pub const EXTRACTION_MAX_TOKENS_DEFAULT: usize = 5_000;
+
+/// Resolves the per-body NER token cap, honouring the env-var override.
+///
+/// Override via `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` env var. Values outside
+/// [512, 100_000] fall back to [`EXTRACTION_MAX_TOKENS_DEFAULT`].
+pub fn extraction_max_tokens() -> usize {
+    std::env::var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (512..=100_000).contains(&n))
+        .unwrap_or(EXTRACTION_MAX_TOKENS_DEFAULT)
+}
+
 /// PRD-canonical regex that validates names and namespaces. Allows 1 char `[a-z0-9]`
 /// OR a 2-80 char string starting with a letter and ending with a letter/digit,
 /// containing only `[a-z0-9-]`. Rejects the `__` prefix (internal reserved).

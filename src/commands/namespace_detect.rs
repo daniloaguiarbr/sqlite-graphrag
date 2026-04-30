@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn namespace_detect_default_retorna_global_via_detect() {
+    fn namespace_detect_default_returns_global_via_detect() {
         // Garante que sem flag e sem env, detect_namespace retorna "global"
         std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
         let resolution = namespace::detect_namespace(None).unwrap();
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn namespace_detect_explicit_flag_sobrepoe_env() {
+    fn namespace_detect_explicit_flag_overrides_env() {
         std::env::set_var("SQLITE_GRAPHRAG_NAMESPACE", "env-namespace");
         let resolution = namespace::detect_namespace(Some("flag-namespace")).unwrap();
         assert_eq!(resolution.namespace, "flag-namespace");
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn namespace_detect_env_var_usada_quando_sem_flag() {
+    fn namespace_detect_env_var_used_when_no_flag() {
         std::env::remove_var("SQLITE_GRAPHRAG_NAMESPACE");
         std::env::set_var("SQLITE_GRAPHRAG_NAMESPACE", "namespace-de-env");
         let resolution = namespace::detect_namespace(None).unwrap();
@@ -79,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_detect_response_serializa_todos_campos() {
+    fn namespace_detect_response_serializes_all_fields() {
         let resp = NamespaceDetectResponse {
             namespace: "meu-projeto".to_string(),
             source: NamespaceSource::ExplicitFlag,
@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_source_serializa_em_snake_case() {
+    fn namespace_source_serializes_in_snake_case() {
         let casos = vec![
             (NamespaceSource::ExplicitFlag, "explicit_flag"),
             (NamespaceSource::Environment, "environment"),
@@ -110,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_detect_aceita_db_como_noop() {
+    fn namespace_detect_accepts_db_as_noop() {
         let cli = crate::cli::Cli::try_parse_from([
             "sqlite-graphrag",
             "namespace-detect",

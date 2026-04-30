@@ -190,7 +190,7 @@ mod tests {
         (dir, conn)
     }
 
-    fn nova_memoria(name: &str) -> NewMemory {
+    fn new_memory(name: &str) -> NewMemory {
         NewMemory {
             namespace: "global".to_string(),
             name: name.to_string(),
@@ -205,10 +205,10 @@ mod tests {
     }
 
     #[test]
-    fn rejeita_new_name_com_prefixo_duplo_underscore() {
+    fn rejects_new_name_with_double_underscore_prefix() {
         use crate::errors::AppError;
         let (_dir, conn) = setup_db();
-        insert(&conn, &nova_memoria("mem-teste")).unwrap();
+        insert(&conn, &new_memory("mem-teste")).unwrap();
         drop(conn);
 
         let err = AppError::Validation(
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn optimistic_lock_conflict_retorna_exit_3() {
+    fn optimistic_lock_conflict_returns_exit_3() {
         use crate::errors::AppError;
         let err = AppError::Conflict(
             "optimistic lock conflict: expected updated_at=100, but current is 200".to_string(),

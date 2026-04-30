@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn unlink_response_relationship_id_positivo() {
+    fn unlink_response_relationship_id_positive() {
         let resp = UnlinkResponse {
             action: "deleted".to_string(),
             relationship_id: 42,

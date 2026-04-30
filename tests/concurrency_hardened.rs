@@ -1,16 +1,16 @@
 #![cfg(feature = "slow-tests")]
 
-// Suite 4 — Testes reforçados de lock e concorrência
+// Suite 4 — Hardened lock and concurrency tests
 //
-// ISOLAMENTO: cada teste usa `SQLITE_GRAPHRAG_CACHE_DIR` apontando para um
-// `TempDir` exclusivo por teste. `#[serial]` é obrigatório em todos os testes
-// para evitar corridas no filesystem entre testes que compartilham o binário.
+// ISOLATION: each test uses `SQLITE_GRAPHRAG_CACHE_DIR` pointing to a
+// `TempDir` exclusive per test. `#[serial]` is required in all tests to avoid
+// filesystem races between tests that share the same binary.
 //
-// `--skip-memory-guard` é usado para que a verificação de RAM não aborte antes
-// do semáforo ser exercitado em ambientes CI com pouca memória.
+// `--skip-memory-guard` is used so that the RAM check does not abort before
+// the semaphore is exercised in CI environments with limited memory.
 //
-// Testes de timing flaky são marcados com `#[ignore]` e documentam como
-// executá-los manualmente.
+// Flaky timing tests are marked with `#[ignore]` and document how to run them
+// manually.
 
 use assert_cmd::Command;
 use serial_test::serial;
@@ -49,9 +49,9 @@ fn ocupar_slots(tmp: &TempDir, n_slots: usize) -> Vec<std::fs::File> {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 1 — 5 instâncias simultâneas: a 5ª recebe exit 75
+// Test 1 — 5 simultaneous instances: the 5th receives exit 75
 // ---------------------------------------------------------------------------
-// Ocupa os 4 slots padrão via fs4, depois dispara uma 5ª invocação com
+// Occupies the 4 default slots via fs4, then triggers a 5th invocation with
 // --wait-lock 0 e confirma que ela retorna exit 75 (AllSlotsFull).
 
 #[test]
@@ -59,10 +59,10 @@ fn ocupar_slots(tmp: &TempDir, n_slots: usize) -> Vec<std::fs::File> {
 fn cinco_instancias_quinta_exit_75() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    // Ocupa todos os 4 slots padrão
+    // Occupy all 4 default slots
     let handles = ocupar_slots(&tmp, 4);
 
-    // 5ª invocação com --wait-lock 0 deve falhar com exit 75
+    // 5th invocation with --wait-lock 0 must fail with exit 75
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -82,9 +82,9 @@ fn cinco_instancias_quinta_exit_75() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 2 — --wait-lock 3 espera até 3 segundos pelo slot
+// Test 2 — --wait-lock 3 waits up to 3 seconds for a slot
 // ---------------------------------------------------------------------------
-// Ocupa todos os slots, libera após 1s em thread separada, confirma que
+// Occupies all slots, releases after 1s in a separate thread, confirms that
 // --wait-lock 3 aguarda e conclui com sucesso.
 //
 // MARCADO #[ignore] — adiciona ~1-2s ao CI e depende de timing de threads.
@@ -101,15 +101,15 @@ fn wait_lock_3s_respeitado() {
     // Ocupa todos os 4 slots
     let handles = ocupar_slots(&tmp, 4);
 
-    // Libera todos após 1 segundo em thread separada
+    // Release all after 1 second in a separate thread
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
         drop(handles);
-        // Manter tmp_path vivo até aqui
+        // Keep tmp_path alive until here
         let _ = &tmp_path;
     });
 
-    // --wait-lock 3 deve aguardar a liberação (dentro de 3s) e completar
+    // --wait-lock 3 must wait for release (within 3s) and complete
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -128,9 +128,9 @@ fn wait_lock_3s_respeitado() {
 // ---------------------------------------------------------------------------
 // Teste 3 — remember duplicado seguido de edit com --updated-at stale → exit 3
 // ---------------------------------------------------------------------------
-// Simula optimistic locking: insere uma memória, obtém updated_at, modifica
-// via CLI, então tenta editar novamente com o updated_at stale (antes da
-// modificação) e confirma exit 3 (Conflict).
+// Simulates optimistic locking: insert a memory, get updated_at, modify
+// via CLI, then try editing again with the stale updated_at (before the
+// modification) and confirm exit 3 (Conflict).
 
 #[test]
 #[serial]
@@ -147,7 +147,7 @@ fn optimistic_locking_conflito_exit_3() {
         .assert()
         .success();
 
-    // Inserir memória
+    // Insert memory
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
@@ -193,11 +193,11 @@ fn optimistic_locking_conflito_exit_3() {
         .and_then(|v| v.as_i64())
         .expect("updated_at deve existir e ser i64");
 
-    // Valor impossível: Unix epoch 1970-01-01 nunca será o updated_at de uma memória recém-criada.
-    // Garante o conflito independentemente de quantas operações ocorram no mesmo segundo.
+    // Impossible value: Unix epoch 1970-01-01 will never be updated_at for a freshly created memory.
+    // Ensures the conflict regardless of how many operations happen in the same second.
     let updated_at_stale: i64 = 1;
 
-    // Edição com --expected-updated-at stale deve falhar com exit 3 (Conflict)
+    // Edit with stale --expected-updated-at must fail with exit 3 (Conflict)
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário não encontrado")
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
@@ -220,11 +220,11 @@ fn optimistic_locking_conflito_exit_3() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 4 — purge durante recall não corrompe o banco
+// Test 4 — purge during recall does not corrupt the database
 // ---------------------------------------------------------------------------
 // Dispara recall e purge em paralelo via threads e confirma que o banco
-// permanece íntegro (sem erros SQLITE_CORRUPT ou panic) após ambos concluírem.
-// Usa std::sync::Barrier para sincronizar o início.
+// remains intact (no SQLITE_CORRUPT errors or panic) after both finish.
+// Uses std::sync::Barrier to synchronize the start.
 
 #[test]
 #[serial]
@@ -241,7 +241,7 @@ fn purge_during_recall_does_not_corrupt() {
         .assert()
         .success();
 
-    // Inserir algumas memórias antigas para que purge tenha algo a fazer
+    // Insert some old memories so that purge has something to do
     for i in 0..3 {
         Command::cargo_bin("sqlite-graphrag")
             .expect("binário não encontrado")
@@ -298,7 +298,7 @@ fn purge_during_recall_does_not_corrupt() {
             .expect("recall deve executar sem panic")
     });
 
-    // Thread purge — purge concorrente com --dry-run para não deletar nada
+    // Purge thread — concurrent purge with --dry-run so nothing is deleted
     let handle_purge = std::thread::spawn(move || {
         barrier_purge.wait();
         std::process::Command::new(&bin_purge)
@@ -322,7 +322,7 @@ fn purge_during_recall_does_not_corrupt() {
         .join()
         .expect("thread purge não deve entrar em panic");
 
-    // Nenhum dos dois deve ter saído com código de erro de corrupção
+    // Neither must have exited with a corruption error code
     // Exit code 10 = Database error (SQLite), 20 = Internal
     let codigo_recall = resultado_recall.status.code().unwrap_or(-1);
     let codigo_purge = resultado_purge.status.code().unwrap_or(-1);
@@ -336,7 +336,7 @@ fn purge_during_recall_does_not_corrupt() {
         "purge não deve retornar erro interno (exit 20)"
     );
 
-    // Verificar integridade do banco após operações concorrentes
+    // Verify database integrity after concurrent operations
     let conn = rusqlite::Connection::open(&db_path).expect("banco deve abrir após concorrência");
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
@@ -348,10 +348,10 @@ fn purge_during_recall_does_not_corrupt() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 5 — 10 remembers em namespaces diferentes não colidem
+// Test 5 — 10 remembers in different namespaces do not collide
 // ---------------------------------------------------------------------------
-// Confirma que inserções em 10 namespaces distintos via threads simultâneas
-// são todas bem-sucedidas e que cada namespace contém exatamente 1 memória.
+// Confirms that inserts into 10 distinct namespaces via concurrent threads
+// all succeed and that each namespace contains exactly 1 memory.
 
 #[test]
 #[serial]
@@ -422,7 +422,7 @@ fn dez_remembers_namespaces_diferentes() {
          obtivemos {sucessos} sucessos e {falhas} falhas"
     );
 
-    // Verificar que cada namespace tem exatamente 1 memória no banco
+    // Verify that each namespace has exactly 1 memory in the database
     let conn = rusqlite::Connection::open(&db_path).expect("banco deve abrir");
     for i in 0..n_threads {
         let namespace = format!("ns-thread-{i}");

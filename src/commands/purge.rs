@@ -280,12 +280,12 @@ mod tests {
     }
 
     #[test]
-    fn retention_days_used_padrao_eh_90() {
+    fn retention_days_used_default_is_90() {
         assert_eq!(crate::constants::PURGE_RETENTION_DAYS_DEFAULT, 90u32);
     }
 
     #[test]
-    fn compute_metrics_bytes_freed_positivo_para_body_populado() {
+    fn compute_metrics_bytes_freed_positive_for_populated_body() {
         let conn = setup_test_db();
         let now = current_epoch().expect("epoch falhou");
         let old_epoch = now - 100 * 86_400;
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_metrics_retorna_zero_sem_candidatos() {
+    fn compute_metrics_returns_zero_without_candidates() {
         let conn = setup_test_db();
         let now = current_epoch().expect("epoch falhou");
         let cutoff = now - 90 * 86_400;
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_nao_deleta_registros() {
+    fn dry_run_does_not_delete_records() {
         let conn = setup_test_db();
         let now = current_epoch().expect("epoch falhou");
         let old_epoch = now - 200 * 86_400;
@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn oldest_deleted_at_retorna_menor_epoch() {
+    fn oldest_deleted_at_returns_smallest_epoch() {
         let conn = setup_test_db();
         let now = current_epoch().expect("epoch falhou");
         let epoch_antigo = now - 300 * 86_400;
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn purge_args_namespace_aceita_none_sem_default() {
+    fn purge_args_namespace_accepts_none_without_default() {
         // P1-C: namespace deve ser None quando não fornecido, permitindo resolve_namespace
         // consultar SQLITE_GRAPHRAG_NAMESPACE antes de cair em "global".
         // O campo era `default_value = "global"` antes de P1-C; com isso removido,

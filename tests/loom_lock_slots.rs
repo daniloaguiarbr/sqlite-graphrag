@@ -110,9 +110,9 @@ fn quatro_threads_invariante_maximo_tres_slots() {
 
             let h = loom::thread::spawn(move || {
                 if sem_t.try_acquire() {
-                    // Registra que esta thread detém um slot.
+                    // Record that this thread holds a slot.
                     let agora = holds_t.fetch_add(1, Ordering::AcqRel) + 1;
-                    // Invariante central: nunca mais que MAX_SLOTS holds simultâneos.
+                    // Core invariant: never more than MAX_SLOTS simultaneous holds.
                     assert!(
                         agora <= MAX_SLOTS,
                         "violação: {agora} holds simultâneos ultrapassam o limite {MAX_SLOTS}"
@@ -121,7 +121,7 @@ fn quatro_threads_invariante_maximo_tres_slots() {
                     holds_t.fetch_sub(1, Ordering::AcqRel);
                     sem_t.release();
                 }
-                // Thread que não obteve slot simplesmente retorna — sem pânico.
+                // Thread that did not acquire a slot simply returns — no panic.
             });
             handles.push(h);
         }
@@ -151,7 +151,7 @@ fn release_frees_slot_for_next_thread() {
     builder.preemption_bound = Some(1);
     builder.max_branches = 100;
     builder.check(|| {
-        // Semáforo com 1 slot para forçar contenção determinística.
+        // Semaphore with 1 slot to force deterministic contention.
         let sem = Arc::new(SlotSemaforo::novo(1));
         assert!(
             sem.try_acquire(),
@@ -161,7 +161,7 @@ fn release_frees_slot_for_next_thread() {
         let sem_a = Arc::new(sem.clonar());
         let sem_b = Arc::new(sem.clonar());
 
-        // Sinalização de que A liberou o slot.
+        // Signal that A released the slot.
         let liberado = Arc::new(AtomicUsize::new(0));
         let liberado_b = Arc::clone(&liberado);
         let b_adquiriu = Arc::new(AtomicUsize::new(0));
@@ -175,16 +175,16 @@ fn release_frees_slot_for_next_thread() {
         });
 
         let hb = loom::thread::spawn(move || {
-            // B tenta em loop até o slot estar livre — modela polling de wait_seconds.
+            // B retries in a loop until the slot is free — models wait_seconds polling.
             loop {
                 if sem_b.try_acquire() {
                     b_adquiriu_t.store(1, Ordering::Release);
                     sem_b.release();
                     break;
                 }
-                // Sem o slot: verifica se A já liberou antes de tentar de novo.
+                // No slot held: check if A already released before retrying.
                 if liberado_b.load(Ordering::Acquire) == 1 {
-                    // Tenta uma última vez após a liberação confirmada.
+                    // Try one last time after the release was confirmed.
                     if sem_b.try_acquire() {
                         b_adquiriu_t.store(1, Ordering::Release);
                         sem_b.release();
@@ -259,7 +259,7 @@ fn shutdown_limpo_todos_slots_liberados() {
             n = sem.ocupados()
         );
 
-        // Ao menos uma thread adquiriu slot — sistema não estava travado.
+        // At least one thread acquired a slot — the system was not stuck.
         let total = adquiridos_total.load(Ordering::Acquire);
         assert!(
             total > 0,

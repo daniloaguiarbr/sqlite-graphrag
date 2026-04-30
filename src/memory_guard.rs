@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn low_memory_error_contem_valores_corretos() {
+    fn low_memory_error_contains_correct_values() {
         match check_available_memory(u64::MAX) {
             Err(AppError::LowMemory {
                 available_mb,
@@ -125,25 +125,25 @@ mod tests {
     }
 
     #[test]
-    fn calculate_safe_concurrency_respeita_metade_da_margem() {
+    fn calculate_safe_concurrency_respects_half_margin() {
         let permits = calculate_safe_concurrency(8_000, 8, 1_000, 4);
         assert_eq!(permits, 4);
     }
 
     #[test]
-    fn calculate_safe_concurrency_nunca_retorna_zero() {
+    fn calculate_safe_concurrency_never_returns_zero() {
         let permits = calculate_safe_concurrency(100, 1, 10_000, 4);
         assert_eq!(permits, 1);
     }
 
     #[test]
-    fn calculate_safe_concurrency_respeita_teto_maximo() {
+    fn calculate_safe_concurrency_respects_max_ceiling() {
         let permits = calculate_safe_concurrency(128_000, 64, 500, 4);
         assert_eq!(permits, 4);
     }
 
     #[test]
-    fn current_process_memory_mb_retorna_algum_valor() {
+    fn current_process_memory_mb_returns_some_value() {
         let rss = current_process_memory_mb();
         assert!(rss.is_some());
     }

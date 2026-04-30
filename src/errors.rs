@@ -227,22 +227,22 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_duplicate_retorna_2() {
+    fn exit_code_duplicate_returns_2() {
         assert_eq!(AppError::Duplicate("namespace/nome".into()).exit_code(), 2);
     }
 
     #[test]
-    fn exit_code_conflict_retorna_3() {
+    fn exit_code_conflict_returns_3() {
         assert_eq!(AppError::Conflict("updated_at mudou".into()).exit_code(), 3);
     }
 
     #[test]
-    fn exit_code_not_found_retorna_4() {
+    fn exit_code_not_found_returns_4() {
         assert_eq!(AppError::NotFound("memória ausente".into()).exit_code(), 4);
     }
 
     #[test]
-    fn exit_code_namespace_error_retorna_5() {
+    fn exit_code_namespace_error_returns_5() {
         assert_eq!(
             AppError::NamespaceError("não resolvido".into()).exit_code(),
             5
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_limit_exceeded_retorna_6() {
+    fn exit_code_limit_exceeded_returns_6() {
         assert_eq!(
             AppError::LimitExceeded("corpo muito grande".into()).exit_code(),
             6
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_embedding_retorna_11() {
+    fn exit_code_embedding_returns_11() {
         assert_eq!(
             AppError::Embedding("falha de modelo".into()).exit_code(),
             11
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_vec_extension_retorna_12() {
+    fn exit_code_vec_extension_returns_12() {
         assert_eq!(
             AppError::VecExtension("extensão não carregou".into()).exit_code(),
             12
@@ -274,12 +274,12 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_db_busy_retorna_15() {
+    fn exit_code_db_busy_returns_15() {
         assert_eq!(AppError::DbBusy("esgotou retries".into()).exit_code(), 15);
     }
 
     #[test]
-    fn exit_code_batch_partial_failure_retorna_13() {
+    fn exit_code_batch_partial_failure_returns_13() {
         assert_eq!(
             AppError::BatchPartialFailure {
                 total: 10,
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn display_batch_partial_failure_inclui_contagens() {
+    fn display_batch_partial_failure_includes_counts() {
         let err = AppError::BatchPartialFailure {
             total: 50,
             failed: 7,
@@ -304,25 +304,25 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_io_retorna_14() {
+    fn exit_code_io_returns_14() {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "arquivo ausente");
         assert_eq!(AppError::Io(io_err).exit_code(), 14);
     }
 
     #[test]
-    fn exit_code_internal_retorna_20() {
+    fn exit_code_internal_returns_20() {
         let anyhow_err = anyhow::anyhow!("erro interno inesperado");
         assert_eq!(AppError::Internal(anyhow_err).exit_code(), 20);
     }
 
     #[test]
-    fn exit_code_json_retorna_20() {
+    fn exit_code_json_returns_20() {
         let json_err = serde_json::from_str::<serde_json::Value>("json inválido {{").unwrap_err();
         assert_eq!(AppError::Json(json_err).exit_code(), 20);
     }
 
     #[test]
-    fn exit_code_lock_busy_retorna_75() {
+    fn exit_code_lock_busy_returns_75() {
         assert_eq!(
             AppError::LockBusy("outra instância ativa".into()).exit_code(),
             75
@@ -337,14 +337,14 @@ mod tests {
     }
 
     #[test]
-    fn display_duplicate_inclui_mensagem() {
+    fn display_duplicate_includes_message() {
         let err = AppError::Duplicate("proj/mem".into());
         assert!(err.to_string().contains("proj/mem"));
         assert!(err.to_string().contains("duplicate detected"));
     }
 
     #[test]
-    fn display_not_found_inclui_mensagem() {
+    fn display_not_found_includes_message() {
         let err = AppError::NotFound("id 42".into());
         assert!(err.to_string().contains("id 42"));
         assert!(err.to_string().contains("not found"));

@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn health_check_sem_detail_omite_campo() {
+    fn health_check_without_detail_omits_field() {
         let check = HealthCheck {
             name: "vec_memories".to_string(),
             ok: true,

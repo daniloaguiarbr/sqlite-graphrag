@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn list_response_items_vazio_serializa_array_vazio() {
+    fn list_response_items_empty_serializes_empty_array() {
         let resp = ListResponse {
             items: vec![],
             elapsed_ms: 0,
@@ -188,14 +188,14 @@ mod tests {
     }
 
     #[test]
-    fn snippet_truncado_em_200_chars() {
+    fn snippet_truncated_to_200_chars() {
         let body_longo: String = "a".repeat(300);
         let snippet: String = body_longo.chars().take(200).collect();
         assert_eq!(snippet.len(), 200, "snippet deve ter exatamente 200 chars");
     }
 
     #[test]
-    fn updated_at_iso_epoch_zero_gera_utc_valido() {
+    fn updated_at_iso_epoch_zero_yields_valid_utc() {
         let iso = crate::tz::epoch_to_iso(0);
         assert!(
             iso.starts_with("1970-01-01T00:00:00"),

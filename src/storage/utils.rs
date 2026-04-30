@@ -84,17 +84,17 @@ mod tests {
     }
 
     #[test]
-    fn is_sqlite_busy_detecta_database_busy() {
+    fn is_sqlite_busy_detects_database_busy() {
         assert!(is_sqlite_busy(&make_busy_error()));
     }
 
     #[test]
-    fn is_sqlite_busy_detecta_database_locked() {
+    fn is_sqlite_busy_detects_database_locked() {
         assert!(is_sqlite_busy(&make_locked_error()));
     }
 
     #[test]
-    fn is_sqlite_busy_rejeita_outros_erros() {
+    fn is_sqlite_busy_rejects_other_errors() {
         let err = AppError::Validation("campo inválido".into());
         assert!(!is_sqlite_busy(&err));
     }

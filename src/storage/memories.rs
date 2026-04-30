@@ -692,7 +692,7 @@ mod tests {
         Ok(conn)
     }
 
-    fn nova_memoria(name: &str) -> NewMemory {
+    fn new_memory(name: &str) -> NewMemory {
         NewMemory {
             namespace: "global".to_string(),
             name: name.to_string(),
@@ -707,9 +707,9 @@ mod tests {
     }
 
     #[test]
-    fn insert_e_find_by_name_retornam_id() -> TestResult {
+    fn insert_and_find_by_name_return_id() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-alpha");
+        let m = new_memory("mem-alpha");
         let id = insert(&conn, &m)?;
         assert!(id > 0);
 
@@ -721,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn find_by_name_retorna_none_quando_nao_existe() -> TestResult {
+    fn find_by_name_returns_none_when_not_found() -> TestResult {
         let conn = setup_conn()?;
         let result = find_by_name(&conn, "global", "inexistente")?;
         assert!(result.is_none());
@@ -729,9 +729,9 @@ mod tests {
     }
 
     #[test]
-    fn find_by_hash_retorna_id_correto() -> TestResult {
+    fn find_by_hash_returns_correct_id() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-hash");
+        let m = new_memory("mem-hash");
         let id = insert(&conn, &m)?;
 
         let found = find_by_hash(&conn, "global", "hash-mem-hash")?;
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn find_by_hash_retorna_none_quando_hash_nao_existe() -> TestResult {
+    fn find_by_hash_returns_none_when_hash_not_found() -> TestResult {
         let conn = setup_conn()?;
         let result = find_by_hash(&conn, "global", "hash-inexistente")?;
         assert!(result.is_none());
@@ -748,9 +748,9 @@ mod tests {
     }
 
     #[test]
-    fn find_by_hash_ignora_namespace_diferente() -> TestResult {
+    fn find_by_hash_ignores_different_namespace() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-ns");
+        let m = new_memory("mem-ns");
         insert(&conn, &m)?;
 
         let result = find_by_hash(&conn, "outro-namespace", "hash-mem-ns")?;
@@ -759,9 +759,9 @@ mod tests {
     }
 
     #[test]
-    fn read_by_name_retorna_memoria_completa() -> TestResult {
+    fn read_by_name_returns_full_memory() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-read");
+        let m = new_memory("mem-read");
         let id = insert(&conn, &m)?;
 
         let row = read_by_name(&conn, "global", "mem-read")?.ok_or("mem-read deveria existir")?;
@@ -774,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn read_by_name_retorna_none_para_ausente() -> TestResult {
+    fn read_by_name_returns_none_for_missing() -> TestResult {
         let conn = setup_conn()?;
         let result = read_by_name(&conn, "global", "nao-existe")?;
         assert!(result.is_none());
@@ -782,9 +782,9 @@ mod tests {
     }
 
     #[test]
-    fn read_full_por_id_retorna_memoria() -> TestResult {
+    fn read_full_by_id_returns_memory() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-full");
+        let m = new_memory("mem-full");
         let id = insert(&conn, &m)?;
 
         let row = read_full(&conn, id)?.ok_or("mem-full deveria existir")?;
@@ -794,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn read_full_retorna_none_para_id_inexistente() -> TestResult {
+    fn read_full_returns_none_for_missing_id() -> TestResult {
         let conn = setup_conn()?;
         let result = read_full(&conn, 9999)?;
         assert!(result.is_none());
@@ -802,12 +802,12 @@ mod tests {
     }
 
     #[test]
-    fn update_sem_otimismo_modifica_campos() -> TestResult {
+    fn update_without_optimism_modifies_fields() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-upd");
+        let m = new_memory("mem-upd");
         let id = insert(&conn, &m)?;
 
-        let mut m2 = nova_memoria("mem-upd");
+        let mut m2 = new_memory("mem-upd");
         m2.body = "corpo atualizado".to_string();
         m2.body_hash = "hash-novo".to_string();
         let ok = update(&conn, id, &m2, None)?;
@@ -820,15 +820,15 @@ mod tests {
     }
 
     #[test]
-    fn update_com_expected_updated_at_correto_tem_sucesso() -> TestResult {
+    fn update_with_correct_expected_updated_at_succeeds() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-opt");
+        let m = new_memory("mem-opt");
         let id = insert(&conn, &m)?;
 
         let (_, updated_at, _) =
             find_by_name(&conn, "global", "mem-opt")?.ok_or("mem-opt deveria existir")?;
 
-        let mut m2 = nova_memoria("mem-opt");
+        let mut m2 = new_memory("mem-opt");
         m2.body = "corpo otimista".to_string();
         m2.body_hash = "hash-otimista".to_string();
         let ok = update(&conn, id, &m2, Some(updated_at))?;
@@ -840,12 +840,12 @@ mod tests {
     }
 
     #[test]
-    fn update_com_expected_updated_at_errado_retorna_false() -> TestResult {
+    fn update_with_wrong_expected_updated_at_returns_false() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-conflict");
+        let m = new_memory("mem-conflict");
         let id = insert(&conn, &m)?;
 
-        let mut m2 = nova_memoria("mem-conflict");
+        let mut m2 = new_memory("mem-conflict");
         m2.body = "nao deve aparecer".to_string();
         m2.body_hash = "hash-x".to_string();
         let ok = update(&conn, id, &m2, Some(0))?;
@@ -857,18 +857,18 @@ mod tests {
     }
 
     #[test]
-    fn update_id_inexistente_retorna_false() -> TestResult {
+    fn update_missing_id_returns_false() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("fantasma");
+        let m = new_memory("fantasma");
         let ok = update(&conn, 9999, &m, None)?;
         assert!(!ok);
         Ok(())
     }
 
     #[test]
-    fn soft_delete_marca_deleted_at() -> TestResult {
+    fn soft_delete_marks_deleted_at() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-del");
+        let m = new_memory("mem-del");
         insert(&conn, &m)?;
 
         let ok = soft_delete(&conn, "global", "mem-del")?;
@@ -883,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn soft_delete_retorna_false_quando_nao_existe() -> TestResult {
+    fn soft_delete_returns_false_when_not_found() -> TestResult {
         let conn = setup_conn()?;
         let ok = soft_delete(&conn, "global", "nao-existe")?;
         assert!(!ok);
@@ -891,9 +891,9 @@ mod tests {
     }
 
     #[test]
-    fn soft_delete_duplo_retorna_false_na_segunda_vez() -> TestResult {
+    fn double_soft_delete_returns_false_on_second_call() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-del2");
+        let m = new_memory("mem-del2");
         insert(&conn, &m)?;
 
         soft_delete(&conn, "global", "mem-del2")?;
@@ -903,10 +903,10 @@ mod tests {
     }
 
     #[test]
-    fn list_retorna_memorias_do_namespace() -> TestResult {
+    fn list_returns_memories_from_namespace() -> TestResult {
         let conn = setup_conn()?;
-        insert(&conn, &nova_memoria("mem-list-a"))?;
-        insert(&conn, &nova_memoria("mem-list-b"))?;
+        insert(&conn, &new_memory("mem-list-a"))?;
+        insert(&conn, &new_memory("mem-list-b"))?;
 
         let rows = list(&conn, "global", None, 10, 0, false)?;
         assert!(rows.len() >= 2);
@@ -917,11 +917,11 @@ mod tests {
     }
 
     #[test]
-    fn list_com_filtro_de_tipo_retorna_apenas_tipo_correto() -> TestResult {
+    fn list_with_type_filter_returns_only_correct_type() -> TestResult {
         let conn = setup_conn()?;
-        insert(&conn, &nova_memoria("mem-user"))?;
+        insert(&conn, &new_memory("mem-user"))?;
 
-        let mut m2 = nova_memoria("mem-feedback");
+        let mut m2 = new_memory("mem-feedback");
         m2.memory_type = "feedback".to_string();
         insert(&conn, &m2)?;
 
@@ -936,7 +936,7 @@ mod tests {
     #[test]
     fn list_exclui_soft_deleted() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-excluida");
+        let m = new_memory("mem-excluida");
         insert(&conn, &m)?;
         soft_delete(&conn, "global", "mem-excluida")?;
 
@@ -949,7 +949,7 @@ mod tests {
     fn list_pagination_works() -> TestResult {
         let conn = setup_conn()?;
         for i in 0..5 {
-            insert(&conn, &nova_memoria(&format!("mem-pag-{i}")))?;
+            insert(&conn, &new_memory(&format!("mem-pag-{i}")))?;
         }
 
         let pagina1 = list(&conn, "global", None, 2, 0, false)?;
@@ -963,9 +963,9 @@ mod tests {
     }
 
     #[test]
-    fn upsert_vec_e_delete_vec_funcionam() -> TestResult {
+    fn upsert_vec_and_delete_vec_work() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-vec");
+        let m = new_memory("mem-vec");
         let id = insert(&conn, &m)?;
 
         let embedding: Vec<f32> = vec![0.1; 384];
@@ -992,9 +992,9 @@ mod tests {
     }
 
     #[test]
-    fn upsert_vec_substitui_vetor_existente() -> TestResult {
+    fn upsert_vec_replaces_existing_vector() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-vec-upsert");
+        let m = new_memory("mem-vec-upsert");
         let id = insert(&conn, &m)?;
 
         let emb1: Vec<f32> = vec![0.1; 384];
@@ -1013,17 +1013,17 @@ mod tests {
     }
 
     #[test]
-    fn knn_search_retorna_resultados_por_distancia() -> TestResult {
+    fn knn_search_returns_results_by_distance() -> TestResult {
         let conn = setup_conn()?;
 
         // emb_a: predominantemente positivo — cosseno alto com query [1.0; 384]
-        let ma = nova_memoria("mem-knn-a");
+        let ma = new_memory("mem-knn-a");
         let id_a = insert(&conn, &ma)?;
         let emb_a: Vec<f32> = vec![1.0; 384];
         upsert_vec(&conn, id_a, "global", "user", &emb_a, "mem-knn-a", "s")?;
 
         // emb_b: predominantemente negativo — cosseno baixo com query [1.0; 384]
-        let mb = nova_memoria("mem-knn-b");
+        let mb = new_memory("mem-knn-b");
         let id_b = insert(&conn, &mb)?;
         let emb_b: Vec<f32> = vec![-1.0; 384];
         upsert_vec(&conn, id_b, "global", "user", &emb_b, "mem-knn-b", "s")?;
@@ -1036,10 +1036,10 @@ mod tests {
     }
 
     #[test]
-    fn knn_search_com_filtro_de_tipo_restringe_resultado() -> TestResult {
+    fn knn_search_with_type_filter_restricts_result() -> TestResult {
         let conn = setup_conn()?;
 
-        let ma = nova_memoria("mem-knn-tipo-user");
+        let ma = new_memory("mem-knn-tipo-user");
         let id_a = insert(&conn, &ma)?;
         let emb: Vec<f32> = vec![1.0; 384];
         upsert_vec(
@@ -1052,7 +1052,7 @@ mod tests {
             "s",
         )?;
 
-        let mut mb = nova_memoria("mem-knn-tipo-fb");
+        let mut mb = new_memory("mem-knn-tipo-fb");
         mb.memory_type = "feedback".to_string();
         let id_b = insert(&conn, &mb)?;
         upsert_vec(
@@ -1075,9 +1075,9 @@ mod tests {
     }
 
     #[test]
-    fn fts_search_encontra_por_prefixo_no_body() -> TestResult {
+    fn fts_search_finds_by_prefix_in_body() -> TestResult {
         let conn = setup_conn()?;
-        let mut m = nova_memoria("mem-fts");
+        let mut m = new_memory("mem-fts");
         m.body = "linguagem de programacao rust".to_string();
         insert(&conn, &m)?;
 
@@ -1093,13 +1093,13 @@ mod tests {
     }
 
     #[test]
-    fn fts_search_com_filtro_de_tipo() -> TestResult {
+    fn fts_search_with_type_filter() -> TestResult {
         let conn = setup_conn()?;
-        let mut m = nova_memoria("mem-fts-tipo");
+        let mut m = new_memory("mem-fts-tipo");
         m.body = "linguagem especial para filtro".to_string();
         insert(&conn, &m)?;
 
-        let mut m2 = nova_memoria("mem-fts-feedback");
+        let mut m2 = new_memory("mem-fts-feedback");
         m2.memory_type = "feedback".to_string();
         m2.body = "linguagem especial para filtro".to_string();
         insert(&conn, &m2)?;
@@ -1118,9 +1118,9 @@ mod tests {
     }
 
     #[test]
-    fn fts_search_nao_retorna_deletados() -> TestResult {
+    fn fts_search_excludes_deleted() -> TestResult {
         let conn = setup_conn()?;
-        let mut m = nova_memoria("mem-fts-del");
+        let mut m = new_memory("mem-fts-del");
         m.body = "conteudo deletado fts".to_string();
         insert(&conn, &m)?;
 
@@ -1137,9 +1137,9 @@ mod tests {
     }
 
     #[test]
-    fn list_deleted_before_retorna_ids_corretos() -> TestResult {
+    fn list_deleted_before_returns_correct_ids() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-purge");
+        let m = new_memory("mem-purge");
         insert(&conn, &m)?;
         soft_delete(&conn, "global", "mem-purge")?;
 
@@ -1152,9 +1152,9 @@ mod tests {
     }
 
     #[test]
-    fn find_by_name_retorna_max_version_correto() -> TestResult {
+    fn find_by_name_returns_correct_max_version() -> TestResult {
         let conn = setup_conn()?;
-        let m = nova_memoria("mem-ver");
+        let m = new_memory("mem-ver");
         let id = insert(&conn, &m)?;
 
         let (_, _, v0) =
@@ -1176,7 +1176,7 @@ mod tests {
     #[test]
     fn insert_com_metadata_json() -> TestResult {
         let conn = setup_conn()?;
-        let mut m = nova_memoria("mem-meta");
+        let mut m = new_memory("mem-meta");
         m.metadata = serde_json::json!({"chave": "valor", "numero": 42});
         let id = insert(&conn, &m)?;
 
@@ -1190,7 +1190,7 @@ mod tests {
     #[test]
     fn insert_com_session_id() -> TestResult {
         let conn = setup_conn()?;
-        let mut m = nova_memoria("mem-session");
+        let mut m = new_memory("mem-session");
         m.session_id = Some("sessao-xyz".to_string());
         let id = insert(&conn, &m)?;
 

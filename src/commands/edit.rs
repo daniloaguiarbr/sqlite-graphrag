@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_body_excede_limite_retorna_erro() {
+    fn edit_body_exceeds_limit_returns_error() {
         let limite = crate::constants::MAX_MEMORY_BODY_LEN;
         let corpo_grande: String = "a".repeat(limite + 1);
         assert!(
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_description_excede_limite_retorna_erro() {
+    fn edit_description_exceeds_limit_returns_error() {
         let limite = crate::constants::MAX_MEMORY_DESCRIPTION_LEN;
         let desc_grande: String = "d".repeat(limite + 1);
         assert!(

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.31] - 2026-04-30
+
+### Fixed
+- **A2 (P1-CRITICAL)**: `ingest` subcommand now emits proper NDJSON (one JSON object per line). Previously emitted pretty-printed multiline JSON, breaking line-by-line consumers. Switched 5 calls in `src/commands/ingest.rs` from `output::emit_json` to `output::emit_json_compact`.
+- **A3 (P1-MEDIUM)**: `stats --json` now reports correct `schema_version` value (e.g., "9") read from `refinery_schema_history` table. Previously returned "unknown" because empty `schema_meta` table was queried.
+- **A4 (P1-MEDIUM)**: `forget` command now populates `action` and `deleted_at` fields in JSON output. Three explicit states: `soft_deleted`, `already_deleted`, `not_found`. Race-safe via re-SELECT after soft-delete.
+- **A1 (P0-CRITICAL)**: Extraction pipeline no longer hangs on documents larger than ~50 KB. Added `EXTRACTION_MAX_TOKENS=5000` cap (env override `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS`). Body exceeding cap is truncated for NER but full body still goes through regex. Empirical impact: 68 KB document went from >5 minutes to ~37 seconds (88% reduction) while preserving `extraction_method=bert+regex-batch`.
+- **A9 (P2-MEDIUM)**: Relationship fan-out reduced — entities co-occurring in same sentence/paragraph now generate edges; previously generated C(N,2) "mentions" between all entities in memory.
+- **A10 (P2-MEDIUM)**: Name truncation at 60 chars now logs `tracing::warn` and handles collisions with numeric suffix (-1, -2, ...).
+
+### Added
+- **A6**: New integration test suite `tests/ingest_integration.rs` covering NDJSON contract, fail-fast, max-files, name truncation, --skip-extraction, --pattern variants, recursive walk.
+- **A7**: V009 end-to-end migration tests in `tests/schema_migration_integration.rs`: `v009_document_type_lifecycle_e2e`, `v009_note_type_lifecycle_e2e`, `v009_invalid_type_rejected`.
+- **A11**: PT-BR uppercase stoplist for NER false-positive filter (ADAPTER, PROJETO, PASSIVA, SOMENTE, LEITURA, etc.). Improves entity extraction quality for Portuguese-language corpora.
+
+### Improved
+- **A5 (P1-MEDIUM)**: Renamed 210 test functions in `src/*` across 35 files from Portuguese to English identifiers (also covered helper functions like `nova_memoria` → `new_memory`, `cria_node` → `make_node`, `resposta_vazia` → `empty_response`). Brings codebase into full compliance with project's English-exclusive language policy for identifiers.
+- **A8 (P1-MEDIUM)**: Refined production-only `.unwrap()`/`.expect()` calls. Original audit count of 167 was inflated — most matches were inside `#[cfg(test)] mod tests` blocks (acceptable per CLAUDE.md). The actual production-path inventory was 13 occurrences. Improvements: 1 `.expect()` in `src/embedder.rs` got a more precise invariant message; 10 `Regex::new(LITERAL).unwrap()` in `src/extraction.rs` static `OnceLock` initializers replaced with `.expect("compile-time validated <kind> regex literal")`; 2 `.max_by(...).unwrap()` over BERT NER logits replaced with `.expect("BERT NER logits invariant: no NaN in classifier output")`; 1 `.expect()` in `src/chunking.rs` translated from PT to EN. The 4 `.unwrap()` calls in `src/graph.rs`, 3 in `src/namespace.rs`, and 2 in `src/output.rs` are inside `///` doctests (idiomatic per Rust API Guidelines C-EXAMPLE).
+- **A12+A13**: Translated ~38 PT comments in `tests/signal_handling_integration.rs`, `tests/lock_integration.rs`, and `deny.toml`. Removed 2 obsolete `[advisories.ignore]` entries (RUSTSEC-2024-0436, RUSTSEC-2025-0119) — `cargo deny check` now reports zero advisory-not-detected warnings.
+- **A14**: Translated ~150 additional PT comments in `tests/prd_compliance.rs`, `tests/integration.rs`, `tests/concurrency_hardened.rs`, `tests/security_hardening.rs`, and other test files.
+
+### Audit Methodology
+- 13 gaps identified empirically via plan-mode audit on installed v1.0.30 binary against real-file corpus (20 markdown PT-BR docs).
+- All fixes validated via PDCA + Agent Teams orchestration: 11 tasks, 9 teammates spawned in parallel, each with Rule Zero compliance and per-task validation.
+- Validation passed: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo audit, cargo deny check, cargo doc -D warnings, cargo nextest run.
+
 ## [1.0.30] - 2026-04-29
 
 ### Added (New Subcommand — Bulk Ingestion)

@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_response_serializa_campos_obrigatorios() {
+    fn recall_response_serializes_required_fields() {
         let resp = RecallResponse {
             query: "rust memory".to_string(),
             k: 5,
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_item_serializa_type_renomeado() {
+    fn recall_item_serializes_renamed_type() {
         let item = make_item("mem-teste", 0.25, "direct");
         let json = serde_json::to_value(&item).expect("serialização falhou");
 
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_response_results_contem_direct_e_graph() {
+    fn recall_response_results_contains_direct_and_graph() {
         let direct = make_item("d-mem", 0.10, "direct");
         let graph = make_item("g-mem", 0.0, "graph");
 
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_response_vazio_serializa_arrays_vazios() {
+    fn recall_response_empty_serializes_empty_arrays() {
         let resp = RecallResponse {
             query: "nada".to_string(),
             k: 3,

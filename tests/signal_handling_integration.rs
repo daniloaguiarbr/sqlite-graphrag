@@ -96,10 +96,10 @@ fn sigint_during_health_exits_with_db_integrity() {
         .spawn()
         .expect("spawn de health falhou");
 
-    // Pausa mínima para garantir que o processo iniciou
+    // Minimum delay to ensure process has started
     std::thread::sleep(Duration::from_millis(50));
 
-    // Tenta enviar SIGINT; se o processo já terminou, ignora ESRCH (errno 3)
+    // Send SIGINT; ignore ESRCH (errno 3) if process already exited
     match send_signal(&child, libc::SIGINT) {
         Ok(()) => {}
         Err(3) => {} // ESRCH: processo já encerrou — tudo bem
@@ -108,8 +108,8 @@ fn sigint_during_health_exits_with_db_integrity() {
 
     let status = child.wait().expect("wait falhou");
 
-    // Processo terminou normalmente (exit 0) ou por sinal — ambos aceitáveis
-    // O importante é que NÃO houve panic e o DB está íntegro
+    // Process exited normally (exit 0) or by signal — both acceptable
+    // What matters is that no panic occurred and the DB is intact
     let _ = status; // exit code depende de timing — não assertamos valor fixo
 
     assert!(
@@ -134,7 +134,7 @@ fn sigterm_during_init_graceful_exit_db_integrity() {
         .spawn()
         .expect("spawn de init falhou");
 
-    // Aguarda um pouco para o processo entrar em execução
+    // Wait briefly for the process to start running
     std::thread::sleep(Duration::from_millis(100));
 
     match send_signal(&child, libc::SIGTERM) {
@@ -145,7 +145,7 @@ fn sigterm_during_init_graceful_exit_db_integrity() {
 
     let status = child.wait().expect("wait falhou");
 
-    // Aceita tanto exit 0 (completou antes do sinal) quanto terminação por sinal
+    // Accept both exit 0 (completed before signal) and signal termination
     let encerrou_ok =
         status.success() || status.signal().is_some() || status.code().is_some_and(|c| c != 0);
 
@@ -154,7 +154,7 @@ fn sigterm_during_init_graceful_exit_db_integrity() {
         "Processo deveria ter encerrado mas wait retornou status indefinido"
     );
 
-    // Se o banco foi criado, deve estar íntegro
+    // If the DB was created, it must be intact
     let db_path = tmp.path().join("test.sqlite");
     if db_path.exists() {
         assert!(
@@ -192,7 +192,7 @@ fn sigterm_after_remember_does_not_corrupt_db() {
         "remember deve ter sucesso antes do teste de sinal"
     );
 
-    // Segundo remember com SIGTERM durante execução
+    // Second remember with SIGTERM during execution
     let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .args([
             "remember",
@@ -220,7 +220,7 @@ fn sigterm_after_remember_does_not_corrupt_db() {
 
     let _ = child.wait().expect("wait falhou");
 
-    // O banco deve estar íntegro após o sinal — invariante crítico
+    // DB must be intact after signal — critical invariant
     assert!(
         db_integro(&tmp),
         "DB deve estar íntegro após SIGTERM durante remember"
@@ -251,12 +251,12 @@ fn sigkill_process_does_not_become_zombie() {
         Err(e) => panic!("kill(SIGKILL) falhou com errno={e}"),
     }
 
-    // `.wait()` deve retornar sem bloquear — processo não pode ser zombie
+    // `.wait()` must return without blocking — process must not become zombie
     let status = child.wait().expect("wait deve retornar apos SIGKILL");
 
-    // O invariante crítico é que `.wait()` retornou sem bloquear (não é zumbi).
-    // O processo pode ter terminado antes do SIGKILL (exit 0) ou por SIGKILL (sinal 9).
-    // Ambos os casos são válidos — apenas um deadlock em `.wait()` seria falha real.
+    // Critical invariant: `.wait()` returned without blocking (not a zombie).
+    // The process may have exited before SIGKILL (exit 0) or by SIGKILL (signal 9).
+    // Both cases are valid — only a deadlock in `.wait()` would be a real failure.
     let wait_retornou =
         status.success() || status.signal().is_some_and(|s| s == 9) || !status.success();
 

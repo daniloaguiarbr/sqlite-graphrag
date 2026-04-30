@@ -122,7 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn epoch_to_iso_converte_zero_para_epoch_unix() {
+    fn epoch_to_iso_converts_zero_to_unix_epoch() {
         let resultado = epoch_to_iso(0);
         assert!(
             resultado.starts_with("1970-01-01T00:00:00"),
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_to_iso_converte_timestamp_conhecido() {
+    fn epoch_to_iso_converts_known_timestamp() {
         let resultado = epoch_to_iso(1_705_320_000);
         assert!(
             resultado.starts_with("2024-01-15"),
@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_to_iso_retorna_fallback_para_epoch_negativo_invalido() {
+    fn epoch_to_iso_returns_fallback_for_invalid_negative_epoch() {
         let resultado = epoch_to_iso(i64::MIN);
         assert!(
             !resultado.is_empty(),
@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn read_response_serializa_aliases_id_e_memory_id() {
+    fn read_response_serializes_id_and_memory_id_aliases() {
         let resp = ReadResponse {
             id: 42,
             memory_id: 42,
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn read_response_session_id_some_serializa_string() {
+    fn read_response_session_id_some_serializes_string() {
         let resp = ReadResponse {
             id: 1,
             memory_id: 1,
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn read_response_elapsed_ms_esta_presente() {
+    fn read_response_elapsed_ms_is_present() {
         let resp = ReadResponse {
             id: 7,
             memory_id: 7,
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn read_response_metadata_object_nao_string_escapada() {
+    fn read_response_metadata_object_not_escaped_string() {
         // P2-A: metadata deve serializar como objeto JSON, não como string escapada.
         let resp = ReadResponse {
             id: 3,
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn read_response_metadata_fallback_para_null_em_json_invalido() {
+    fn read_response_metadata_fallback_to_null_for_invalid_json() {
         // P2-A: fallback quando metadata é string inválida.
         let raw = "json-invalido{{{";
         let parsed =

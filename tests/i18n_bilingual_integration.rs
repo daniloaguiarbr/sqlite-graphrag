@@ -400,7 +400,7 @@ fn default_sem_lang_e_sem_env_retorna_ingles() {
 }
 
 // ---------------------------------------------------------------------------
-// Locale LC_ALL=pt_BR.UTF-8 sem flag e sem SQLITE_GRAPHRAG_LANG → Português
+// Locale LC_ALL=pt_BR.UTF-8 without flag and without SQLITE_GRAPHRAG_LANG → Portuguese
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -422,7 +422,7 @@ fn locale_ptbr_sem_flag_sem_env_sqlite_graphrag_aplica_portugues() {
 }
 
 // ---------------------------------------------------------------------------
-// Mensagens stdout JSON são idênticas em EN e PT (JSON é determinístico)
+// JSON stdout messages are identical in EN and PT (JSON is deterministic)
 // ---------------------------------------------------------------------------
 
 #[test]

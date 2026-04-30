@@ -142,7 +142,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn epoch_zero_gera_iso_valido() {
+    fn epoch_zero_yields_valid_iso() {
         // epoch_to_iso uses chrono-tz with explicit offset (+00:00 for UTC)
         let iso = crate::tz::epoch_to_iso(0);
         assert!(iso.starts_with("1970-01-01T00:00:00"), "obtido: {iso}");
@@ -150,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_tipico_gera_iso_rfc3339() {
+    fn typical_epoch_yields_iso_rfc3339() {
         let iso = crate::tz::epoch_to_iso(1_745_000_000);
         assert!(!iso.is_empty(), "created_at_iso não deve ser vazio");
         assert!(iso.contains('T'), "created_at_iso deve conter separador T");
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_invalido_retorna_fallback() {
+    fn invalid_epoch_returns_fallback() {
         let iso = crate::tz::epoch_to_iso(i64::MIN);
         assert!(
             !iso.is_empty(),

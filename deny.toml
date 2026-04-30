@@ -16,11 +16,8 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 version = 2
 yanked = "warn"
 unmaintained = "workspace"
-# Advisories transitivas sem upgrade disponível (todas via fastembed):
-ignore = [
-    { id = "RUSTSEC-2025-0119", reason = "number_prefix unmaintained via fastembed → hf-hub → indicatif; sem upgrade disponível" },
-    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained via fastembed → tokenizers; sem upgrade disponível" },
-]
+# Transitive advisories without upgrade available (all via fastembed):
+ignore = []
 
 [licenses]
 confidence-threshold = 0.8

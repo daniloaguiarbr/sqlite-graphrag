@@ -417,7 +417,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn nome_comprimento_en() {
+        fn name_length_en() {
             let msg = match Language::English {
                 Language::English => format!("name must be 1-{} chars", 80),
                 Language::Portuguese => format!("nome deve ter entre 1 e {} caracteres", 80),
@@ -426,7 +426,7 @@ mod tests {
         }
 
         #[test]
-        fn nome_comprimento_pt() {
+        fn name_length_pt() {
             let msg = match Language::Portuguese {
                 Language::English => format!("name must be 1-{} chars", 80),
                 Language::Portuguese => format!("nome deve ter entre 1 e {} caracteres", 80),
@@ -469,7 +469,7 @@ mod tests {
         }
 
         #[test]
-        fn descricao_excede_en() {
+        fn description_exceeds_en() {
             let msg = match Language::English {
                 Language::English => format!("description must be <= {} chars", 500),
                 Language::Portuguese => format!("descrição deve ter no máximo {} caracteres", 500),
@@ -478,7 +478,7 @@ mod tests {
         }
 
         #[test]
-        fn descricao_excede_pt() {
+        fn description_exceeds_pt() {
             let msg = match Language::Portuguese {
                 Language::English => format!("description must be <= {} chars", 500),
                 Language::Portuguese => format!("descrição deve ter no máximo {} caracteres", 500),
@@ -490,7 +490,7 @@ mod tests {
         }
 
         #[test]
-        fn body_excede_en() {
+        fn body_exceeds_en() {
             let limite = crate::constants::MAX_MEMORY_BODY_LEN;
             let msg = match Language::English {
                 Language::English => format!("body exceeds {limite} bytes"),
@@ -500,7 +500,7 @@ mod tests {
         }
 
         #[test]
-        fn body_excede_pt() {
+        fn body_exceeds_pt() {
             let limite = crate::constants::MAX_MEMORY_BODY_LEN;
             let msg = match Language::Portuguese {
                 Language::English => format!("body exceeds {limite} bytes"),
@@ -562,7 +562,7 @@ mod tests {
         }
 
         #[test]
-        fn nome_reservado_en() {
+        fn reserved_name_en() {
             let msg = match Language::English {
                 Language::English => {
                     "names and namespaces starting with __ are reserved for internal use"
@@ -577,7 +577,7 @@ mod tests {
         }
 
         #[test]
-        fn nome_reservado_pt() {
+        fn reserved_name_pt() {
             let msg = match Language::Portuguese {
                 Language::English => {
                     "names and namespaces starting with __ are reserved for internal use"

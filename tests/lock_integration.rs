@@ -1,17 +1,17 @@
-// Testes de integração E2E para o semáforo de slots do sqlite-graphrag.
+// E2E integration tests for the sqlite-graphrag slot semaphore.
 //
-// ISOLAMENTO: todos os testes definem `SQLITE_GRAPHRAG_CACHE_DIR` apontando
-// para um `TempDir` exclusivo, garantindo que os lock files não poluam
-// `~/.cache/sqlite-graphrag` nem colidam entre testes.
+// ISOLATION: every test sets `SQLITE_GRAPHRAG_CACHE_DIR` pointing
+// to an exclusive `TempDir`, ensuring lock files do not pollute
+// `~/.cache/sqlite-graphrag` nor collide between tests.
 //
-// `#[serial]` é obrigatório em todos os testes: embora cada teste use
-// diretório próprio, o binário compilado é compartilhado e o `TempDir` só
-// é liberado após o teste encerrar; serializar elimina corridas no sistema
-// de arquivos e torna os timings previsíveis.
+// `#[serial]` is mandatory in all tests: although each test uses
+// its own directory, the compiled binary is shared and `TempDir` is only
+// released after the test ends; serializing eliminates filesystem races
+// and makes timings predictable.
 //
-// Os cenários 4 e 5 dependem de um processo externo que segura um slot por
-// tempo determinístico. Marcados `#[ignore]` pois timing de subprocessos é
-// flaky em ambientes com carga variável.
+// Scenarios 4 and 5 depend on an external process that holds a slot for
+// a deterministic duration. Marked `#[ignore]` because subprocess timing is
+// flaky in environments with variable load.
 
 use assert_cmd::Command;
 use serial_test::serial;
@@ -28,17 +28,17 @@ fn slot_path(tmp: &TempDir, slot: usize) -> std::path::PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Cenário 1 — slot é liberado após processo terminar
+// Scenario 1 — slot is released after process exits
 // ---------------------------------------------------------------------------
-// Garante que duas invocações sequenciais sem --max-concurrency não conflitam,
-// pois o primeiro processo libera o slot ao encerrar.
+// Ensures that two sequential invocations without --max-concurrency do not conflict,
+// since the first process releases the slot on exit.
 
 #[test]
 #[serial]
 fn slot_released_after_process_exits() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    // Primeira invocação — deve adquirir e liberar o slot 1.
+    // First invocation — must acquire and release slot 1.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -46,7 +46,7 @@ fn slot_released_after_process_exits() {
         .assert()
         .success();
 
-    // Segunda invocação — deve adquirir o slot novamente sem erro.
+    // Second invocation — must acquire the slot again without error.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -56,9 +56,9 @@ fn slot_released_after_process_exits() {
 }
 
 // ---------------------------------------------------------------------------
-// Cenário 2 — arquivo de slot é criado no cache dir configurado
+// Scenario 2 — slot file is created in the configured cache dir
 // ---------------------------------------------------------------------------
-// Confirma que o binário cria `cli-slot-1.lock` no diretório sobrescrito via
+// Confirms that the binary creates `cli-slot-1.lock` in the directory overridden via
 // `SQLITE_GRAPHRAG_CACHE_DIR`.
 
 #[test]
@@ -81,10 +81,10 @@ fn slot_file_created_in_cache_dir() {
 }
 
 // ---------------------------------------------------------------------------
-// Cenário 3 — --wait-lock 0 falha imediatamente quando todos os slots ocupados
+// Scenario 3 — --wait-lock 0 fails immediately when all slots are busy
 // ---------------------------------------------------------------------------
-// Simula N slots ocupados criando e travando os arquivos de lock diretamente,
-// depois confirma que uma nova invocação retorna exit 75 sem aguardar.
+// Simulates N busy slots by creating and locking the lock files directly,
+// then confirms that a new invocation returns exit 75 without waiting.
 
 #[test]
 #[serial]
@@ -95,7 +95,7 @@ fn wait_lock_zero_returns_75_when_slots_busy() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
     let max = 4;
 
-    // Travar todos os N slots diretamente para simular N instâncias rodando.
+    // Lock all N slots directly to simulate N running instances.
     let mut handles = Vec::new();
     for slot in 1..=max {
         let path = slot_path(&tmp, slot);
@@ -111,7 +111,7 @@ fn wait_lock_zero_returns_75_when_slots_busy() {
         handles.push(file);
     }
 
-    // Invocação com todos os slots ocupados e --wait-lock 0 → exit 75.
+    // Invocation with all slots busy and --wait-lock 0 → exit 75.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -127,14 +127,14 @@ fn wait_lock_zero_returns_75_when_slots_busy() {
         .failure()
         .code(75);
 
-    // Liberar os locks antes de drop(tmp).
+    // Release the locks before drop(tmp).
     drop(handles);
 }
 
 // ---------------------------------------------------------------------------
-// Cenário 4 — segunda instância recebe exit 75 enquanto slot está ocupado
+// Scenario 4 — second instance receives exit 75 while slot is busy
 // ---------------------------------------------------------------------------
-// MARCADO #[ignore] — timing de subprocessos é flaky em ambientes com carga.
+// MARKED #[ignore] — subprocess timing is flaky in environments with variable load.
 // Para rodar manualmente:
 //   cargo test -- --ignored slot_bloqueia_segunda_instancia_com_exit_75
 
@@ -147,7 +147,7 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
 
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    // Travar todos os slots (default 4) para simular lotação máxima.
+    // Lock all slots (default 4) to simulate maximum saturation.
     let mut handles = Vec::new();
     for slot in 1..=4 {
         let path = slot_path(&tmp, slot);
@@ -164,7 +164,7 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
 
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Segunda instância deve falhar imediatamente com exit 75.
+    // Second instance must fail immediately with exit 75.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -184,7 +184,7 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
 }
 
 // ---------------------------------------------------------------------------
-// Cenário 5 — --wait-lock espera e adquire slot após liberação
+// Scenario 5 — --wait-lock waits and acquires the slot after release
 // ---------------------------------------------------------------------------
 // MARCADO #[ignore] — adiciona ~1s ao tempo total e depende de timing.
 // Para rodar manualmente:
@@ -214,7 +214,7 @@ fn wait_lock_espera_e_adquire_slot() {
         handles.push(file);
     }
 
-    // Liberar todos após 1 segundo em thread separada.
+    // Release all after 1 second in a separate thread.
     let tmp_path = tmp.path().to_path_buf();
     let _ = tmp_path; // silence unused warning
     std::thread::spawn(move || {
@@ -222,7 +222,7 @@ fn wait_lock_espera_e_adquire_slot() {
         drop(handles);
     });
 
-    // --wait-lock 10 deve aguardar a liberação e completar com sucesso.
+    // --wait-lock 10 must wait for release and complete successfully.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())

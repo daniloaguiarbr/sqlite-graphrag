@@ -55,8 +55,8 @@ fn db_path(tmp: &TempDir) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// 1 — namespace com prefixo __ rejeitado com exit 1
-//     (o check é feito em remember.rs nível de nome; namespace-level não tem __ guard)
+// 1 — namespace with __ prefix rejected with exit 1
+//     (the check is done in remember.rs at the name level; there is no __ guard at namespace level)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -82,7 +82,7 @@ fn prd_name_double_underscore_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// 2 — cross-namespace link rejeitado (exit 4: entidade não existe no namespace)
+// 2 — cross-namespace link rejected (exit 4: entity does not exist in namespace)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -93,7 +93,7 @@ fn prd_cross_namespace_link_rejected() {
     // Cria entidade em ns-alpha
     remember_ok(&tmp, "entidade-alpha", "corpo alpha");
 
-    // Tenta link entre entidades de namespaces distintos (to: ns-beta não existe)
+    // Try to link between entities from distinct namespaces (to: ns-beta does not exist)
     cmd_base(&tmp)
         .args([
             "link",
@@ -112,7 +112,7 @@ fn prd_cross_namespace_link_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// 3 — soft-delete: memórias esquecidas não aparecem em recall
+// 3 — soft-delete: forgotten memories do not appear in recall
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -134,7 +134,7 @@ fn prd_soft_delete_recall_does_not_return_forgotten() {
         .assert()
         .success();
 
-    // Verifica que deleted_at foi preenchido (não retorna em SELECT ... WHERE deleted_at IS NULL)
+    // Verify that deleted_at was filled (does not return in SELECT ... WHERE deleted_at IS NULL)
     let conn = Connection::open(db_path(&tmp)).unwrap();
     let count: i64 = conn
         .query_row(
@@ -159,7 +159,7 @@ fn prd_soft_delete_recall_does_not_return_forgotten() {
 }
 
 // ---------------------------------------------------------------------------
-// 4 — trg_fts_ad idempotente: double-delete não corrompe fts_memories
+// 4 — trg_fts_ad idempotent: double-delete does not corrupt fts_memories
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -175,7 +175,7 @@ fn prd_trg_fts_ad_idempotent_double_delete() {
 
     let conn = Connection::open(db_path(&tmp)).unwrap();
 
-    // Obtém o id da memória
+    // Obtain the memory id
     let memory_id: i64 = conn
         .query_row(
             "SELECT id FROM memories WHERE name='memoria-dupla'",
@@ -184,18 +184,18 @@ fn prd_trg_fts_ad_idempotent_double_delete() {
         )
         .unwrap();
 
-    // Primeira deleção via UPDATE (soft-delete manual direto no banco)
+    // First deletion via UPDATE (manual soft-delete directly in the database)
     conn.execute(
         "UPDATE memories SET deleted_at=strftime('%s','now') WHERE id=?1",
         [memory_id],
     )
     .unwrap();
 
-    // Segunda "deleção" — o trigger trg_fts_ad já removeu do FTS; não deve dar erro
+    // Second "deletion" — the trg_fts_ad trigger already removed it from FTS; should not error
     conn.execute("DELETE FROM fts_memories WHERE rowid=?1", [memory_id])
         .unwrap_or(0); // idempotente: se não existir, ignora
 
-    // Verifica integridade do FTS após operação dupla
+    // Verify FTS integrity after the double operation
     let result =
         conn.execute_batch("INSERT INTO fts_memories(fts_memories) VALUES('integrity-check')");
     assert!(
@@ -247,7 +247,7 @@ fn prd_remember_duplicate_returns_merged_into_memory_id() {
 }
 
 // ---------------------------------------------------------------------------
-// 6 — remember JSON contém entities_persisted e relationships_persisted
+// 6 — remember JSON contains entities_persisted and relationships_persisted
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -288,7 +288,7 @@ fn prd_remember_json_contains_entities_and_relationships_persisted() {
 }
 
 // ---------------------------------------------------------------------------
-// 7 — FTS5 unicode61 remove_diacritics: busca "nao" casa "não"
+// 7 — FTS5 unicode61 remove_diacritics: searching "nao" matches "não"
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -358,7 +358,7 @@ fn prd_edit_expected_updated_at_stale_returns_exit_3() {
 
     remember_ok(&tmp, "mem-edit-lock", "corpo para edit lock test");
 
-    // Usa timestamp stale (0) para forçar conflito
+    // Use stale timestamp (0) to force a conflict
     cmd_base(&tmp)
         .args([
             "edit",
@@ -377,7 +377,7 @@ fn prd_edit_expected_updated_at_stale_returns_exit_3() {
 }
 
 // ---------------------------------------------------------------------------
-// 10 — 5 instâncias simultâneas: a 5ª retorna exit 75
+// 10 — 5 simultaneous instances: the 5th returns exit 75
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -388,7 +388,7 @@ fn prd_five_instances_fifth_returns_exit_75() {
 
     let tmp = TempDir::new().unwrap();
 
-    // Ocupa os 4 slots padrão diretamente via fs4
+    // Occupy the 4 default slots directly via fs4
     let handles: Vec<std::fs::File> = (1..=4)
         .map(|slot| {
             let path = tmp.path().join(format!("cli-slot-{slot}.lock"));
@@ -404,7 +404,7 @@ fn prd_five_instances_fifth_returns_exit_75() {
         })
         .collect();
 
-    // 5ª invocação com --wait-lock 0 deve retornar exit 75
+    // 5th invocation with --wait-lock 0 must return exit 75
     Command::cargo_bin("sqlite-graphrag")
         .unwrap()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -455,7 +455,7 @@ fn prd_max_body_len_exceeded_returns_exit_6() {
 }
 
 // ---------------------------------------------------------------------------
-// 12 — SQLITE_GRAPHRAG_NAMESPACE env var funciona como namespace padrão
+// 12 — SQLITE_GRAPHRAG_NAMESPACE env var works as default namespace
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -464,10 +464,10 @@ fn prd_sqlite_graphrag_namespace_env_works() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Cria memória passando namespace explicitamente (--namespace tem precedência sobre env var)
-    // SQLITE_GRAPHRAG_NAMESPACE é suportado pela CLI mas o flag --namespace em remember.rs tem
-    // default_value="global" que sempre injeta Some("global") quando não fornecido.
-    // O correto é passar --namespace explicitamente para garantir namespace correto.
+    // Create memory passing namespace explicitly (--namespace takes precedence over env var)
+    // SQLITE_GRAPHRAG_NAMESPACE is supported by the CLI but the --namespace flag in remember.rs has
+    // default_value="global" that always injects Some("global") when not provided.
+    // The correct approach is to pass --namespace explicitly to guarantee the right namespace.
     cmd_base(&tmp)
         .args([
             "remember",
@@ -486,7 +486,7 @@ fn prd_sqlite_graphrag_namespace_env_works() {
         .assert()
         .success();
 
-    // Verifica que a memória foi salva no namespace correto
+    // Verify the memory was saved in the correct namespace
     let conn = Connection::open(db_path(&tmp)).unwrap();
     let ns: String = conn
         .query_row(
@@ -569,12 +569,12 @@ fn prd_link_creates_memory_relationships() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Cria duas memórias (e assim potencialmente entidades via extraction)
+    // Create two memories (and thus potentially entities via extraction)
     remember_ok(&tmp, "mem-link-src", "entidade alfa para link test");
     remember_ok(&tmp, "mem-link-dst", "entidade beta para link test");
 
     // Verifica que ao menos duas entidades existem ou cria via link direto
-    // Tenta o link; se não houver entidades, o teste valida o comportamento de erro
+    // Try the link; if there are no entities, the test validates the error behavior
     let output = cmd_base(&tmp)
         .args([
             "link",
@@ -599,7 +599,7 @@ fn prd_link_creates_memory_relationships() {
             })
             .unwrap_or(0);
 
-        // Verifica relationships também
+        // Verify relationships as well
         let rel_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))
             .unwrap_or(0);
@@ -609,7 +609,7 @@ fn prd_link_creates_memory_relationships() {
             "link deve criar entrada em memory_relationships ou relationships"
         );
     } else {
-        // Entidades não existem — link falhou com exit 4 (NotFound): comportamento correto
+        // Entities do not exist — link failed with exit 4 (NotFound): correct behavior
         assert_eq!(
             output.status.code(),
             Some(4),
@@ -619,7 +619,7 @@ fn prd_link_creates_memory_relationships() {
 }
 
 // ---------------------------------------------------------------------------
-// 16 — unlink remove só a relação específica, preservando outras
+// 16 — unlink removes only the specific relation, preserving others
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -697,7 +697,7 @@ fn prd_unlink_removes_only_specific_relation() {
 }
 
 // ---------------------------------------------------------------------------
-// 17 — graph JSON contém nodes e edges
+// 17 — graph JSON contains nodes and edges
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -726,7 +726,7 @@ fn prd_graph_json_contains_nodes_and_edges() {
 }
 
 // ---------------------------------------------------------------------------
-// 18 — graph DOT é digraph válido (começa com "digraph sqlite-graphrag {")
+// 18 — graph DOT is a valid digraph (starts with "digraph sqlite-graphrag {")
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -750,7 +750,7 @@ fn prd_graph_dot_is_valid_digraph() {
 }
 
 // ---------------------------------------------------------------------------
-// 19 — graph Mermaid começa com "graph LR"
+// 19 — graph Mermaid starts with "graph LR"
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -782,8 +782,8 @@ fn prd_hybrid_search_rrf_k_default_60() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Verifica que --rrf-k 60 é aceito sem erro (valor default documentado)
-    // Usa banco vazio — resultado vazio é aceitável
+    // Verify that --rrf-k 60 is accepted without error (documented default value)
+    // Use empty database — empty result is acceptable
     cmd_base(&tmp)
         .args([
             "hybrid-search",
@@ -798,7 +798,7 @@ fn prd_hybrid_search_rrf_k_default_60() {
 }
 
 // ---------------------------------------------------------------------------
-// 21 — purge com retention=1 remove memórias soft-deleted com > 1 dia
+// 21 — purge with retention=1 removes soft-deleted memories older than 1 day
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -808,7 +808,7 @@ fn prd_purge_retention_remove_deletados_antigos() {
 
     remember_ok(&tmp, "mem-purge-alvo", "corpo para purge test");
 
-    // Soft-delete direto via SQL com timestamp no passado (2 dias atrás)
+    // Direct soft-delete via SQL with timestamp in the past (2 days ago)
     let conn = Connection::open(db_path(&tmp)).unwrap();
     conn.execute(
         "UPDATE memories SET deleted_at = strftime('%s','now') - 172800 WHERE name='mem-purge-alvo'",
@@ -817,7 +817,7 @@ fn prd_purge_retention_remove_deletados_antigos() {
     .unwrap();
     drop(conn);
 
-    // Purge com retention de 1 dia — deve remover a memória de 2 dias atrás
+    // Purge with retention of 1 day — should remove the 2-day-old memory
     cmd_base(&tmp)
         .args(["purge", "--retention-days", "1", "--yes"])
         .assert()
@@ -888,7 +888,7 @@ fn prd_vacuum_retorna_size_before_e_size_after() {
 }
 
 // ---------------------------------------------------------------------------
-// 24 — chmod 600 aplicado no Unix após init
+// 24 — chmod 600 applied on Unix after init
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -974,7 +974,7 @@ fn prd_list_respeita_limit() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Cria 5 memórias
+    // Create 5 memories
     for i in 0..5 {
         remember_ok(&tmp, &format!("mem-limit-{i}"), &format!("corpo {i}"));
     }
@@ -997,7 +997,7 @@ fn prd_list_respeita_limit() {
 }
 
 // ---------------------------------------------------------------------------
-// 28 — rename atualiza versão da memória
+// 28 — rename updates memory version
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1007,7 +1007,7 @@ fn prd_rename_atualiza_versao() {
 
     remember_ok(&tmp, "mem-rename-orig", "corpo para rename test");
 
-    // Verifica versão inicial via memory_versions
+    // Verify initial version via memory_versions
     let conn = Connection::open(db_path(&tmp)).unwrap();
     let version_antes: i64 = conn
         .query_row(
@@ -1033,7 +1033,7 @@ fn prd_rename_atualiza_versao() {
         .assert()
         .success();
 
-    // Verifica que a memória existe com novo nome
+    // Verify the memory exists with the new name
     let conn2 = Connection::open(db_path(&tmp)).unwrap();
     let count: i64 = conn2
         .query_row(
@@ -1044,7 +1044,7 @@ fn prd_rename_atualiza_versao() {
         .unwrap();
     assert_eq!(count, 1, "memória deve existir com novo nome após rename");
 
-    // Versão pode ter aumentado após rename (verificamos que existe em memory_versions)
+    // Version may have incremented after rename (we check it exists in memory_versions)
     let versions_count: i64 = conn2
         .query_row(
             "SELECT COUNT(*) FROM memory_versions WHERE name='mem-rename-novo' OR name='mem-rename-orig'",
@@ -1060,7 +1060,7 @@ fn prd_rename_atualiza_versao() {
 }
 
 // ---------------------------------------------------------------------------
-// 29 — restore reverte memória ao estado antes do último soft-delete
+// 29 — restore reverts memory to the state before the last soft-delete
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1082,7 +1082,7 @@ fn prd_restore_reverte_soft_delete() {
         .assert()
         .success();
 
-    // Verifica soft-deleted e obtém a versão para restore
+    // Verify soft-deleted and obtain the version for restore
     let conn = Connection::open(db_path(&tmp)).unwrap();
     let deleted: bool = conn
         .query_row(
@@ -1101,7 +1101,7 @@ fn prd_restore_reverte_soft_delete() {
         .unwrap();
     drop(conn);
 
-    // Restore passando a versão obtida do histórico
+    // Restore passing the version obtained from history
     cmd_base(&tmp)
         .args([
             "restore",
@@ -1131,7 +1131,7 @@ fn prd_restore_reverte_soft_delete() {
 }
 
 // ---------------------------------------------------------------------------
-// 30 — cleanup-orphans remove entities sem memórias
+// 30 — cleanup-orphans removes entities without memories
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1139,7 +1139,7 @@ fn prd_cleanup_orphans_removes_entities_without_memories() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Insere entidade órfã diretamente no banco
+    // Insert an orphan entity directly into the database
     let conn = Connection::open(db_path(&tmp)).unwrap();
     conn.execute(
         "INSERT INTO entities (name, type, namespace) VALUES ('entidade-orfa', 'concept', 'global')",

@@ -34,7 +34,7 @@ fn remember(tmp: &TempDir, name: &str, memory_type: &str, description: &str, bod
 }
 
 // ---------------------------------------------------------------------------
-// recall — DB não-inicializada
+// recall — uninitialized DB
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -72,7 +72,7 @@ fn test_recall_banco_vazio_retorna_listas_vazias() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — query simples encontra memória existente
+// recall — simple query finds existing memory
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -149,7 +149,7 @@ fn test_recall_snippet_limitado_a_300_chars() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — -k limita número de resultados
+// recall — -k limits number of results
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -186,7 +186,7 @@ fn test_recall_k_limita_resultados() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — --no-graph desativa expansão por grafo
+// recall — --no-graph disables graph expansion
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -289,7 +289,7 @@ fn test_recall_namespace_filtra_resultados() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — --type filtra por tipo de memória
+// recall — --type filters by memory type
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -339,7 +339,7 @@ fn test_recall_type_filters_by_type() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — estrutura JSON de resposta válida
+// recall — valid JSON response structure
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -399,7 +399,7 @@ fn test_recall_estrutura_json_valida() {
 }
 
 // ---------------------------------------------------------------------------
-// recall — múltiplas memórias, query reflete todas
+// recall — multiple memories, query reflects all
 // ---------------------------------------------------------------------------
 
 #[test]

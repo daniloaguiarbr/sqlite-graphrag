@@ -22,6 +22,9 @@ const MODEL_ID: &str = "Davlan/bert-base-multilingual-cased-ner-hrl";
 const MAX_SEQ_LEN: usize = 512;
 const STRIDE: usize = 256;
 const MAX_ENTS: usize = 30;
+// v1.0.31 A9: only consumed by the legacy `build_relationships`, which is
+// kept for unit tests pinning the cap behaviour.
+#[cfg(test)]
 const TOP_K_RELATIONS: usize = 5;
 const DEFAULT_RELATION: &str = "mentions";
 const MIN_ENTITY_CHARS: usize = 2;
@@ -48,11 +51,16 @@ static REGEX_BRAND_CAMEL: OnceLock<Regex> = OnceLock::new();
 // v1.0.25 P0-4: added technology/protocol acronyms (API, CLI, HTTP, HTTPS, JWT, LLM, REST, UI, URL)
 // and PT-BR section-label stems (CAPÍTULO, ETAPA, FASE, PASSO, SEÇÃO) to prevent section markers
 // and generic tech terms from being extracted as entities.
+// v1.0.31 A11: added PT-BR uppercase noise observed during ingest of technical Portuguese
+// rule documents — common nouns/adjectives written in caps as visual emphasis (ADAPTER, PROJETO,
+// PASSIVA, ATIVA, SOMENTE, LEITURA, ESCRITA, OBRIGATORIA, EXEMPLO, REGRA, DEFAULT). Each one
+// kept leaking as a "concept" entity and inflating the graph with non-entities.
 const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ACEITE",
     "ACK",
     "ACL",
     "ACRESCENTADO",
+    "ADAPTER",
     "ADICIONAR",
     "AGENTS",
     "ALL",
@@ -60,6 +68,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ALWAYS",
     "API",
     "ARTEFATOS",
+    "ATIVA",
     "ATIVO",
     "BAIXA",
     "BANCO",
@@ -77,6 +86,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "CRÍTICO",
     "CRITICAL",
     "CSV",
+    "DEFAULT",
     "DEVE",
     "DEVEMOS",
     "DISCO",
@@ -84,6 +94,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "EFEITO",
     "ENTRADA",
     "ERROR",
+    "ESCRITA",
     "ESSA",
     "ESSE",
     "ESSENCIAL",
@@ -91,6 +102,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ESTE",
     "ETAPA",
     "EVITAR",
+    "EXEMPLO",
     "EXPANDIR",
     "EXPOR",
     "FALHA",
@@ -106,20 +118,25 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "JAMAIS",
     "JSON",
     "JWT",
+    "LEITURA",
     "LLM",
     "MUST",
     "NEGUE",
     "NEVER",
     "NOTE",
     "NUNCA",
+    "OBRIGATORIA",
     "OBRIGATÓRIO",
     "PADRÃO",
+    "PASSIVA",
     "PASSO",
     "PENDING",
     "PLAN",
     "PODEMOS",
     "PROIBIDO",
+    "PROJETO",
     "RECUSE",
+    "REGRA",
     "REGRAS",
     "REQUIRED",
     "REQUISITO",
@@ -128,6 +145,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "SEMPRE",
     "SHALL",
     "SHOULD",
+    "SOMENTE",
     "SOUL",
     "TODAS",
     "TODO",
@@ -162,29 +180,38 @@ fn is_filtered_all_caps(token: &str) -> bool {
 }
 
 fn regex_email() -> &'static Regex {
-    REGEX_EMAIL
-        .get_or_init(|| Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap())
+    REGEX_EMAIL.get_or_init(|| {
+        Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+            .expect("compile-time validated email regex literal")
+    })
 }
 
 fn regex_url() -> &'static Regex {
-    REGEX_URL.get_or_init(|| Regex::new(r#"https?://[^\s\)\]\}"'<>]+"#).unwrap())
+    REGEX_URL.get_or_init(|| {
+        Regex::new(r#"https?://[^\s\)\]\}"'<>]+"#)
+            .expect("compile-time validated URL regex literal")
+    })
 }
 
 fn regex_uuid() -> &'static Regex {
     REGEX_UUID.get_or_init(|| {
         Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-            .unwrap()
+            .expect("compile-time validated UUID regex literal")
     })
 }
 
 fn regex_all_caps() -> &'static Regex {
-    REGEX_ALL_CAPS.get_or_init(|| Regex::new(r"\b[A-Z][A-Z0-9_]{2,}\b").unwrap())
+    REGEX_ALL_CAPS.get_or_init(|| {
+        Regex::new(r"\b[A-Z][A-Z0-9_]{2,}\b")
+            .expect("compile-time validated all-caps regex literal")
+    })
 }
 
 fn regex_section_marker() -> &'static Regex {
     REGEX_SECTION_MARKER.get_or_init(|| {
         // Matches PT-BR document-structure labels followed by a number: "Etapa 3", "Fase 1", etc.
-        Regex::new(r"\b(?:Etapa|Fase|Passo|Seção|Capítulo)\s+\d+\b").unwrap()
+        Regex::new(r"\b(?:Etapa|Fase|Passo|Seção|Capítulo)\s+\d+\b")
+            .expect("compile-time validated section marker regex literal")
     })
 }
 
@@ -192,7 +219,8 @@ fn regex_brand_camel() -> &'static Regex {
     REGEX_BRAND_CAMEL.get_or_init(|| {
         // Matches CamelCase brand names: one or more lowercase letters after an uppercase, then
         // another uppercase followed by more letters. Covers "OpenAI", "PostgreSQL", "ChatGPT".
-        Regex::new(r"\b[A-Z][a-z]+[A-Z][A-Za-z]+\b").unwrap()
+        Regex::new(r"\b[A-Z][a-z]+[A-Z][A-Za-z]+\b")
+            .expect("compile-time validated CamelCase brand regex literal")
     })
 }
 
@@ -333,7 +361,10 @@ impl BertNerModel {
             let argmax = vec
                 .iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .max_by(|(_, a), (_, b)| {
+                    a.partial_cmp(b)
+                        .expect("BERT NER logits invariant: no NaN in classifier output")
+                })
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
             let label = self
@@ -421,7 +452,10 @@ impl BertNerModel {
                     let argmax = token_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b)
+                                .expect("BERT NER logits invariant: no NaN in classifier output")
+                        })
                         .map(|(idx, _)| idx)
                         .unwrap_or(0);
                     self.id2label
@@ -693,6 +727,13 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
 /// Returns (relationships, truncated) where truncated is true when the cap was hit
 /// before all entity pairs were covered. Exposed in RememberResponse as
 /// `relationships_truncated` so callers can decide whether to increase the cap.
+///
+/// v1.0.31 A9: superseded by `build_relationships_by_sentence_cooccurrence` for
+/// the auto-extraction pipeline because the legacy pairwise scheme produces a
+/// dense C(N,2) graph polluted with co-mentions across unrelated paragraphs.
+/// Kept for unit tests that pin the cap behaviour and for callers that lack a
+/// body string.
+#[cfg(test)]
 fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
     if entities.len() < 2 {
         return (Vec::new(), false);
@@ -753,6 +794,79 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
     (rels, hit_cap)
 }
 
+/// v1.0.31 A9: build relationships only between entities that actually
+/// co-occur within the same sentence (split on `.`, `!`, `?`, newline).
+///
+/// The legacy `build_relationships` pairs every entity with every other,
+/// yielding a dense C(N,2) graph dominated by spurious "mentions" edges
+/// across unrelated sections. Restricting to sentence-level co-occurrence
+/// keeps the edges semantically meaningful while still respecting the
+/// configurable `max_relationships_per_memory` cap.
+///
+/// Returns `(relationships, truncated)` mirroring `build_relationships`.
+fn build_relationships_by_sentence_cooccurrence(
+    body: &str,
+    entities: &[NewEntity],
+) -> (Vec<NewRelationship>, bool) {
+    if entities.len() < 2 {
+        return (Vec::new(), false);
+    }
+
+    let max_rels = crate::constants::max_relationships_per_memory();
+    let lower_names: Vec<(usize, String)> = entities
+        .iter()
+        .take(MAX_ENTS)
+        .enumerate()
+        .map(|(i, e)| (i, e.name.to_lowercase()))
+        .collect();
+
+    let mut rels: Vec<NewRelationship> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut hit_cap = false;
+
+    for sentence in body.split(['.', '!', '?', '\n']) {
+        if sentence.trim().is_empty() {
+            continue;
+        }
+        let lower_sentence = sentence.to_lowercase();
+        let present: Vec<usize> = lower_names
+            .iter()
+            .filter(|(_, name)| !name.is_empty() && lower_sentence.contains(name.as_str()))
+            .map(|(i, _)| *i)
+            .collect();
+
+        if present.len() < 2 {
+            continue;
+        }
+
+        for i in 0..present.len() {
+            for j in (i + 1)..present.len() {
+                if rels.len() >= max_rels {
+                    hit_cap = true;
+                    tracing::warn!(
+                        "relationships truncated to {max_rels} during sentence-level pairing"
+                    );
+                    return (rels, hit_cap);
+                }
+                let a = &entities[present[i]];
+                let b = &entities[present[j]];
+                let key = (a.name.to_lowercase(), b.name.to_lowercase());
+                if seen.insert(key) {
+                    rels.push(NewRelationship {
+                        source: a.name.clone(),
+                        target: b.name.clone(),
+                        relation: DEFAULT_RELATION.to_string(),
+                        strength: 0.5,
+                        description: None,
+                    });
+                }
+            }
+        }
+    }
+
+    (rels, hit_cap)
+}
+
 fn run_ner_sliding_window(
     model: &BertNerModel,
     body: &str,
@@ -766,8 +880,8 @@ fn run_ner_sliding_window(
         .encode(body, false)
         .map_err(|e| anyhow::anyhow!("encoding NER input: {e}"))?;
 
-    let all_ids: Vec<u32> = encoding.get_ids().to_vec();
-    let all_tokens: Vec<String> = encoding
+    let mut all_ids: Vec<u32> = encoding.get_ids().to_vec();
+    let mut all_tokens: Vec<String> = encoding
         .get_tokens()
         .iter()
         .map(|s| s.to_string())
@@ -775,6 +889,25 @@ fn run_ner_sliding_window(
 
     if all_ids.is_empty() {
         return Ok(Vec::new());
+    }
+
+    // v1.0.31 A1: cap the token stream fed to BERT NER. A 68 KB markdown body
+    // tokenises to ~17 000 tokens, producing ~65 sliding windows whose CPU
+    // forward passes can take 5+ minutes. The regex prefilter already covers
+    // structural entities (URLs, emails, all-caps identifiers, CamelCase
+    // brands) on the full body, so truncation only affects names that BERT
+    // would have detected past the leading region. The cap is configurable
+    // via `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS`.
+    let max_tokens = crate::constants::extraction_max_tokens();
+    if all_ids.len() > max_tokens {
+        tracing::warn!(
+            target: "extraction",
+            original_tokens = all_ids.len(),
+            capped_tokens = max_tokens,
+            "NER input truncated to cap; later body region will be skipped by NER (regex prefilter still covers full body)"
+        );
+        all_ids.truncate(max_tokens);
+        all_tokens.truncate(max_tokens);
     }
 
     // Phase 1: collect all sliding windows before any inference
@@ -849,7 +982,10 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
     static SUFFIX_RE: OnceLock<Regex> = OnceLock::new();
     // Matches: separator + digits + optional decimal + optional lowercase letter
     // Examples: "-4", " 5", "-4o", " 5b", "-8x", " 3.5", "-3.5-turbo" (capped by len)
-    let suffix_re = SUFFIX_RE.get_or_init(|| Regex::new(r"^([\-\s]+\d+(?:\.\d+)?[a-z]?)").unwrap());
+    let suffix_re = SUFFIX_RE.get_or_init(|| {
+        Regex::new(r"^([\-\s]+\d+(?:\.\d+)?[a-z]?)")
+            .expect("compile-time validated numeric suffix regex literal")
+    });
 
     entities
         .into_iter()
@@ -912,7 +1048,7 @@ fn augment_versioned_model_names(
         Regex::new(
             r"\b([A-Z][A-Za-z]{2,15})[\s\-]+(\d+(?:\.\d+)?(?:[a-z]|x\d+[A-Za-z]?)?)(?:\s+(?:Sonnet|Opus|Haiku|Turbo|Pro|Lite|Mini|Nano|Flash|Ultra))?\b",
         )
-        .unwrap()
+        .expect("compile-time validated versioned model regex literal")
     });
 
     let mut existing_lc: std::collections::HashSet<String> =
@@ -1072,7 +1208,8 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
         .filter(|e| !regex_section_marker().is_match(&e.name))
         .collect();
     let entities = to_new_entities(with_models);
-    let (relationships, relationships_truncated) = build_relationships(&entities);
+    let (relationships, relationships_truncated) =
+        build_relationships_by_sentence_cooccurrence(body, &entities);
 
     let extraction_method = if bert_used {
         "bert+regex-batch".to_string()
@@ -1097,7 +1234,8 @@ impl Extractor for RegexExtractor {
     fn extract(&self, body: &str) -> Result<ExtractionResult> {
         let regex_entities = apply_regex_prefilter(body);
         let entities = to_new_entities(regex_entities);
-        let (relationships, relationships_truncated) = build_relationships(&entities);
+        let (relationships, relationships_truncated) =
+            build_relationships_by_sentence_cooccurrence(body, &entities);
         let urls = extract_urls(body);
         Ok(ExtractionResult {
             entities,
@@ -1131,7 +1269,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_all_caps_filtra_palavra_regra_pt() {
+    fn regex_all_caps_filters_pt_rule_word() {
         // v1.0.20 fix P1: NUNCA, PROIBIDO, DEVE não devem virar "entidades".
         let ents = apply_regex_prefilter("NUNCA fazer isso. PROIBIDO usar X. DEVE seguir Y.");
         assert!(
@@ -1193,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_urls_deduplica_repetidas() {
+    fn extract_urls_dedupes_repeated() {
         let body = "https://example.com referenciado aqui e depois aqui https://example.com";
         let urls = extract_urls(body);
         assert_eq!(urls.len(), 1, "URLs repetidas devem ser deduplicadas");
@@ -1213,7 +1351,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_all_caps_ignora_palavras_curtas() {
+    fn regex_all_caps_ignores_short_words() {
         let ents = apply_regex_prefilter("use AI em seu projeto");
         assert!(
             !ents.iter().any(|e| e.name == "AI"),
@@ -1249,7 +1387,7 @@ mod tests {
     }
 
     #[test]
-    fn iob_subword_orphan_descarta() {
+    fn iob_subword_orphan_discards() {
         // v1.0.21 P0: subword órfão sem entidade ativa não deve virar entidade.
         let tokens = vec!["##AI".to_string()];
         let labels = vec!["B-ORG".to_string()];
@@ -1352,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_extractor_implementa_trait() {
+    fn regex_extractor_implements_trait() {
         let extractor = RegexExtractor;
         let result = extractor
             .extract("contato: dev@empresa.io e MAX_TIMEOUT configurado")
@@ -1906,5 +2044,165 @@ mod tests {
             !ents.iter().any(|e| e.name.contains("Fase")),
             "section marker 'Fase 1' from BERT must be filtered; entities: {ents:?}"
         );
+    }
+
+    // ── v1.0.31 A1: NER cap protects against pathological body sizes ──
+
+    #[test]
+    fn extract_graph_auto_handles_large_body_under_30s() {
+        // Regression guard for the v1.0.31 A1 fix. A 80 KB body without real
+        // entities must complete in under 30 s; before the cap it took 5+ minutes.
+        let body = "x ".repeat(40_000);
+        let paths = make_paths();
+        let start = std::time::Instant::now();
+        let result = extract_graph_auto(&body, &paths).expect("extraction must not error");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_secs() < 30,
+            "extract_graph_auto took {}s for 80 KB body (cap should keep it well under 30s)",
+            elapsed.as_secs()
+        );
+        // No real entities expected in synthetic body, but the call must succeed.
+        let _ = result.entities;
+    }
+
+    // ── v1.0.31 A11: PT-BR uppercase noise must not leak as entities ──
+
+    #[test]
+    fn pt_uppercase_stopwords_filtered_v1031() {
+        let body = "Para o ADAPTER funcionar com PROJETO em modo PASSIVA, devemos usar \
+                    SOMENTE LEITURA conforme a REGRA OBRIGATORIA do EXEMPLO DEFAULT.";
+        let ents = apply_regex_prefilter(body);
+        let names: Vec<String> = ents.iter().map(|e| e.name.to_uppercase()).collect();
+        for stop in &[
+            "ADAPTER",
+            "PROJETO",
+            "PASSIVA",
+            "SOMENTE",
+            "LEITURA",
+            "REGRA",
+            "OBRIGATORIA",
+            "EXEMPLO",
+            "DEFAULT",
+        ] {
+            assert!(
+                !names.contains(&stop.to_string()),
+                "v1.0.31 A11 stoplist failed: {stop} leaked as entity; got names: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pt_underscored_identifier_preserved_v1031() {
+        // Identifiers with underscore must still pass through (FLOWAIPER_API_KEY,
+        // MAX_RETRY etc. are intentional entities, not noise).
+        let ents = apply_regex_prefilter("configure FLOWAIPER_API_KEY=foo and MAX_TIMEOUT=30");
+        let names: Vec<&str> = ents.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"FLOWAIPER_API_KEY"));
+        assert!(names.contains(&"MAX_TIMEOUT"));
+    }
+
+    // ── v1.0.31 A9: relationships only between entities co-occurring in same sentence ──
+
+    #[test]
+    fn build_relationships_by_sentence_only_links_co_occurring_entities() {
+        let body = "Alice met Bob at the conference. Carol works alone in another room.";
+        let entities = vec![
+            NewEntity {
+                name: "Alice".to_string(),
+                entity_type: "person".to_string(),
+                description: None,
+            },
+            NewEntity {
+                name: "Bob".to_string(),
+                entity_type: "person".to_string(),
+                description: None,
+            },
+            NewEntity {
+                name: "Carol".to_string(),
+                entity_type: "person".to_string(),
+                description: None,
+            },
+        ];
+        let (rels, truncated) = build_relationships_by_sentence_cooccurrence(body, &entities);
+        assert!(!truncated);
+        assert_eq!(
+            rels.len(),
+            1,
+            "only Alice/Bob should pair (same sentence); Carol is isolated"
+        );
+        let pair = (rels[0].source.as_str(), rels[0].target.as_str());
+        assert!(
+            matches!(pair, ("Alice", "Bob") | ("Bob", "Alice")),
+            "unexpected pair {pair:?}"
+        );
+    }
+
+    #[test]
+    fn build_relationships_by_sentence_returns_empty_for_single_entity() {
+        let body = "Alice is here.";
+        let entities = vec![NewEntity {
+            name: "Alice".to_string(),
+            entity_type: "person".to_string(),
+            description: None,
+        }];
+        let (rels, truncated) = build_relationships_by_sentence_cooccurrence(body, &entities);
+        assert!(rels.is_empty());
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn build_relationships_by_sentence_dedupes_pairs_across_sentences() {
+        let body = "Alice met Bob. Bob saw Alice again.";
+        let entities = vec![
+            NewEntity {
+                name: "Alice".to_string(),
+                entity_type: "person".to_string(),
+                description: None,
+            },
+            NewEntity {
+                name: "Bob".to_string(),
+                entity_type: "person".to_string(),
+                description: None,
+            },
+        ];
+        let (rels, _) = build_relationships_by_sentence_cooccurrence(body, &entities);
+        assert_eq!(
+            rels.len(),
+            1,
+            "Alice/Bob pair must be emitted only once even when co-occurring in multiple sentences"
+        );
+    }
+
+    #[test]
+    fn extraction_max_tokens_default_is_5000() {
+        std::env::remove_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS");
+        assert_eq!(crate::constants::extraction_max_tokens(), 5_000);
+    }
+
+    #[test]
+    fn extraction_max_tokens_env_override_clamped() {
+        std::env::set_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS", "200");
+        assert_eq!(
+            crate::constants::extraction_max_tokens(),
+            5_000,
+            "value below 512 must fall back to default"
+        );
+
+        std::env::set_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS", "200000");
+        assert_eq!(
+            crate::constants::extraction_max_tokens(),
+            5_000,
+            "value above 100_000 must fall back to default"
+        );
+
+        std::env::set_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS", "8000");
+        assert_eq!(
+            crate::constants::extraction_max_tokens(),
+            8_000,
+            "valid value must be honoured"
+        );
+
+        std::env::remove_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS");
     }
 }

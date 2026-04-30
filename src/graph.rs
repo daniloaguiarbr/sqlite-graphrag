@@ -288,14 +288,14 @@ mod tests {
     // --- edge cases retornando vazio ---
 
     #[test]
-    fn retorna_vazio_quando_seeds_vazio() {
+    fn returns_empty_when_seeds_empty() {
         let conn = setup_db();
         let resultado = traverse_from_memories(&conn, &[], "ns", 0.5, 3).unwrap();
         assert!(resultado.is_empty());
     }
 
     #[test]
-    fn retorna_vazio_quando_max_hops_zero() {
+    fn returns_empty_when_max_hops_zero() {
         let conn = setup_db();
         insert_memory(&conn, 1, "ns", false);
         link_memory_entity(&conn, 1, 10);
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn retorna_vazio_quando_seed_sem_entidades() {
+    fn returns_empty_when_seed_has_no_entities() {
         let conn = setup_db();
         insert_memory(&conn, 1, "ns", false);
         // memoria existe mas não tem entidades associadas
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn retorna_vazio_quando_sem_relacionamentos() {
+    fn returns_empty_when_no_relationships() {
         let conn = setup_db();
         insert_memory(&conn, 1, "ns", false);
         link_memory_entity(&conn, 1, 10);
@@ -325,7 +325,7 @@ mod tests {
     // --- happy path básico ---
 
     #[test]
-    fn traversal_basico_um_hop() {
+    fn traversal_basic_one_hop() {
         let conn = setup_db();
 
         // seed: memory 1 com entity 10
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn traversal_dois_hops() {
+    fn traversal_two_hops() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn max_hops_limita_profundidade() {
+    fn max_hops_limits_depth() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -390,7 +390,7 @@ mod tests {
     // --- filtro de peso ---
 
     #[test]
-    fn relacionamento_com_peso_abaixo_do_minimo_ignorado() {
+    fn relationship_with_weight_below_min_ignored() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn relacionamento_com_peso_exatamente_no_minimo_incluido() {
+    fn relationship_with_weight_exactly_at_min_included() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -425,7 +425,7 @@ mod tests {
     // --- isolamento de namespace ---
 
     #[test]
-    fn relacionamento_de_namespace_diferente_ignorado() {
+    fn relationship_from_different_namespace_ignored() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns_a", false);
@@ -444,7 +444,7 @@ mod tests {
     // --- excluir seeds do resultado ---
 
     #[test]
-    fn seeds_nao_aparecem_no_resultado() {
+    fn seeds_do_not_appear_in_result() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -466,7 +466,7 @@ mod tests {
     // --- memórias soft-deleted excluídas ---
 
     #[test]
-    fn memorias_deletadas_nao_incluidas() {
+    fn deleted_memories_not_included() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -485,7 +485,7 @@ mod tests {
     // --- múltiplos seeds ---
 
     #[test]
-    fn multiplos_seeds_unidos_no_resultado() {
+    fn multiple_seeds_merged_in_result() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -511,7 +511,7 @@ mod tests {
     // --- deduplicação de resultado ---
 
     #[test]
-    fn resultado_sem_duplicatas() {
+    fn result_without_duplicates() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -534,7 +534,7 @@ mod tests {
     // --- nó único (single node) ---
 
     #[test]
-    fn single_node_sem_vizinhos_retorna_vazio() {
+    fn single_node_without_neighbors_returns_empty() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);
@@ -548,7 +548,7 @@ mod tests {
     // --- ciclos no grafo ---
 
     #[test]
-    fn ciclo_nao_causa_loop_infinito() {
+    fn cycle_does_not_cause_infinite_loop() {
         let conn = setup_db();
 
         insert_memory(&conn, 1, "ns", false);

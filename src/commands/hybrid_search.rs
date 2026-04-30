@@ -211,7 +211,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
-    fn resposta_vazia(
+    fn empty_response(
         k: usize,
         rrf_k: u32,
         weight_vec: f32,
@@ -232,8 +232,8 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_response_vazia_serializa_campos_corretos() {
-        let resp = resposta_vazia(10, 60, 1.0, 1.0);
+    fn hybrid_search_response_empty_serializes_correct_fields() {
+        let resp = empty_response(10, 60, 1.0, 1.0);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"results\""), "deve conter campo results");
         assert!(json.contains("\"query\""), "deve conter campo query");
@@ -257,8 +257,8 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_response_serializa_rrf_k_e_weights() {
-        let resp = resposta_vazia(5, 60, 0.7, 0.3);
+    fn hybrid_search_response_serializes_rrf_k_and_weights() {
+        let resp = empty_response(5, 60, 0.7, 0.3);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"rrf_k\""), "deve conter campo rrf_k");
         assert!(json.contains("\"weights\""), "deve conter campo weights");
@@ -267,8 +267,8 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_response_serializa_elapsed_ms() {
-        let mut resp = resposta_vazia(5, 60, 1.0, 1.0);
+    fn hybrid_search_response_serializes_elapsed_ms() {
+        let mut resp = empty_response(5, 60, 1.0, 1.0);
         resp.elapsed_ms = 123;
         let json = serde_json::to_string(&resp).unwrap();
         assert!(
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn weights_struct_serializa_corretamente() {
+    fn weights_struct_serializes_correctly() {
         let w = Weights { vec: 0.6, fts: 0.4 };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"vec\""));
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_item_omite_fts_rank_quando_none() {
+    fn hybrid_search_item_omits_fts_rank_when_none() {
         let item = HybridSearchItem {
             memory_id: 1,
             name: "mem".to_string(),
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_item_omite_vec_rank_quando_none() {
+    fn hybrid_search_item_omits_vec_rank_when_none() {
         let item = HybridSearchItem {
             memory_id: 2,
             name: "mem2".to_string(),
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_item_serializa_ambos_ranks_quando_some() {
+    fn hybrid_search_item_serializes_both_ranks_when_some() {
         let item = HybridSearchItem {
             memory_id: 3,
             name: "mem3".to_string(),
@@ -364,8 +364,8 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_search_response_serializa_k_corretamente() {
-        let resp = resposta_vazia(5, 60, 1.0, 1.0);
+    fn hybrid_search_response_serializes_k_correctly() {
+        let resp = empty_response(5, 60, 1.0, 1.0);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"k\":5"), "deve serializar k=5");
     }

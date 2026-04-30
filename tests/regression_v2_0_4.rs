@@ -9,7 +9,7 @@
 /// Inconsistency 3: PURGE_RETENTION_DAYS was documented as 30 days but the code uses 90.
 
 // ---------------------------------------------------------------------------
-// Regressão 1a — BatchPartialFailure DEVE ter exit code 13 (e não 15)
+// Regression 1a — BatchPartialFailure MUST have exit code 13 (and not 15)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -27,7 +27,7 @@ fn regression_v2_0_4_exit_13_apenas_batch_partial() {
 }
 
 // ---------------------------------------------------------------------------
-// Regressão 1b — DbBusy DEVE ter exit code 15 (separado de BatchPartialFailure)
+// Regression 1b — DbBusy MUST have exit code 15 (separate from BatchPartialFailure)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -57,7 +57,7 @@ fn regression_v2_0_4_exit_13_e_15_sao_distintos() {
 }
 
 // ---------------------------------------------------------------------------
-// Regressão 2a — LockBusy usa exit 75, NÃO 73
+// Regression 2a — LockBusy uses exit 75, NOT 73
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -84,7 +84,7 @@ fn regression_v2_0_4_exit_75_all_slots_full_nao_73() {
 }
 
 // ---------------------------------------------------------------------------
-// Regressão 2b — AGENTS.md não contém referência ao exit 73
+// Regression 2b — AGENTS.md does not contain references to exit 73
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -100,7 +100,7 @@ fn regression_v2_0_4_docs_agents_nao_menciona_exit_73() {
 }
 
 // ---------------------------------------------------------------------------
-// Regressão 3 — PURGE_RETENTION_DAYS_DEFAULT é 90, não 30
+// Regression 3 — PURGE_RETENTION_DAYS_DEFAULT is 90, not 30
 // ---------------------------------------------------------------------------
 
 #[test]

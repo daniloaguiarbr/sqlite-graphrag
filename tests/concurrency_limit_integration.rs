@@ -1,22 +1,22 @@
-// Testes E2E de limite de concorrência para o semáforo de slots do sqlite-graphrag.
+// E2E concurrency limit tests for the sqlite-graphrag slot semaphore.
 //
-// ISOLAMENTO: `SQLITE_GRAPHRAG_CACHE_DIR` aponta para um `TempDir` exclusivo
-// por teste. `#[serial]` é obrigatório em todos os testes para evitar corridas
-// no sistema de arquivos entre testes que usam o mesmo binário compilado.
+// ISOLATION: `SQLITE_GRAPHRAG_CACHE_DIR` points to a `TempDir` unique per test.
+// `#[serial]` is required in all tests to avoid filesystem races between tests
+// that share the same compiled binary.
 //
-// `--skip-memory-guard` é usado em todos os testes para que a verificação de
-// RAM disponível não aborte antes do semáforo ser exercitado.
+// `--skip-memory-guard` is used in all tests so that the available RAM check
+// does not abort before the semaphore is exercised.
 
 use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
-// Teste 1 — limite de concorrência é respeitado sob carga de 10 processos
+// Test 1 — concurrency limit is respected under 10-process load
 // ---------------------------------------------------------------------------
-// Dispara 10 invocações paralelas com --max-concurrency 4 e --wait-lock 30.
-// Verifica que TODAS completam com sucesso (os 6 que não conseguem slot ficam
-// aguardando em polling até um dos 4 iniciais terminar e liberar o slot).
+// Spawns 10 parallel invocations with --max-concurrency 4 and --wait-lock 30.
+// Verifies that ALL complete successfully (the 6 that cannot acquire a slot
+// keep polling until one of the initial 4 finishes and releases its slot).
 
 #[test]
 #[serial]
@@ -24,8 +24,8 @@ fn limite_respeitado_sob_carga() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
     let bin = assert_cmd::cargo::cargo_bin("sqlite-graphrag");
 
-    // Spawna 10 invocações em paralelo usando std::process::Command para
-    // controle direto sobre PIDs (assert_cmd não expõe spawn).
+    // Spawn 10 invocations in parallel using std::process::Command for
+    // direct PID control (assert_cmd does not expose spawn).
     let handles: Vec<_> = (0..10)
         .map(|_| {
             std::process::Command::new(&bin)
@@ -52,7 +52,7 @@ fn limite_respeitado_sob_carga() {
     let successos = resultados.iter().filter(|r| r.status.success()).count();
     let falhas = resultados.iter().filter(|r| !r.status.success()).count();
 
-    // Todas as 10 invocações devem completar com sucesso quando --wait-lock=30.
+    // All 10 invocations must complete successfully when --wait-lock=30.
     assert_eq!(
         successos, 10,
         "todas as 10 invocações devem completar com sucesso (--wait-lock 30), \
@@ -61,9 +61,9 @@ fn limite_respeitado_sob_carga() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 2 — --max-concurrency 0 é rejeitado com exit 2
+// Test 2 — --max-concurrency 0 is rejected with exit 2
 // ---------------------------------------------------------------------------
-// Valida que o guard de validação em `Cli::validate_flags` rejeita N=0
+// Validates that the validation guard in `Cli::validate_flags` rejects N=0
 // antes de tentar adquirir qualquer slot.
 
 #[test]
@@ -88,7 +88,7 @@ fn max_concurrency_zero_rejected_with_exit_2() {
 // ---------------------------------------------------------------------------
 // Teste 3 — todos os slots ocupados retornam exit 75 sem espera
 // ---------------------------------------------------------------------------
-// Ocupa N slots diretamente via fs4 e verifica que invocação com --wait-lock 0
+// Occupy N slots directly via fs4 and verify that invocation with --wait-lock 0
 // retorna exit 75 (AllSlotsFull) imediatamente sem timeout.
 
 #[test]
@@ -100,7 +100,7 @@ fn todos_slots_ocupados_retornam_75() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
     let max: usize = 4;
 
-    // Travar todos os slots diretamente para simular 4 instâncias ativas.
+    // Lock all slots directly to simulate 4 active instances.
     let mut handles = Vec::new();
     for slot in 1..=max {
         let path = tmp.path().join(format!("cli-slot-{slot}.lock"));
@@ -116,7 +116,7 @@ fn todos_slots_ocupados_retornam_75() {
         handles.push(file);
     }
 
-    // Invocação com --wait-lock 0 deve falhar imediatamente com exit 75.
+    // Invocation with --wait-lock 0 must fail immediately with exit 75.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
@@ -137,20 +137,20 @@ fn todos_slots_ocupados_retornam_75() {
 }
 
 // ---------------------------------------------------------------------------
-// Teste 4 — --skip-memory-guard bypassa a verificação de memória disponível
+// Test 4 — --skip-memory-guard bypasses the available-memory check
 // ---------------------------------------------------------------------------
-// Verifica que `--skip-memory-guard` permite que o comando execute mesmo sem
-// passar pela verificação de RAM. Sem a flag, o comando poderia falhar com
-// exit 77 em ambientes CI com pouca memória disponível. Com a flag, deve
-// completar normalmente independente da RAM disponível.
+// Verifies that `--skip-memory-guard` allows the command to run without going
+// through the RAM check. Without the flag, the command could fail with
+// exit 77 in CI environments with limited available memory. With the flag, it
+// should complete normally regardless of available RAM.
 
 #[test]
 #[serial]
 fn skip_memory_guard_bypasses_ram_check() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    // Com --skip-memory-guard, o comando deve completar com sucesso mesmo em
-    // ambientes onde a RAM disponível poderia causar exit 77.
+    // With --skip-memory-guard, the command must complete successfully even in
+    // environments where available RAM could cause exit 77.
     Command::cargo_bin("sqlite-graphrag")
         .expect("binário sqlite-graphrag não encontrado")
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())

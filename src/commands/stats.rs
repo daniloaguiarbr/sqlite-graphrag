@@ -77,11 +77,14 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
 
     let schema_version: String = conn
         .query_row(
-            "SELECT value FROM schema_meta WHERE key='schema_version'",
+            "SELECT MAX(version) FROM refinery_schema_history",
             [],
-            |r| r.get(0),
+            |row| row.get::<_, Option<i64>>(0),
         )
-        .unwrap_or_else(|_| "unknown".to_string());
+        .ok()
+        .flatten()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let db_size_bytes = std::fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
@@ -165,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_response_namespaces_eh_array_de_strings() {
+    fn stats_response_namespaces_is_string_array() {
         let resp = StatsResponse {
             memories: 0,
             memories_total: 0,
@@ -193,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_response_namespaces_vazio_serializa_array_vazio() {
+    fn stats_response_namespaces_empty_serializes_empty_array() {
         let resp = StatsResponse {
             memories: 0,
             memories_total: 0,

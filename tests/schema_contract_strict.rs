@@ -1,10 +1,10 @@
 #![cfg(feature = "slow-tests")]
 
-// Suite 8 — Validação estrita de contrato JSON Schema para todos os 25 subcomandos.
-// Cada teste executa o binário, captura stdout, parseia como JSON e valida contra
-// docs/schemas/<cmd>.schema.json usando o crate jsonschema::Validator.
+// Suite 8 — Strict JSON Schema contract validation for all 25 subcommands.
+// Each test runs the binary, captures stdout, parses it as JSON and validates against
+// docs/schemas/<cmd>.schema.json using the jsonschema::Validator crate.
 //
-// Dependência: jsonschema = "0.29" em [dev-dependencies] do Cargo.toml.
+// Dependency: jsonschema = "0.29" in [dev-dependencies] of Cargo.toml.
 use assert_cmd::Command;
 use serde_json::Value;
 use serial_test::serial;
@@ -382,7 +382,7 @@ fn schema_10_restore() {
     let env = Env::new();
     env.init();
     env.remember_simples("mem-schema-restore");
-    // Cria uma segunda versão via edit
+    // Create a second version via edit
     env.cmd()
         .args([
             "edit",

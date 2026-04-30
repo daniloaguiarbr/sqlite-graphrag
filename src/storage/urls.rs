@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_url_duplicata_ignorada() -> TestResult {
+    fn insert_url_duplicate_ignored() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_urls_retorna_contagem_inseridas() -> TestResult {
+    fn insert_urls_returns_inserted_count() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_by_memory_remove_todas_urls() -> TestResult {
+    fn delete_by_memory_removes_all_urls() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let mem_id = insert_test_memory(&conn)?;
 

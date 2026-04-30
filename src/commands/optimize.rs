@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn optimize_retorna_not_found_quando_db_ausente() {
+    fn optimize_returns_not_found_when_db_missing() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("inexistente.sqlite");
         std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", db_path.to_str().unwrap());

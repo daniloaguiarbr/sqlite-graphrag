@@ -86,11 +86,11 @@ fn test_symlink_to_etc_rejected() {
     let tmp = TempDir::new().unwrap();
     let link_path = tmp.path().join("link_malicioso.sqlite");
 
-    // Criar symlink apontando para /etc/hosts (arquivo sensível)
+    // Create symlink pointing to /etc/hosts (sensitive file)
     let _ = std::os::unix::fs::symlink("/etc/hosts", &link_path);
 
-    // O binário deve rejeitar o caminho atravessado via symlink
-    // (validação de .. no caminho OU falha ao tentar abrir /etc/hosts como SQLite)
+    // The binary must reject the traversed path via symlink
+    // (validation of .. in the path OR failure when trying to open /etc/hosts as SQLite)
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.env("SQLITE_GRAPHRAG_DB_PATH", &link_path);
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
@@ -98,12 +98,12 @@ fn test_symlink_to_etc_rejected() {
     c.arg("--skip-memory-guard");
     c.args(["init"]);
 
-    // Deve falhar: ou exit 1 (validation) ou exit 10 (database - arquivo não é SQLite)
+    // Must fail: either exit 1 (validation) or exit 10 (database - file is not SQLite)
     c.assert().failure();
 }
 
 // ---------------------------------------------------------------------------
-// chmod 600 após init — apenas Unix
+// chmod 600 after init — Unix only
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -161,7 +161,7 @@ fn test_sqlite_wal_shm_chmod_600() {
 
     let tmp = TempDir::new().unwrap();
 
-    // Inicializar e fazer uma operação que force criação de WAL/SHM
+    // Initialize and perform an operation that forces WAL/SHM creation
     init_db(&tmp);
 
     cmd_base(&tmp)
@@ -198,7 +198,7 @@ fn test_sqlite_wal_shm_chmod_600() {
 }
 
 // ---------------------------------------------------------------------------
-// BLAKE3 — idempotência do hash
+// BLAKE3 — hash idempotency
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -258,7 +258,7 @@ fn test_blake3_deduplication_via_cli() {
         .assert()
         .success();
 
-    // Segunda inserção com mesmo hash: em v2.0.5 gera warning mas sucede (deduplicação não-fatal)
+    // Second insertion with the same hash: in v2.0.5 emits a warning but succeeds (non-fatal dedup)
     let output = cmd_base(&tmp)
         .args([
             "remember",
@@ -287,7 +287,7 @@ fn test_blake3_deduplication_via_cli() {
 }
 
 // ---------------------------------------------------------------------------
-// Lock files — tamanho pequeno (não acumulam dados)
+// Lock files — small size (do not accumulate data)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -295,7 +295,7 @@ fn test_cli_slot_lock_files_small_size() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Verificar arquivos de lock no diretório de cache
+    // Check lock files in the cache directory
     let cache_dir = tmp.path().join("cache");
     if cache_dir.exists() {
         for i in 1..=4 {
@@ -313,7 +313,7 @@ fn test_cli_slot_lock_files_small_size() {
 }
 
 // ---------------------------------------------------------------------------
-// Caminho explícito do banco com traversal rejeitado
+// Explicit database path with traversal rejected
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -328,7 +328,7 @@ fn test_cache_dir_without_traversal_in_override() {
 }
 
 // ---------------------------------------------------------------------------
-// Saída JSON não vaza caminhos absolutos do host em campos de erro
+// JSON output does not leak absolute host paths in error fields
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -344,7 +344,7 @@ fn test_error_does_not_leak_absolute_path_in_stderr() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // A resposta de erro não deve vazar o caminho completo do banco no stdout JSON
+    // The error response must not leak the full database path in stdout JSON
     assert!(
         !stdout.contains("/etc/"),
         "stdout não deve conter caminhos de /etc/: {stdout}"
@@ -356,7 +356,7 @@ fn test_error_does_not_leak_absolute_path_in_stderr() {
 }
 
 // ---------------------------------------------------------------------------
-// Validação: nome com injection SQL não é executado
+// Validation: name with SQL injection is not executed
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -385,7 +385,7 @@ fn test_sql_injection_in_name_rejected() {
         .failure()
         .code(1);
 
-    // Banco deve continuar íntegro após tentativa
+    // Database must remain intact after the attempt
     cmd_base(&tmp).arg("health").assert().success();
 }
 

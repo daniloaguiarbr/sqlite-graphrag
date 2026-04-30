@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn vacuum_response_elapsed_ms_presente_e_nao_negativo() {
+    fn vacuum_response_elapsed_ms_present_and_non_negative() {
         let resp = VacuumResponse {
             db_path: "/data/db.sqlite".to_string(),
             size_before_bytes: 1024,

@@ -51,7 +51,9 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     .map_err(|e| AppError::Embedding(e.to_string()))?;
     // If another thread raced and won, discard our instance and return theirs.
     let _ = EMBEDDER.set(Mutex::new(model));
-    Ok(EMBEDDER.get().expect("just set above"))
+    Ok(EMBEDDER
+        .get()
+        .expect("OnceLock populated by set() above (or by racing thread)"))
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
@@ -235,13 +237,13 @@ mod tests {
     // --- testes de f32_to_bytes (função pura, sem modelo) ---
 
     #[test]
-    fn f32_to_bytes_slice_vazio_retorna_vazio() {
+    fn f32_to_bytes_empty_slice_returns_empty() {
         let v: Vec<f32> = vec![];
         assert_eq!(f32_to_bytes(&v), &[] as &[u8]);
     }
 
     #[test]
-    fn f32_to_bytes_um_elemento_retorna_4_bytes() {
+    fn f32_to_bytes_one_element_returns_4_bytes() {
         let v = vec![1.0_f32];
         let bytes = f32_to_bytes(&v);
         assert_eq!(bytes.len(), 4);
@@ -251,19 +253,19 @@ mod tests {
     }
 
     #[test]
-    fn f32_to_bytes_comprimento_e_4x_elementos() {
+    fn f32_to_bytes_length_is_4x_elements() {
         let v = vec![0.0_f32, 1.0, 2.0, 3.0];
         assert_eq!(f32_to_bytes(&v).len(), v.len() * 4);
     }
 
     #[test]
-    fn f32_to_bytes_zero_codificado_como_4_zeros() {
+    fn f32_to_bytes_zero_encoded_as_4_zeros() {
         let v = vec![0.0_f32];
         assert_eq!(f32_to_bytes(&v), &[0u8, 0, 0, 0]);
     }
 
     #[test]
-    fn f32_to_bytes_roundtrip_vetor_embedding_dim() {
+    fn f32_to_bytes_roundtrip_vector_embedding_dim() {
         let v: Vec<f32> = (0..EMBEDDING_DIM).map(|i| i as f32 * 0.001).collect();
         let bytes = f32_to_bytes(&v);
         assert_eq!(bytes.len(), EMBEDDING_DIM * 4);
@@ -278,17 +280,17 @@ mod tests {
     // --- verifica prefixos usados pelo embedder (sem modelo) ---
 
     #[test]
-    fn passage_prefix_nao_vazio() {
+    fn passage_prefix_not_empty() {
         assert_eq!(PASSAGE_PREFIX, "passage: ");
     }
 
     #[test]
-    fn query_prefix_nao_vazio() {
+    fn query_prefix_not_empty() {
         assert_eq!(QUERY_PREFIX, "query: ");
     }
 
     #[test]
-    fn embedding_dim_e_384() {
+    fn embedding_dim_is_384() {
         assert_eq!(EMBEDDING_DIM, 384);
     }
 
@@ -296,7 +298,7 @@ mod tests {
 
     #[test]
     #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
-    fn embed_passage_retorna_vetor_com_dimensao_correta() {
+    fn embed_passage_returns_vector_with_correct_dimension() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
         let result = embed_passage(embedder, "texto de teste").unwrap();
@@ -305,7 +307,7 @@ mod tests {
 
     #[test]
     #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
-    fn embed_query_retorna_vetor_com_dimensao_correta() {
+    fn embed_query_returns_vector_with_correct_dimension() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
         let result = embed_query(embedder, "consulta de teste").unwrap();
@@ -314,7 +316,7 @@ mod tests {
 
     #[test]
     #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
-    fn embed_passages_batch_retorna_um_vetor_por_texto() {
+    fn embed_passages_batch_returns_one_vector_per_text() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
         let textos = ["primeiro", "segundo"];
@@ -326,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn controlled_batch_plan_respeita_orcamento() {
+    fn controlled_batch_plan_respects_budget() {
         assert_eq!(
             plan_controlled_batches(&[100, 100, 100, 100, 300, 300]),
             vec![(0, 4), (4, 5), (5, 6)]
@@ -334,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn controlled_batch_count_retorna_um_para_chunk_unico() {
+    fn controlled_batch_count_returns_one_for_single_chunk() {
         assert_eq!(controlled_batch_count(&[350]), 1);
     }
 }

@@ -67,7 +67,7 @@ fn test_exit_01_validation_namespace_invalido() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Namespace com espaços é inválido (deve conter apenas alfanuméricos + hífens/underscores)
+    // Namespace with spaces is invalid (must contain only alphanumerics + hyphens/underscores)
     cmd_base(&tmp)
         .args([
             "remember",
@@ -98,7 +98,7 @@ fn test_exit_02_duplicate_memoria_repetida() {
 
     remember_ok(&tmp, "mem-duplicada", "primeiro conteudo unico aqui");
 
-    // Duplicate é disparado quando o NOME já existe no namespace (sem --force-merge)
+    // Duplicate is triggered when the NAME already exists in the namespace (without --force-merge)
     cmd_base(&tmp)
         .args([
             "remember",
@@ -334,7 +334,7 @@ fn test_exit_13_batch_partial_failure_exit_code_correto() {
 }
 
 // ---------------------------------------------------------------------------
-// Exit code 14 — IO (diretório sem permissão de escrita, Unix only)
+// Exit code 14 — IO (directory without write permission, Unix only)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -438,7 +438,7 @@ fn test_exit_00_sucesso_health_apos_init() {
 }
 
 // ---------------------------------------------------------------------------
-// Consistência entre constantes e exit_code()
+// Consistency between constants and exit_code()
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -473,7 +473,7 @@ fn test_constantes_exit_codes_alinhadas() {
 }
 
 // ---------------------------------------------------------------------------
-// Mensagens de erro são não-vazias em PT e EN
+// Error messages are non-empty in PT and EN
 // ---------------------------------------------------------------------------
 
 #[test]

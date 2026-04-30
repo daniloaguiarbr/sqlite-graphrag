@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn utc_default_quando_env_ausente() {
+    fn utc_default_when_env_missing() {
         // Remove variável para garantir fallback UTC
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
         let resultado = resolve_tz_from_env().expect("não deve falhar com env ausente");
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn env_valido_aplica_timezone() {
+    fn env_valid_applies_timezone() {
         std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "America/Sao_Paulo");
         let resultado = resolve_tz_from_env().expect("America/Sao_Paulo é válido");
         assert_eq!(resultado.name(), "America/Sao_Paulo");
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn env_invalido_retorna_erro_validation() {
+    fn env_invalid_returns_validation_error() {
         std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "Invalido/Naoexiste");
         let resultado = resolve_tz_from_env();
         assert!(resultado.is_err(), "timezone inválida deve retornar Err");
@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_zero_gera_utc_iso() {
+    fn epoch_zero_yields_utc_iso() {
         // Testa epoch_to_iso diretamente sem estado global
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
         let resultado = {

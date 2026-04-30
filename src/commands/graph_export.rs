@@ -597,7 +597,7 @@ mod tests {
     use crate::cli::{Cli, Commands};
     use clap::Parser;
 
-    fn cria_node(kind: &str) -> NodeOut {
+    fn make_node(kind: &str) -> NodeOut {
         NodeOut {
             id: 1,
             name: "entidade-teste".to_string(),
@@ -608,8 +608,8 @@ mod tests {
     }
 
     #[test]
-    fn node_out_type_duplica_kind() {
-        let node = cria_node("agent");
+    fn node_out_type_duplicates_kind() {
+        let node = make_node("agent");
         let json = serde_json::to_value(&node).expect("serialização deve funcionar");
         assert_eq!(json["kind"], json["type"]);
         assert_eq!(json["kind"], "agent");
@@ -617,8 +617,8 @@ mod tests {
     }
 
     #[test]
-    fn node_out_serializa_todos_campos() {
-        let node = cria_node("document");
+    fn node_out_serializes_all_fields() {
+        let node = make_node("document");
         let json = serde_json::to_value(&node).expect("serialização deve funcionar");
         assert!(json.get("id").is_some());
         assert!(json.get("name").is_some());
@@ -628,8 +628,8 @@ mod tests {
     }
 
     #[test]
-    fn graph_snapshot_serializa_nodes_com_type() {
-        let node = cria_node("concept");
+    fn graph_snapshot_serializes_nodes_with_type() {
+        let node = make_node("concept");
         let snapshot = GraphSnapshot {
             nodes: vec![node],
             edges: vec![],
@@ -643,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_traverse_response_serializa_corretamente() {
+    fn graph_traverse_response_serializes_correctly() {
         let resp = GraphTraverseResponse {
             from: "entity-a".to_string(),
             namespace: "global".to_string(),
@@ -665,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_stats_response_serializa_corretamente() {
+    fn graph_stats_response_serializes_correctly() {
         let resp = GraphStatsResponse {
             namespace: Some("global".to_string()),
             node_count: 10,
@@ -682,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_entities_response_serializa_campos_obrigatorios() {
+    fn graph_entities_response_serializes_required_fields() {
         let resp = GraphEntitiesResponse {
             items: vec![EntityItem {
                 id: 1,
@@ -708,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn entity_item_serializa_todos_campos() {
+    fn entity_item_serializes_all_fields() {
         let item = EntityItem {
             id: 42,
             name: "test-entity".to_string(),
@@ -725,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn entity_item_entity_type_nunca_e_null() {
+    fn entity_item_entity_type_is_never_null() {
         // P2-C: entity_type must never be null, even when DB column is empty.
         let item = EntityItem {
             id: 1,
@@ -743,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_traverse_cli_rejeita_format_dot() {
+    fn graph_traverse_cli_rejects_format_dot() {
         let parsed = Cli::try_parse_from([
             "sqlite-graphrag",
             "graph",
@@ -760,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_stats_cli_aceita_format_text() {
+    fn graph_stats_cli_accepts_format_text() {
         let parsed = Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "text"])
             .expect("graph stats --format text deve ser aceito");
 
@@ -776,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_stats_cli_rejeita_format_mermaid() {
+    fn graph_stats_cli_rejects_format_mermaid() {
         let parsed =
             Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "mermaid"]);
         assert!(

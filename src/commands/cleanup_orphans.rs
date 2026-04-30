@@ -90,7 +90,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cleanup_response_serializa_dry_run_true() {
+    fn cleanup_response_serializes_dry_run_true() {
         let resp = CleanupResponse {
             orphan_count: 5,
             deleted: 0,
@@ -107,7 +107,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_response_deleted_zero_quando_dry_run() {
+    fn cleanup_response_deleted_zero_when_dry_run() {
         let resp = CleanupResponse {
             orphan_count: 10,
             deleted: 0,
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_response_namespace_none_serializa_null() {
+    fn cleanup_response_namespace_none_serializes_null() {
         let resp = CleanupResponse {
             orphan_count: 0,
             deleted: 0,

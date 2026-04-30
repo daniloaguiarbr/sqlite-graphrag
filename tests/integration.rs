@@ -27,7 +27,7 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
 }
 
 // ---------------------------------------------------------------------------
-// Resolução de path do banco via SQLITE_GRAPHRAG_HOME
+// Database path resolution via SQLITE_GRAPHRAG_HOME
 // ---------------------------------------------------------------------------
 
 /// Isolated helper that does NOT inject `SQLITE_GRAPHRAG_DB_PATH`, letting
@@ -36,7 +36,7 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
 fn home_isolated_cmd(cwd: &std::path::Path) -> Command {
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.env_clear();
-    // PATH é necessário em alguns ambientes para libs do binário; preserva minimamente.
+    // PATH is required in some environments for binary libs; preserve it minimally.
     if let Ok(path_var) = std::env::var("PATH") {
         c.env("PATH", path_var);
     }
@@ -912,7 +912,7 @@ fn test_stats_returns_counts() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert!(json["memories"].as_i64().unwrap() >= 1);
     assert!(json["db_size_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(json["schema_version"], "6");
+    assert_eq!(json["schema_version"], "9");
 }
 
 #[test]
@@ -1285,14 +1285,14 @@ fn test_restore_versao_inexistente_retorna_exit_4() {
 }
 
 // ---------------------------------------------------------------------------
-// regressão forget+purge (FTS5 external-content corruption)
+// forget+purge regression (FTS5 external-content corruption)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_forget_purge_does_not_corrupt_fts_index() {
-    // Regressão: forget.rs previamente executava `DELETE FROM fts_memories WHERE rowid=?`
-    // direto, corrompendo índice FTS5 external-content. A corrupção só aparecia
-    // quando purge executava DELETE físico em memories disparando trg_fts_ad.
+    // Regression: forget.rs previously executed `DELETE FROM fts_memories WHERE rowid=?`
+    // directly, corrupting the FTS5 external-content index. The corruption only appeared
+    // when purge ran a physical DELETE on memories triggering trg_fts_ad.
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1626,7 +1626,7 @@ fn test_unlink_entidade_ausente_retorna_exit_4() {
 }
 
 // ---------------------------------------------------------------------------
-// regressão: INSERT OR REPLACE em vec_entities (vec0 não suporta REPLACE)
+// regression: INSERT OR REPLACE on vec_entities (vec0 does not support REPLACE)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1634,14 +1634,14 @@ fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Primeira memória com entidade "entidade-comum".
+    // First memory with entity "entidade-comum".
     seed_memory_with_entities(
         &tmp,
         "memoria-primeiro",
         r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
     );
 
-    // Segunda memória reutiliza a MESMA entidade — vec0 não tolera INSERT OR REPLACE duplicado.
+    // Second memory reuses the SAME entity — vec0 does not tolerate duplicate INSERT OR REPLACE.
     // DEVE ter sucesso sem UNIQUE constraint error.
     seed_memory_with_entities(
         &tmp,
@@ -1649,7 +1649,7 @@ fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
         r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
     );
 
-    // Terceira memória também reutiliza, garantindo robustez com múltiplas duplicações.
+    // Third memory also reuses it, ensuring robustness with multiple duplicates.
     seed_memory_with_entities(
         &tmp,
         "memoria-terceiro",
@@ -1666,7 +1666,7 @@ fn test_related_finds_memories_via_graph() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Memória 1 e 2 compartilham a entidade "projeto-compartilhado".
+    // Memory 1 and 2 share the entity "projeto-compartilhado".
     seed_memory_with_entities(
         &tmp,
         "memoria-um",
@@ -1714,7 +1714,7 @@ fn test_related_finds_memories_via_graph() {
     let arr = json["results"]
         .as_array()
         .expect("related retorna results array");
-    // deve conter pelo menos uma das outras duas memórias via hop
+    // should contain at least one of the other two memories via hop
     let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();
     assert!(
         names.contains(&"memoria-link"),
@@ -2237,14 +2237,14 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Cria uma memória com entidades vinculadas
+    // Create a memory with linked entities
     seed_memory_with_entities(
         &tmp,
         "co-mem-ligada",
         r#"[{"name":"co-ent-ligada","entity_type":"project","description":null}]"#,
     );
 
-    // Cria uma memória com entidades adicionais e remove a memória, deixando as entidades órfãs
+    // Create a memory with additional entities and remove it, leaving orphan entities
     seed_memory_with_entities(
         &tmp,
         "co-mem-descartada",
@@ -2265,7 +2265,7 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
         .assert()
         .success();
 
-    // Dry-run conta órfãos sem remover
+    // Dry-run counts orphans without removing
     let output = cmd(&tmp)
         .args(["cleanup-orphans", "--dry-run"])
         .assert()
@@ -2278,7 +2278,7 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
     assert!(dry["orphan_count"].as_u64().unwrap() >= 1);
     assert_eq!(dry["deleted"].as_u64().unwrap(), 0);
 
-    // Execução real remove os órfãos
+    // Real execution removes the orphans
     let output = cmd(&tmp)
         .args(["cleanup-orphans", "--yes"])
         .assert()

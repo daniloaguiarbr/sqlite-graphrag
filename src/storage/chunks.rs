@@ -158,14 +158,14 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_chunks_vazia_ok() {
+    fn test_insert_chunks_empty_ok() {
         let (_tmp, conn) = setup_db();
         let resultado = insert_chunks(&conn, &[]);
         assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_insert_chunks_e_get_por_memory() {
+    fn test_insert_chunks_and_get_by_memory() {
         let (_tmp, conn) = setup_db();
         let memory_id = insert_memory(&conn);
 
@@ -202,14 +202,14 @@ mod tests {
     }
 
     #[test]
-    fn test_get_chunks_memory_inexistente_retorna_vazio() {
+    fn test_get_chunks_missing_memory_returns_empty() {
         let (_tmp, conn) = setup_db();
         let resultado = get_chunks_by_memory(&conn, 9999).unwrap();
         assert!(resultado.is_empty());
     }
 
     #[test]
-    fn test_delete_chunks_remove_todos() {
+    fn test_delete_chunks_removes_all() {
         let (_tmp, conn) = setup_db();
         let memory_id = insert_memory(&conn);
 
@@ -240,14 +240,14 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_chunks_memory_sem_chunks_ok() {
+    fn test_delete_chunks_memory_without_chunks_ok() {
         let (_tmp, conn) = setup_db();
         let resultado = delete_chunks(&conn, 9999);
         assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_get_chunks_ordenados_por_chunk_idx() {
+    fn test_get_chunks_ordered_by_chunk_idx() {
         let (_tmp, conn) = setup_db();
         let memory_id = insert_memory(&conn);
 
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_chunk_vec_e_knn_search() {
+    fn test_upsert_chunk_vec_and_knn_search() {
         let (_tmp, conn) = setup_db();
         let memory_id = insert_memory(&conn);
 
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_knn_search_chunks_sem_dados_retorna_vazio() {
+    fn test_knn_search_chunks_without_data_returns_empty() {
         let (_tmp, conn) = setup_db();
         let embedding = vec![0.0f32; EMBEDDING_DIM];
         let resultado = knn_search_chunks(&conn, &embedding, 5).unwrap();

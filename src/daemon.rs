@@ -653,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_control_dir_usa_pai_de_models() {
+    fn daemon_control_dir_uses_models_parent() {
         let base = PathBuf::from("/tmp/sqlite-graphrag-cache-test");
         let models_dir = base.join("models");
         assert_eq!(daemon_control_dir(&models_dir), base);

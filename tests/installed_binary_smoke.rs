@@ -287,7 +287,7 @@ fn smoke_03_remember() {
         .expect("remember falhou");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    // v2.0.4: remember retorna action "created", não campo status
+    // v2.0.4: remember returns action "created", not a status field
     assert_eq!(
         json["action"], "created",
         "remember deve retornar action=created: {json}"
@@ -416,7 +416,7 @@ fn smoke_09_rename() {
     let env = Env::new();
     env.init();
     env.remember("smoke-rename-src", "memória para renomear");
-    // v2.0.4: rename usa --name e --new-name (não --from/--to)
+    // v2.0.4: rename uses --name and --new-name (not --from/--to)
     let out = env
         .cmd()
         .args([
@@ -483,7 +483,7 @@ fn smoke_11_history() {
     let env = Env::new();
     env.init();
     env.remember("smoke-history-01", "versão 1 do conteúdo");
-    // Gera uma segunda versão
+    // Generate a second version
     env.cmd()
         .args([
             "edit",
@@ -520,7 +520,7 @@ fn smoke_12_restore() {
         .args(["edit", "--name", "smoke-restore-01", "--body", "versão 2"])
         .output()
         .unwrap();
-    // Obtém versões pelo history
+    // Obtain versions through history
     let hist_out = env
         .cmd()
         .args(["history", "--name", "smoke-restore-01"])
@@ -528,8 +528,8 @@ fn smoke_12_restore() {
         .unwrap();
     let hist_json: serde_json::Value = serde_json::from_slice(&hist_out.stdout).unwrap();
     let versions = hist_json["versions"].as_array().unwrap();
-    // Restaura para a versão mais antiga disponível
-    // v2.0.4: campo é "version" (não "version_id")
+    // Restore to the oldest available version
+    // v2.0.4: field is "version" (not "version_id")
     if versions.len() >= 2 {
         let version_id = versions
             .iter()
@@ -676,8 +676,8 @@ fn smoke_19_vacuum() {
 fn smoke_20_link() {
     let env = Env::new();
     env.init();
-    // Link opera sobre entidades do grafo, não sobre nomes de memórias.
-    // Cria memória com entidades via --entities-file (campo entity_type obrigatório).
+    // Link operates on graph entities, not on memory names.
+    // Create a memory with entities via --entities-file (entity_type field is required).
     let (ent_a, ent_b) = env.remember_with_entities(
         "smoke-link",
         "memória com entidades para smoke test de link",
@@ -804,8 +804,8 @@ fn smoke_24_cleanup_orphans() {
 // ---------------------------------------------------------------------------
 // Suite 10 — Smoke #25: __debug_schema
 //
-// Alguns binários legados não expõem `__debug_schema`.
-// Quando a suíte está rodando deliberadamente contra um binário antigo,
+// Some legacy binaries do not expose `__debug_schema`.
+// When the suite is running deliberately against an old binary,
 // este teste skippa sem falhar.
 // ---------------------------------------------------------------------------
 
@@ -845,7 +845,7 @@ fn smoke_25_debug_schema() {
 }
 
 // ---------------------------------------------------------------------------
-// Suite 10 — Smoke #26: contrato do banco default no diretório atual
+// Suite 10 — Smoke #26: default database contract in the current directory
 // ---------------------------------------------------------------------------
 
 #[test]

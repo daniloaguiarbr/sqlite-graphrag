@@ -235,41 +235,41 @@ mod tests {
     }
 
     #[test]
-    fn emit_json_retorna_ok_para_valor_valido() {
+    fn emit_json_returns_ok_for_valid_value() {
         let v = Dummy { val: 42 };
         assert!(emit_json(&v).is_ok());
     }
 
     #[test]
-    fn emit_json_retorna_erro_para_valor_nao_serializavel() {
+    fn emit_json_returns_err_for_non_serializable_value() {
         let v = NotSerializable;
         assert!(emit_json(&v).is_err());
     }
 
     #[test]
-    fn emit_json_compact_retorna_ok_para_valor_valido() {
+    fn emit_json_compact_returns_ok_for_valid_value() {
         let v = Dummy { val: 7 };
         assert!(emit_json_compact(&v).is_ok());
     }
 
     #[test]
-    fn emit_json_compact_retorna_erro_para_valor_nao_serializavel() {
+    fn emit_json_compact_returns_err_for_non_serializable_value() {
         let v = NotSerializable;
         assert!(emit_json_compact(&v).is_err());
     }
 
     #[test]
-    fn emit_text_nao_entra_em_panico() {
+    fn emit_text_does_not_panic() {
         emit_text("mensagem de teste");
     }
 
     #[test]
-    fn emit_progress_nao_entra_em_panico() {
+    fn emit_progress_does_not_panic() {
         emit_progress("progresso de teste");
     }
 
     #[test]
-    fn remember_response_serializa_corretamente() {
+    fn remember_response_serializes_correctly() {
         let r = RememberResponse {
             memory_id: 1,
             name: "teste".to_string(),
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_item_serializa_campo_type_renomeado() {
+    fn recall_item_serializes_renamed_type_field() {
         let item = RecallItem {
             memory_id: 10,
             name: "entidade".to_string(),
@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_response_serializa_com_listas() {
+    fn recall_response_serializes_with_lists() {
         let resp = RecallResponse {
             query: "busca".to_string(),
             k: 10,
@@ -342,13 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn output_format_default_eh_json() {
+    fn output_format_default_is_json() {
         let fmt = OutputFormat::default();
         assert!(matches!(fmt, OutputFormat::Json));
     }
 
     #[test]
-    fn output_format_variantes_existem() {
+    fn output_format_variants_exist() {
         let _text = OutputFormat::Text;
         let _md = OutputFormat::Markdown;
         let _json = OutputFormat::Json;

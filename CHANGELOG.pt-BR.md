@@ -10,6 +10,32 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.31] - 2026-04-30
+
+### Corrigido
+- **A2 (P1-CRÍTICO)**: subcomando `ingest` agora emite NDJSON correto (um objeto JSON por linha). Antes emitia JSON multilinha indentado, quebrando consumidores line-by-line. 5 chamadas em `src/commands/ingest.rs` trocadas de `output::emit_json` para `output::emit_json_compact`.
+- **A3 (P1-MÉDIO)**: `stats --json` agora reporta `schema_version` correto (ex.: "9") lendo de `refinery_schema_history`. Antes retornava "unknown" porque a tabela `schema_meta` (vazia) era consultada.
+- **A4 (P1-MÉDIO)**: comando `forget` agora popula `action` e `deleted_at` no JSON de saída. Três estados explícitos: `soft_deleted`, `already_deleted`, `not_found`. Race-safe via re-SELECT após soft-delete.
+- **A1 (P0-CRÍTICO)**: pipeline de extração não trava mais em documentos > 50 KB. Adicionado cap `EXTRACTION_MAX_TOKENS=5000` (override via env `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS`). Body que excede o cap é truncado para NER mas o body completo continua passando pelo regex. Impacto empírico: documento de 68 KB caiu de >5 minutos para ~37 segundos (88% de redução), mantendo `extraction_method=bert+regex-batch`.
+- **A9 (P2-MÉDIO)**: fan-out de relacionamentos reduzido — entidades co-ocorrendo na mesma sentença/parágrafo agora geram edges; antes gerava C(N,2) "mentions" entre todas entidades da memória.
+- **A10 (P2-MÉDIO)**: truncamento de nome em 60 chars agora emite `tracing::warn` e trata colisões com sufixo numérico (-1, -2, ...) dentro da mesma run.
+
+### Adicionado
+- **A6**: nova suite `tests/ingest_integration.rs` cobrindo contrato NDJSON, fail-fast, max-files, truncamento de nome, --skip-extraction, variantes de --pattern, walk recursivo (10 testes).
+- **A7**: testes E2E para V009 em `tests/schema_migration_integration.rs`: `v009_document_type_lifecycle_e2e`, `v009_note_type_lifecycle_e2e`, `v009_invalid_type_rejected`.
+- **A11**: stoplist PT-BR de palavras em caixa alta para filtro NER (ADAPTER, PROJETO, PASSIVA, SOMENTE, LEITURA, etc.). Melhora qualidade da extração para corpora em português.
+
+### Melhorado
+- **A5 (P1-MÉDIO)**: 210 funções de teste em `src/*` renomeadas de português para inglês em 35 arquivos (cobre também helpers como `nova_memoria` → `new_memory`, `cria_node` → `make_node`, `resposta_vazia` → `empty_response`). Codebase agora 100% em conformidade com a política linguística do projeto (identificadores exclusivos em inglês).
+- **A8 (P1-MÉDIO)**: refinamento de `.unwrap()`/`.expect()` em código de produção. A contagem original da auditoria de 167 estava inflada — a maioria dos matches estava em blocos `#[cfg(test)] mod tests` (aceitáveis pelo CLAUDE.md). O inventário real em produção era de 13 ocorrências. Melhorias: 1 `.expect()` em `src/embedder.rs` recebeu mensagem de invariante mais precisa; 10 `Regex::new(LITERAL).unwrap()` em initializers de `OnceLock` em `src/extraction.rs` substituídos por `.expect("compile-time validated <kind> regex literal")`; 2 `.max_by(...).unwrap()` sobre logits do BERT NER substituídos por `.expect("BERT NER logits invariant: no NaN in classifier output")`; 1 `.expect()` em `src/chunking.rs` traduzido de PT para EN.
+- **A12+A13**: ~38 comentários PT traduzidos em `tests/signal_handling_integration.rs`, `tests/lock_integration.rs` e `deny.toml`. 2 entries `[advisories.ignore]` obsoletas removidas (RUSTSEC-2024-0436, RUSTSEC-2025-0119) — `cargo deny check` agora reporta zero warnings de advisory-not-detected.
+- **A14**: ~150 comentários PT adicionais traduzidos em `tests/prd_compliance.rs`, `tests/integration.rs`, `tests/concurrency_hardened.rs`, `tests/security_hardening.rs` e outros arquivos de teste.
+
+### Metodologia da Auditoria
+- 13 gaps identificados empiricamente via auditoria em plan-mode contra binário v1.0.30 instalado, usando corpus real (20 documentos markdown PT-BR).
+- Todos os fixes validados via PDCA + orquestração com Agent Teams: 13 tasks, 9 teammates spawnados em paralelo, cada um com Regra Zero do CLAUDE.md e validação por task.
+- Validação aprovada: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo audit, cargo deny check, cargo doc -D warnings, cargo nextest run.
+
 ## [1.0.30] - 2026-04-29
 
 ### Adicionado (Novo Subcomando — Ingestão em Massa)

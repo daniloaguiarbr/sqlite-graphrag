@@ -206,7 +206,7 @@ mod tests {
     use crate::errors::AppError;
 
     #[test]
-    fn optimistic_lock_conflict_retorna_exit_3() {
+    fn optimistic_lock_conflict_returns_exit_3() {
         let err = AppError::Conflict(
             "optimistic lock conflict: expected updated_at=50, but current is 99".to_string(),
         );

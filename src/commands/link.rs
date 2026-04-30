@@ -139,7 +139,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn link_response_sem_aliases_redundantes() {
+    fn link_response_without_redundant_aliases() {
         // P1-O: campos source/target foram removidos do JSON de resposta.
         let resp = LinkResponse {
             action: "created".to_string(),

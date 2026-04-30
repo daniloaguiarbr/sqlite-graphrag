@@ -33,7 +33,7 @@ fn remember(tmp: &TempDir, name: &str, memory_type: &str, description: &str, bod
 }
 
 // ---------------------------------------------------------------------------
-// purge --dry-run — não deleta nada
+// purge --dry-run — does not delete anything
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -79,22 +79,22 @@ fn purge_dry_run_deletes_nothing() {
 }
 
 // ---------------------------------------------------------------------------
-// purge sem --retention-days — constante default é 90
+// purge without --retention-days — default constant is 90
 // ---------------------------------------------------------------------------
 
 #[test]
 fn purge_retention_days_padrao_90() {
-    // Verifica diretamente a constante — o comportamento de CLI (retenção de 90 dias)
-    // significa que memórias recém-deletadas NÃO são incluídas no cutoff padrão.
-    // Testamos que a constante está correta sem precisar manipular timestamps.
+    // Verify the constant directly — the CLI behavior (90-day retention)
+    // means that recently soft-deleted memories are NOT included in the default cutoff.
+    // We test that the constant is correct without needing to manipulate timestamps.
     assert_eq!(
         sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT,
         90,
         "PURGE_RETENTION_DAYS_DEFAULT deve ser 90"
     );
 
-    // Verifica também que o campo retention_days_used aparece na resposta quando
-    // há memórias elegíveis (usando retention_days=0 para forçar inclusão imediata).
+    // Also verify that the retention_days_used field appears in the response when
+    // there are eligible memories (using retention_days=0 to force immediate inclusion).
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -298,7 +298,7 @@ fn name_slug_regex_allows_single_digit() {
 }
 
 // ---------------------------------------------------------------------------
-// NAME_SLUG_REGEX rejeita multichar com prefixo dígito
+// NAME_SLUG_REGEX rejects multichar with digit prefix
 // ---------------------------------------------------------------------------
 
 #[test]

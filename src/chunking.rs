@@ -136,7 +136,9 @@ pub fn split_into_chunks_hierarchical(body: &str, tokenizer: &Tokenizer) -> Vec<
     let config = ChunkConfig::new(CHUNK_SIZE_TOKENS)
         .with_sizer(tokenizer)
         .with_overlap(CHUNK_OVERLAP_TOKENS)
-        .expect("CHUNK_OVERLAP_TOKENS deve ser menor que CHUNK_SIZE_TOKENS");
+        .expect(
+            "compile-time invariant: CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_SIZE_TOKENS",
+        );
 
     let splitter = MarkdownSplitter::new(config);
 
@@ -270,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn split_by_token_offsets_retorna_um_chunk_quando_cabe() {
+    fn split_by_token_offsets_returns_one_chunk_when_fits() {
         let body = "texto curto";
         let offsets = vec![(0, 5), (6, 11)];
         let chunks = split_into_chunks_by_token_offsets(body, &offsets);
@@ -337,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hierarchical_empty_body_retorna_vazio() {
+    fn test_hierarchical_empty_body_returns_empty() {
         use text_splitter::{Characters, ChunkConfig, MarkdownSplitter};
         let config = ChunkConfig::new(100)
             .with_sizer(Characters)
@@ -349,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_h1_boundary_gera_dois_chunks() {
+    fn test_markdown_h1_boundary_yields_two_chunks() {
         let body = "# Title 1\n\nbody1 body1 body1 body1 body1 body1\n\n# Title 2\n\nbody2 body2 body2 body2 body2 body2";
         let chunks = split_hier_chars(body, 30);
         assert!(
@@ -364,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_h2_nested_respeita_boundaries() {
+    fn test_markdown_h2_nested_respects_boundaries() {
         let body = "# H1\n\n## H2a\n\nParágrafo A com texto suficiente para forçar split.\n\n## H2b\n\nParágrafo B com texto suficiente para forçar split também.";
         let chunks = split_hier_chars(body, 40);
         assert!(!chunks.is_empty());
@@ -377,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_paragrafo_soft_boundary() {
+    fn test_markdown_paragraph_soft_boundary() {
         let para = "Frase de texto simples para preencher o parágrafo. ";
         let body = format!(
             "{}\n\n{}\n\n{}",
@@ -398,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_60kb_offsets_validos() {
+    fn test_markdown_60kb_valid_offsets() {
         let bloco = "# Seção\n\nTexto de conteúdo do bloco. ".repeat(1500);
         assert!(
             bloco.len() > 50_000,
@@ -416,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_texto_puro_sem_marcadores() {
+    fn test_fallback_plain_text_without_markers() {
         let body = "a ".repeat(1000);
         let chunks = split_hier_chars(&body, 100);
         assert!(!chunks.is_empty());

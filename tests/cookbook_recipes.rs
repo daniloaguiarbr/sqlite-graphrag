@@ -1,15 +1,15 @@
 #![cfg(feature = "slow-tests")]
 
-// Suite 11 — testes das receitas documentadas em docs/COOKBOOK.md
+// Suite 11 — tests for the recipes documented in docs/COOKBOOK.md
 //
-// Cada teste valida que o comportamento real do CLI corresponde ao documentado.
-// Detecta drift entre documentação e implementação.
+// Each test validates that actual CLI behavior matches what is documented.
+// Detects drift between documentation and implementation.
 //
-// Receitas skippadas por design:
-//   - Recipe 6: AGENTS.md discovery — apenas documentação, sem comandos executáveis
-//   - Recipe 12: Git LFS — requer git lfs instalado e repositório git
+// Recipes skipped by design:
+//   - Recipe 6: AGENTS.md discovery — documentation only, no executable commands
+//   - Recipe 12: Git LFS — requires git lfs installed and a git repository
 //
-// Receitas testadas: 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15 (13 de 13 executáveis)
+// Recipes tested: 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15 (13 of 13 executable)
 
 use assert_cmd::Command;
 use serial_test::serial;
@@ -61,7 +61,7 @@ fn recipe_01_bootstrap_60s() {
     );
 }
 
-// Recipe 2 — Bulk-import stdin: remember com --body-stdin lê corpo do stdin
+// Recipe 2 — Bulk-import stdin: remember with --body-stdin reads body from stdin
 #[test]
 #[serial]
 fn recipe_02_bulk_import_body_stdin() {
@@ -124,7 +124,7 @@ fn recipe_03_hybrid_search_tunable() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    // Seed com uma memória
+    // Seed with a memory
     cmd(&dir)
         .args([
             "remember",
@@ -207,7 +207,7 @@ fn recipe_04_graph_traversal_related() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    // Seed memória de origem
+    // Seed source memory
     cmd(&dir)
         .args([
             "remember",
@@ -321,7 +321,7 @@ fn recipe_05_pre_post_task_hooks() {
         "recipe 5: recall deve ter elapsed_ms"
     );
 
-    // A memória persistida deve ser encontrada
+    // The persisted memory must be found
     let results = json["results"].as_array().unwrap();
     assert!(
         !results.is_empty(),
@@ -374,7 +374,7 @@ fn recipe_08_export_para_arquivo() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    // Seed com memória
+    // Seed with memory
     cmd(&dir)
         .args([
             "remember",
@@ -425,14 +425,14 @@ fn recipe_08_export_para_arquivo() {
     );
 }
 
-// Recipe 9 — sync-safe-copy: snapshot é consistente e abre com exit 0
+// Recipe 9 — sync-safe-copy: snapshot is consistent and opens with exit 0
 #[test]
 #[serial]
 fn recipe_09_sync_safe_copy() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    // Seed com memória para ter dados no snapshot
+    // Seed with memory to have data in the snapshot
     cmd(&dir)
         .args([
             "remember",
@@ -578,8 +578,8 @@ fn recipe_10_purge_vacuum_optimize() {
     );
 }
 
-// Recipe 11 — NDJSON export via list: list retorna objeto com chave items (não array root)
-// O COOKBOOK público já documenta `jaq -c '.items[]'` e este teste blinda esse contrato.
+// Recipe 11 — NDJSON export via list: list returns object with items key (not a root array)
+// The public COOKBOOK already documents `jaq -c '.items[]'` and this test guards that contract.
 #[test]
 #[serial]
 fn recipe_11_ndjson_list() {
@@ -665,7 +665,7 @@ fn recipe_13_parallel_namespaces() {
 
     let namespaces = ["project-a", "project-b", "project-c", "project-d"];
 
-    // Seed uma memória em cada namespace
+    // Seed one memory in each namespace
     for ns in &namespaces {
         cmd(&dir)
             .args([
@@ -689,7 +689,7 @@ fn recipe_13_parallel_namespaces() {
     let cache_path = dir.path().join("cache").to_owned();
     let bin_path = bin();
 
-    // Simula `parallel -j 4` com 4 threads simultâneas
+    // Simulate `parallel -j 4` with 4 simultaneous threads
     let handles: Vec<_> = namespaces
         .iter()
         .map(|ns| {
@@ -809,7 +809,7 @@ fn recipe_14_debug_health_stats() {
     }
 }
 
-// Recipe 15 — Benchmark simulado: recall e hybrid-search executam em tempo razoável
+// Recipe 15 — Simulated benchmark: recall and hybrid-search execute in reasonable time
 // Simula `hyperfine` verificando que ambos os comandos completam sem timeout
 #[test]
 #[serial]
@@ -817,7 +817,7 @@ fn recipe_15_hyperfine_timing() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    // Seed com memória para busca não-trivial
+    // Seed with memory for non-trivial search
     cmd(&dir)
         .args([
             "remember",
@@ -835,7 +835,7 @@ fn recipe_15_hyperfine_timing() {
         .assert()
         .success();
 
-    // Medição de recall
+    // Measure recall
     let t0 = std::time::Instant::now();
     let recall_out = cmd(&dir)
         .args([
@@ -859,7 +859,7 @@ fn recipe_15_hyperfine_timing() {
         "recipe 15: recall deve completar em menos de 30s, levou {recall_elapsed:?}"
     );
 
-    // Medição de hybrid-search
+    // Measure hybrid-search
     let t1 = std::time::Instant::now();
     let hybrid_out = cmd(&dir)
         .args([
@@ -883,7 +883,7 @@ fn recipe_15_hyperfine_timing() {
         "recipe 15: hybrid-search deve completar em menos de 30s, levou {hybrid_elapsed:?}"
     );
 
-    // Ambos retornam resultados JSON válidos com elapsed_ms
+    // Both return valid JSON results with elapsed_ms
     let recall_json: serde_json::Value = serde_json::from_slice(&recall_out.stdout).unwrap();
     let hybrid_json: serde_json::Value = serde_json::from_slice(&hybrid_out.stdout).unwrap();
 

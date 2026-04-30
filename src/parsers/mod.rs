@@ -23,41 +23,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aceita_unix_epoch() {
+    fn accepts_unix_epoch() {
         assert_eq!(parse_expected_updated_at("1700000000").unwrap(), 1700000000);
     }
 
     #[test]
-    fn aceita_zero() {
+    fn accepts_zero() {
         assert_eq!(parse_expected_updated_at("0").unwrap(), 0);
     }
 
     #[test]
-    fn aceita_rfc_3339_utc() {
+    fn accepts_rfc_3339_utc() {
         let resultado = parse_expected_updated_at("2020-01-01T00:00:00Z");
         assert!(resultado.is_ok());
         assert_eq!(resultado.unwrap(), 1577836800);
     }
 
     #[test]
-    fn aceita_rfc_3339_com_offset() {
+    fn accepts_rfc_3339_with_offset() {
         let resultado = parse_expected_updated_at("2026-04-19T12:00:00+00:00");
         assert!(resultado.is_ok());
     }
 
     #[test]
-    fn rejeita_string_invalida() {
+    fn rejects_invalid_string() {
         assert!(parse_expected_updated_at("bananas").is_err());
     }
 
     #[test]
-    fn rejeita_negativo() {
+    fn rejects_negative() {
         let erro = parse_expected_updated_at("-1");
         assert!(erro.is_err());
     }
 
     #[test]
-    fn mensagem_de_erro_menciona_formato() {
+    fn error_message_mentions_format() {
         let msg = parse_expected_updated_at("invalido").unwrap_err();
         assert!(msg.contains("RFC 3339") || msg.contains("Unix epoch"));
     }

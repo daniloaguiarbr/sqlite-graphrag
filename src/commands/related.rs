@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn traverse_related_retorna_vazio_sem_entidades_seed() {
+    fn traverse_related_returns_empty_without_seed_entities() {
         let conn = setup_related_db();
         let resultado = traverse_related(&conn, 1, &[], "global", 2, 0.0, None, 10)
             .expect("traverse_related falhou");
@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn traverse_related_retorna_vazio_com_max_hops_zero() {
+    fn traverse_related_returns_empty_with_max_hops_zero() {
         let conn = setup_related_db();
         let mem_id = insert_memory(&conn, "seed-mem", "global");
         let ent_id = insert_entity(&conn, "ent-a", "global");
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn traverse_related_descobre_memoria_vizinha_por_grafo() {
+    fn traverse_related_discovers_neighbor_memory_via_graph() {
         let conn = setup_related_db();
 
         let seed_id = insert_memory(&conn, "seed-mem", "global");
@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn related_memory_campos_opcionais_nulos_serializados() {
+    fn related_memory_optional_null_fields_serialized() {
         let mem = RelatedMemory {
             memory_id: 99,
             name: "sem-relacao".to_string(),
