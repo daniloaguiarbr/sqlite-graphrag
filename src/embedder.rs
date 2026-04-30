@@ -24,19 +24,19 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
 
     maybe_init_dynamic_ort(models_dir)?;
 
-    // Mitigação multi-camada do RSS explosivo observado com payloads de shapes
-    // variáveis. As três camadas atuais são:
-    //   1. `with_arena_allocator(false)` no execution provider CPU (linha abaixo)
-    //   2. env var `ORT_DISABLE_CPU_MEM_ARENA=1` em `main.rs` (default desde v1.0.18)
-    //   3. env var `ORT_NUM_THREADS=1` + `ORT_INTRA_OP_NUM_THREADS=1` em `main.rs`
-    // A bandeira `with_memory_pattern(false)` existe em ort 2.0 (`SessionBuilder`)
-    // mas fastembed 5.13.2 NÃO expõe acesso ao SessionBuilder customizado via
-    // `TextInitOptions`. Caso o RSS volte a crescer em corpora reais, a próxima
-    // mitigação requer um dos seguintes caminhos:
-    //   - Forkar fastembed para expor `SessionBuilder::with_memory_pattern(false)`
-    //   - Bypass de fastembed e uso direto de ort com SessionBuilder customizado
-    //   - Padding fixo em `plan_controlled_batches` para eliminar shapes variáveis
-    // Referências:
+    // Multi-layer mitigation of the explosive RSS observed with variable-shape
+    // payloads. The three current layers are:
+    //   1. `with_arena_allocator(false)` on the CPU execution provider (line below)
+    //   2. env var `ORT_DISABLE_CPU_MEM_ARENA=1` in `main.rs` (default since v1.0.18)
+    //   3. env var `ORT_NUM_THREADS=1` + `ORT_INTRA_OP_NUM_THREADS=1` in `main.rs`
+    // The `with_memory_pattern(false)` flag exists in ort 2.0 (`SessionBuilder`)
+    // but fastembed 5.13.2 does NOT expose access to a custom SessionBuilder via
+    // `TextInitOptions`. If RSS grows again in real corpora, the next
+    // mitigation requires one of the following paths:
+    //   - Fork fastembed to expose `SessionBuilder::with_memory_pattern(false)`
+    //   - Bypass fastembed and use ort directly with a custom SessionBuilder
+    //   - Fixed padding in `plan_controlled_batches` to eliminate variable shapes
+    // References:
     //   https://onnxruntime.ai/docs/performance/tune-performance/memory.html
     //   https://github.com/qdrant/fastembed/issues/570
     let cpu_ep: ExecutionProviderDispatch = CPU::default().with_arena_allocator(false).build();
@@ -51,9 +51,12 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     .map_err(|e| AppError::Embedding(e.to_string()))?;
     // If another thread raced and won, discard our instance and return theirs.
     let _ = EMBEDDER.set(Mutex::new(model));
-    Ok(EMBEDDER
-        .get()
-        .expect("OnceLock populated by set() above (or by racing thread)"))
+    EMBEDDER.get().ok_or_else(|| {
+        AppError::Embedding(
+            "embedder OnceLock unexpectedly empty after set() (likely a racing initializer aborted before completion)"
+                .into(),
+        )
+    })
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
@@ -99,14 +102,14 @@ pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Embedding("resultado de embedding vazio".into()))?;
-    assert_eq!(emb.len(), EMBEDDING_DIM, "dimensão de embedding inesperada");
+        .ok_or_else(|| AppError::Embedding("empty embedding result".into()))?;
+    assert_eq!(emb.len(), EMBEDDING_DIM, "unexpected embedding dimension");
     Ok(emb)
 }
 
@@ -114,13 +117,13 @@ pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f3
     let prefixed = format!("{QUERY_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::Embedding("resultado de embedding vazio".into()))?;
+        .ok_or_else(|| AppError::Embedding("empty embedding result".into()))?;
     Ok(emb)
 }
 
@@ -136,11 +139,11 @@ pub fn embed_passages_batch(
     let strs: Vec<&str> = prefixed.iter().map(String::as_str).collect();
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("mutex do embedder corrompido: {e}")))?
+        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(strs, Some(batch_size.min(FASTEMBED_BATCH_SIZE)))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     for emb in &results {
-        assert_eq!(emb.len(), EMBEDDING_DIM, "dimensão de embedding inesperada");
+        assert_eq!(emb.len(), EMBEDDING_DIM, "unexpected embedding dimension");
     }
     Ok(results)
 }
@@ -156,7 +159,7 @@ pub fn embed_passages_controlled(
 ) -> Result<Vec<Vec<f32>>, AppError> {
     if texts.len() != token_counts.len() {
         return Err(AppError::Internal(anyhow::anyhow!(
-            "comprimento de texts/token_counts diverge no embedding controlado"
+            "texts/token_counts length mismatch in controlled embedding"
         )));
     }
 
@@ -234,7 +237,7 @@ mod tests {
     use super::*;
     use crate::constants::{EMBEDDING_DIM, PASSAGE_PREFIX, QUERY_PREFIX};
 
-    // --- testes de f32_to_bytes (função pura, sem modelo) ---
+    // --- f32_to_bytes tests (pure function, no model) ---
 
     #[test]
     fn f32_to_bytes_empty_slice_returns_empty() {
@@ -247,7 +250,7 @@ mod tests {
         let v = vec![1.0_f32];
         let bytes = f32_to_bytes(&v);
         assert_eq!(bytes.len(), 4);
-        // roundtrip: os 4 bytes devem reconstruir o f32 original
+        // roundtrip: the 4 bytes must reconstruct the original f32
         let recovered = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         assert_eq!(recovered, 1.0_f32);
     }
@@ -269,7 +272,7 @@ mod tests {
         let v: Vec<f32> = (0..EMBEDDING_DIM).map(|i| i as f32 * 0.001).collect();
         let bytes = f32_to_bytes(&v);
         assert_eq!(bytes.len(), EMBEDDING_DIM * 4);
-        // reconstrói e compara primeiro e último elemento
+        // reconstructs and compares first and last element
         let first = f32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert!((first - 0.0_f32).abs() < 1e-6);
         let last_start = (EMBEDDING_DIM - 1) * 4;
@@ -277,7 +280,7 @@ mod tests {
         assert!((last - (EMBEDDING_DIM - 1) as f32 * 0.001).abs() < 1e-4);
     }
 
-    // --- verifica prefixos usados pelo embedder (sem modelo) ---
+    // --- verifies prefixes used by the embedder (no model) ---
 
     #[test]
     fn passage_prefix_not_empty() {

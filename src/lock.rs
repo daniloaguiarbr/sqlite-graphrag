@@ -33,7 +33,7 @@ fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
         let dirs = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
             AppError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "não foi possível determinar o diretório de cache para os lock files do sqlite-graphrag",
+                "could not determine cache directory for sqlite-graphrag lock files",
             ))
         })?;
         dirs.cache_dir().to_path_buf()
@@ -91,7 +91,7 @@ pub fn acquire_cli_slot(
         });
     }
 
-    // Loop de polling até o deadline.
+    // Polling loop until the deadline.
     let deadline = Instant::now() + Duration::from_secs(wait_secs);
     loop {
         thread::sleep(Duration::from_millis(CLI_LOCK_POLL_INTERVAL_MS));

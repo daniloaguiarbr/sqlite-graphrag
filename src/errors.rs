@@ -51,7 +51,7 @@ pub enum AppError {
     #[error("sqlite-vec extension failed: {0}")]
     VecExtension(String),
 
-    /// SQLite returned `SQLITE_BUSY` after exhausting retries. Maps to exit code `15` (antes de v2.0.0 era `13`; movido para liberar `13` para BatchPartialFailure conforme PRD).
+    /// SQLite returned `SQLITE_BUSY` after exhausting retries. Maps to exit code `15` (was `13` before v2.0.0; relocated to free `13` for BatchPartialFailure per PRD).
     #[error("database busy: {0}")]
     DbBusy(String),
 
@@ -183,35 +183,30 @@ impl AppError {
     }
 
     fn to_string_pt(&self) -> String {
+        use crate::i18n::validation::app_error_pt as pt;
         match self {
-            Self::Validation(msg) => format!("erro de validação: {msg}"),
-            Self::Duplicate(msg) => format!("duplicata detectada: {msg}"),
-            Self::Conflict(msg) => format!("conflito: {msg}"),
-            Self::NotFound(msg) => format!("não encontrado: {msg}"),
-            Self::NamespaceError(msg) => format!("namespace não resolvido: {msg}"),
-            Self::LimitExceeded(msg) => format!("limite excedido: {msg}"),
-            Self::Database(e) => format!("erro de banco de dados: {e}"),
-            Self::Embedding(msg) => format!("erro de embedding: {msg}"),
-            Self::VecExtension(msg) => format!("extensão sqlite-vec falhou: {msg}"),
-            Self::DbBusy(msg) => format!("banco ocupado: {msg}"),
+            Self::Validation(msg) => pt::validation(msg),
+            Self::Duplicate(msg) => pt::duplicate(msg),
+            Self::Conflict(msg) => pt::conflict(msg),
+            Self::NotFound(msg) => pt::not_found(msg),
+            Self::NamespaceError(msg) => pt::namespace_error(msg),
+            Self::LimitExceeded(msg) => pt::limit_exceeded(msg),
+            Self::Database(e) => pt::database(&e.to_string()),
+            Self::Embedding(msg) => pt::embedding(msg),
+            Self::VecExtension(msg) => pt::vec_extension(msg),
+            Self::DbBusy(msg) => pt::db_busy(msg),
             Self::BatchPartialFailure { total, failed } => {
-                format!("falha parcial em batch: {failed} de {total} itens falharam")
+                pt::batch_partial_failure(*total, *failed)
             }
-            Self::Io(e) => format!("erro de I/O: {e}"),
-            Self::Internal(e) => format!("erro interno: {e}"),
-            Self::Json(e) => format!("erro de JSON: {e}"),
-            Self::LockBusy(msg) => format!("lock ocupado: {msg}"),
-            Self::AllSlotsFull { max, waited_secs } => format!(
-                "todos os {max} slots de concorrência ocupados após aguardar {waited_secs}s \
-                 (exit 75); use --max-concurrency ou aguarde outras invocações terminarem"
-            ),
+            Self::Io(e) => pt::io(&e.to_string()),
+            Self::Internal(e) => pt::internal(&e.to_string()),
+            Self::Json(e) => pt::json(&e.to_string()),
+            Self::LockBusy(msg) => pt::lock_busy(msg),
+            Self::AllSlotsFull { max, waited_secs } => pt::all_slots_full(*max, *waited_secs),
             Self::LowMemory {
                 available_mb,
                 required_mb,
-            } => format!(
-                "memória disponível ({available_mb}MB) abaixo do mínimo requerido ({required_mb}MB) \
-                 para carregar o modelo; aborte outras cargas ou use --skip-memory-guard (exit 77)"
-            ),
+            } => pt::low_memory(*available_mb, *required_mb),
         }
     }
 }
@@ -223,28 +218,31 @@ mod tests {
 
     #[test]
     fn exit_code_validation_returns_1() {
-        assert_eq!(AppError::Validation("campo inválido".into()).exit_code(), 1);
+        assert_eq!(AppError::Validation("invalid field".into()).exit_code(), 1);
     }
 
     #[test]
     fn exit_code_duplicate_returns_2() {
-        assert_eq!(AppError::Duplicate("namespace/nome".into()).exit_code(), 2);
+        assert_eq!(AppError::Duplicate("namespace/name".into()).exit_code(), 2);
     }
 
     #[test]
     fn exit_code_conflict_returns_3() {
-        assert_eq!(AppError::Conflict("updated_at mudou".into()).exit_code(), 3);
+        assert_eq!(
+            AppError::Conflict("updated_at changed".into()).exit_code(),
+            3
+        );
     }
 
     #[test]
     fn exit_code_not_found_returns_4() {
-        assert_eq!(AppError::NotFound("memória ausente".into()).exit_code(), 4);
+        assert_eq!(AppError::NotFound("memory missing".into()).exit_code(), 4);
     }
 
     #[test]
     fn exit_code_namespace_error_returns_5() {
         assert_eq!(
-            AppError::NamespaceError("não resolvido".into()).exit_code(),
+            AppError::NamespaceError("not resolved".into()).exit_code(),
             5
         );
     }
@@ -252,30 +250,27 @@ mod tests {
     #[test]
     fn exit_code_limit_exceeded_returns_6() {
         assert_eq!(
-            AppError::LimitExceeded("corpo muito grande".into()).exit_code(),
+            AppError::LimitExceeded("body too large".into()).exit_code(),
             6
         );
     }
 
     #[test]
     fn exit_code_embedding_returns_11() {
-        assert_eq!(
-            AppError::Embedding("falha de modelo".into()).exit_code(),
-            11
-        );
+        assert_eq!(AppError::Embedding("model failure".into()).exit_code(), 11);
     }
 
     #[test]
     fn exit_code_vec_extension_returns_12() {
         assert_eq!(
-            AppError::VecExtension("extensão não carregou".into()).exit_code(),
+            AppError::VecExtension("extension did not load".into()).exit_code(),
             12
         );
     }
 
     #[test]
     fn exit_code_db_busy_returns_15() {
-        assert_eq!(AppError::DbBusy("esgotou retries".into()).exit_code(), 15);
+        assert_eq!(AppError::DbBusy("retries exhausted".into()).exit_code(), 15);
     }
 
     #[test]
@@ -305,34 +300,34 @@ mod tests {
 
     #[test]
     fn exit_code_io_returns_14() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "arquivo ausente");
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file missing");
         assert_eq!(AppError::Io(io_err).exit_code(), 14);
     }
 
     #[test]
     fn exit_code_internal_returns_20() {
-        let anyhow_err = anyhow::anyhow!("erro interno inesperado");
+        let anyhow_err = anyhow::anyhow!("unexpected internal error");
         assert_eq!(AppError::Internal(anyhow_err).exit_code(), 20);
     }
 
     #[test]
     fn exit_code_json_returns_20() {
-        let json_err = serde_json::from_str::<serde_json::Value>("json inválido {{").unwrap_err();
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json {{").unwrap_err();
         assert_eq!(AppError::Json(json_err).exit_code(), 20);
     }
 
     #[test]
     fn exit_code_lock_busy_returns_75() {
         assert_eq!(
-            AppError::LockBusy("outra instância ativa".into()).exit_code(),
+            AppError::LockBusy("another active instance".into()).exit_code(),
             75
         );
     }
 
     #[test]
     fn display_validation_includes_message() {
-        let err = AppError::Validation("cpf inválido".into());
-        assert!(err.to_string().contains("cpf inválido"));
+        let err = AppError::Validation("invalid id".into());
+        assert!(err.to_string().contains("invalid id"));
         assert!(err.to_string().contains("validation error"));
     }
 
@@ -351,45 +346,45 @@ mod tests {
     }
 
     #[test]
-    fn display_embedding_inclui_mensagem() {
-        let err = AppError::Embedding("dimensão errada".into());
-        assert!(err.to_string().contains("dimensão errada"));
+    fn display_embedding_includes_message() {
+        let err = AppError::Embedding("wrong dimension".into());
+        assert!(err.to_string().contains("wrong dimension"));
         assert!(err.to_string().contains("embedding error"));
     }
 
     #[test]
-    fn display_lock_busy_inclui_mensagem() {
+    fn display_lock_busy_includes_message() {
         let err = AppError::LockBusy("pid 1234".into());
         assert!(err.to_string().contains("pid 1234"));
         assert!(err.to_string().contains("lock busy"));
     }
 
     #[test]
-    fn from_io_error_converte_corretamente() {
-        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "sem permissão");
+    fn from_io_error_converts_correctly() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
         let app_err: AppError = io_err.into();
         assert_eq!(app_err.exit_code(), 14);
         assert!(app_err.to_string().contains("IO error"));
     }
 
     #[test]
-    fn from_anyhow_error_converte_corretamente() {
-        let anyhow_err = anyhow::anyhow!("detalhe interno");
+    fn from_anyhow_error_converts_correctly() {
+        let anyhow_err = anyhow::anyhow!("internal detail");
         let app_err: AppError = anyhow_err.into();
         assert_eq!(app_err.exit_code(), 20);
         assert!(app_err.to_string().contains("internal error"));
     }
 
     #[test]
-    fn from_serde_json_error_converte_corretamente() {
-        let json_err = serde_json::from_str::<serde_json::Value>("{campo_ruim}").unwrap_err();
+    fn from_serde_json_error_converts_correctly() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{bad_field}").unwrap_err();
         let app_err: AppError = json_err.into();
         assert_eq!(app_err.exit_code(), 20);
         assert!(app_err.to_string().contains("json error"));
     }
 
     #[test]
-    fn exit_code_lock_busy_bate_com_constante() {
+    fn exit_code_lock_busy_matches_constant() {
         assert_eq!(
             AppError::LockBusy("test".into()).exit_code(),
             crate::constants::CLI_LOCK_EXIT_CODE
@@ -405,120 +400,63 @@ mod tests {
         );
     }
 
+    // Detailed Portuguese-specific assertions live in `src/i18n.rs`
+    // (the bilingual module). Here we only verify that delegation is wired
+    // correctly, without embedding PT strings in this English-only file.
+
     #[test]
-    fn localized_message_pt_not_found_in_portuguese() {
+    fn localized_message_pt_differs_from_en() {
         let err = AppError::NotFound("mem-x".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(msg.contains("não encontrado"), "esperado PT, obtido: {msg}");
-        assert!(msg.contains("mem-x"));
+        let en = err.localized_message_for(crate::i18n::Language::English);
+        let pt = err.localized_message_for(crate::i18n::Language::Portuguese);
+        assert_ne!(en, pt, "PT and EN must produce distinct messages");
+        assert!(pt.contains("mem-x"), "PT must include the variant payload");
     }
 
     #[test]
-    fn localized_message_pt_validation_in_portuguese() {
-        let err = AppError::Validation("campo x".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("erro de validação"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
+    fn localized_message_pt_delegates_to_app_error_pt_helper() {
+        use crate::i18n::validation::app_error_pt as pt;
 
-    #[test]
-    fn localized_message_pt_duplicate_in_portuguese() {
-        let err = AppError::Duplicate("ns/mem".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("duplicata detectada"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
+        let cases: Vec<(AppError, String)> = vec![
+            (AppError::Validation("x".into()), pt::validation("x")),
+            (AppError::Duplicate("x".into()), pt::duplicate("x")),
+            (AppError::Conflict("x".into()), pt::conflict("x")),
+            (AppError::NotFound("x".into()), pt::not_found("x")),
+            (
+                AppError::NamespaceError("x".into()),
+                pt::namespace_error("x"),
+            ),
+            (AppError::LimitExceeded("x".into()), pt::limit_exceeded("x")),
+            (AppError::Embedding("x".into()), pt::embedding("x")),
+            (AppError::VecExtension("x".into()), pt::vec_extension("x")),
+            (AppError::DbBusy("x".into()), pt::db_busy("x")),
+            (
+                AppError::BatchPartialFailure {
+                    total: 10,
+                    failed: 3,
+                },
+                pt::batch_partial_failure(10, 3),
+            ),
+            (AppError::LockBusy("x".into()), pt::lock_busy("x")),
+            (
+                AppError::AllSlotsFull {
+                    max: 4,
+                    waited_secs: 60,
+                },
+                pt::all_slots_full(4, 60),
+            ),
+            (
+                AppError::LowMemory {
+                    available_mb: 100,
+                    required_mb: 500,
+                },
+                pt::low_memory(100, 500),
+            ),
+        ];
 
-    #[test]
-    fn localized_message_pt_conflict_in_portuguese() {
-        let err = AppError::Conflict("ts mudou".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(msg.contains("conflito"), "esperado PT, obtido: {msg}");
-    }
-
-    #[test]
-    fn localized_message_pt_namespace_in_portuguese() {
-        let err = AppError::NamespaceError("sem marcador".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("namespace não resolvido"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
-
-    #[test]
-    fn localized_message_pt_limit_exceeded_in_portuguese() {
-        let err = AppError::LimitExceeded("corpo enorme".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("limite excedido"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
-
-    #[test]
-    fn localized_message_pt_embedding_in_portuguese() {
-        let err = AppError::Embedding("dim errada".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("erro de embedding"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
-
-    #[test]
-    fn localized_message_pt_db_busy_in_portuguese() {
-        let err = AppError::DbBusy("retries esgotados".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(msg.contains("banco ocupado"), "esperado PT, obtido: {msg}");
-    }
-
-    #[test]
-    fn localized_message_pt_batch_partial_failure_in_portuguese() {
-        let err = AppError::BatchPartialFailure {
-            total: 10,
-            failed: 3,
-        };
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(msg.contains("falha parcial"), "esperado PT, obtido: {msg}");
-        assert!(msg.contains("3"));
-        assert!(msg.contains("10"));
-    }
-
-    #[test]
-    fn localized_message_pt_lock_busy_in_portuguese() {
-        let err = AppError::LockBusy("pid 42".into());
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(msg.contains("lock ocupado"), "esperado PT, obtido: {msg}");
-    }
-
-    #[test]
-    fn localized_message_pt_all_slots_full_in_portuguese() {
-        let err = AppError::AllSlotsFull {
-            max: 4,
-            waited_secs: 60,
-        };
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("slots de concorrência"),
-            "esperado PT, obtido: {msg}"
-        );
-    }
-
-    #[test]
-    fn localized_message_pt_low_memory_in_portuguese() {
-        let err = AppError::LowMemory {
-            available_mb: 100,
-            required_mb: 500,
-        };
-        let msg = err.localized_message_for(crate::i18n::Language::Portuguese);
-        assert!(
-            msg.contains("memória disponível"),
-            "esperado PT, obtido: {msg}"
-        );
+        for (err, expected) in cases {
+            let actual = err.localized_message_for(crate::i18n::Language::Portuguese);
+            assert_eq!(actual, expected, "delegation mismatch");
+        }
     }
 }

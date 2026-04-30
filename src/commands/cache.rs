@@ -10,6 +10,11 @@ use crate::paths::AppPaths;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Remove cached embedding/NER model files (forces re-download on next init)\n  \
+    sqlite-graphrag cache clear-models\n\n  \
+    # Skip the confirmation prompt\n  \
+    sqlite-graphrag cache clear-models --yes")]
 pub struct CacheArgs {
     #[command(subcommand)]
     pub command: CacheCommands,

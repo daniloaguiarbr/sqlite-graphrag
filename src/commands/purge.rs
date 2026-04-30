@@ -8,6 +8,20 @@ use crate::storage::connection::open_rw;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Permanently delete soft-deleted memories older than 90 days (default retention)\n  \
+    sqlite-graphrag purge\n\n  \
+    # Custom retention window in days\n  \
+    sqlite-graphrag purge --retention-days 30\n\n  \
+    # Purge ALL soft-deleted memories regardless of age\n  \
+    sqlite-graphrag purge --retention-days 0\n\n  \
+    # Preview what would be purged without deleting\n  \
+    sqlite-graphrag purge --dry-run\n\n  \
+    # Purge a specific memory by name\n  \
+    sqlite-graphrag purge --name old-memory --namespace my-project\n\n\
+NOTES:\n  \
+    `--yes` only confirms intent and does NOT override `--retention-days`.\n  \
+    To wipe every soft-deleted memory immediately, pair `--yes` with `--retention-days 0`.")]
 pub struct PurgeArgs {
     #[arg(long)]
     pub name: Option<String>,
@@ -15,8 +29,15 @@ pub struct PurgeArgs {
     #[arg(long)]
     pub namespace: Option<String>,
     /// Retention days: memories with deleted_at older than (now - retention_days*86400) will be
-    /// permanently removed. Default: PURGE_RETENTION_DAYS_DEFAULT (90).
-    #[arg(long, alias = "days", value_name = "DAYS", default_value_t = crate::constants::PURGE_RETENTION_DAYS_DEFAULT)]
+    /// permanently removed. Default: PURGE_RETENTION_DAYS_DEFAULT (90). Use 0 to purge all
+    /// soft-deleted memories regardless of age. Alias: `--max-age-days`.
+    #[arg(
+        long,
+        alias = "days",
+        alias = "max-age-days",
+        value_name = "DAYS",
+        default_value_t = crate::constants::PURGE_RETENTION_DAYS_DEFAULT
+    )]
     pub retention_days: u32,
     /// [DEPRECATED in v2.0.0] Legacy alias — use --retention-days instead.
     #[arg(long, hide = true)]
@@ -24,8 +45,10 @@ pub struct PurgeArgs {
     /// Does not execute DELETE: computes and reports what WOULD be purged.
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
-    /// Compatibility with tools that pass --yes to confirm destructive operations.
-    #[arg(long, hide = true, default_value_t = false)]
+    /// Confirms destructive intent for tools that require explicit acknowledgement.
+    /// Does NOT override `--retention-days`: combine with `--retention-days 0` to wipe
+    /// every soft-deleted memory regardless of age.
+    #[arg(long, default_value_t = false)]
     pub yes: bool,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
@@ -45,6 +68,12 @@ pub struct PurgeResponse {
     pub warnings: Vec<String>,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
+    /// Human-readable explanation surfaced when nothing was purged so callers
+    /// understand the retention semantics. Present only when
+    /// `purged_count == 0` (M2 in v1.0.32) — kept absent otherwise to preserve
+    /// the existing JSON contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Permanently delete soft-deleted memories that have exceeded the retention window.
@@ -56,11 +85,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let mut warnings: Vec<String> = Vec::new();
     let now = current_epoch()?;
@@ -102,6 +127,15 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
         tx.commit()?;
     }
 
+    let message = if candidates_count == 0 {
+        Some(format!(
+            "no soft-deleted memories older than {retention_days} day(s); use --retention-days 0 to purge all soft-deleted memories regardless of age",
+            retention_days = args.retention_days
+        ))
+    } else {
+        None
+    };
+
     output::emit_json(&PurgeResponse {
         purged_count: candidates_count,
         bytes_freed,
@@ -112,6 +146,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
         cutoff_epoch,
         warnings,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
+        message,
     })?;
 
     Ok(())
@@ -247,7 +282,7 @@ mod tests {
     use rusqlite::Connection;
 
     fn setup_test_db() -> Connection {
-        let conn = Connection::open_in_memory().expect("falha ao abrir banco em memória");
+        let conn = Connection::open_in_memory().expect("failed to open in-memory db");
         conn.execute_batch(
             "CREATE TABLE memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,7 +295,7 @@ mod tests {
             CREATE TABLE IF NOT EXISTS vec_chunks (memory_id INTEGER);
             CREATE TABLE IF NOT EXISTS vec_memories (memory_id INTEGER);",
         )
-        .expect("falha ao criar tabelas de teste");
+        .expect("failed to create test tables");
         conn
     }
 
@@ -275,7 +310,7 @@ mod tests {
             "INSERT INTO memories (name, namespace, body, deleted_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![name, namespace, body, deleted_at],
         )
-        .expect("falha ao inserir memória de teste");
+        .expect("failed to insert test memory");
         conn.last_insert_rowid()
     }
 
@@ -287,27 +322,27 @@ mod tests {
     #[test]
     fn compute_metrics_bytes_freed_positive_for_populated_body() {
         let conn = setup_test_db();
-        let now = current_epoch().expect("epoch falhou");
+        let now = current_epoch().expect("epoch failed");
         let old_epoch = now - 100 * 86_400;
-        insert_deleted_memory(&conn, "mem-teste", "global", "corpo da memória", old_epoch);
+        insert_deleted_memory(&conn, "mem-test", "global", "memory body", old_epoch);
 
         let cutoff = now - 30 * 86_400;
         let (bytes, oldest, count) =
-            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics falhou");
+            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics failed");
 
-        assert!(bytes > 0, "bytes_freed deve ser > 0 para body populado");
-        assert!(oldest.is_some(), "oldest_deleted_at deve ser Some");
+        assert!(bytes > 0, "bytes_freed must be > 0 for populated body");
+        assert!(oldest.is_some(), "oldest_deleted_at must be Some");
         assert_eq!(count, 1);
     }
 
     #[test]
     fn compute_metrics_returns_zero_without_candidates() {
         let conn = setup_test_db();
-        let now = current_epoch().expect("epoch falhou");
+        let now = current_epoch().expect("epoch failed");
         let cutoff = now - 90 * 86_400;
 
         let (bytes, oldest, count) =
-            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics falhou");
+            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics failed");
 
         assert_eq!(bytes, 0);
         assert!(oldest.is_none());
@@ -317,61 +352,61 @@ mod tests {
     #[test]
     fn dry_run_does_not_delete_records() {
         let conn = setup_test_db();
-        let now = current_epoch().expect("epoch falhou");
+        let now = current_epoch().expect("epoch failed");
         let old_epoch = now - 200 * 86_400;
-        insert_deleted_memory(&conn, "mem-dry", "global", "conteúdo dry run", old_epoch);
+        insert_deleted_memory(&conn, "mem-dry", "global", "dry run content", old_epoch);
 
         let cutoff = now - 30 * 86_400;
-        let (_, _, count_antes) =
-            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics falhou");
-        assert_eq!(count_antes, 1, "deve haver 1 candidato antes do dry run");
+        let (_, _, count_before) =
+            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics failed");
+        assert_eq!(count_before, 1, "must have 1 candidate before dry run");
 
-        let (_, _, count_depois) =
-            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics falhou");
+        let (_, _, count_after) =
+            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics failed");
         assert_eq!(
-            count_depois, 1,
-            "dry_run não deve remover registros: count deve permanecer 1"
+            count_after, 1,
+            "dry_run must not remove records: count must remain 1"
         );
     }
 
     #[test]
     fn oldest_deleted_at_returns_smallest_epoch() {
         let conn = setup_test_db();
-        let now = current_epoch().expect("epoch falhou");
-        let epoch_antigo = now - 300 * 86_400;
-        let epoch_recente = now - 200 * 86_400;
+        let now = current_epoch().expect("epoch failed");
+        let epoch_old = now - 300 * 86_400;
+        let epoch_recent = now - 200 * 86_400;
 
-        insert_deleted_memory(&conn, "mem-a", "global", "corpo-a", epoch_antigo);
-        insert_deleted_memory(&conn, "mem-b", "global", "corpo-b", epoch_recente);
+        insert_deleted_memory(&conn, "mem-a", "global", "body-a", epoch_old);
+        insert_deleted_memory(&conn, "mem-b", "global", "body-b", epoch_recent);
 
         let cutoff = now - 30 * 86_400;
         let (_, oldest, count) =
-            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics falhou");
+            compute_metrics(&conn, cutoff, Some("global"), None).expect("compute_metrics failed");
 
         assert_eq!(count, 2);
         assert_eq!(
             oldest,
-            Some(epoch_antigo),
-            "oldest_deleted_at deve ser o epoch mais antigo"
+            Some(epoch_old),
+            "oldest_deleted_at must be the oldest epoch"
         );
     }
 
     #[test]
     fn purge_args_namespace_accepts_none_without_default() {
-        // P1-C: namespace deve ser None quando não fornecido, permitindo resolve_namespace
-        // consultar SQLITE_GRAPHRAG_NAMESPACE antes de cair em "global".
-        // O campo era `default_value = "global"` antes de P1-C; com isso removido,
-        // resolve_namespace(None) consulta o env var corretamente.
+        // P1-C: namespace must be None when not provided, allowing resolve_namespace
+        // to consult SQLITE_GRAPHRAG_NAMESPACE before falling back to "global".
+        // The field was `default_value = "global"` before P1-C; with that removed,
+        // resolve_namespace(None) consults the env var correctly.
         let resolved = crate::namespace::resolve_namespace(None)
-            .expect("resolve_namespace(None) deve retornar Ok");
+            .expect("resolve_namespace(None) must return Ok");
         assert_eq!(
             resolved, "global",
-            "sem env var, resolve_namespace(None) deve cair em 'global'"
+            "without env var, resolve_namespace(None) must fall back to 'global'"
         );
     }
 
     #[test]
-    fn purge_response_serializa_todos_campos_novos() {
+    fn purge_response_serializes_all_new_fields() {
         let resp = PurgeResponse {
             purged_count: 3,
             bytes_freed: 1024,
@@ -382,12 +417,38 @@ mod tests {
             cutoff_epoch: 1_710_000_000,
             warnings: vec![],
             elapsed_ms: 42,
+            message: None,
         };
-        let json = serde_json::to_string(&resp).expect("serialização falhou");
+        let json = serde_json::to_string(&resp).expect("serialization failed");
         assert!(json.contains("bytes_freed"));
         assert!(json.contains("oldest_deleted_at"));
         assert!(json.contains("retention_days_used"));
         assert!(json.contains("dry_run"));
         assert!(json.contains("elapsed_ms"));
+        // M2: when no purge happened, `message` is omitted to keep payloads stable.
+        assert!(!json.contains("\"message\""));
+    }
+
+    #[test]
+    fn purge_response_serializes_message_when_present() {
+        // M2 (v1.0.32): zero purges include a human-readable hint message.
+        let resp = PurgeResponse {
+            purged_count: 0,
+            bytes_freed: 0,
+            oldest_deleted_at: None,
+            retention_days_used: 90,
+            dry_run: false,
+            namespace: Some("global".to_string()),
+            cutoff_epoch: 1_710_000_000,
+            warnings: vec![],
+            elapsed_ms: 5,
+            message: Some(
+                "no soft-deleted memories older than 90 day(s); use --retention-days 0 to purge all soft-deleted memories regardless of age"
+                    .to_string(),
+            ),
+        };
+        let json = serde_json::to_string(&resp).expect("serialization failed");
+        assert!(json.contains("\"message\""));
+        assert!(json.contains("--retention-days 0"));
     }
 }

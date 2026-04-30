@@ -109,7 +109,7 @@ pub fn embed_passage_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>,
         Some(DaemonResponse::PassageEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "resposta inesperada do daemon para embedding de passage: {other:?}"
+            "unexpected daemon response for passage embedding: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -128,7 +128,7 @@ pub fn embed_query_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, A
         Some(DaemonResponse::QueryEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "resposta inesperada do daemon para embedding de query: {other:?}"
+            "unexpected daemon response for query embedding: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -151,7 +151,7 @@ pub fn embed_passages_controlled_or_local(
         Some(DaemonResponse::PassageEmbeddings { embeddings, .. }) => Ok(embeddings),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "resposta inesperada do daemon para batch de embeddings de passage: {other:?}"
+            "unexpected daemon response for passage embedding batch: {other:?}"
         ))),
         None => {
             let embedder = embedder::get_embedder(models_dir)?;
@@ -200,9 +200,9 @@ impl Drop for DaemonSpawnGuard {
 }
 
 pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
-    // Tokio runtime com 2 worker threads para reduzir threads ociosas do daemon.
-    // O loop de accept permanece síncrono; cada conexão é despachada para spawn_blocking
-    // de forma que embeddings pesados não bloqueiem os workers tokio.
+    // Tokio runtime with 2 worker threads to reduce idle threads in the daemon.
+    // The accept loop remains synchronous; each connection is dispatched via spawn_blocking
+    // so heavy embeddings do not block the tokio workers.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("daemon-worker")
@@ -223,8 +223,8 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
         .create_sync()
         .map_err(AppError::Io)?;
 
-    // Guard que limpa o lock file de spawn em encerramento gracioso.
-    // SIGKILL não dispara Drop; nesse caso try_overwrite(true) acima é o fallback.
+    // Guard that cleans up the spawn lock file on graceful shutdown.
+    // SIGKILL does not trigger Drop; in that case try_overwrite(true) above is the fallback.
     let _spawn_guard = DaemonSpawnGuard::new(models_dir);
 
     // Warm the model once per daemon process inside spawn_blocking so the
@@ -303,7 +303,7 @@ fn handle_client(
         write_response(
             reader.get_mut(),
             &DaemonResponse::Error {
-                message: "requisição vazia ao daemon".to_string(),
+                message: "empty request to daemon".to_string(),
             },
         )?;
         return Ok(false);
@@ -416,7 +416,9 @@ fn request_if_available(
     let mut line = String::new();
     reader.read_line(&mut line).map_err(AppError::Io)?;
     if line.trim().is_empty() {
-        return Err(AppError::Embedding("daemon retornou resposta vazia".into()));
+        return Err(AppError::Embedding(
+            "daemon returned an empty response".into(),
+        ));
     }
 
     let response = serde_json::from_str(line.trim()).map_err(AppError::Json)?;
@@ -485,7 +487,22 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
         .stderr(Stdio::null());
 
     match child.spawn() {
-        Ok(_) => {
+        Ok(child_handle) => {
+            // SAFETY: deliberate orphan daemon detach. The Child handle is intentionally
+            // dropped without a corresponding `.wait()` call because the daemon owns its
+            // own lifecycle: `Stdio::null()` is set on stdin/stdout/stderr (above) so the
+            // child does not inherit terminal handles, the spawn lock file at
+            // `<models_dir>/.daemon.spawn.lock` prevents concurrent spawns, and the
+            // daemon shuts itself down via `DAEMON_IDLE_SHUTDOWN_SECS` (or an explicit
+            // `daemon stop`/SIGTERM). Keeping the handle here would block the parent
+            // CLI in the foreground until the daemon exited, defeating the autostart
+            // contract that callers expect.
+            let pid = child_handle.id();
+            drop(child_handle);
+            tracing::debug!(
+                pid,
+                "daemon detached; lifecycle managed via spawn lock + readiness file"
+            );
             let ready = wait_for_daemon_ready(models_dir)?;
             if ready {
                 clear_spawn_backoff_state(models_dir).ok();

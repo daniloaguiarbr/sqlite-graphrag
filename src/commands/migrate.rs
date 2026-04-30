@@ -8,6 +8,13 @@ use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Apply pending schema migrations\n  \
+    sqlite-graphrag migrate\n\n  \
+    # Show already-applied migrations without applying new ones\n  \
+    sqlite-graphrag migrate --status\n\n  \
+    # Migrate a database at a custom path\n  \
+    sqlite-graphrag migrate --db /path/to/graphrag.sqlite")]
 pub struct MigrateArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -44,8 +51,8 @@ struct MigrationEntry {
 }
 
 pub fn run(args: MigrateArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
-    let _ = args.json; // --json é no-op pois output já é JSON por default
+    let start = std::time::Instant::now();
+    let _ = args.json; // --json is a no-op because output is already JSON by default
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
 
@@ -58,7 +65,7 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
             db_path: paths.db.display().to_string(),
             applied_migrations: applied,
             schema_version,
-            elapsed_ms: inicio.elapsed().as_millis() as u64,
+            elapsed_ms: start.elapsed().as_millis() as u64,
         })?;
         return Ok(());
     }
@@ -82,7 +89,7 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
         db_path: paths.db.display().to_string(),
         schema_version,
         status: "ok".to_string(),
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -132,11 +139,11 @@ mod tests {
     use rusqlite::Connection;
 
     fn create_db_without_history() -> Connection {
-        Connection::open_in_memory().expect("falha ao abrir banco em memória")
+        Connection::open_in_memory().expect("failed to open in-memory db")
     }
 
-    fn create_db_with_history(versao: i64) -> Connection {
-        let conn = Connection::open_in_memory().expect("falha ao abrir banco em memória");
+    fn create_db_with_history(version: i64) -> Connection {
+        let conn = Connection::open_in_memory().expect("failed to open in-memory db");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (
                 version INTEGER NOT NULL,
@@ -145,24 +152,21 @@ mod tests {
                 checksum TEXT
             );",
         )
-        .expect("falha ao criar tabela de histórico");
+        .expect("failed to create history table");
         conn.execute(
             "INSERT INTO refinery_schema_history (version, name) VALUES (?1, 'V001__init')",
-            rusqlite::params![versao],
+            rusqlite::params![version],
         )
-        .expect("falha ao inserir versão");
+        .expect("failed to insert version");
         conn
     }
 
     #[test]
     fn latest_schema_version_returns_error_without_table() {
         let conn = create_db_without_history();
-        // Sem tabela refinery_schema_history, SQLite retorna Unknown (código 1) → AppError::Database
-        let resultado = latest_schema_version(&conn);
-        assert!(
-            resultado.is_err(),
-            "deve retornar Err quando tabela não existe"
-        );
+        // Without refinery_schema_history table, SQLite returns Unknown (code 1) -> AppError::Database
+        let result = latest_schema_version(&conn);
+        assert!(result.is_err(), "must return Err when table does not exist");
     }
 
     #[test]
@@ -173,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_response_serializa_campos_obrigatorios() {
+    fn migrate_response_serializes_required_fields() {
         let resp = MigrateResponse {
             db_path: "/tmp/test.sqlite".to_string(),
             schema_version: "6".to_string(),
@@ -189,15 +193,15 @@ mod tests {
 
     #[test]
     fn latest_schema_version_returns_zero_when_table_empty() {
-        let conn = Connection::open_in_memory().expect("banco em memória");
+        let conn = Connection::open_in_memory().expect("in-memory db");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (
                 version INTEGER NOT NULL,
                 name TEXT
             );",
         )
-        .expect("criação da tabela");
-        // Tabela existe mas está vazia → QueryReturnedNoRows → "0"
+        .expect("table creation");
+        // Table exists but is empty -> QueryReturnedNoRows -> "0"
         let version = latest_schema_version(&conn).unwrap();
         assert_eq!(version, "0");
     }

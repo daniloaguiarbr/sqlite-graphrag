@@ -9,6 +9,15 @@ use crate::storage::memories;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # List up to 50 memories from the global namespace (default)\n  \
+    sqlite-graphrag list\n\n  \
+    # Filter by memory type and namespace\n  \
+    sqlite-graphrag list --type project --namespace my-project\n\n  \
+    # Paginate with limit and offset\n  \
+    sqlite-graphrag list --limit 20 --offset 40\n\n  \
+    # Include soft-deleted memories\n  \
+    sqlite-graphrag list --include-deleted")]
 pub struct ListArgs {
     /// Namespace to list memories from. Defaults to "global".
     #[arg(
@@ -76,12 +85,8 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    // v1.0.22 P1: padroniza exit code 4 com mensagem amigável quando DB não existe.
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(
-            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
-        ));
-    }
+    // v1.0.22 P1: standardizes exit code 4 with a friendly message when the DB does not exist.
+    crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
     let memory_type_str = args.r#type.map(|t| t.as_str());

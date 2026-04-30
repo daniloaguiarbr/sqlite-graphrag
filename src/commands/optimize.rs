@@ -1,13 +1,19 @@
 //! Handler for the `optimize` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Run PRAGMA optimize on the default database\n  \
+    sqlite-graphrag optimize\n\n  \
+    # Optimize a database at a custom path\n  \
+    sqlite-graphrag optimize --db /path/to/graphrag.sqlite\n\n  \
+    # Optimize via SQLITE_GRAPHRAG_DB_PATH env var\n  \
+    SQLITE_GRAPHRAG_DB_PATH=/data/graphrag.sqlite sqlite-graphrag optimize")]
 pub struct OptimizeArgs {
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
@@ -27,11 +33,7 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_rw(&paths.db)?;
     conn.execute_batch("PRAGMA optimize;")?;
@@ -66,24 +68,34 @@ mod tests {
 
     #[test]
     #[serial]
-    fn optimize_returns_not_found_when_db_missing() {
+    fn optimize_auto_inits_when_db_missing() {
         let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("inexistente.sqlite");
-        std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", db_path.to_str().unwrap());
-        std::env::set_var("LOG_LEVEL", "error");
+        let db_path = dir.path().join("missing.sqlite");
+        // SAFETY: `#[serial]` guarantees single-threaded execution.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_DB_PATH", db_path.to_str().unwrap());
+            std::env::set_var("LOG_LEVEL", "error");
+        }
 
         let args = OptimizeArgs {
             json: false,
             db: Some(db_path.to_string_lossy().to_string()),
         };
-        let resultado = run(args);
-        assert!(resultado.is_err(), "deve falhar quando db não existe");
-        match resultado.unwrap_err() {
-            AppError::NotFound(_) => {}
-            outro => unreachable!("esperava NotFound, obteve: {outro:?}"),
+        let result = run(args);
+        assert!(
+            result.is_ok(),
+            "auto-init must succeed and PRAGMA optimize must run on the fresh database, got {result:?}"
+        );
+        assert!(
+            db_path.exists(),
+            "auto-init must create the database file at {}",
+            db_path.display()
+        );
+        // SAFETY: `#[serial]` guarantees single-threaded execution.
+        unsafe {
+            std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
+            std::env::remove_var("LOG_LEVEL");
         }
-        std::env::remove_var("SQLITE_GRAPHRAG_DB_PATH");
-        std::env::remove_var("LOG_LEVEL");
     }
 
     #[test]

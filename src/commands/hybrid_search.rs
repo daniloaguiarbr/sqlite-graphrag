@@ -17,8 +17,13 @@ use std::collections::HashMap;
 /// isolated namespace.
 #[derive(clap::Args)]
 pub struct HybridSearchArgs {
+    #[arg(help = "Hybrid search query (vector KNN + FTS5 BM25 fused via RRF)")]
     pub query: String,
-    #[arg(short = 'k', long, default_value = "10")]
+    /// Maximum number of fused results to return after RRF combines vector + FTS5 candidates.
+    ///
+    /// Validated to the inclusive range `1..=4096` (the upper bound matches `sqlite-vec`'s knn
+    /// limit). Each underlying search fetches `k * 2` candidates before fusion.
+    #[arg(short = 'k', long, default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     #[arg(long, default_value = "60")]
     pub rrf_k: u32,
@@ -98,11 +103,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(
-            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
-        ));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     output::emit_progress_i18n(
         "Computing query embedding...",
@@ -122,7 +123,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         args.k * 2,
     )?;
 
-    // Mapear posição de ranking vetorial por memory_id (1-indexed conforme schema)
+    // Map vector ranking position by memory_id (1-indexed per schema)
     let vec_rank_map: HashMap<i64, usize> = vec_results
         .iter()
         .enumerate()
@@ -132,7 +133,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let fts_results =
         memories::fts_search(&conn, &args.query, &namespace, memory_type_str, args.k * 2)?;
 
-    // Mapear posição de ranking FTS por memory_id (1-indexed conforme schema)
+    // Map FTS ranking position by memory_id (1-indexed per schema)
     let fts_rank_map: HashMap<i64, usize> = fts_results
         .iter()
         .enumerate()
@@ -141,7 +142,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     let rrf_k = args.rrf_k as f64;
 
-    // Acumular scores RRF combinados
+    // Accumulate combined RRF scores
     let mut combined_scores: HashMap<i64, f64> = HashMap::new();
 
     for (rank, (memory_id, _)) in vec_results.iter().enumerate() {
@@ -154,15 +155,15 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         *combined_scores.entry(row.id).or_insert(0.0) += score;
     }
 
-    // Ordenar por score descendente e tomar os top-k
+    // Sort by score descending and take the top-k
     let mut ranked: Vec<(i64, f64)> = combined_scores.into_iter().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     ranked.truncate(args.k);
 
-    // Coletar todos os IDs para busca em batch (evitar N+1)
+    // Collect all IDs for batch fetch (avoiding N+1)
     let top_ids: Vec<i64> = ranked.iter().map(|(id, _)| *id).collect();
 
-    // Buscar dados completos das memórias top
+    // Fetch full data for the top memories
     let mut memory_data: HashMap<i64, memories::MemoryRow> = HashMap::new();
     for id in &top_ids {
         if let Some(row) = memories::read_full(&conn, *id)? {
@@ -294,7 +295,7 @@ mod tests {
             namespace: "default".to_string(),
             memory_type: "user".to_string(),
             description: "desc".to_string(),
-            body: "conteúdo".to_string(),
+            body: "content".to_string(),
             combined_score: 0.0328,
             score: 0.0328,
             source: "hybrid".to_string(),

@@ -150,7 +150,7 @@ mod tests {
             },
         ];
         let count = insert_urls(&conn, mem_id, &batch);
-        assert_eq!(count, 2, "apenas 2 únicas devem ser inseridas");
+        assert_eq!(count, 2, "only 2 unique entries must be inserted");
         Ok(())
     }
 

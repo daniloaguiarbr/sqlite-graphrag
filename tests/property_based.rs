@@ -53,7 +53,7 @@ proptest! {
 
     /// Uppercase letters must always be rejected by the regex.
     #[test]
-    fn name_slug_regex_rejeita_uppercase(
+    fn name_slug_regex_rejects_uppercase(
         upper in "[A-Z]{1,5}[a-z0-9-]{0,10}"
     ) {
         let re = Regex::new(NAME_SLUG_REGEX).unwrap();
@@ -66,7 +66,7 @@ proptest! {
 
     /// Underscore must never be accepted by the regex.
     #[test]
-    fn name_slug_regex_rejeita_underscore(
+    fn name_slug_regex_rejects_underscore(
         prefix in "[a-z]{1,10}",
         suffix in "[a-z]{1,10}"
     ) {
@@ -81,7 +81,7 @@ proptest! {
 
     /// Strings containing whitespace must be rejected.
     #[test]
-    fn name_slug_regex_rejeita_espaco(
+    fn name_slug_regex_rejects_space(
         a in "[a-z]{1,10}",
         b in "[a-z]{1,10}"
     ) {
@@ -97,7 +97,7 @@ proptest! {
     /// Any ASCII string longer than MAX_MEMORY_BODY_LEN bytes must
     /// have a length above the limit — boundary invariant.
     #[test]
-    fn body_length_boundary_unicode_acima_do_limite(
+    fn body_length_boundary_unicode_above_limit(
         extra in "[\\p{L}]{1,500}"
     ) {
         // Gera um body com pelo menos MAX_MEMORY_BODY_LEN + len(extra) bytes.
@@ -127,7 +127,7 @@ proptest! {
     /// Name with length between 1 and MAX_MEMORY_NAME_LEN bytes and kebab format
     /// must be considered valid by the length invariant.
     #[test]
-    fn name_comprimento_valido_dentro_do_limite(
+    fn name_length_valid_within_limit(
         name in "[a-z][a-z0-9-]{0,78}[a-z0-9]"
     ) {
         prop_assert!(
@@ -216,7 +216,7 @@ mod unit_tests {
     use super::*;
 
     #[test]
-    fn name_slug_regex_aceita_exemplos_canonicos() {
+    fn name_slug_regex_accepts_canonical_examples() {
         let re = Regex::new(NAME_SLUG_REGEX).unwrap();
         let validos = [
             "a",
@@ -240,7 +240,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn name_slug_regex_rejeita_exemplos_invalidos() {
+    fn name_slug_regex_rejects_invalid_examples() {
         let re = Regex::new(NAME_SLUG_REGEX).unwrap();
         let invalidos = [
             "",
@@ -273,7 +273,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn body_um_acima_do_limite_detectado() {
+    fn body_one_above_limit_detected() {
         let body: String = "x".repeat(MAX_MEMORY_BODY_LEN + 1);
         assert!(body.len() > MAX_MEMORY_BODY_LEN);
     }

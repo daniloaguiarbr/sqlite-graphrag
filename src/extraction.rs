@@ -38,12 +38,12 @@ static REGEX_SECTION_MARKER: OnceLock<Regex> = OnceLock::new();
 // v1.0.25 P0-2: captures CamelCase brand names that BERT NER often misses (e.g. "OpenAI", "PostgreSQL").
 static REGEX_BRAND_CAMEL: OnceLock<Regex> = OnceLock::new();
 
-// v1.0.20: stopwords para filtrar palavras-regra PT-BR/EN comuns capturadas como ALL_CAPS.
-// Sem este filtro, corpus técnico em PT-BR contendo regras formatadas em CAPS (NUNCA, PROIBIDO, DEVE)
-// gerava ~70% de "entidades" lixo. Mantemos identificadores tipo MAX_RETRY (com underscore).
-// v1.0.22: lista expandida com termos observados em stress test 495 arquivos do flowaiper.
-// Inclui verbos (ADICIONAR, VALIDAR), adjetivos (ALTA, BAIXA), substantivos comuns (BANCO, CASO),
-// HTTP methods (GET, POST, DELETE) e formatos de dados genéricos (JSON, XML).
+// v1.0.20: stopwords to filter common PT-BR/EN rule words captured as ALL_CAPS.
+// Without this filter, technical PT-BR corpora containing CAPS-formatted rules (NUNCA, PROIBIDO, DEVE)
+// generated ~70% of "garbage entities". We keep identifiers like MAX_RETRY (with underscore).
+// v1.0.22: expanded list with terms observed in 495-file flowaiper stress test.
+// Includes verbs (ADICIONAR, VALIDAR), adjectives (ALTA, BAIXA), common nouns (BANCO, CASO),
+// HTTP methods (GET, POST, DELETE) and generic data formats (JSON, XML).
 // v1.0.24: added 17 new terms observed in audit v1.0.23: generic status words (COMPLETED, DONE,
 // FIXED, PENDING), PT-BR imperative verbs (ACEITE, CONFIRME, NEGUE, RECUSE), PT-BR modal/
 // common verbs (DEVEMOS, PODEMOS, VAMOS), generic nouns (BORDA, CHECKLIST, PLAN, TOKEN),
@@ -164,14 +164,14 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "YAML",
 ];
 
-// v1.0.22: HTTP methods são verbos de protocolo, não entidades semanticamente úteis.
-// Filtrados em apply_regex_prefilter (regex_all_caps) e iob_to_entities (single-token).
+// v1.0.22: HTTP methods are protocol verbs, not semantically useful entities.
+// Filtered in apply_regex_prefilter (regex_all_caps) and iob_to_entities (single-token).
 const HTTP_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
 ];
 
 fn is_filtered_all_caps(token: &str) -> bool {
-    // Identificadores com underscore são preservados (ex: MAX_RETRY, FLOWAIPER_API_KEY)
+    // Identifiers containing underscore are preserved (e.g. MAX_RETRY, FLOWAIPER_API_KEY)
     let is_identifier = token.contains('_');
     if is_identifier {
         return false;
@@ -210,7 +210,10 @@ fn regex_all_caps() -> &'static Regex {
 fn regex_section_marker() -> &'static Regex {
     REGEX_SECTION_MARKER.get_or_init(|| {
         // Matches PT-BR document-structure labels followed by a number: "Etapa 3", "Fase 1", etc.
-        Regex::new(r"\b(?:Etapa|Fase|Passo|Seção|Capítulo)\s+\d+\b")
+        // Accented characters expressed as escapes to keep this source file ASCII-only
+        // per the project language policy. Pattern is equivalent to:
+        //   \b(?:Etapa|Fase|Passo|Se\xe7\xe3o|Cap\xedtulo)\s+\d+\b
+        Regex::new("\\b(?:Etapa|Fase|Passo|Se\u{00e7}\u{00e3}o|Cap\u{00ed}tulo)\\s+\\d+\\b")
             .expect("compile-time validated section marker regex literal")
     })
 }
@@ -305,12 +308,12 @@ impl BertNerModel {
         // 3. The safetensors format is well-formed (verified by candle's parser before mmap).
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
-                .with_context(|| format!("mapeando {weights_path:?}"))?
+                .with_context(|| format!("mapping {weights_path:?}"))?
         };
-        let bert = BertModel::load(vb.pp("bert"), &bert_cfg).context("carregando BertModel")?;
+        let bert = BertModel::load(vb.pp("bert"), &bert_cfg).context("loading BertModel")?;
 
-        // v1.0.20 fix P0 secundário: carregar classifier head do safetensors em vez de zeros.
-        // Em v1.0.19 usávamos Tensor::zeros, o que produzia argmax constante e inferência degenerada.
+        // v1.0.20 secondary P0 fix: load classifier head from safetensors instead of zeros.
+        // In v1.0.19 we used Tensor::zeros, which produced constant argmax and degenerate inference.
         let cls_vb = vb.pp("classifier");
         let weight = cls_vb
             .get((num_labels, hidden_size), "weight")
@@ -505,15 +508,15 @@ fn ensure_model_files(paths: &AppPaths) -> Result<PathBuf> {
     tracing::info!("Downloading NER model (first run, ~676 MB)...");
     crate::output::emit_progress_i18n(
         "Downloading NER model (first run, ~676 MB)...",
-        "Baixando modelo NER (primeira execução, ~676 MB)...",
+        crate::i18n::validation::runtime_pt::downloading_ner_model(),
     );
 
-    let api = huggingface_hub::api::sync::Api::new().context("criando cliente HF Hub")?;
+    let api = huggingface_hub::api::sync::Api::new().context("creating HF Hub client")?;
     let repo = api.model(MODEL_ID.to_string());
 
-    // v1.0.20 fix P0 primário: tokenizer.json no repo Davlan está apenas em onnx/tokenizer.json.
-    // Em v1.0.19 buscávamos da raiz e recebíamos 404, caindo em graceful degradation 100% das vezes.
-    // Mapeamos (remote_path, local_filename) para baixar do subfolder mantendo nome plano local.
+    // v1.0.20 primary P0 fix: tokenizer.json in the Davlan repo is only at onnx/tokenizer.json.
+    // In v1.0.19 we fetched it from the root and got 404, falling into graceful degradation 100% of the time.
+    // We map (remote_path, local_filename) to download from the subfolder while keeping a flat local name.
     for (remote, local) in &[
         ("model.safetensors", "model.safetensors"),
         ("config.json", "config.json"),
@@ -560,7 +563,7 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     let cleaned = cleaned.as_ref();
 
     for m in regex_email().find_iter(cleaned) {
-        // v1.0.20: email é "concept" (regex sozinho não distingue pessoa de mailing list/role).
+        // v1.0.20: email is "concept" (regex alone cannot distinguish person from mailing list/role).
         add(&mut entities, &mut seen, m.as_str(), "concept");
     }
     for m in regex_uuid().find_iter(cleaned) {
@@ -621,9 +624,9 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
         |parts: &mut Vec<String>, typ: &mut Option<String>, entities: &mut Vec<ExtractedEntity>| {
             if let Some(t) = typ.take() {
                 let name = parts.join(" ").trim().to_string();
-                // v1.0.22: filtra single-token entities que sejam stopwords ALL CAPS ou HTTP methods.
-                // BERT NER classifica algumas dessas como B-MISC/B-ORG; pós-filtro aqui evita
-                // poluir o grafo com verbos/protocolos genéricos.
+                // v1.0.22: filters single-token entities that are ALL CAPS stopwords or HTTP methods.
+                // BERT NER classifies some of these as B-MISC/B-ORG; post-filtering here avoids
+                // polluting the graph with generic verbs/protocols.
                 let is_single_caps = !name.contains(' ')
                     && name == name.to_uppercase()
                     && name.len() >= MIN_ENTITY_CHARS;
@@ -661,8 +664,20 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
         // v1.0.25 P0-2: Portuguese monosyllabic verbs that BERT often misclassifies as person names.
         // Only filtered when confidence is unavailable (no logit gate here); these tokens are
         // structurally unlikely to be real proper names in a technical corpus.
+        // Accented PT-BR characters expressed as Unicode escapes so this source
+        // file remains ASCII-only per the project language policy. Equivalent
+        // tokens: L\u{00ea}, V\u{00ea}, C\u{00e1}, P\u{00f4}r.
         const PT_VERB_FALSE_POSITIVES: &[&str] = &[
-            "Lê", "Vê", "Cá", "Pôr", "Ser", "Vir", "Ver", "Dar", "Ler", "Ter",
+            "L\u{00ea}",
+            "V\u{00ea}",
+            "C\u{00e1}",
+            "P\u{00f4}r",
+            "Ser",
+            "Vir",
+            "Ver",
+            "Dar",
+            "Ler",
+            "Ter",
         ];
 
         let entity_type = match bio_type {
@@ -697,8 +712,8 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
 
         if prefix == "B" {
             if token.starts_with("##") {
-                // BERT confuso: subword com B-prefix indica continuação de entidade anterior.
-                // Anexar à última parte da entidade atual; senão descartar.
+                // BERT confused: subword with B-prefix indicates continuation of previous entity.
+                // Append to the last part of the current entity; otherwise discard.
                 let clean = token.strip_prefix("##").unwrap_or(token.as_str());
                 if let Some(last) = current_parts.last_mut() {
                     last.push_str(clean);
@@ -739,8 +754,8 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
         return (Vec::new(), false);
     }
 
-    // v1.0.22: cap configurável via env var (constants::max_relationships_per_memory).
-    // Permite usuários com corpus denso aumentar além do default 50.
+    // v1.0.22: cap configurable via env var (constants::max_relationships_per_memory).
+    // Allows users with dense corpora to increase beyond the default 50.
     let max_rels = crate::constants::max_relationships_per_memory();
     let n = entities.len().min(MAX_ENTS);
     let mut rels: Vec<NewRelationship> = Vec::new();
@@ -990,7 +1005,7 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
     entities
         .into_iter()
         .map(|ent| {
-            // Encontra a primeira ocorrência case-sensitive da entidade no body
+            // Finds the first case-sensitive occurrence of the entity in the body
             if let Some(pos) = body.find(&ent.name) {
                 let after_pos = pos + ent.name.len();
                 if after_pos < body.len() {
@@ -1194,7 +1209,7 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     };
 
     let merged = merge_and_deduplicate(regex_entities, ner_entities);
-    // v1.0.22: estender entidades NER com sufixos numéricos do body (GPT-5, Claude 4, Python 3).
+    // v1.0.22: extend NER entities with numeric suffixes from the body (GPT-5, Claude 4, Python 3).
     let extended = extend_with_numeric_suffix(merged, body);
     // v1.0.23: capture versioned model names that BERT NER does not detect on its own
     // (e.g. "Claude 4", "Llama 3"). Hyphenated variants like "GPT-5" are already covered
@@ -1260,61 +1275,61 @@ mod tests {
     }
 
     #[test]
-    fn regex_email_captura_endereco() {
-        let ents = apply_regex_prefilter("contato: fulano@empresa.com.br para mais info");
-        // v1.0.20: emails são classificados como "concept" (regex sozinho não distingue pessoa de role).
+    fn regex_email_captures_address() {
+        let ents = apply_regex_prefilter("contact: someone@company.com for more info");
+        // v1.0.20: emails are classified as "concept" (regex alone cannot distinguish person from role).
         assert!(ents
             .iter()
-            .any(|e| e.name == "fulano@empresa.com.br" && e.entity_type == "concept"));
+            .any(|e| e.name == "someone@company.com" && e.entity_type == "concept"));
     }
 
     #[test]
     fn regex_all_caps_filters_pt_rule_word() {
-        // v1.0.20 fix P1: NUNCA, PROIBIDO, DEVE não devem virar "entidades".
-        let ents = apply_regex_prefilter("NUNCA fazer isso. PROIBIDO usar X. DEVE seguir Y.");
+        // v1.0.20 fix P1: NUNCA, PROIBIDO, DEVE must not become "entities".
+        let ents = apply_regex_prefilter("NUNCA do this. PROIBIDO use X. DEVE follow Y.");
         assert!(
             !ents.iter().any(|e| e.name == "NUNCA"),
-            "NUNCA deveria ser filtrado como stopword"
+            "NUNCA must be filtered as a stopword"
         );
         assert!(
             !ents.iter().any(|e| e.name == "PROIBIDO"),
-            "PROIBIDO deveria ser filtrado"
+            "PROIBIDO must be filtered"
         );
         assert!(
             !ents.iter().any(|e| e.name == "DEVE"),
-            "DEVE deveria ser filtrado"
+            "DEVE must be filtered"
         );
     }
 
     #[test]
     fn regex_all_caps_accepts_underscored_constant() {
-        // Constantes técnicas tipo MAX_RETRY, TIMEOUT_MS sempre devem ser aceitas.
-        let ents = apply_regex_prefilter("configure MAX_RETRY=3 e API_TIMEOUT=30");
+        // Technical constants like MAX_RETRY, TIMEOUT_MS must always be accepted.
+        let ents = apply_regex_prefilter("configure MAX_RETRY=3 and API_TIMEOUT=30");
         assert!(ents.iter().any(|e| e.name == "MAX_RETRY"));
         assert!(ents.iter().any(|e| e.name == "API_TIMEOUT"));
     }
 
     #[test]
     fn regex_all_caps_accepts_domain_acronym() {
-        // Acrônimos legítimos (não-stopword) devem passar: OPENAI, NVIDIA, GOOGLE.
-        let ents = apply_regex_prefilter("OPENAI lançou GPT-5 com NVIDIA H100");
+        // Legitimate (non-stopword) acronyms must pass: OPENAI, NVIDIA, GOOGLE.
+        let ents = apply_regex_prefilter("OPENAI launched GPT-5 with NVIDIA H100");
         assert!(ents.iter().any(|e| e.name == "OPENAI"));
         assert!(ents.iter().any(|e| e.name == "NVIDIA"));
     }
 
     #[test]
     fn regex_url_does_not_appear_in_apply_regex_prefilter() {
-        // v1.0.24 P0-2: URLs foram removidas de apply_regex_prefilter e agora vão para extract_urls.
-        let ents = apply_regex_prefilter("veja https://docs.rs/crate para detalhes");
+        // v1.0.24 P0-2: URLs were removed from apply_regex_prefilter and now go through extract_urls.
+        let ents = apply_regex_prefilter("see https://docs.rs/crate for details");
         assert!(
             !ents.iter().any(|e| e.name.starts_with("https://")),
-            "URLs não devem aparecer como entidades após split P0-2"
+            "URLs must not appear as entities after the P0-2 split"
         );
     }
 
     #[test]
-    fn extract_urls_captura_https() {
-        let urls = extract_urls("veja https://docs.rs/crate para detalhes");
+    fn extract_urls_captures_https() {
+        let urls = extract_urls("see https://docs.rs/crate for details");
         assert_eq!(urls.len(), 1);
         assert_eq!(urls[0].url, "https://docs.rs/crate");
         assert!(urls[0].offset > 0);
@@ -1382,29 +1397,33 @@ mod tests {
         let ents = iob_to_entities(&tokens, &labels);
         assert!(
             ents.iter().any(|e| e.name == "OpenAI" || e.name == "Open"),
-            "deveria mergear ##AI ou descartar"
+            "should merge ##AI or discard"
         );
     }
 
     #[test]
     fn iob_subword_orphan_discards() {
-        // v1.0.21 P0: subword órfão sem entidade ativa não deve virar entidade.
+        // v1.0.21 P0: an orphan subword with no active entity must not become an entity.
         let tokens = vec!["##AI".to_string()];
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert!(
             ents.is_empty(),
-            "subword órfão sem entidade ativa deve ser descartado"
+            "orphan subword without an active entity must be discarded"
         );
     }
 
     #[test]
     fn iob_maps_date_to_date_v1025() {
         // v1.0.25 V008: DATE is now emitted instead of discarded.
-        let tokens = vec!["Janeiro".to_string(), "2024".to_string()];
+        let tokens = vec!["January".to_string(), "2024".to_string()];
         let labels = vec!["B-DATE".to_string(), "I-DATE".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents.len(), 1, "DATE deve ser emitido como entidade v1.0.25");
+        assert_eq!(
+            ents.len(),
+            1,
+            "DATE must be emitted as an entity in v1.0.25"
+        );
         assert_eq!(ents[0].entity_type, "date");
     }
 
@@ -1485,7 +1504,7 @@ mod tests {
         assert_eq!(
             merged.len(),
             1,
-            "rust e Rust com mesmo tipo são a mesma entidade"
+            "rust and Rust with the same type are the same entity"
         );
     }
 
@@ -1546,11 +1565,11 @@ mod tests {
 
     #[test]
     fn dedup_normalizes_unicode_combining_marks() {
-        // v1.0.24 P1-E: "Café" (NFC precomposed) and "Cafe\u{301}" (NFD with
+        // v1.0.24 P1-E: "Caf\u{e9}" (NFC precomposed) and "Cafe\u{301}" (NFD with
         // combining acute accent) must deduplicate to a single entity after NFKC
         // normalization.
         let nfc = vec![ExtractedEntity {
-            name: "Café".to_string(),
+            name: "Caf\u{e9}".to_string(),
             entity_type: "concept".to_string(),
         }];
         // Build the NFD form: 'e' followed by combining acute accent U+0301
@@ -1563,7 +1582,7 @@ mod tests {
         assert_eq!(
             merged.len(),
             1,
-            "NFC 'Café' and NFD 'Cafe\\u{{301}}' must deduplicate to 1 entity after NFKC normalization"
+            "NFC 'Caf\\u{{e9}}' and NFD 'Cafe\\u{{301}}' must deduplicate to 1 entity after NFKC normalization"
         );
     }
 
@@ -1605,7 +1624,7 @@ mod tests {
             assert_eq!(
                 t.dims(),
                 &[max_len],
-                "cada janela deve ter shape (max_len,) após padding"
+                "each window must have shape (max_len,) after padding"
             );
             padded_ids.push(t);
         }
@@ -1672,7 +1691,7 @@ mod tests {
         assert_eq!(
             crate::constants::ner_batch_size(),
             4,
-            "valor válido preservado"
+            "valid value preserved"
         );
 
         std::env::remove_var("GRAPHRAG_NER_BATCH_SIZE");
@@ -1682,10 +1701,10 @@ mod tests {
     fn extraction_method_regex_only_unchanged() {
         // RegexExtractor always returns "regex-only" regardless of NER_MODEL OnceLock state.
         // This guards against accidentally changing the regex-only fallback string.
-        let result = RegexExtractor.extract("contato: dev@acme.io").unwrap();
+        let result = RegexExtractor.extract("contact: dev@acme.io").unwrap();
         assert_eq!(
             result.extraction_method, "regex-only",
-            "RegexExtractor deve retornar regex-only"
+            "RegexExtractor must return regex-only"
         );
     }
 
@@ -1698,10 +1717,10 @@ mod tests {
             name: "GPT".to_string(),
             entity_type: "concept".to_string(),
         }];
-        let result = extend_with_numeric_suffix(ents, "usando GPT-5 no projeto");
+        let result = extend_with_numeric_suffix(ents, "using GPT-5 in the project");
         assert_eq!(
             result[0].name, "GPT-5",
-            "sufixo puramente numérico deve ser estendido"
+            "purely numeric suffix must be extended"
         );
     }
 
@@ -1712,8 +1731,8 @@ mod tests {
             name: "GPT".to_string(),
             entity_type: "concept".to_string(),
         }];
-        let result = extend_with_numeric_suffix(ents, "usando GPT-4o para tarefas avançadas");
-        assert_eq!(result[0].name, "GPT-4o", "sufixo '4o' deve ser aceito");
+        let result = extend_with_numeric_suffix(ents, "using GPT-4o for advanced tasks");
+        assert_eq!(result[0].name, "GPT-4o", "suffix '4o' must be accepted");
     }
 
     #[test]
@@ -1723,8 +1742,8 @@ mod tests {
             name: "Llama".to_string(),
             entity_type: "concept".to_string(),
         }];
-        let result = extend_with_numeric_suffix(ents, "modelo Llama-5b open-weight");
-        assert_eq!(result[0].name, "Llama-5b", "sufixo '5b' deve ser aceito");
+        let result = extend_with_numeric_suffix(ents, "Llama-5b open-weight model");
+        assert_eq!(result[0].name, "Llama-5b", "suffix '5b' must be accepted");
     }
 
     #[test]
@@ -1734,8 +1753,8 @@ mod tests {
             name: "Mistral".to_string(),
             entity_type: "concept".to_string(),
         }];
-        let result = extend_with_numeric_suffix(ents, "testando Mistral-8x em produção");
-        assert_eq!(result[0].name, "Mistral-8x", "sufixo '8x' deve ser aceito");
+        let result = extend_with_numeric_suffix(ents, "testing Mistral-8x in production");
+        assert_eq!(result[0].name, "Mistral-8x", "suffix '8x' must be accepted");
     }
 
     // --- P2-D: augment_versioned_model_names extended regex ---
@@ -1743,10 +1762,10 @@ mod tests {
     #[test]
     fn augment_versioned_gpt4o() {
         // P2-D: "GPT-4o" must be captured with alphanumeric suffix.
-        let result = augment_versioned_model_names(vec![], "usando GPT-4o para análise");
+        let result = augment_versioned_model_names(vec![], "using GPT-4o for analysis");
         assert!(
             result.iter().any(|e| e.name == "GPT-4o"),
-            "GPT-4o deve ser capturado pelo augment, achados: {:?}",
+            "GPT-4o must be captured by augment, found: {:?}",
             result.iter().map(|e| &e.name).collect::<Vec<_>>()
         );
     }
@@ -1755,10 +1774,10 @@ mod tests {
     fn augment_versioned_claude_4_sonnet() {
         // P2-D: "Claude 4 Sonnet" must be captured with release tier.
         let result =
-            augment_versioned_model_names(vec![], "melhor modelo: Claude 4 Sonnet lançado hoje");
+            augment_versioned_model_names(vec![], "best model: Claude 4 Sonnet released today");
         assert!(
             result.iter().any(|e| e.name == "Claude 4 Sonnet"),
-            "Claude 4 Sonnet deve ser capturado, achados: {:?}",
+            "Claude 4 Sonnet must be captured, found: {:?}",
             result.iter().map(|e| &e.name).collect::<Vec<_>>()
         );
     }
@@ -1794,9 +1813,9 @@ mod tests {
             name: "Claude 4".to_string(),
             entity_type: "concept".to_string(),
         }];
-        let result = augment_versioned_model_names(existing, "usando Claude 4 no projeto");
+        let result = augment_versioned_model_names(existing, "using Claude 4 in the project");
         let count = result.iter().filter(|e| e.name == "Claude 4").count();
-        assert_eq!(count, 1, "Claude 4 não deve ser duplicado");
+        assert_eq!(count, 1, "Claude 4 must not be duplicated");
     }
 
     // ── v1.0.25 P0-4: new stopwords (API, CLI, HTTP, HTTPS, JWT, LLM, REST, UI, URL) ──
@@ -1822,7 +1841,9 @@ mod tests {
     #[test]
     fn section_markers_etapa_fase_filtered_v1025() {
         // "Etapa 3" and "Fase 1" are document-structure labels, not entities.
-        let body = "Etapa 3 do plano: implementar Fase 1 da Migração.";
+        // Body intentionally uses PT-BR section keywords (Etapa/Fase/Migra\u{e7}\u{e3}o) to
+        // exercise the PT-BR section-marker filter. ASCII-escaped per the project policy.
+        let body = "Etapa 3 do plano: implementar Fase 1 da Migra\u{e7}\u{e3}o.";
         let ents = apply_regex_prefilter(body);
         assert!(
             !ents
@@ -1835,13 +1856,15 @@ mod tests {
 
     #[test]
     fn section_markers_passo_secao_filtered_v1025() {
-        let body = "Siga Passo 2 conforme Seção 3 do manual.";
+        // PT-BR keywords Passo/Se\u{e7}\u{e3}o written with Unicode escapes per the
+        // project language policy.
+        let body = "Siga Passo 2 conforme Se\u{e7}\u{e3}o 3 do manual.";
         let ents = apply_regex_prefilter(body);
         assert!(
             !ents
                 .iter()
-                .any(|e| e.name.contains("Passo") || e.name.contains("Seção")),
-            "Passo/Seção section markers must be stripped; entities: {:?}",
+                .any(|e| e.name.contains("Passo") || e.name.contains("Se\u{e7}\u{e3}o")),
+            "Passo/Se\\u{{e7}}\\u{{e3}}o section markers must be stripped; entities: {:?}",
             ents.iter().map(|e| &e.name).collect::<Vec<_>>()
         );
     }
@@ -1898,7 +1921,8 @@ mod tests {
     #[test]
     fn iob_loc_maps_to_location_not_concept_v1025() {
         // B-LOC must emit "location" (V008), not "concept".
-        let tokens = vec!["São".to_string(), "Paulo".to_string()];
+        // Token is the PT-BR locality "S\u{e3}o Paulo"; ASCII-escaped per language policy.
+        let tokens = vec!["S\u{e3}o".to_string(), "Paulo".to_string()];
         let labels = vec!["B-LOC".to_string(), "I-LOC".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert_eq!(
@@ -1930,15 +1954,16 @@ mod tests {
 
     #[test]
     fn pt_verb_le_filtered_as_per_v1025() {
-        // "Lê" is a PT monosyllabic verb; when tagged B-PER it must be dropped.
-        let tokens = vec!["Lê".to_string(), "o".to_string(), "livro".to_string()];
+        // "L\u{ea}" is a PT monosyllabic verb; when tagged B-PER it must be dropped.
+        // ASCII-escaped per language policy.
+        let tokens = vec!["L\u{ea}".to_string(), "o".to_string(), "livro".to_string()];
         let labels = vec!["B-PER".to_string(), "O".to_string(), "O".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert!(
             !ents
                 .iter()
-                .any(|e| e.name == "Lê" && e.entity_type == "person"),
-            "PT verb 'Lê' tagged B-PER must be filtered; entities: {ents:?}"
+                .any(|e| e.name == "L\u{ea}" && e.entity_type == "person"),
+            "PT verb 'L\\u{{ea}}' tagged B-PER must be filtered; entities: {ents:?}"
         );
     }
 

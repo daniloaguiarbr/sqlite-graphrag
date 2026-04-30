@@ -10,9 +10,20 @@ use crate::storage::{memories, versions};
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Rename a memory using the positional form\n  \
+    sqlite-graphrag rename onboarding --new-name welcome-guide\n\n  \
+    # Rename using the named flag form\n  \
+    sqlite-graphrag rename --name onboarding --new-name welcome-guide\n\n  \
+    # Rename within a specific namespace\n  \
+    sqlite-graphrag rename onboarding --new-name welcome-guide --namespace my-project")]
 pub struct RenameArgs {
     /// Current memory name as a positional argument. Alternative to `--name` / `--old`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Current memory name to rename; alternative to --name/--old"
+    )]
     pub name_positional: Option<String>,
     /// Current memory name. Also accepts the alias `--old`.
     #[arg(long, alias = "old")]
@@ -64,7 +75,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
-    // v1.0.20: trim_matches('-') também remove hífens trailing/leading.
+    // v1.0.20: trim_matches('-') also removes trailing/leading hyphens.
     let normalized_new_name = {
         let lower = args.new_name.to_lowercase().replace(['_', ' '], "-");
         let trimmed = lower.trim_matches('-').to_string();
@@ -101,11 +112,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     }
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _) = memories::find_by_name(&conn, &namespace, &name)?

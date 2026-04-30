@@ -1,13 +1,19 @@
 //! Handler for the `stats` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Show database statistics (memory counts, sizes, namespace breakdown)\n  \
+    sqlite-graphrag stats\n\n  \
+    # Stats for a database at a custom path\n  \
+    sqlite-graphrag stats --db /path/to/graphrag.sqlite\n\n  \
+    # Use SQLITE_GRAPHRAG_DB_PATH env var\n  \
+    SQLITE_GRAPHRAG_DB_PATH=/data/graphrag.sqlite sqlite-graphrag stats")]
 pub struct StatsArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -46,16 +52,12 @@ struct StatsResponse {
 }
 
 pub fn run(args: StatsArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
-    let _ = args.json; // --json é no-op pois output já é JSON por default
-    let _ = args.format; // --format é no-op; JSON sempre emitido no stdout
+    let start = std::time::Instant::now();
+    let _ = args.json; // --json is a no-op because output is already JSON by default
+    let _ = args.format; // --format is a no-op; JSON is always emitted on stdout
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -88,16 +90,16 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
 
     let db_size_bytes = std::fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
-    // v1.0.21 P1-C: query usa tabela `memory_chunks` (correta).
-    // Se a tabela não existir (DB legado pré-chunking), o erro é "no such table"
-    // e o fallback retorna 0. Outros erros são logados via tracing para auditoria.
+    // v1.0.21 P1-C: query uses the (correct) `memory_chunks` table.
+    // If the table does not exist (legacy pre-chunking DB), the error is "no such table"
+    // and the fallback returns 0. Other errors are logged via tracing for audit.
     let chunks_total: i64 = match conn.query_row("SELECT COUNT(*) FROM memory_chunks", [], |r| {
         r.get::<_, i64>(0)
     }) {
         Ok(n) => n,
         Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => 0,
         Err(e) => {
-            tracing::warn!("falha ao contar memory_chunks: {e}");
+            tracing::warn!("failed to count memory_chunks: {e}");
             0
         }
     };
@@ -124,7 +126,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
         db_size_bytes,
         db_bytes: db_size_bytes,
         schema_version,
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -135,7 +137,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stats_response_serializa_todos_campos() {
+    fn stats_response_serializes_all_fields() {
         let resp = StatsResponse {
             memories: 10,
             memories_total: 10,
@@ -146,13 +148,13 @@ mod tests {
             edges: 3,
             chunks_total: 20,
             avg_body_len: 42.5,
-            namespaces: vec!["global".to_string(), "projeto".to_string()],
+            namespaces: vec!["global".to_string(), "project".to_string()],
             db_size_bytes: 8192,
             db_bytes: 8192,
             schema_version: "6".to_string(),
             elapsed_ms: 7,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memories"], 10);
         assert_eq!(json["memories_total"], 10);
         assert_eq!(json["entities"], 5);
@@ -185,10 +187,10 @@ mod tests {
             schema_version: "unknown".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         let arr = json["namespaces"]
             .as_array()
-            .expect("namespaces deve ser array");
+            .expect("namespaces must be array");
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0], "ns1");
         assert_eq!(arr[1], "ns2");
@@ -213,15 +215,15 @@ mod tests {
             schema_version: "unknown".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         let arr = json["namespaces"]
             .as_array()
-            .expect("namespaces deve ser array");
-        assert!(arr.is_empty(), "namespaces vazio deve serializar como []");
+            .expect("namespaces must be array");
+        assert!(arr.is_empty(), "empty namespaces must serialize as []");
     }
 
     #[test]
-    fn stats_response_aliases_memories_total_e_memories_iguais() {
+    fn stats_response_aliases_memories_total_and_memories_equal() {
         let resp = StatsResponse {
             memories: 42,
             memories_total: 42,
@@ -238,7 +240,7 @@ mod tests {
             schema_version: "6".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memories"], json["memories_total"]);
         assert_eq!(json["entities"], json["entities_total"]);
         assert_eq!(json["relationships"], json["relationships_total"]);

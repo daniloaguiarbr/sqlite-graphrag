@@ -1,7 +1,6 @@
 //! Handler for the `cleanup-orphans` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output::{self, OutputFormat};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
@@ -9,6 +8,13 @@ use crate::storage::entities;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Remove orphan entities (no memories, no relationships) from the global namespace\n  \
+    sqlite-graphrag cleanup-orphans\n\n  \
+    # Preview which entities would be removed without deleting\n  \
+    sqlite-graphrag cleanup-orphans --dry-run\n\n  \
+    # Cleanup within a specific namespace\n  \
+    sqlite-graphrag cleanup-orphans --namespace my-project --yes")]
 pub struct CleanupOrphansArgs {
     #[arg(long)]
     pub namespace: Option<String>,
@@ -38,11 +44,7 @@ pub fn run(args: CleanupOrphansArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let mut conn = open_rw(&paths.db)?;
 
@@ -98,7 +100,7 @@ mod tests {
             namespace: Some("global".to_string()),
             elapsed_ms: 12,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["orphan_count"], 5);
         assert_eq!(json["deleted"], 0);
         assert_eq!(json["dry_run"], true);
@@ -115,7 +117,7 @@ mod tests {
             namespace: None,
             elapsed_ms: 5,
         };
-        assert_eq!(resp.deleted, 0, "dry_run deve manter deleted em 0");
+        assert_eq!(resp.deleted, 0, "dry_run must keep deleted at 0");
         assert_eq!(resp.orphan_count, 10);
     }
 
@@ -128,10 +130,10 @@ mod tests {
             namespace: None,
             elapsed_ms: 1,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert!(
             json["namespace"].is_null(),
-            "namespace None deve serializar como null"
+            "namespace None must serialize as null"
         );
     }
 

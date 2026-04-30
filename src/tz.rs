@@ -84,49 +84,49 @@ mod tests {
     #[test]
     #[serial]
     fn utc_default_when_env_missing() {
-        // Remove variável para garantir fallback UTC
+        // Remove variable to ensure UTC fallback
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
-        let resultado = resolve_tz_from_env().expect("não deve falhar com env ausente");
-        assert_eq!(resultado, Tz::UTC);
+        let result = resolve_tz_from_env().expect("must not fail with env absent");
+        assert_eq!(result, Tz::UTC);
     }
 
     #[test]
     #[serial]
     fn env_valid_applies_timezone() {
         std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "America/Sao_Paulo");
-        let resultado = resolve_tz_from_env().expect("America/Sao_Paulo é válido");
-        assert_eq!(resultado.name(), "America/Sao_Paulo");
+        let result = resolve_tz_from_env().expect("America/Sao_Paulo is valid");
+        assert_eq!(result.name(), "America/Sao_Paulo");
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
     }
 
     #[test]
     #[serial]
     fn env_invalid_returns_validation_error() {
-        std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "Invalido/Naoexiste");
-        let resultado = resolve_tz_from_env();
-        assert!(resultado.is_err(), "timezone inválida deve retornar Err");
-        match resultado {
+        std::env::set_var("SQLITE_GRAPHRAG_DISPLAY_TZ", "Invalid/Nonexistent");
+        let result = resolve_tz_from_env();
+        assert!(result.is_err(), "invalid timezone must return Err");
+        match result {
             Err(AppError::Validation(msg)) => {
                 assert!(
                     msg.contains("SQLITE_GRAPHRAG_DISPLAY_TZ"),
-                    "mensagem deve citar a env var"
+                    "message must cite the env var"
                 );
                 assert!(
-                    msg.contains("Invalido/Naoexiste"),
-                    "mensagem deve citar o valor inválido"
+                    msg.contains("Invalid/Nonexistent"),
+                    "message must cite the invalid value"
                 );
             }
-            other => unreachable!("esperado AppError::Validation, obtido: {other:?}"),
+            other => unreachable!("expected AppError::Validation, got: {other:?}"),
         }
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
     }
 
     #[test]
     fn epoch_zero_yields_utc_iso() {
-        // Testa epoch_to_iso diretamente sem estado global
+        // Tests epoch_to_iso directly without global state
         std::env::remove_var("SQLITE_GRAPHRAG_DISPLAY_TZ");
-        let resultado = {
-            // Aplica UTC diretamente sem usar GLOBAL_TZ
+        let result = {
+            // Applies UTC directly without using GLOBAL_TZ
             let tz = Tz::UTC;
             Utc.timestamp_opt(0, 0)
                 .single()
@@ -137,32 +137,32 @@ mod tests {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00+00:00".to_string())
         };
-        assert_eq!(resultado, "1970-01-01T00:00:00+00:00");
+        assert_eq!(result, "1970-01-01T00:00:00+00:00");
     }
 
     #[test]
     fn format_iso_utc_preserves_zero_offset() {
         let ts = Utc.timestamp_opt(1_705_320_000, 0).single().unwrap();
-        // Aplica UTC diretamente
-        let resultado = ts
+        // Applies UTC directly
+        let result = ts
             .with_timezone(&Tz::UTC)
             .format("%Y-%m-%dT%H:%M:%S%:z")
             .to_string();
-        assert_eq!(resultado, "2024-01-15T12:00:00+00:00");
+        assert_eq!(result, "2024-01-15T12:00:00+00:00");
     }
 
     #[test]
     fn format_iso_sao_paulo_applies_offset() {
         let ts = Utc.timestamp_opt(1_705_320_000, 0).single().unwrap();
         let sao_paulo: Tz = "America/Sao_Paulo".parse().unwrap();
-        let resultado = ts
+        let result = ts
             .with_timezone(&sao_paulo)
             .format("%Y-%m-%dT%H:%M:%S%:z")
             .to_string();
-        // America/Sao_Paulo em janeiro é UTC-3
+        // America/Sao_Paulo in January is UTC-3
         assert!(
-            resultado.contains("-03:00"),
-            "esperado offset -03:00, obtido: {resultado}"
+            result.contains("-03:00"),
+            "expected offset -03:00, got: {result}"
         );
     }
 }

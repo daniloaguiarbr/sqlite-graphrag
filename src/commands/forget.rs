@@ -10,9 +10,20 @@ use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Soft-delete a memory by name (positional form)\n  \
+    sqlite-graphrag forget onboarding\n\n  \
+    # Soft-delete using the named flag form\n  \
+    sqlite-graphrag forget --name onboarding\n\n  \
+    # Soft-delete from a specific namespace\n  \
+    sqlite-graphrag forget onboarding --namespace my-project")]
 pub struct ForgetArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name to soft-delete; alternative to --name"
+    )]
     pub name_positional: Option<String>,
     /// Memory name to soft-delete. The row is preserved with `deleted_at` set, recoverable via `restore`.
     /// Use `purge` to permanently remove soft-deleted memories.
@@ -41,18 +52,14 @@ struct ForgetResponse {
 }
 
 pub fn run(args: ForgetArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     // Resolve name from positional or --name flag; both are optional, at least one is required.
     let name = args.name_positional.or(args.name).ok_or_else(|| {
         AppError::Validation("name required: pass as positional argument or via --name".to_string())
     })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_rw(&paths.db)?;
 
@@ -101,9 +108,9 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     if forgotten {
         if let Some(id) = memory_id {
             // FTS5 external-content: manual `DELETE FROM fts_memories WHERE rowid=?`
-            // corrompe o índice. A limpeza correta acontece via trigger `trg_fts_ad`
-            // quando `purge` remove fisicamente a linha de `memories`. Entre soft-delete
-            // e purge, as queries FTS filtram `m.deleted_at IS NULL` no JOIN.
+            // corrupts the index. The correct cleanup happens via the `trg_fts_ad` trigger
+            // when `purge` physically removes the row from `memories`. Between soft-delete
+            // and purge, FTS queries filter `m.deleted_at IS NULL` in the JOIN.
             if let Err(e) = memories::delete_vec(&conn, id) {
                 tracing::warn!(memory_id = id, error = %e, "vec cleanup failed — orphan vector left");
             }
@@ -116,7 +123,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         name: name.clone(),
         namespace: namespace.clone(),
         deleted_at,
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     };
     output::emit_json(&response)?;
 
@@ -134,30 +141,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn forget_response_serializa_campos_basicos() {
+    fn forget_response_serializes_basic_fields() {
         let resp = ForgetResponse {
             action: "soft_deleted".to_string(),
             forgotten: true,
-            name: "minha-memoria".to_string(),
+            name: "my-memory".to_string(),
             namespace: "global".to_string(),
             deleted_at: Some(1_700_000_000),
             elapsed_ms: 5,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "soft_deleted");
         assert_eq!(json["forgotten"], true);
-        assert_eq!(json["name"], "minha-memoria");
+        assert_eq!(json["name"], "my-memory");
         assert_eq!(json["namespace"], "global");
         assert_eq!(json["deleted_at"], 1_700_000_000i64);
         assert!(json["elapsed_ms"].is_number());
     }
 
     #[test]
-    fn forget_response_action_soft_deleted_implica_forgotten_true() {
+    fn forget_response_action_soft_deleted_implies_forgotten_true() {
         let resp = ForgetResponse {
             action: "soft_deleted".to_string(),
             forgotten: true,
-            name: "teste".to_string(),
+            name: "test".to_string(),
             namespace: "ns".to_string(),
             deleted_at: Some(42),
             elapsed_ms: 1,
@@ -173,27 +180,27 @@ mod tests {
             action: "already_deleted".to_string(),
             forgotten: false,
             name: "abc".to_string(),
-            namespace: "meu-projeto".to_string(),
+            namespace: "my-project".to_string(),
             deleted_at: Some(1_650_000_000),
             elapsed_ms: 2,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "already_deleted");
         assert_eq!(json["forgotten"], false);
         assert_eq!(json["deleted_at"], 1_650_000_000i64);
     }
 
     #[test]
-    fn forget_response_not_found_emite_deleted_at_null() {
+    fn forget_response_not_found_emits_deleted_at_null() {
         let resp = ForgetResponse {
             action: "not_found".to_string(),
             forgotten: false,
-            name: "fantasma".to_string(),
+            name: "phantom".to_string(),
             namespace: "global".to_string(),
             deleted_at: None,
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "not_found");
         assert_eq!(json["forgotten"], false);
         assert!(json["deleted_at"].is_null());

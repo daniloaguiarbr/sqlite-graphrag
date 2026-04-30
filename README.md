@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/sqlite-graphrag.svg)](https://crates.io/crates/sqlite-graphrag)
 [![Docs.rs](https://docs.rs/sqlite-graphrag/badge.svg)](https://docs.rs/sqlite-graphrag)
+[![CI](https://github.com/daniloaguiarbr/sqlite-graphrag/actions/workflows/ci.yml/badge.svg)](https://github.com/daniloaguiarbr/sqlite-graphrag/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](LICENSE)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
@@ -181,6 +182,7 @@ sqlite-graphrag remember \
   --body-stdin < notes.md
 ```
 ### Read, forget, edit and rename using positional name argument
+<!-- skip-test: forget soft-deletes the memory mid-block, which then invalidates the subsequent edit/rename. The block is a lifecycle illustration, not a runnable script. -->
 ```bash
 sqlite-graphrag read integration-tests-postgres --json
 sqlite-graphrag forget integration-tests-postgres
@@ -207,6 +209,91 @@ sqlite-graphrag stats --json
 ```bash
 sqlite-graphrag purge --retention-days 90 --dry-run --json
 sqlite-graphrag purge --retention-days 90 --yes
+```
+
+### Run or control the persistent embedding daemon
+<!-- skip-test: `daemon --idle-shutdown-secs` runs in the foreground and would block the test indefinitely. `--ping`/`--stop` require an already-running daemon. -->
+```bash
+sqlite-graphrag daemon --idle-shutdown-secs 600
+sqlite-graphrag daemon --ping --json
+sqlite-graphrag daemon --stop --json
+```
+### Bulk-ingest every Markdown file under a directory
+<!-- skip-test: requires a `./docs` directory containing Markdown files relative to the invocation cwd. -->
+```bash
+sqlite-graphrag ingest ./docs --type document --pattern '*.md' --recursive
+```
+### Rename a memory while keeping its version history
+<!-- skip-test: illustrative names (`old-name`, `new-name`) — the source memory does not exist in this isolated test database. -->
+```bash
+sqlite-graphrag rename old-name --new-name new-name --json
+```
+### Edit a memory body or description (creates a new version)
+<!-- skip-test: depends on the memory not having been soft-deleted by an earlier example block. -->
+```bash
+sqlite-graphrag edit integration-tests-postgres --body "Updated body."
+sqlite-graphrag edit integration-tests-postgres --description "Updated description."
+```
+### Restore a memory to a previous version
+<!-- skip-test: `restore --version 2` requires the memory to have at least two versions, which is not the case in the isolated example database. -->
+```bash
+sqlite-graphrag history integration-tests-postgres --json
+sqlite-graphrag restore --name integration-tests-postgres --version 2 --json
+```
+### Apply pending schema migrations
+```bash
+sqlite-graphrag migrate --status --json
+sqlite-graphrag migrate --json
+```
+### Resolve namespace precedence for the current invocation
+```bash
+sqlite-graphrag namespace-detect --json
+sqlite-graphrag namespace-detect --namespace project-foo --json
+```
+### Refresh SQLite query planner statistics
+```bash
+sqlite-graphrag optimize --json
+```
+### Reclaim disk space and checkpoint the WAL
+```bash
+sqlite-graphrag vacuum --json
+```
+### Create a typed relationship between two entities
+<!-- skip-test: requires the `OpenAI` and `GPT-4` entities to already exist in the namespace. -->
+```bash
+sqlite-graphrag link --from "OpenAI" --to "GPT-4" --relation uses --weight 0.8 --json
+```
+### Remove a specific relationship between two entities
+<!-- skip-test: requires the relationship created by the preceding `link` example. -->
+```bash
+sqlite-graphrag unlink --from "OpenAI" --to "GPT-4" --relation uses --json
+```
+### Traverse memories connected via the entity graph
+```bash
+sqlite-graphrag related onboarding-note --max-hops 2 --limit 10 --json
+```
+### Export a graph snapshot in json, dot or mermaid
+<!-- skip-test: `--output graph.json` writes a file relative to the invocation cwd; pollutes the test workspace. The remaining read-only graph subcommands are exercised by the cookbook integration tests. -->
+```bash
+sqlite-graphrag graph --format json --output graph.json
+sqlite-graphrag graph stats --json
+sqlite-graphrag graph traverse --from "OpenAI" --depth 2 --json
+sqlite-graphrag graph entities --entity-type organization --limit 50 --json
+```
+### Remove orphan entities with no memories and no relationships
+```bash
+sqlite-graphrag cleanup-orphans --dry-run --json
+sqlite-graphrag cleanup-orphans --yes --json
+```
+### Clear cached embedding/NER models from the XDG cache
+<!-- skip-test: deletes the embedding model cache; safe in production but slows the integration suite by forcing a re-download on later commands. -->
+```bash
+sqlite-graphrag cache clear-models --yes
+```
+### List every version of a memory
+<!-- skip-test: depends on the lifecycle state established by earlier illustrative blocks (which are themselves marked `skip-test`). -->
+```bash
+sqlite-graphrag history integration-tests-postgres --no-body --json
 ```
 
 

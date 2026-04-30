@@ -1,7 +1,6 @@
 //! Handler for the `debug-schema` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -9,6 +8,13 @@ use serde::Serialize;
 use std::time::Instant;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Dump the SQLite schema (tables, indices, triggers) as JSON\n  \
+    sqlite-graphrag __debug_schema\n\n  \
+    # Dump schema of a database at a custom path\n  \
+    sqlite-graphrag __debug_schema --db /path/to/graphrag.sqlite\n\n  \
+    # Use SQLITE_GRAPHRAG_DB_PATH env var\n  \
+    SQLITE_GRAPHRAG_DB_PATH=/data/graphrag.sqlite sqlite-graphrag __debug_schema")]
 pub struct DebugSchemaArgs {
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
@@ -48,11 +54,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
     let inicio = Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -60,7 +62,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap_or(0);
 
-    // PRAGMA user_version é setado explicitamente após migrações (valor canônico SCHEMA_USER_VERSION).
+    // PRAGMA user_version is set explicitly after migrations (canonical value SCHEMA_USER_VERSION).
     let user_version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap_or(0);

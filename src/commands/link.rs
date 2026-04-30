@@ -73,11 +73,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
         )));
     }
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let relation_str = args.relation.as_str();
 
@@ -140,41 +136,41 @@ mod tests {
 
     #[test]
     fn link_response_without_redundant_aliases() {
-        // P1-O: campos source/target foram removidos do JSON de resposta.
+        // P1-O: source/target fields were removed from the JSON response.
         let resp = LinkResponse {
             action: "created".to_string(),
-            from: "entidade-a".to_string(),
-            to: "entidade-b".to_string(),
+            from: "entity-a".to_string(),
+            to: "entity-b".to_string(),
             relation: "uses".to_string(),
             weight: 1.0,
             namespace: "default".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização deve funcionar");
-        assert_eq!(json["from"], "entidade-a");
-        assert_eq!(json["to"], "entidade-b");
+        let json = serde_json::to_value(&resp).expect("serialization must work");
+        assert_eq!(json["from"], "entity-a");
+        assert_eq!(json["to"], "entity-b");
         assert!(
             json.get("source").is_none(),
-            "campo 'source' foi removido em P1-O"
+            "field 'source' was removed in P1-O"
         );
         assert!(
             json.get("target").is_none(),
-            "campo 'target' foi removido em P1-O"
+            "field 'target' was removed in P1-O"
         );
     }
 
     #[test]
-    fn link_response_serializa_todos_campos() {
+    fn link_response_serializes_all_fields() {
         let resp = LinkResponse {
             action: "already_exists".to_string(),
-            from: "origem".to_string(),
-            to: "destino".to_string(),
+            from: "origin".to_string(),
+            to: "destination".to_string(),
             relation: "mentions".to_string(),
             weight: 0.8,
-            namespace: "teste".to_string(),
+            namespace: "test".to_string(),
             elapsed_ms: 5,
         };
-        let json = serde_json::to_value(&resp).expect("serialização deve funcionar");
+        let json = serde_json::to_value(&resp).expect("serialization must work");
         assert!(json.get("action").is_some());
         assert!(json.get("from").is_some());
         assert!(json.get("to").is_some());

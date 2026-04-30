@@ -54,11 +54,7 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let relation_str = args.relation.as_str();
 
@@ -119,24 +115,24 @@ mod tests {
         let resp = UnlinkResponse {
             action: "deleted".to_string(),
             relationship_id: 99,
-            from_name: "entidade-a".to_string(),
-            to_name: "entidade-b".to_string(),
+            from_name: "entity-a".to_string(),
+            to_name: "entity-b".to_string(),
             relation: "uses".to_string(),
             namespace: "global".to_string(),
             elapsed_ms: 5,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "deleted");
         assert_eq!(json["relationship_id"], 99i64);
-        assert_eq!(json["from_name"], "entidade-a");
-        assert_eq!(json["to_name"], "entidade-b");
+        assert_eq!(json["from_name"], "entity-a");
+        assert_eq!(json["to_name"], "entity-b");
         assert_eq!(json["relation"], "uses");
         assert_eq!(json["namespace"], "global");
         assert_eq!(json["elapsed_ms"], 5u64);
     }
 
     #[test]
-    fn unlink_args_relation_kind_as_str_correto() {
+    fn unlink_args_relation_kind_as_str_correct() {
         assert_eq!(RelationKind::Uses.as_str(), "uses");
         assert_eq!(RelationKind::DependsOn.as_str(), "depends_on");
         assert_eq!(RelationKind::AppliesTo.as_str(), "applies_to");
@@ -145,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn unlink_response_action_deve_ser_deleted() {
+    fn unlink_response_action_must_be_deleted() {
         let resp = UnlinkResponse {
             action: "deleted".to_string(),
             relationship_id: 1,
@@ -155,10 +151,10 @@ mod tests {
             namespace: "global".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(
             json["action"], "deleted",
-            "ação de unlink deve sempre ser 'deleted'"
+            "unlink action must always be 'deleted'"
         );
     }
 
@@ -167,16 +163,16 @@ mod tests {
         let resp = UnlinkResponse {
             action: "deleted".to_string(),
             relationship_id: 42,
-            from_name: "origem".to_string(),
-            to_name: "destino".to_string(),
+            from_name: "origin".to_string(),
+            to_name: "destination".to_string(),
             relation: "supports".to_string(),
-            namespace: "projeto".to_string(),
+            namespace: "project".to_string(),
             elapsed_ms: 3,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert!(
             json["relationship_id"].as_i64().unwrap() > 0,
-            "relationship_id deve ser positivo após unlink"
+            "relationship_id must be positive after unlink"
         );
     }
 }

@@ -188,9 +188,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
-    // Auto-normalizar para kebab-case antes de validar (P2-H).
-    // v1.0.20: também faz trim de hífens em borda (incluindo trailing) para evitar rejeição
-    // após truncamento por filename longo terminando em hífen.
+    // Capture the original `--name` before normalization so the JSON response can
+    // surface `name_was_normalized` + `original_name` (B_4 in v1.0.32). Stored as
+    // an owned String because `args.name` is moved into the response below.
+    let original_name = args.name.clone();
+
+    // Auto-normalize to kebab-case before validation (P2-H).
+    // v1.0.20: also trims hyphens at the boundary (including trailing) to avoid rejection
+    // after truncation by a long filename ending in a hyphen.
     let normalized_name = {
         let lower = args.name.to_lowercase().replace(['_', ' '], "-");
         let trimmed = lower.trim_matches('-').to_string();
@@ -203,6 +208,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
         trimmed
     };
+    let name_was_normalized = normalized_name != original_name;
 
     if normalized_name.is_empty() {
         return Err(AppError::Validation(
@@ -288,14 +294,10 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         ));
     }
 
-    // v1.0.22 P1: rejeitar body vazio ou whitespace-only quando não há grafo externo.
-    // Sem este check, embeddings vazios eram persistidos quebrando a semântica de recall.
+    // v1.0.22 P1: reject empty or whitespace-only body when no external graph is provided.
+    // Without this check, empty embeddings would be persisted, breaking recall semantics.
     if !entities_provided_externally && graph.entities.is_empty() && raw_body.trim().is_empty() {
-        return Err(AppError::Validation(
-            "body cannot be empty: provide --body, --body-file, --body-stdin with content, \
-             ou um grafo via --entities-file/--graph-stdin"
-                .to_string(),
-        ));
+        return Err(AppError::Validation(crate::i18n::validation::empty_body()));
     }
 
     let metadata: serde_json::Value = if let Some(m) = args.metadata {
@@ -313,7 +315,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
 
-    // v1.0.20: usar .trim().is_empty() para rejeitar bodies que são apenas whitespace.
+    // v1.0.20: use .trim().is_empty() to reject bodies that are only whitespace.
     let mut extraction_method: Option<String> = None;
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
     let mut relationships_truncated = false;
@@ -383,7 +385,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             crate::memory_guard::available_memory_mb()
         ),
         &format!(
-            "Etapa remember: entrada validada; memória disponível {} MB",
+            "Stage remember: input validated; available memory {} MB",
             crate::memory_guard::available_memory_mb()
         ),
     );
@@ -409,7 +411,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             crate::memory_guard::current_process_memory_mb().unwrap_or(0)
         ),
         &format!(
-            "Etapa remember: tokenizer contou {total_passage_tokens} tokens de passagem (máximo do modelo {model_max_length}); chunking gerou {} chunks; RSS do processo {} MB",
+            "Stage remember: tokenizer counted {total_passage_tokens} passage tokens (model max {model_max_length}); chunking produced {} chunks; process RSS {} MB",
             chunks_created,
             crate::memory_guard::current_process_memory_mb().unwrap_or(0)
         ),
@@ -438,7 +440,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 chunks_info.len()
             ),
             &format!(
-                "Embedando {} chunks serialmente para manter memória limitada...",
+                "Embedding {} chunks serially to keep memory bounded...",
                 chunks_info.len()
             ),
         );
@@ -455,7 +457,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 crate::memory_guard::current_process_memory_mb().unwrap_or(0)
             ),
             &format!(
-                "Etapa remember: embeddings dos chunks concluídos; RSS do processo {} MB",
+                "Stage remember: chunk embeddings completed; process RSS {} MB",
                 crate::memory_guard::current_process_memory_mb().unwrap_or(0)
             ),
         );
@@ -639,8 +641,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
     tx.commit()?;
 
-    // v1.0.24 P0-2: persistir URLs em tabela dedicada, fora da transação principal.
-    // Falhas não propagam — caminho não crítico com graceful degradation.
+    // v1.0.24 P0-2: persist URLs in a dedicated table, outside the main transaction.
+    // Failures do not propagate — non-critical path with graceful degradation.
     let urls_persisted = if !extracted_urls.is_empty() {
         let url_entries: Vec<storage_urls::MemoryUrl> = extracted_urls
             .into_iter()
@@ -659,7 +661,10 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     output::emit_json(&RememberResponse {
         memory_id,
-        name: args.name,
+        // Persist the normalized (kebab-case) slug as `name` since that is the
+        // storage key. The original input is exposed via `original_name` only
+        // when normalization actually changed something (B_4 in v1.0.32).
+        name: normalized_name.clone(),
         namespace,
         action: action.clone(),
         operation: action,
@@ -676,6 +681,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         created_at: created_at_epoch,
         created_at_iso,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
+        name_was_normalized,
+        original_name: name_was_normalized.then_some(original_name),
     })?;
 
     Ok(())
@@ -706,9 +713,11 @@ mod tests {
             created_at: 1_705_320_000,
             created_at_iso: "2024-01-15T12:00:00Z".to_string(),
             elapsed_ms: 55,
+            name_was_normalized: false,
+            original_name: None,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memory_id"], 42);
         assert_eq!(json["action"], "created");
         assert_eq!(json["operation"], "created");
@@ -739,9 +748,11 @@ mod tests {
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             elapsed_ms: 0,
+            name_was_normalized: false,
+            original_name: None,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(
             json["action"], json["operation"],
             "action e operation devem ser iguais"
@@ -772,9 +783,11 @@ mod tests {
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             elapsed_ms: 10,
+            name_was_normalized: false,
+            original_name: None,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         let warnings = json["warnings"]
             .as_array()
             .expect("warnings deve ser array");
@@ -785,7 +798,7 @@ mod tests {
     #[test]
     fn invalid_name_reserved_prefix_returns_validation_error() {
         use crate::errors::AppError;
-        // Valida a lógica de rejeição de nomes com prefixo "__" diretamente
+        // Validates the rejection logic for names with the "__" prefix directly
         let nome = "__reservado";
         let resultado: Result<(), AppError> = if nome.starts_with("__") {
             Err(AppError::Validation(
@@ -836,9 +849,11 @@ mod tests {
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             elapsed_ms: 0,
+            name_was_normalized: false,
+            original_name: None,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["merged_into_memory_id"], 7);
     }
 
@@ -864,8 +879,10 @@ mod tests {
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             elapsed_ms: 0,
+            name_was_normalized: false,
+            original_name: None,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["urls_persisted"], 3);
     }
 
@@ -940,15 +957,17 @@ mod tests {
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             elapsed_ms: 0,
+            name_was_normalized: false,
+            original_name: None,
         };
-        let json_false = serde_json::to_value(&resp_false).expect("serialização falhou");
+        let json_false = serde_json::to_value(&resp_false).expect("serialization failed");
         assert_eq!(json_false["relationships_truncated"], false);
 
         let resp_true = RememberResponse {
             relationships_truncated: true,
             ..resp_false
         };
-        let json_true = serde_json::to_value(&resp_true).expect("serialização falhou");
+        let json_true = serde_json::to_value(&resp_true).expect("serialization failed");
         assert_eq!(json_true["relationships_truncated"], true);
     }
 

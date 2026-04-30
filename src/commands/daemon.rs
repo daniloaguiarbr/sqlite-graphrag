@@ -4,6 +4,15 @@ use crate::output;
 use crate::paths::AppPaths;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Start the embedding daemon in the foreground (default 600s idle timeout)\n  \
+    sqlite-graphrag daemon\n\n  \
+    # Start with a longer idle timeout for batch ingestion\n  \
+    sqlite-graphrag daemon --idle-shutdown-secs 3600\n\n  \
+    # Health-check a running daemon (exit 4 if not running)\n  \
+    sqlite-graphrag daemon --ping\n\n  \
+    # Request graceful shutdown of a running daemon\n  \
+    sqlite-graphrag daemon --stop")]
 pub struct DaemonArgs {
     /// Idle timeout in seconds before the daemon auto-shuts down to release the embedding model.
     /// Default 600s; raise for long-running batch ingestion to avoid cold-start overhead.

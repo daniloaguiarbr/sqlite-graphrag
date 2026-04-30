@@ -18,9 +18,20 @@ use std::collections::{HashMap, HashSet, VecDeque};
 type Neighbour = (i64, String, String, String, f64);
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # List memories connected to a memory via the entity graph (default 2 hops)\n  \
+    sqlite-graphrag related onboarding\n\n  \
+    # Increase hop distance and filter by relation type\n  \
+    sqlite-graphrag related onboarding --max-hops 3 --relation related\n\n  \
+    # Cap result count and require minimum edge weight\n  \
+    sqlite-graphrag related onboarding --limit 5 --min-weight 0.5")]
 pub struct RelatedArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name whose neighbours to traverse; alternative to --name"
+    )]
     pub name_positional: Option<String>,
     /// Memory name as a flag. Required when the positional form is absent.
     #[arg(long)]
@@ -85,11 +96,7 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -387,7 +394,7 @@ mod tests {
     use super::*;
 
     fn setup_related_db() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
+        let conn = rusqlite::Connection::open_in_memory().expect("failed to open in-memory db");
         conn.execute_batch(
             "CREATE TABLE memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -415,7 +422,7 @@ mod tests {
                 entity_id INTEGER NOT NULL
             );",
         )
-        .expect("falha ao criar tabelas de teste");
+        .expect("failed to create test tables");
         conn
     }
 
@@ -424,7 +431,7 @@ mod tests {
             "INSERT INTO memories (name, namespace) VALUES (?1, ?2)",
             rusqlite::params![name, namespace],
         )
-        .expect("falha ao inserir memória");
+        .expect("failed to insert memory");
         conn.last_insert_rowid()
     }
 
@@ -433,7 +440,7 @@ mod tests {
             "INSERT INTO entities (name, namespace) VALUES (?1, ?2)",
             rusqlite::params![name, namespace],
         )
-        .expect("falha ao inserir entidade");
+        .expect("failed to insert entity");
         conn.last_insert_rowid()
     }
 
@@ -442,7 +449,7 @@ mod tests {
             "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
             rusqlite::params![memory_id, entity_id],
         )
-        .expect("falha ao vincular memória-entidade");
+        .expect("failed to link memory-entity");
     }
 
     fn insert_relationship(
@@ -458,28 +465,28 @@ mod tests {
              VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![namespace, source_id, target_id, relation, weight],
         )
-        .expect("falha ao inserir relacionamento");
+        .expect("failed to insert relationship");
     }
 
     #[test]
-    fn related_response_serializa_results_e_elapsed_ms() {
+    fn related_response_serializes_results_and_elapsed_ms() {
         let resp = RelatedResponse {
             results: vec![RelatedMemory {
                 memory_id: 1,
-                name: "mem-vizinha".to_string(),
+                name: "neighbor-mem".to_string(),
                 namespace: "global".to_string(),
                 memory_type: "fact".to_string(),
                 description: "desc".to_string(),
                 hop_distance: 1,
-                source_entity: Some("entidade-a".to_string()),
-                target_entity: Some("entidade-b".to_string()),
+                source_entity: Some("entity-a".to_string()),
+                target_entity: Some("entity-b".to_string()),
                 relation: Some("related_to".to_string()),
                 weight: Some(0.9),
             }],
             elapsed_ms: 7,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert!(json["results"].is_array());
         assert_eq!(json["results"].as_array().unwrap().len(), 1);
         assert_eq!(json["elapsed_ms"], 7u64);
@@ -490,11 +497,11 @@ mod tests {
     #[test]
     fn traverse_related_returns_empty_without_seed_entities() {
         let conn = setup_related_db();
-        let resultado = traverse_related(&conn, 1, &[], "global", 2, 0.0, None, 10)
-            .expect("traverse_related falhou");
+        let result = traverse_related(&conn, 1, &[], "global", 2, 0.0, None, 10)
+            .expect("traverse_related failed");
         assert!(
-            resultado.is_empty(),
-            "sem entidades seed deve retornar vazio"
+            result.is_empty(),
+            "no seed entities must yield empty results"
         );
     }
 
@@ -505,9 +512,9 @@ mod tests {
         let ent_id = insert_entity(&conn, "ent-a", "global");
         link_memory_entity(&conn, mem_id, ent_id);
 
-        let resultado = traverse_related(&conn, mem_id, &[ent_id], "global", 0, 0.0, None, 10)
-            .expect("traverse_related falhou");
-        assert!(resultado.is_empty(), "max_hops=0 deve retornar vazio");
+        let result = traverse_related(&conn, mem_id, &[ent_id], "global", 0, 0.0, None, 10)
+            .expect("traverse_related failed");
+        assert!(result.is_empty(), "max_hops=0 must return empty");
     }
 
     #[test]
@@ -515,24 +522,24 @@ mod tests {
         let conn = setup_related_db();
 
         let seed_id = insert_memory(&conn, "seed-mem", "global");
-        let vizinha_id = insert_memory(&conn, "vizinha-mem", "global");
+        let neighbor_id = insert_memory(&conn, "neighbor-mem", "global");
         let ent_a = insert_entity(&conn, "ent-a", "global");
         let ent_b = insert_entity(&conn, "ent-b", "global");
 
         link_memory_entity(&conn, seed_id, ent_a);
-        link_memory_entity(&conn, vizinha_id, ent_b);
+        link_memory_entity(&conn, neighbor_id, ent_b);
         insert_relationship(&conn, "global", ent_a, ent_b, "related_to", 1.0);
 
-        let resultado = traverse_related(&conn, seed_id, &[ent_a], "global", 2, 0.0, None, 10)
-            .expect("traverse_related falhou");
+        let result = traverse_related(&conn, seed_id, &[ent_a], "global", 2, 0.0, None, 10)
+            .expect("traverse_related failed");
 
-        assert_eq!(resultado.len(), 1, "deve encontrar 1 memória vizinha");
-        assert_eq!(resultado[0].name, "vizinha-mem");
-        assert_eq!(resultado[0].hop_distance, 1);
+        assert_eq!(result.len(), 1, "must find 1 neighboring memory");
+        assert_eq!(result[0].name, "neighbor-mem");
+        assert_eq!(result[0].hop_distance, 1);
     }
 
     #[test]
-    fn traverse_related_respeita_limite() {
+    fn traverse_related_respects_limit() {
         let conn = setup_related_db();
 
         let seed_id = insert_memory(&conn, "seed", "global");
@@ -540,18 +547,18 @@ mod tests {
         link_memory_entity(&conn, seed_id, ent_seed);
 
         for i in 0..5 {
-            let mem_id = insert_memory(&conn, &format!("vizinha-{i}"), "global");
+            let mem_id = insert_memory(&conn, &format!("neighbor-{i}"), "global");
             let ent_id = insert_entity(&conn, &format!("ent-{i}"), "global");
             link_memory_entity(&conn, mem_id, ent_id);
             insert_relationship(&conn, "global", ent_seed, ent_id, "related_to", 1.0);
         }
 
-        let resultado = traverse_related(&conn, seed_id, &[ent_seed], "global", 1, 0.0, None, 3)
-            .expect("traverse_related falhou");
+        let result = traverse_related(&conn, seed_id, &[ent_seed], "global", 1, 0.0, None, 3)
+            .expect("traverse_related failed");
 
         assert!(
-            resultado.len() <= 3,
-            "limite=3 deve restringir a no máximo 3 resultados"
+            result.len() <= 3,
+            "limit=3 must constrain to at most 3 results"
         );
     }
 
@@ -559,7 +566,7 @@ mod tests {
     fn related_memory_optional_null_fields_serialized() {
         let mem = RelatedMemory {
             memory_id: 99,
-            name: "sem-relacao".to_string(),
+            name: "no-relation".to_string(),
             namespace: "ns".to_string(),
             memory_type: "concept".to_string(),
             description: "".to_string(),
@@ -570,7 +577,7 @@ mod tests {
             weight: None,
         };
 
-        let json = serde_json::to_value(&mem).expect("serialização falhou");
+        let json = serde_json::to_value(&mem).expect("serialization failed");
         assert!(json["source_entity"].is_null());
         assert!(json["target_entity"].is_null());
         assert!(json["relation"].is_null());

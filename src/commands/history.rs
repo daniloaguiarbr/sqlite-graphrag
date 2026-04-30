@@ -10,9 +10,20 @@ use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # List all versions of a memory (positional form)\n  \
+    sqlite-graphrag history onboarding\n\n  \
+    # List versions using the named flag form\n  \
+    sqlite-graphrag history --name onboarding\n\n  \
+    # Omit body content to reduce response size\n  \
+    sqlite-graphrag history onboarding --no-body")]
 pub struct HistoryArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name whose version history to return; alternative to --name"
+    )]
     pub name_positional: Option<String>,
     /// Memory name whose version history will be returned. Includes soft-deleted memories
     /// so that `restore --version <V>` workflow remains discoverable after `forget`.
@@ -68,23 +79,19 @@ struct HistoryResponse {
 }
 
 pub fn run(args: HistoryArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     // Resolve name from positional or --name flag; both are optional, at least one is required.
     let name = args.name_positional.or(args.name).ok_or_else(|| {
         AppError::Validation("name required: pass as positional argument or via --name".to_string())
     })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
-    // v1.0.22 P0: query direta SEM filtro deleted_at — history DEVE retornar versões
-    // de memórias forgotten para que o usuário descubra a versão em `restore`.
-    // O find_by_name antigo filtrava deleted_at IS NULL e gerava dead-end no workflow forget+restore.
+    // v1.0.22 P0: direct query WITHOUT deleted_at filter — history MUST return versions
+    // of forgotten memories so the user can discover the version to use in `restore`.
+    // The old find_by_name filtered deleted_at IS NULL and was a dead-end in the forget+restore workflow.
     let row: Option<(i64, Option<i64>)> = conn
         .query_row(
             "SELECT id, deleted_at FROM memories WHERE namespace = ?1 AND name = ?2",
@@ -133,7 +140,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
         namespace,
         deleted,
         versions,
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -145,19 +152,19 @@ mod tests {
     fn epoch_zero_yields_valid_iso() {
         // epoch_to_iso uses chrono-tz with explicit offset (+00:00 for UTC)
         let iso = crate::tz::epoch_to_iso(0);
-        assert!(iso.starts_with("1970-01-01T00:00:00"), "obtido: {iso}");
-        assert!(iso.contains("00:00"), "deve conter offset, obtido: {iso}");
+        assert!(iso.starts_with("1970-01-01T00:00:00"), "got: {iso}");
+        assert!(iso.contains("00:00"), "must contain offset, got: {iso}");
     }
 
     #[test]
     fn typical_epoch_yields_iso_rfc3339() {
         let iso = crate::tz::epoch_to_iso(1_745_000_000);
-        assert!(!iso.is_empty(), "created_at_iso não deve ser vazio");
-        assert!(iso.contains('T'), "created_at_iso deve conter separador T");
-        // Com UTC o offset é +00:00; verifica formato geral sem depender do fuso global
+        assert!(!iso.is_empty(), "created_at_iso must not be empty");
+        assert!(iso.contains('T'), "created_at_iso must contain T separator");
+        // With UTC the offset is +00:00; verifies general format without relying on the global tz
         assert!(
             iso.contains('+') || iso.contains('-'),
-            "deve conter sinal de offset, obtido: {iso}"
+            "must contain offset sign, got: {iso}"
         );
     }
 
@@ -166,7 +173,7 @@ mod tests {
         let iso = crate::tz::epoch_to_iso(i64::MIN);
         assert!(
             !iso.is_empty(),
-            "epoch inválido deve retornar fallback não-vazio"
+            "invalid epoch must return non-empty fallback"
         );
     }
 }

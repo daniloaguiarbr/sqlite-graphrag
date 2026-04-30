@@ -1,7 +1,6 @@
 //! Handler for the `health` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -10,6 +9,13 @@ use std::fs;
 use std::time::Instant;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Check database health (connectivity, integrity, vector index)\n  \
+    sqlite-graphrag health\n\n  \
+    # Check health of a database at a custom path\n  \
+    sqlite-graphrag health --db /path/to/graphrag.sqlite\n\n  \
+    # Use SQLITE_GRAPHRAG_DB_PATH env var\n  \
+    SQLITE_GRAPHRAG_DB_PATH=/data/graphrag.sqlite sqlite-graphrag health")]
 pub struct HealthArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
@@ -68,7 +74,7 @@ struct HealthResponse {
     elapsed_ms: u64,
 }
 
-/// Verifica se uma tabela (incluindo virtuais) existe em sqlite_master.
+/// Checks whether a table (including virtual ones) exists in sqlite_master.
 fn table_exists(conn: &rusqlite::Connection, table_name: &str) -> bool {
     conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'shadow') AND name = ?1",
@@ -80,16 +86,12 @@ fn table_exists(conn: &rusqlite::Connection, table_name: &str) -> bool {
 }
 
 pub fn run(args: HealthArgs) -> Result<(), AppError> {
-    let inicio = Instant::now();
-    let _ = args.json; // --json é no-op pois output já é JSON por default
-    let _ = args.format; // --format é no-op; JSON sempre emitido no stdout
+    let start = Instant::now();
+    let _ = args.json; // --json is a no-op because output is already JSON by default
+    let _ = args.format; // --format is a no-op; JSON is always emitted on stdout
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -126,7 +128,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
                 ok: false,
                 detail: Some(integrity),
             }],
-            elapsed_ms: inicio.elapsed().as_millis() as u64,
+            elapsed_ms: start.elapsed().as_millis() as u64,
         })?;
         return Err(AppError::Database(rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
@@ -157,13 +159,13 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 
     let schema_ok = schema_version > 0;
 
-    // Verifica tabelas vetoriais via sqlite_master
+    // Checks vector tables via sqlite_master
     let vec_memories_ok = table_exists(&conn, "vec_memories");
     let vec_entities_ok = table_exists(&conn, "vec_entities");
     let vec_chunks_ok = table_exists(&conn, "vec_chunks");
     let fts_ok = table_exists(&conn, "fts_memories");
 
-    // Detecta entidades órfãs referenciadas por memórias mas ausentes na tabela entities.
+    // Detects orphan entities referenced by memories but absent from the entities table.
     let mut missing_entities: Vec<String> = Vec::new();
     let mut stmt = conn.prepare(
         "SELECT DISTINCT me.entity_id
@@ -186,17 +188,17 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         .map(|m| m.len() as f64 / 1024.0 / 1024.0)
         .unwrap_or(0.0);
 
-    // Tamanho do arquivo de banco em bytes
+    // Database file size in bytes
     let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
-    // Verifica se o modelo ONNX está presente no cache
+    // Checks whether the ONNX model is present in the cache
     let model_dir = paths.models.join("models--intfloat--multilingual-e5-small");
     let model_ok = model_dir.exists();
 
-    // Monta array de checks para diagnóstico detalhado
+    // Builds the checks array for detailed diagnostics
     let mut checks: Vec<HealthCheck> = Vec::new();
 
-    // Neste ponto integrity_ok é sempre true (DB corrompido retorna cedo acima).
+    // At this point integrity_ok is always true (corrupt DB returned early above).
     checks.push(HealthCheck {
         name: "integrity".to_string(),
         ok: true,
@@ -209,7 +211,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if schema_ok {
             None
         } else {
-            Some(format!("schema_version={schema_version} (esperado >0)"))
+            Some(format!("schema_version={schema_version} (expected >0)"))
         },
     });
 
@@ -219,7 +221,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_memories_ok {
             None
         } else {
-            Some("tabela vec_memories ausente em sqlite_master".to_string())
+            Some("vec_memories table missing from sqlite_master".to_string())
         },
     });
 
@@ -229,7 +231,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_entities_ok {
             None
         } else {
-            Some("tabela vec_entities ausente em sqlite_master".to_string())
+            Some("vec_entities table missing from sqlite_master".to_string())
         },
     });
 
@@ -239,7 +241,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_chunks_ok {
             None
         } else {
-            Some("tabela vec_chunks ausente em sqlite_master".to_string())
+            Some("vec_chunks table missing from sqlite_master".to_string())
         },
     });
 
@@ -249,7 +251,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if fts_ok {
             None
         } else {
-            Some("tabela fts_memories ausente em sqlite_master".to_string())
+            Some("fts_memories table missing from sqlite_master".to_string())
         },
     });
 
@@ -260,7 +262,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             None
         } else {
             Some(format!(
-                "modelo ausente em {}; execute 'sqlite-graphrag models download'",
+                "model missing at {}; run 'sqlite-graphrag models download'",
                 model_dir.display()
             ))
         },
@@ -290,7 +292,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         wal_size_mb,
         journal_mode,
         checks,
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     };
 
     output::emit_json(&response)?;
@@ -355,13 +357,13 @@ mod tests {
         assert!(json["checks"].is_array());
         assert_eq!(json["checks"].as_array().unwrap().len(), 2);
 
-        // Verifica que detail está ausente quando ok=true (skip_serializing_if)
+        // Verifies that detail is absent when ok=true (skip_serializing_if)
         let integrity_check = &json["checks"][0];
         assert_eq!(integrity_check["name"], "integrity");
         assert_eq!(integrity_check["ok"], true);
         assert!(integrity_check.get("detail").is_none());
 
-        // Verifica que detail está presente quando ok=false
+        // Verifies that detail is present when ok=false
         let model_check = &json["checks"][1];
         assert_eq!(model_check["name"], "model_onnx");
         assert_eq!(model_check["ok"], false);
@@ -383,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn health_check_com_detail_serializa_campo() {
+    fn health_check_with_detail_serializes_field() {
         let check = HealthCheck {
             name: "fts_memories".to_string(),
             ok: false,

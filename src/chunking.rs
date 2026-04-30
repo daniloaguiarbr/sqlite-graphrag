@@ -10,9 +10,9 @@ use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS, EMBEDDING_DIM};
 use text_splitter::{ChunkConfig, MarkdownSplitter};
 use tokenizers::Tokenizer;
 
-// Heurística conservadora para reduzir o risco de subestimar o número real de tokens
-// em Markdown, código e texto multilíngue. Valor anterior 4 chars/token permitia
-// chunks grandes demais para alguns documentos reais.
+// Conservative heuristic to reduce the risk of underestimating the real token count
+// in Markdown, code, and multilingual text. The previous value (4 chars/token) allowed
+// chunks that were too large for some real documents.
 const CHARS_PER_TOKEN: usize = 2;
 pub const CHUNK_SIZE_CHARS: usize = CHUNK_SIZE_TOKENS * CHARS_PER_TOKEN;
 pub const CHUNK_OVERLAP_CHARS: usize = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
@@ -284,7 +284,11 @@ mod tests {
 
     #[test]
     fn test_multibyte_body_preserves_progress_and_boundaries() {
-        let body = "ação útil ".repeat(1000);
+        // Multibyte body intentionally includes 2-byte UTF-8 sequences (Latin-1 supplement)
+        // expressed as Unicode escapes so this source file remains ASCII-only per the
+        // language policy. The original PT-BR phrase "a\u{e7}\u{e3}o \u{fa}til " is preserved
+        // since the test exercises UTF-8 char-boundary handling.
+        let body = "a\u{e7}\u{e3}o \u{fa}til ".repeat(1000);
         let chunks = split_into_chunks(&body);
         assert!(chunks.len() > 1);
         for chunk in &chunks {
@@ -315,7 +319,7 @@ mod tests {
         let config = ChunkConfig::new(size)
             .with_sizer(Characters)
             .with_overlap(0)
-            .expect("overlap deve ser menor que size");
+            .expect("overlap must be smaller than size");
         let splitter = MarkdownSplitter::new(config);
         let items: Vec<(usize, &str)> = splitter.chunk_indices(body).collect();
         if items.is_empty() {
@@ -356,7 +360,7 @@ mod tests {
         let chunks = split_hier_chars(body, 30);
         assert!(
             chunks.len() >= 2,
-            "esperado >=2 chunks, obtido {}",
+            "expected >=2 chunks, got {}",
             chunks.len()
         );
         for c in &chunks {
@@ -367,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_markdown_h2_nested_respects_boundaries() {
-        let body = "# H1\n\n## H2a\n\nParágrafo A com texto suficiente para forçar split.\n\n## H2b\n\nParágrafo B com texto suficiente para forçar split também.";
+        let body = "# H1\n\n## H2a\n\nParagraph A with enough text to force a split.\n\n## H2b\n\nParagraph B with enough text to force a split as well.";
         let chunks = split_hier_chars(body, 40);
         assert!(!chunks.is_empty());
         for c in &chunks {
@@ -380,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_markdown_paragraph_soft_boundary() {
-        let para = "Frase de texto simples para preencher o parágrafo. ";
+        let para = "Plain text sentence used to fill the paragraph. ";
         let body = format!(
             "{}\n\n{}\n\n{}",
             para.repeat(3),
@@ -390,7 +394,7 @@ mod tests {
         let chunks = split_hier_chars(&body, 80);
         assert!(
             chunks.len() >= 2,
-            "esperado >=2 chunks com body de {} chars",
+            "expected >=2 chunks with a body of {} chars",
             body.len()
         );
         for c in &chunks {
@@ -401,19 +405,19 @@ mod tests {
 
     #[test]
     fn test_markdown_60kb_valid_offsets() {
-        let bloco = "# Seção\n\nTexto de conteúdo do bloco. ".repeat(1500);
+        let block = "# Section\n\nBlock content text. ".repeat(1700);
         assert!(
-            bloco.len() > 50_000,
-            "body deve ser >50KB, tem {} bytes",
-            bloco.len()
+            block.len() > 50_000,
+            "body must be >50KB, has {} bytes",
+            block.len()
         );
-        let chunks = split_hier_chars(&bloco, 256);
+        let chunks = split_hier_chars(&block, 256);
         assert!(chunks.len() > 1);
         for c in &chunks {
-            assert!(bloco.is_char_boundary(c.start_offset));
-            assert!(bloco.is_char_boundary(c.end_offset));
+            assert!(block.is_char_boundary(c.start_offset));
+            assert!(block.is_char_boundary(c.end_offset));
             assert!(c.end_offset > c.start_offset);
-            assert!(!chunk_text(&bloco, c).is_empty());
+            assert!(!chunk_text(&block, c).is_empty());
         }
     }
 

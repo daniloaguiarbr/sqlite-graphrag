@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.32] - 2026-04-30
+
+### Fixed (Critical — Audit findings from v1.0.31)
+- **C1 (CRITICAL)**: Auto-init unified across all CRUD handlers via new `ensure_db_ready` helper in `src/storage/connection.rs`. Previously `remember` silently auto-created the DB while `recall`, `list`, etc. returned `NotFound`, breaking the implicit "if it works for one, it works for all" contract. Now every CRUD subcommand creates the database on first use with a single `tracing::info!("creating database (auto-init) at <path> schema_version=9")` log entry. Resolves the 23 inconsistent `paths.db.exists()` checks across `forget`, `related`, `optimize`, `edit`, `health`, `hybrid_search`, `cleanup_orphans`, `rename`, `recall`, `read`, `vacuum`, `graph_export` (×4), `purge`, `list`, `history`, `unlink`, `link`, `stats`, `sync_safe_copy`, `debug_schema`.
+- **C2 (CRITICAL)**: Documented the deliberate orphan-daemon detach in `src/daemon.rs:487`. The `Child` handle is now intentionally dropped with a `// SAFETY:` comment explaining lifecycle ownership via spawn lock + ready file + idle-timeout shutdown, plus a `tracing::debug!` log capturing the daemon PID. `Stdio::null()` already covered the I/O detach.
+- **C3 (CRITICAL)**: New integration test `tests/readme_examples_executable.rs` parses every `bash` fenced block from `README.md` and `README.pt-BR.md` at compile time and executes each `sqlite-graphrag` invocation against a real binary in an isolated `TempDir`. Blocks containing pipes/redirects or marked `<!-- skip-test -->` are skipped. 22 commands per README are now CI-validated, eliminating the drift uncovered in v1.0.31 (8+ broken examples: `--query` vs positional `<QUERY>`, `--top-k` vs `-k`, `--dir` vs positional `<DIR>`, etc.).
+
+### Fixed (High)
+- **A1 (HIGH)**: Translated 8 Portuguese runtime strings to English in `src/lock.rs:36`, `src/daemon.rs:113,131,154,307,419` (including the `daemon.rs:307` IPC payload that leaked PT into JSON `message` fields). Added `Message::EmptyQueryValidation` and `Message::EmptyBodyValidation` (as `validation::empty_query()` / `validation::empty_body()`) in `src/i18n.rs` so user-visible validation messages remain bilingual; internal errors are EN-only. Audit gate `rg '[áéíóúâêôãõç]' src/ -g '!i18n.rs'` now returns ZERO matches.
+- **A2 (HIGH)**: Refactored `src/commands/ingest.rs` from per-file fork-spawn (`Command::new(current_exe).args(["remember", ...]).output()`) to in-process pipeline. Loads the embedder once and reuses it across all files via `crate::daemon::embed_passage_or_local`. Measured speedup: 50 files in **21 seconds** vs ~14 minutes previously (≈40× faster, well under the 60s target). Per-file NDJSON event schema unchanged (`{file, name, status, memory_id, action}`).
+- **A3 (HIGH)**: Replaced `.expect("OnceLock populated by set() above")` in `src/embedder.rs:56` with `.ok_or_else(|| AppError::Embedding(...))?` propagating a real error variant. Eliminates the only remaining production `.expect()` outside documented invariants.
+- **A4 (HIGH)**: Added `#[command(after_long_help = "EXAMPLES: ...")]` with 2-4 realistic invocations to 21 subcommands previously missing it (`init`, `daemon`, `read`, `list`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `health`, `migrate`, `namespace-detect`, `optimize`, `stats`, `sync-safe-copy`, `vacuum`, `related`, `cleanup-orphans`, `cache`, `__debug_schema`, plus enrichment of `hybrid-search`/`ingest`).
+- **A5 (HIGH)**: Auto-migrate transparency. `ensure_db_ready` now compares `PRAGMA user_version` against `SCHEMA_USER_VERSION` and runs the remaining migrations automatically when an older DB (e.g. v1.0.27 schema 7) is opened by a newer binary. Logs `tracing::warn!(from, to, path, "auto-migrating database schema")` so operators are not surprised. Eliminates the silent failure mode where stale DBs caused indeterminate runtime errors.
+- **A6 (HIGH)**: Renamed 23 Portuguese identifiers to English across `tests/property_based.rs`, `tests/i18n_bilingual_integration.rs`, `tests/integration.rs`, `tests/vacuum_integration.rs`, `tests/exit_codes_integration.rs`, `tests/regression_v2_0_4.rs`, `tests/schema_contract_strict.rs`, `src/errors.rs`, `src/commands/health.rs`. Plus residual PT comments and assert messages in `src/storage/entities.rs`, `src/commands/remember.rs`, `src/chunking.rs`, `src/graph.rs`, `src/embedder.rs`, `src/output.rs`, `src/tz.rs`, `src/memory_guard.rs`, `src/daemon.rs`, `src/lock.rs` translated to English.
+
+### Fixed (Medium)
+- **M1 (MEDIUM)**: `recall -k` and `hybrid-search -k` now use `value_parser = parse_k_range` validating the inclusive range `1..=4096` (matches `sqlite-vec`'s knn limit) at parse time. Out-of-range values surface a clean Clap error instead of leaking the engine's `"k value in knn query too large"` message. Added unit tests in `src/parsers/mod.rs`.
+- **M2 (MEDIUM)**: `purge` UX clarified. Added alias `--max-age-days` for the existing `--retention-days`. When `purged_count == 0`, the JSON response now includes a `message` field (`"no soft-deleted memories older than {N} day(s); use --retention-days 0 to purge all soft-deleted memories regardless of age"`). Help text on `--yes` rewritten to clarify it confirms intent but does NOT override `--retention-days`.
+- **M3 (MEDIUM)**: Added `#[arg(help = "...")]` to 9 positional arguments previously bare in `--help` output: `recall <QUERY>`, `hybrid-search <QUERY>`, `ingest <DIR>`, `read <NAME>`, `forget <NAME>`, `rename <NAME>`, `edit <NAME>`, `history <NAME>`, `related <NAME>`.
+- **M4 (MEDIUM)**: Verified `daemon --stop` already exists (dispatches to `crate::daemon::try_shutdown`) and that the autostart spawn path uses `std::process::Command` with intentional orphan detach (documented under C2). `tokio::process::Command` `kill_on_drop(true)` was N/A — code path uses std spawn — so no change needed; the C2 safety comment now explains the design rationale.
+- **M5 (MEDIUM)**: Audit finding "duplicate v1.0.29 entries with date 2026-04-29" was a false positive (v1.0.29 and v1.0.30 are distinct entries that legitimately share `2026-04-29` as their release date). No CHANGELOG change required.
+
+### Fixed (Low)
+- **B_1 (LOW)**: README structure (split `README.md` + `README.pt-BR.md`) preserved; the bilingual policy is documented elsewhere. ADR not required since the split is a deliberate product decision predating the audit.
+- **B_2 (LOW)**: Added GitHub Actions CI badge (`[![CI](...)](...)`) to both `README.md` and `README.pt-BR.md`. Final badge order: crates.io → docs.rs → CI → license → Contributor Covenant.
+- **B_3 (LOW)**: Added bash example blocks for 16 subcommands previously without one in either README: `daemon`, `ingest`, `rename`, `edit`, `restore`, `migrate`, `namespace-detect`, `optimize`, `vacuum`, `link`, `unlink`, `related`, `graph` (with `stats`/`traverse`/`entities` subcommands), `cleanup-orphans`, `cache`, `history`. All 16 examples are validated by the new `tests/readme_examples_executable.rs`.
+- **B_4 (LOW)**: `remember` JSON output now includes `name_was_normalized: bool` and `original_name: Option<String>` (the latter elided via `#[serde(skip_serializing_if = "Option::is_none")]` when normalization was a no-op). Closes the UX gap where users passing `--name "Hello World"` saw only `"name": "hello-world"` with no indication that normalization had happened.
+
+### Added
+- `tests/readme_examples_executable.rs` — 442-line integration test (8 unit + 2 integration tests) validating every README bash example.
+- `parse_k_range` value parser in `src/parsers/mod.rs` with full unit-test coverage of edge cases (zero, above-limit, non-integer, negative).
+- `validation::empty_query()` and `validation::empty_body()` bilingual messages in `src/i18n.rs`.
+- `ensure_db_ready(&AppPaths)` helper in `src/storage/connection.rs` (also makes `register_vec_extension` idempotent via `OnceLock`).
+- `insert_default_schema_meta` helper extracted to ensure auto-init populates `schema_version`, `model`, `dim`, `created_at`, `sqlite-graphrag_version` consistently with explicit `init`.
+
+### Changed
+- `src/commands/ingest.rs` grew from 565 to ~959 lines as the in-process pipeline replicates `remember::run`'s validation + chunking + embedding + persistence transaction. The previous version offloaded that work to a child process per file.
+- `register_vec_extension` is now idempotent (guarded by `OnceLock`); safe to invoke from both `main.rs` and library helpers (unblocks unit tests touching CRUD handlers).
+- Optimize test `optimize_returns_not_found_when_db_missing` renamed to `optimize_auto_inits_when_db_missing` and inverted to assert success (the new auto-init contract).
+- CI-aligned `clippy::uninlined_format_args` cleanup on the new `ensure_db_ready` log line.
+
+### Notes
+- Validation pipeline summary: `cargo fmt --check` ✓, `cargo clippy -- -D warnings` ✓, `cargo test --lib` 427/427 ✓, `cargo doc --no-deps` ✓ zero warnings, `cargo audit` ✓ (2 pre-allowed advisories per `deny.toml`), `cargo deny check advisories licenses bans sources` ✓.
+- Language gate audit: `rg '[áéíóúâêôãõç]' src/ -g '!i18n.rs'` returns ZERO matches.
+- Performance baseline: 50 files ingest in 21s wall-clock (≈40× faster than v1.0.31).
+
 ## [1.0.31] - 2026-04-30
 
 ### Fixed

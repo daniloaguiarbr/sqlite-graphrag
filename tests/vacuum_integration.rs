@@ -17,7 +17,7 @@ fn init_db(tmp: &TempDir) {
 }
 
 #[test]
-fn test_vacuum_falha_sem_init() {
+fn test_vacuum_fails_without_init() {
     let tmp = TempDir::new().unwrap();
     cmd(&tmp)
         .arg("vacuum")
@@ -35,7 +35,7 @@ fn test_vacuum_sucesso_apos_init() {
 }
 
 #[test]
-fn test_vacuum_retorna_json_com_status_ok() {
+fn test_vacuum_returns_json_with_status_ok() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

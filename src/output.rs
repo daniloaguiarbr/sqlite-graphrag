@@ -99,6 +99,8 @@ pub fn emit_error_i18n(en: &str, pt: &str) {
 ///     created_at: 1_700_000_000,
 ///     created_at_iso: "2023-11-14T22:13:20Z".into(),
 ///     elapsed_ms: 42,
+///     name_was_normalized: false,
+///     original_name: None,
 /// };
 ///
 /// let json = serde_json::to_string(&resp).unwrap();
@@ -149,6 +151,16 @@ pub struct RememberResponse {
     pub created_at_iso: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
+    /// True when the user-supplied `--name` differed from the persisted slug
+    /// (i.e. kebab-case normalization changed the value). Added in v1.0.32 so
+    /// callers can detect normalization without parsing stderr WARN logs.
+    #[serde(default)]
+    pub name_was_normalized: bool,
+    /// Original user-supplied `--name` value before normalization.
+    /// Present only when `name_was_normalized == true`; omitted otherwise to
+    /// keep the common (already-kebab) payload small.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_name: Option<String>,
 }
 
 /// Individual item returned by the `recall` query.
@@ -224,12 +236,12 @@ mod tests {
         val: u32,
     }
 
-    // Tipo não-serializável para forçar erro de serialização JSON
+    // Non-serializable type to force a JSON serialization error
     struct NotSerializable;
     impl Serialize for NotSerializable {
         fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
             Err(serde::ser::Error::custom(
-                "falha intencional de serialização",
+                "intentional serialization failure",
             ))
         }
     }
@@ -289,6 +301,8 @@ mod tests {
             created_at: 1776569715,
             created_at_iso: "2026-04-19T03:34:15Z".to_string(),
             elapsed_ms: 123,
+            name_was_normalized: false,
+            original_name: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("memory_id"));

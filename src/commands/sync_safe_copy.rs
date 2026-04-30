@@ -1,13 +1,20 @@
 //! Handler for the `sync-safe-copy` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::{errors_msg, validation};
+use crate::i18n::validation;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Create a checkpointed snapshot safe for cloud sync\n  \
+    sqlite-graphrag sync-safe-copy --dest /backup/graphrag-snapshot.sqlite\n\n  \
+    # Use the --to alias\n  \
+    sqlite-graphrag sync-safe-copy --to /backup/graphrag-snapshot.sqlite\n\n  \
+    # Snapshot a custom source database\n  \
+    sqlite-graphrag sync-safe-copy --db /data/graphrag.sqlite --dest /backup/snapshot.sqlite")]
 pub struct SyncSafeCopyArgs {
     /// Snapshot destination path. Also accepts the aliases `--to` and `--output`.
     #[arg(long, alias = "to", alias = "output")]
@@ -32,15 +39,11 @@ struct SyncSafeCopyResponse {
 }
 
 pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
-    let _ = args.format; // --format é no-op; JSON sempre emitido no stdout
+    let start = std::time::Instant::now();
+    let _ = args.format; // --format is a no-op; JSON is always emitted on stdout
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     if args.dest == paths.db {
         return Err(AppError::Validation(
@@ -58,7 +61,7 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
 
     let bytes_copied = std::fs::copy(&paths.db, &args.dest)?;
 
-    // Aplica permissões 600 no snapshot em Unix para evitar vazamento em Dropbox/NFS compartilhado.
+    // Applies 0600 permissions on the snapshot on Unix to avoid leakage on Dropbox/shared NFS.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -72,7 +75,7 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
         dest_path: args.dest.display().to_string(),
         bytes_copied,
         status: "ok".to_string(),
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -83,7 +86,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sync_safe_copy_response_serializa_todos_campos() {
+    fn sync_safe_copy_response_serializes_all_fields() {
         let resp = SyncSafeCopyResponse {
             source_db_path: "/home/user/.local/share/sqlite-graphrag/db.sqlite".to_string(),
             dest_path: "/tmp/backup.sqlite".to_string(),
@@ -91,7 +94,7 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 12,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(
             json["source_db_path"],
             "/home/user/.local/share/sqlite-graphrag/db.sqlite"
@@ -104,23 +107,23 @@ mod tests {
 
     #[test]
     fn sync_safe_copy_rejects_dest_equal_to_source() {
-        let db_path = std::path::PathBuf::from("/tmp/mesmo.sqlite");
+        let db_path = std::path::PathBuf::from("/tmp/same.sqlite");
         let args = SyncSafeCopyArgs {
             dest: db_path.clone(),
             json: false,
             format: None,
-            db: Some("/tmp/mesmo.sqlite".to_string()),
+            db: Some("/tmp/same.sqlite".to_string()),
         };
-        // Simula resolução manual do caminho — valida lógica de rejeição
-        let resultado = if args.dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or("")) {
+        // Simulates manual path resolution — validates rejection logic
+        let result = if args.dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or("")) {
             Err(AppError::Validation(
                 "destination path must differ from the source database path".to_string(),
             ))
         } else {
             Ok(())
         };
-        assert!(resultado.is_err(), "deve rejeitar dest igual ao source");
-        if let Err(AppError::Validation(msg)) = resultado {
+        assert!(result.is_err(), "must reject dest equal to source");
+        if let Err(AppError::Validation(msg)) = result {
             assert!(msg.contains("destination path must differ"));
         }
     }
@@ -134,12 +137,12 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["status"], "ok");
     }
 
     #[test]
-    fn sync_safe_copy_response_bytes_copied_zero_valido() {
+    fn sync_safe_copy_response_bytes_copied_zero_valid() {
         let resp = SyncSafeCopyResponse {
             source_db_path: "/data/db.sqlite".to_string(),
             dest_path: "/backup/db.sqlite".to_string(),
@@ -147,7 +150,7 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 1,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["bytes_copied"], 0u64);
         assert_eq!(json["elapsed_ms"], 1u64);
     }

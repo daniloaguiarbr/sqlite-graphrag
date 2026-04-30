@@ -477,7 +477,7 @@ fn test_constantes_exit_codes_alinhadas() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_exit_codes_mensagens_nao_vazias_em_todos_idiomas() {
+fn test_exit_codes_messages_non_empty_in_all_languages() {
     use sqlite_graphrag::errors::AppError;
     use sqlite_graphrag::i18n::Language;
 

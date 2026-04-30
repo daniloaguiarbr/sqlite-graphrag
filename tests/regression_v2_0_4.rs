@@ -61,7 +61,7 @@ fn regression_v2_0_4_exit_13_e_15_sao_distintos() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_v2_0_4_exit_75_lock_busy_nao_73() {
+fn regression_v2_0_4_exit_75_lock_busy_not_73() {
     use sqlite_graphrag::errors::AppError;
     let err = AppError::LockBusy("outra instância segura o lock".into());
     assert_eq!(err.exit_code(), 75, "LockBusy DEVE usar exit 75 (não 73)");
@@ -104,7 +104,7 @@ fn regression_v2_0_4_docs_agents_nao_menciona_exit_73() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn regression_v2_0_4_purge_retention_days_default_eh_90() {
+fn regression_v2_0_4_purge_retention_days_default_is_90() {
     use sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
     assert_eq!(
         PURGE_RETENTION_DAYS_DEFAULT, 90,
@@ -113,7 +113,7 @@ fn regression_v2_0_4_purge_retention_days_default_eh_90() {
 }
 
 #[test]
-fn regression_v2_0_4_purge_retention_days_nao_eh_30() {
+fn regression_v2_0_4_purge_retention_days_is_not_30() {
     use sqlite_graphrag::constants::PURGE_RETENTION_DAYS_DEFAULT;
     assert_ne!(
         PURGE_RETENTION_DAYS_DEFAULT, 30,

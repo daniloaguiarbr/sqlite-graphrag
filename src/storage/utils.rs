@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn is_sqlite_busy_rejects_other_errors() {
-        let err = AppError::Validation("campo inválido".into());
+        let err = AppError::Validation("invalid field".into());
         assert!(!is_sqlite_busy(&err));
     }
 

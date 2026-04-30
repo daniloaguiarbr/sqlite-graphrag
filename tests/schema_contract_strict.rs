@@ -67,10 +67,10 @@ impl Env {
         serde_json::from_slice(&saida.stdout).expect("remember stdout não é JSON válido")
     }
 
-    fn remember_com_entidades(&self, nome: &str) -> (String, String) {
-        let ent_a = format!("Ent{}Alpha", nome.replace('-', ""));
-        let ent_b = format!("Ent{}Beta", nome.replace('-', ""));
-        let caminho_ents = self.tmp.path().join(format!("{nome}_ents.json"));
+    fn remember_with_entities(&self, name: &str) -> (String, String) {
+        let ent_a = format!("Ent{}Alpha", name.replace('-', ""));
+        let ent_b = format!("Ent{}Beta", name.replace('-', ""));
+        let caminho_ents = self.tmp.path().join(format!("{name}_ents.json"));
         let json_ents = format!(
             r#"[{{"name":"{ent_a}","entity_type":"concept"}},{{"name":"{ent_b}","entity_type":"concept"}}]"#
         );
@@ -80,7 +80,7 @@ impl Env {
             .args([
                 "remember",
                 "--name",
-                nome,
+                name,
                 "--type",
                 "project",
                 "--description",
@@ -531,7 +531,7 @@ fn schema_14_related() {
 fn schema_15_link() {
     let env = Env::new();
     env.init();
-    let (ent_a, ent_b) = env.remember_com_entidades("mem-schema-link");
+    let (ent_a, ent_b) = env.remember_with_entities("mem-schema-link");
     let saida = env
         .cmd()
         .args([
@@ -569,7 +569,7 @@ fn schema_15_link() {
 fn schema_16_unlink() {
     let env = Env::new();
     env.init();
-    let (ent_a, ent_b) = env.remember_com_entidades("mem-schema-unlink");
+    let (ent_a, ent_b) = env.remember_with_entities("mem-schema-unlink");
     // Cria o link primeiro
     env.cmd()
         .args([

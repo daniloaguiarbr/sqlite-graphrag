@@ -17,9 +17,9 @@ use sqlite_graphrag::{
 };
 
 fn main() {
-    // Limitar thread pool do ONNX Runtime a 1 thread intra-op e 1 inter-op por instância,
-    // evitando que invocações paralelas spawnem dezenas de threads cada.
-    // Deve ser definido ANTES de fastembed inicializar a sessão ONNX.
+    // Limit the ONNX Runtime thread pool to 1 intra-op and 1 inter-op thread per instance,
+    // preventing parallel invocations from spawning dozens of threads each.
+    // Must be set BEFORE fastembed initializes the ONNX session.
     if std::env::var_os("ORT_NUM_THREADS").is_none() {
         // SAFETY: called before tokio runtime starts; single-threaded context
         // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
@@ -32,8 +32,8 @@ fn main() {
         }
     }
 
-    // Limitar pool Rayon a 2 threads — o daemon tokio usa worker_threads=2 e o Rayon
-    // compartilha o mesmo processo; threads acima de 2 são desperdício para embeddings sequenciais.
+    // Limit the Rayon pool to 2 threads — the tokio daemon uses worker_threads=2 and Rayon
+    // shares the same process; more than 2 threads is waste for sequential embeddings.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
         // SAFETY: called before tokio runtime starts; single-threaded context
         // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
@@ -43,11 +43,11 @@ fn main() {
         }
     }
 
-    // Desabilita a CPU memory arena do ONNX Runtime para evitar retenção
-    // agressiva de chunks alocados em inferências de shapes variáveis.
-    // Combinada com `with_arena_allocator(false)` no execution provider, fecha
-    // a porta para o crescimento explosivo de RSS observado em corpora reais.
-    // Referências:
+    // Disables the ONNX Runtime CPU memory arena to avoid aggressive
+    // retention of chunks allocated during variable-shape inferences.
+    // Combined with `with_arena_allocator(false)` on the execution provider, this closes
+    // the door on the explosive RSS growth observed in real corpora.
+    // References:
     //   - https://onnxruntime.ai/docs/performance/tune-performance/memory.html
     //   - https://github.com/qdrant/fastembed/issues/570
     if std::env::var_os("ORT_DISABLE_CPU_MEM_ARENA").is_none() {
@@ -102,9 +102,9 @@ fn main() {
 
     register_vec_extension();
 
-    // Pre-parse --lang antes de Cli::parse() para que o idioma seja definido mesmo
-    // quando o clap encerra cedo via process::exit (--help, erros de parse, etc.).
-    // A chamada subsequente a init(cli.lang) será silenciosamente ignorada pelo OnceLock.
+    // Pre-parse --lang before Cli::parse() so the language is set even
+    // when clap exits early via process::exit (--help, parse errors, etc.).
+    // The subsequent call to init(cli.lang) will be silently ignored by the OnceLock.
     {
         let args: Vec<String> = std::env::args().collect();
         let mut lang_override: Option<sqlite_graphrag::i18n::Language> = None;
@@ -127,10 +127,10 @@ fn main() {
 
     let cli = Cli::parse();
 
-    // `--skip-memory-guard` é um escape hatch de testes. Sem esta proteção, suites que
-    // usam `TempDir` exclusivos acabam auto-subindo múltiplos daemons com o modelo ONNX
-    // carregado, inflando o RSS do host durante a execução dos testes. A força pode ser
-    // religada explicitamente por `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1`.
+    // `--skip-memory-guard` is a test escape hatch. Without this protection, suites that
+    // use exclusive `TempDir`s end up auto-spawning multiple daemons with the ONNX model
+    // loaded, inflating the host RSS during test execution. Auto-spawn can be
+    // explicitly re-enabled via `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1`.
     if cli.skip_memory_guard
         && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").is_none()
         && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_CHILD").is_none()
@@ -143,17 +143,17 @@ fn main() {
         }
     }
 
-    // Inicializar idioma global ANTES de qualquer emit_progress bilíngue.
-    // Esta chamada é no-op se o pre-parse acima já inicializou o OnceLock.
+    // Initialize global language BEFORE any bilingual emit_progress.
+    // This call is a no-op if the pre-parse above already initialized the OnceLock.
     sqlite_graphrag::i18n::init(cli.lang);
 
-    // Inicializar fuso de exibição (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
+    // Initialize display timezone (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
     if let Err(e) = sqlite_graphrag::tz::init(cli.tz) {
         sqlite_graphrag::output::emit_error(&e.localized_message());
         std::process::exit(e.exit_code());
     }
 
-    // Validar flags antes de qualquer inicialização pesada.
+    // Validate flags before any heavy initialization.
     if let Err(msg) = cli.validate_flags() {
         sqlite_graphrag::output::emit_error(&msg);
         std::process::exit(2);
@@ -178,7 +178,7 @@ fn main() {
         None
     };
 
-    // Resolver parâmetros de concorrência com fallback para as constantes canônicas.
+    // Resolve concurrency parameters with fallback to canonical constants.
     let requested_concurrency = cli.max_concurrency.unwrap_or(MAX_CONCURRENT_CLI_INSTANCES);
     let max_concurrency = if embedding_heavy {
         let cpu_count = std::thread::available_parallelism()
@@ -190,7 +190,7 @@ fn main() {
         let available_mb = measured_available_mb.unwrap_or_else(|| {
             sqlite_graphrag::output::emit_error_i18n(
                 "embedding-heavy command must measure available RAM",
-                "comando intensivo em embedding precisa medir RAM disponível",
+                &sqlite_graphrag::i18n::validation::runtime_pt::embedding_heavy_must_measure_ram(),
             );
             std::process::exit(20);
         });
@@ -206,8 +206,9 @@ fn main() {
             &format!(
                 "Heavy command detected; available memory: {available_mb} MB; safe concurrency: {safe_concurrency}"
             ),
-            &format!(
-                "Comando pesado detectado; memória disponível: {available_mb} MB; concorrência segura: {safe_concurrency}"
+            &sqlite_graphrag::i18n::validation::runtime_pt::heavy_command_detected(
+                available_mb,
+                safe_concurrency,
             ),
         );
 
@@ -216,8 +217,9 @@ fn main() {
                 &format!(
                     "Reducing requested concurrency from {requested_concurrency} to {effective_concurrency} to avoid memory oversubscription"
                 ),
-                &format!(
-                    "Reduzindo a concorrência solicitada de {requested_concurrency} para {effective_concurrency} para evitar oversubscription de memória"
+                &sqlite_graphrag::i18n::validation::runtime_pt::reducing_concurrency(
+                    requested_concurrency,
+                    effective_concurrency,
                 ),
             );
         }
@@ -228,8 +230,8 @@ fn main() {
     };
     let wait_secs = cli.wait_lock.unwrap_or(CLI_LOCK_DEFAULT_WAIT_SECS);
 
-    // Adquirir slot no semáforo de contagem. O handle é mantido vivo até o fim de main
-    // para que o flock seja liberado automaticamente ao fechar o descritor.
+    // Acquire a slot in the counting semaphore. The handle is kept alive until end of main
+    // so the flock is released automatically when the file descriptor is closed.
     let _slot_guard = if cli.command.uses_cli_slot() {
         Some(match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
             Ok(pair) => pair,
@@ -242,8 +244,8 @@ fn main() {
         None
     };
 
-    // Registrar handler para SIGINT / SIGTERM / SIGHUP (via feature "termination").
-    // O handler sinaliza SHUTDOWN e loga o evento; a limpeza do slot ocorre pelo Drop do File.
+    // Register handler for SIGINT / SIGTERM / SIGHUP (via the "termination" feature).
+    // The handler signals SHUTDOWN and logs the event; slot cleanup occurs via Drop on the File.
     if let Err(e) = ctrlc::set_handler(move || {
         SHUTDOWN.store(true, Ordering::SeqCst);
         tracing::warn!(

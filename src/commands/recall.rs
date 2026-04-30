@@ -18,13 +18,16 @@ use crate::storage::memories;
 /// isolated namespace.
 #[derive(clap::Args)]
 pub struct RecallArgs {
+    #[arg(help = "Search query string (semantic vector search via sqlite-vec)")]
     pub query: String,
     /// Maximum number of direct vector matches to return.
     ///
     /// Note: this flag controls only `direct_matches`. Graph traversal results
     /// (`graph_matches`) are unbounded by default; use `--max-graph-results` to
     /// cap them independently. The `results` field aggregates both lists.
-    #[arg(short = 'k', long, default_value = "10")]
+    /// Validated to the inclusive range `1..=4096` (the upper bound matches
+    /// `sqlite-vec`'s knn limit; out-of-range values are rejected at parse time).
+    #[arg(short = 'k', long, default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     /// Filter by memory.type. Note: distinct from graph entity_type
     /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
@@ -78,9 +81,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
     if args.query.trim().is_empty() {
-        return Err(AppError::Validation(
-            "query não pode estar vazia".to_string(),
-        ));
+        return Err(AppError::Validation(crate::i18n::validation::empty_query()));
     }
     // Resolve the list of namespaces to search:
     // - empty vec  => all namespaces (sentinel used by knn_search)
@@ -99,11 +100,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         .unwrap_or_else(|| "global".to_string());
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     output::emit_progress_i18n(
         "Computing query embedding...",
@@ -302,7 +299,7 @@ mod tests {
             elapsed_ms: 42,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["query"], "rust memory");
         assert_eq!(json["k"], 5);
         assert_eq!(json["elapsed_ms"], 42u64);
@@ -313,10 +310,10 @@ mod tests {
 
     #[test]
     fn recall_item_serializes_renamed_type() {
-        let item = make_item("mem-teste", 0.25, "direct");
-        let json = serde_json::to_value(&item).expect("serialização falhou");
+        let item = make_item("mem-test", 0.25, "direct");
+        let json = serde_json::to_value(&item).expect("serialization failed");
 
-        // O campo memory_type é renomeado para "type" no JSON
+        // The memory_type field is renamed to "type" in JSON
         assert_eq!(json["type"], "fact");
         assert_eq!(json["distance"], 0.25f32);
         assert_eq!(json["source"], "direct");
@@ -336,7 +333,7 @@ mod tests {
             elapsed_ms: 10,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["direct_matches"].as_array().unwrap().len(), 1);
         assert_eq!(json["graph_matches"].as_array().unwrap().len(), 1);
         assert_eq!(json["results"].as_array().unwrap().len(), 2);
@@ -347,7 +344,7 @@ mod tests {
     #[test]
     fn recall_response_empty_serializes_empty_arrays() {
         let resp = RecallResponse {
-            query: "nada".to_string(),
+            query: "nothing".to_string(),
             k: 3,
             direct_matches: vec![],
             graph_matches: vec![],
@@ -355,7 +352,7 @@ mod tests {
             elapsed_ms: 1,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["direct_matches"].as_array().unwrap().len(), 0);
         assert_eq!(json["results"].as_array().unwrap().len(), 0);
     }

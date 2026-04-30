@@ -1912,7 +1912,7 @@ fn test_graph_stdin_accepts_from_to_aliases_and_hyphenated_relation() {
 }
 
 #[test]
-fn test_graph_stdin_com_skip_extraction_persiste_grafo_explicito() {
+fn test_graph_stdin_with_skip_extraction_persists_explicit_graph() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -2117,7 +2117,7 @@ fn test_graph_json_flag_vence_format_mermaid() {
 }
 
 #[test]
-fn test_graph_json_flag_mantem_stdout_mesmo_com_output() {
+fn test_graph_json_flag_keeps_stdout_even_with_output() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

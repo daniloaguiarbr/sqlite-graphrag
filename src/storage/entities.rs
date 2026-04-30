@@ -550,7 +550,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------ //
-    // upsert_entity_vec — cobre DELETE+INSERT (branch novo após fix OOM)
+    // upsert_entity_vec — covers DELETE+INSERT (new branch after the OOM fix)
     // ------------------------------------------------------------------ //
 
     #[test]
@@ -560,21 +560,21 @@ mod tests {
         let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
 
-        let resultado = upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-nova");
-        assert!(resultado.is_ok(), "primeira inserção deve ter sucesso");
+        let result = upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-nova");
+        assert!(result.is_ok(), "first insertion must succeed");
 
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
             params![entity_id],
             |r| r.get(0),
         )?;
-        assert_eq!(count, 1, "deve existir exatamente uma linha após inserção");
+        assert_eq!(count, 1, "must have exactly one row after insertion");
         Ok(())
     }
 
     #[test]
     fn test_upsert_entity_vec_second_time_replaces_without_error() -> TestResult {
-        // Cobre o branch onde DELETE remove a linha existente antes do INSERT.
+        // Covers the branch where DELETE removes the existing row before INSERT.
         let (_tmp, conn) = setup_db()?;
         let e = new_entity_helper("vec-existente");
         let entity_id = upsert_entity(&conn, "global", &e)?;
@@ -582,12 +582,11 @@ mod tests {
 
         upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-existente")?;
 
-        // Segunda chamada: DELETE retorna 1 linha removida, INSERT deve ter sucesso.
-        let resultado =
-            upsert_entity_vec(&conn, entity_id, "global", "tool", &emb, "vec-existente");
+        // Second call: DELETE returns 1 removed row, INSERT must succeed.
+        let result = upsert_entity_vec(&conn, entity_id, "global", "tool", &emb, "vec-existente");
         assert!(
-            resultado.is_ok(),
-            "segunda inserção (replace) deve ter sucesso: {resultado:?}"
+            result.is_ok(),
+            "second insertion (replace) must succeed: {result:?}"
         );
 
         let count: i64 = conn.query_row(
@@ -595,10 +594,7 @@ mod tests {
             params![entity_id],
             |r| r.get(0),
         )?;
-        assert_eq!(
-            count, 1,
-            "deve existir exatamente uma linha após substituição"
-        );
+        assert_eq!(count, 1, "must have exactly one row after replacement");
         Ok(())
     }
 
@@ -615,7 +611,7 @@ mod tests {
         }
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))?;
-        assert_eq!(count, 3, "deve haver três linhas distintas em vec_entities");
+        assert_eq!(count, 3, "must have three distinct rows in vec_entities");
         Ok(())
     }
 
@@ -778,7 +774,7 @@ mod tests {
         upsert_relationship(&conn, "global", id_a, id_b, &rel)?;
 
         let encontrada = find_relationship(&conn, id_a, id_b, "depends_on")?;
-        let row = encontrada.ok_or("relação deveria existir")?;
+        let row = encontrada.ok_or("relationship should exist")?;
         assert_eq!(row.source_id, id_a);
         assert_eq!(row.target_id, id_b);
         assert!((row.weight - 0.7).abs() < 1e-9);
@@ -807,7 +803,7 @@ mod tests {
         let resultado = link_memory_entity(&conn, memory_id, entity_id);
         assert!(
             resultado.is_ok(),
-            "INSERT OR IGNORE não deve falhar em duplicata"
+            "INSERT OR IGNORE must not fail on duplicate"
         );
         Ok(())
     }
@@ -832,7 +828,7 @@ mod tests {
         let resultado = link_memory_relationship(&conn, memory_id, rel_id);
         assert!(
             resultado.is_ok(),
-            "INSERT OR IGNORE não deve falhar em duplicata"
+            "INSERT OR IGNORE must not fail on duplicate"
         );
         Ok(())
     }
@@ -889,7 +885,10 @@ mod tests {
             params![id_a],
             |r| r.get(0),
         )?;
-        assert_eq!(degree, 2, "rc-a aparece em duas relações (source+target)");
+        assert_eq!(
+            degree, 2,
+            "rc-a appears in two relationships (source+target)"
+        );
         Ok(())
     }
 
@@ -1002,7 +1001,7 @@ mod tests {
         delete_relationship_by_id(&conn, rel_id)?;
 
         let encontrada = find_relationship(&conn, id_a, id_b, "uses")?;
-        assert!(encontrada.is_none(), "relação deve ter sido removida");
+        assert!(encontrada.is_none(), "relationship must have been removed");
         Ok(())
     }
 
@@ -1028,12 +1027,12 @@ mod tests {
         create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
         let (_, criada) =
             create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
-        assert!(!criada, "segunda chamada deve retornar a relação existente");
+        assert!(!criada, "second call must return the existing relationship");
         Ok(())
     }
 
     // ------------------------------------------------------------------ //
-    // serde alias: campo "type" aceito como sinônimo de "entity_type"
+    // serde alias: field "type" accepted as a synonym for "entity_type"
     // ------------------------------------------------------------------ //
 
     #[test]
@@ -1055,12 +1054,12 @@ mod tests {
     #[test]
     fn both_fields_present_yields_duplicate_error() {
         // serde trata alias como nome alternativo do mesmo campo;
-        // ter entity_type e type no mesmo JSON é duplicata e deve falhar
+        // having both entity_type and type in the same JSON is a duplicate and must fail
         let json = r#"{"name": "X", "entity_type": "A", "type": "B"}"#;
         let resultado: Result<NewEntity, _> = serde_json::from_str(json);
         assert!(
             resultado.is_err(),
-            "ambos os campos no mesmo JSON é duplicata"
+            "both fields in the same JSON are a duplicate"
         );
     }
 }

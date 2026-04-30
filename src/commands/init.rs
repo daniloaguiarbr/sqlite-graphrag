@@ -55,7 +55,7 @@ struct InitResponse {
 }
 
 pub fn run(args: InitArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
 
@@ -104,7 +104,7 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
 
     output::emit_progress_i18n(
         "Initializing embedding model (may download on first run)...",
-        "Inicializando modelo de embedding (pode baixar na primeira execução)...",
+        crate::i18n::validation::runtime_pt::initializing_embedding_model(),
     );
 
     let test_emb = crate::daemon::embed_passage_or_local(&paths.models, "smoke test")?;
@@ -116,7 +116,7 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         dim: test_emb.len(),
         namespace,
         status: "ok".to_string(),
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -149,7 +149,7 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 100,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
         assert_eq!(json["schema_version"], "6");
         assert_eq!(json["model"], "multilingual-e5-small");
@@ -161,27 +161,27 @@ mod tests {
 
     #[test]
     fn latest_schema_version_returns_zero_for_empty_db() {
-        let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
+        let conn = rusqlite::Connection::open_in_memory().expect("failed to open in-memory db");
         conn.execute_batch("CREATE TABLE refinery_schema_history (version INTEGER NOT NULL);")
-            .expect("falha ao criar tabela");
+            .expect("failed to create table");
 
-        let versao = latest_schema_version(&conn).expect("latest_schema_version falhou");
-        assert_eq!(versao, "0", "banco vazio deve retornar schema_version '0'");
+        let version = latest_schema_version(&conn).expect("latest_schema_version failed");
+        assert_eq!(version, "0", "empty db must return schema_version '0'");
     }
 
     #[test]
     fn latest_schema_version_returns_max_version() {
-        let conn = rusqlite::Connection::open_in_memory().expect("falha ao abrir banco em memória");
+        let conn = rusqlite::Connection::open_in_memory().expect("failed to open in-memory db");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (version INTEGER NOT NULL);
              INSERT INTO refinery_schema_history VALUES (1);
              INSERT INTO refinery_schema_history VALUES (3);
              INSERT INTO refinery_schema_history VALUES (2);",
         )
-        .expect("falha ao popular tabela");
+        .expect("failed to populate table");
 
-        let versao = latest_schema_version(&conn).expect("latest_schema_version falhou");
-        assert_eq!(versao, "3", "deve retornar a maior versão presente");
+        let version = latest_schema_version(&conn).expect("latest_schema_version failed");
+        assert_eq!(version, "3", "must return the highest version present");
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(
             crate::constants::EMBEDDING_DIM,
             384,
-            "dim deve estar alinhado com EMBEDDING_DIM=384"
+            "dim must be aligned with EMBEDDING_DIM=384"
         );
     }
 
@@ -201,11 +201,11 @@ mod tests {
             schema_version: "6".to_string(),
             model: "multilingual-e5-small".to_string(),
             dim: 384,
-            namespace: "meu-projeto".to_string(),
+            namespace: "my-project".to_string(),
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
-        assert_eq!(json["namespace"], "meu-projeto");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert_eq!(json["namespace"], "my-project");
     }
 }

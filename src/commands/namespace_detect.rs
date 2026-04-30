@@ -6,6 +6,13 @@ use crate::output;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Resolve namespace using current environment and cwd\n  \
+    sqlite-graphrag namespace-detect\n\n  \
+    # Override with an explicit namespace flag\n  \
+    sqlite-graphrag namespace-detect --namespace my-project\n\n  \
+    # Resolve via SQLITE_GRAPHRAG_NAMESPACE env var\n  \
+    SQLITE_GRAPHRAG_NAMESPACE=ci-runner sqlite-graphrag namespace-detect")]
 pub struct NamespaceDetectArgs {
     #[arg(long)]
     pub namespace: Option<String>,
@@ -29,7 +36,7 @@ struct NamespaceDetectResponse {
 pub fn run(args: NamespaceDetectArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let _ = args.db;
-    let _ = args.json; // --json é no-op pois output já é JSON por default
+    let _ = args.json; // --json is a no-op because output is already JSON by default
     let resolution = namespace::detect_namespace(args.namespace.as_deref())?;
     output::emit_json(&NamespaceDetectResponse {
         namespace: resolution.namespace,

@@ -319,6 +319,20 @@ pub mod validation {
         }
     }
 
+    pub fn empty_query() -> String {
+        match current() {
+            Language::English => "query cannot be empty".to_string(),
+            Language::Portuguese => "a consulta não pode estar vazia".to_string(),
+        }
+    }
+
+    pub fn empty_body() -> String {
+        match current() {
+            Language::English => "body cannot be empty: provide --body, --body-file, or --body-stdin with content, or supply a graph via --entities-file/--graph-stdin".to_string(),
+            Language::Portuguese => "o corpo não pode estar vazio: forneça --body, --body-file ou --body-stdin com conteúdo, ou um grafo via --entities-file/--graph-stdin".to_string(),
+        }
+    }
+
     pub fn invalid_namespace_config(path: &str, err: &str) -> String {
         match current() {
             Language::English => {
@@ -364,6 +378,152 @@ pub mod validation {
                 "caminho de destino deve ser diferente do caminho do banco de dados fonte"
                     .to_string()
             }
+        }
+    }
+
+    /// Portuguese translations for `AppError` Display messages.
+    ///
+    /// Each helper mirrors a single `AppError` variant's `#[error(...)]` text in
+    /// Portuguese, keeping the language barrier confined to this module. The
+    /// English source of truth lives in `src/errors.rs` via `thiserror`.
+    pub mod app_error_pt {
+        pub fn validation(msg: &str) -> String {
+            format!("erro de validação: {msg}")
+        }
+
+        pub fn duplicate(msg: &str) -> String {
+            format!("duplicata detectada: {msg}")
+        }
+
+        pub fn conflict(msg: &str) -> String {
+            format!("conflito: {msg}")
+        }
+
+        pub fn not_found(msg: &str) -> String {
+            format!("não encontrado: {msg}")
+        }
+
+        pub fn namespace_error(msg: &str) -> String {
+            format!("namespace não resolvido: {msg}")
+        }
+
+        pub fn limit_exceeded(msg: &str) -> String {
+            format!("limite excedido: {msg}")
+        }
+
+        pub fn database(err: &str) -> String {
+            format!("erro de banco de dados: {err}")
+        }
+
+        pub fn embedding(msg: &str) -> String {
+            format!("erro de embedding: {msg}")
+        }
+
+        pub fn vec_extension(msg: &str) -> String {
+            format!("extensão sqlite-vec falhou: {msg}")
+        }
+
+        pub fn db_busy(msg: &str) -> String {
+            format!("banco ocupado: {msg}")
+        }
+
+        pub fn batch_partial_failure(total: usize, failed: usize) -> String {
+            format!("falha parcial em batch: {failed} de {total} itens falharam")
+        }
+
+        pub fn io(err: &str) -> String {
+            format!("erro de I/O: {err}")
+        }
+
+        pub fn internal(err: &str) -> String {
+            format!("erro interno: {err}")
+        }
+
+        pub fn json(err: &str) -> String {
+            format!("erro de JSON: {err}")
+        }
+
+        pub fn lock_busy(msg: &str) -> String {
+            format!("lock ocupado: {msg}")
+        }
+
+        pub fn all_slots_full(max: usize, waited_secs: u64) -> String {
+            format!(
+                "todos os {max} slots de concorrência ocupados após aguardar {waited_secs}s \
+                 (exit 75); use --max-concurrency ou aguarde outras invocações terminarem"
+            )
+        }
+
+        pub fn low_memory(available_mb: u64, required_mb: u64) -> String {
+            format!(
+                "memória disponível ({available_mb}MB) abaixo do mínimo requerido ({required_mb}MB) \
+                 para carregar o modelo; aborte outras cargas ou use --skip-memory-guard (exit 77)"
+            )
+        }
+    }
+
+    /// Portuguese translations for runtime startup messages emitted from `main.rs`.
+    ///
+    /// These mirror the English text supplied alongside each call to
+    /// `output::emit_progress_i18n` / `output::emit_error_i18n`, keeping the PT
+    /// strings confined to this module per the language policy.
+    pub mod runtime_pt {
+        pub fn embedding_heavy_must_measure_ram() -> String {
+            "comando intensivo em embedding precisa medir RAM disponível".to_string()
+        }
+
+        pub fn heavy_command_detected(available_mb: u64, safe_concurrency: usize) -> String {
+            format!(
+                "Comando pesado detectado; memória disponível: {available_mb} MB; \
+                 concorrência segura: {safe_concurrency}"
+            )
+        }
+
+        pub fn reducing_concurrency(
+            requested_concurrency: usize,
+            effective_concurrency: usize,
+        ) -> String {
+            format!(
+                "Reduzindo a concorrência solicitada de {requested_concurrency} para \
+                 {effective_concurrency} para evitar oversubscription de memória"
+            )
+        }
+
+        pub fn downloading_ner_model() -> &'static str {
+            "Baixando modelo NER (primeira execução, ~676 MB)..."
+        }
+
+        pub fn initializing_embedding_model() -> &'static str {
+            "Inicializando modelo de embedding (pode baixar na primeira execução)..."
+        }
+
+        pub fn embedding_chunks_serially(count: usize) -> String {
+            format!("Embedando {count} chunks serialmente para manter memória limitada...")
+        }
+
+        pub fn remember_step_input_validated(available_mb: u64) -> String {
+            format!("Etapa remember: entrada validada; memória disponível {available_mb} MB")
+        }
+
+        pub fn remember_step_chunking_completed(
+            total_passage_tokens: usize,
+            model_max_length: usize,
+            chunks_count: usize,
+            rss_mb: u64,
+        ) -> String {
+            format!(
+                "Etapa remember: tokenizer contou {total_passage_tokens} tokens de passagem \
+                 (máximo do modelo {model_max_length}); chunking gerou {chunks_count} chunks; \
+                 RSS do processo {rss_mb} MB"
+            )
+        }
+
+        pub fn remember_step_embeddings_completed(rss_mb: u64) -> String {
+            format!("Etapa remember: embeddings dos chunks concluídos; RSS do processo {rss_mb} MB")
+        }
+
+        pub fn restore_recomputing_embedding() -> &'static str {
+            "Recalculando embedding da memória restaurada..."
         }
     }
 }

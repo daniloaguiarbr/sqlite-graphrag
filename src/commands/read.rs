@@ -9,9 +9,20 @@ use crate::storage::memories;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Read a memory by name (positional)\n  \
+    sqlite-graphrag read onboarding\n\n  \
+    # Read using the named flag form\n  \
+    sqlite-graphrag read --name onboarding\n\n  \
+    # Read from a specific namespace\n  \
+    sqlite-graphrag read onboarding --namespace my-project")]
 pub struct ReadArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name (kebab-case slug); alternative to --name"
+    )]
     pub name_positional: Option<String>,
     /// Memory name to read. Returns NotFound (exit 4) if missing or soft-deleted.
     #[arg(long)]
@@ -59,23 +70,19 @@ fn epoch_to_iso(epoch: i64) -> String {
 }
 
 pub fn run(args: ReadArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     // Resolve name from positional or --name flag; both are optional, at least one is required.
     let name = args.name_positional.or(args.name).ok_or_else(|| {
         AppError::Validation("name required: pass as positional argument or via --name".to_string())
     })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(
-            crate::i18n::errors_msg::database_not_found(&paths.db.display().to_string()),
-        ));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
     match memories::read_by_name(&conn, &namespace, &name)? {
         Some(row) => {
-            // Resolver versão atual via tabela memory_versions (maior version para este memory_id).
+            // Resolve current version via memory_versions table (highest version for this memory_id).
             let version: i64 = conn
                 .query_row(
                     "SELECT COALESCE(MAX(version), 1) FROM memory_versions WHERE memory_id=?1",
@@ -103,7 +110,7 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
                 created_at_iso: epoch_to_iso(row.created_at),
                 updated_at: row.updated_at,
                 updated_at_iso: epoch_to_iso(row.updated_at),
-                elapsed_ms: inicio.elapsed().as_millis() as u64,
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
             output::emit_json(&response)?;
         }
@@ -123,28 +130,28 @@ mod tests {
 
     #[test]
     fn epoch_to_iso_converts_zero_to_unix_epoch() {
-        let resultado = epoch_to_iso(0);
+        let result = epoch_to_iso(0);
         assert!(
-            resultado.starts_with("1970-01-01T00:00:00"),
-            "epoch 0 deve mapear para 1970-01-01T00:00:00, obtido: {resultado}"
+            result.starts_with("1970-01-01T00:00:00"),
+            "epoch 0 must map to 1970-01-01T00:00:00, got: {result}"
         );
     }
 
     #[test]
     fn epoch_to_iso_converts_known_timestamp() {
-        let resultado = epoch_to_iso(1_705_320_000);
+        let result = epoch_to_iso(1_705_320_000);
         assert!(
-            resultado.starts_with("2024-01-15"),
-            "timestamp 1705320000 deve mapear para 2024-01-15, obtido: {resultado}"
+            result.starts_with("2024-01-15"),
+            "timestamp 1705320000 must map to 2024-01-15, got: {result}"
         );
     }
 
     #[test]
     fn epoch_to_iso_returns_fallback_for_invalid_negative_epoch() {
-        let resultado = epoch_to_iso(i64::MIN);
+        let result = epoch_to_iso(i64::MIN);
         assert!(
-            !resultado.is_empty(),
-            "deve retornar string não vazia mesmo para epoch inválido"
+            !result.is_empty(),
+            "must return a non-empty string even for invalid epoch"
         );
     }
 
@@ -154,11 +161,11 @@ mod tests {
             id: 42,
             memory_id: 42,
             namespace: "global".to_string(),
-            name: "minha-mem".to_string(),
+            name: "my-mem".to_string(),
             type_alias: "fact".to_string(),
             memory_type: "fact".to_string(),
             description: "desc".to_string(),
-            body: "corpo".to_string(),
+            body: "body".to_string(),
             body_hash: "abc123".to_string(),
             session_id: None,
             source: "agent".to_string(),
@@ -171,7 +178,7 @@ mod tests {
             elapsed_ms: 5,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["id"], 42);
         assert_eq!(json["memory_id"], 42);
         assert_eq!(json["type"], "fact");
@@ -179,12 +186,12 @@ mod tests {
         assert_eq!(json["elapsed_ms"], 5u64);
         assert!(
             json["session_id"].is_null(),
-            "session_id None deve serializar como null"
+            "session_id None must serialize as null"
         );
-        // metadata deve serializar como objeto JSON, não como string escapada
+        // metadata must serialize as a JSON object, not as an escaped string
         assert!(
             json["metadata"].is_object(),
-            "metadata deve ser um objeto JSON"
+            "metadata must be a JSON object"
         );
     }
 
@@ -211,7 +218,7 @@ mod tests {
             elapsed_ms: 0,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["session_id"], "sess-123");
     }
 
@@ -238,7 +245,7 @@ mod tests {
             elapsed_ms: 123,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["elapsed_ms"], 123u64);
         assert!(json["created_at_iso"].is_string());
         assert!(json["updated_at_iso"].is_string());
@@ -246,7 +253,7 @@ mod tests {
 
     #[test]
     fn read_response_metadata_object_not_escaped_string() {
-        // P2-A: metadata deve serializar como objeto JSON, não como string escapada.
+        // P2-A: metadata must serialize as a JSON object, not as an escaped string.
         let resp = ReadResponse {
             id: 3,
             memory_id: 3,
@@ -259,7 +266,7 @@ mod tests {
             body_hash: "h".to_string(),
             session_id: None,
             source: "agent".to_string(),
-            metadata: serde_json::json!({"chave": "valor", "numero": 42}),
+            metadata: serde_json::json!({"key": "value", "number": 42}),
             version: 1,
             created_at: 0,
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
@@ -268,17 +275,17 @@ mod tests {
             elapsed_ms: 1,
         };
 
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         // Must be object, not a JSON string containing escaped JSON.
         assert!(json["metadata"].is_object());
-        assert_eq!(json["metadata"]["chave"], "valor");
-        assert_eq!(json["metadata"]["numero"], 42);
+        assert_eq!(json["metadata"]["key"], "value");
+        assert_eq!(json["metadata"]["number"], 42);
     }
 
     #[test]
     fn read_response_metadata_fallback_to_null_for_invalid_json() {
-        // P2-A: fallback quando metadata é string inválida.
-        let raw = "json-invalido{{{";
+        // P2-A: fallback when metadata is an invalid string.
+        let raw = "invalid-json{{{";
         let parsed =
             serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::Value::Null);
         assert!(parsed.is_null());

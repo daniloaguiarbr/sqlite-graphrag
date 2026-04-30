@@ -172,7 +172,7 @@ fn localized_message_pt_cada_variante_contem_termo_portugues() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lang_pt_remember_nome_invalido_stderr_portugues() {
+fn lang_pt_remember_invalid_name_stderr_portuguese() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -388,7 +388,7 @@ fn flag_lang_pt_overrides_env_lang_en() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn default_sem_lang_e_sem_env_retorna_ingles() {
+fn default_without_lang_and_without_env_returns_english() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -404,7 +404,7 @@ fn default_sem_lang_e_sem_env_retorna_ingles() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn locale_ptbr_sem_flag_sem_env_sqlite_graphrag_aplica_portugues() {
+fn locale_ptbr_without_flag_without_env_applies_portuguese() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

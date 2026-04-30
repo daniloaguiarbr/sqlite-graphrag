@@ -829,13 +829,13 @@ mod tests {
             find_by_name(&conn, "global", "mem-opt")?.ok_or("mem-opt deveria existir")?;
 
         let mut m2 = new_memory("mem-opt");
-        m2.body = "corpo otimista".to_string();
-        m2.body_hash = "hash-otimista".to_string();
+        m2.body = "optimistic body".to_string();
+        m2.body_hash = "hash-optimistic".to_string();
         let ok = update(&conn, id, &m2, Some(updated_at))?;
         assert!(ok);
 
-        let row = read_full(&conn, id)?.ok_or("mem-opt deveria existir após update")?;
-        assert_eq!(row.body, "corpo otimista");
+        let row = read_full(&conn, id)?.ok_or("mem-opt should exist after update")?;
+        assert_eq!(row.body, "optimistic body");
         Ok(())
     }
 
@@ -1167,8 +1167,8 @@ mod tests {
             params![id],
         )?;
 
-        let (_, _, v1) = find_by_name(&conn, "global", "mem-ver")?
-            .ok_or("mem-ver deveria existir após insert")?;
+        let (_, _, v1) =
+            find_by_name(&conn, "global", "mem-ver")?.ok_or("mem-ver should exist after insert")?;
         assert_eq!(v1, 1);
         Ok(())
     }

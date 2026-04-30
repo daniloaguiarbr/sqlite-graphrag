@@ -10,9 +10,22 @@ use serde::Serialize;
 use std::io::Read as _;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Edit body inline\n  \
+    sqlite-graphrag edit onboarding --body \"updated content\"\n\n  \
+    # Edit body from a file\n  \
+    sqlite-graphrag edit onboarding --body-file ./updated.md\n\n  \
+    # Edit body from stdin (pipe)\n  \
+    cat updated.md | sqlite-graphrag edit onboarding --body-stdin\n\n  \
+    # Update only the description\n  \
+    sqlite-graphrag edit onboarding --description \"new short description\"")]
 pub struct EditArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
-    #[arg(value_name = "NAME", conflicts_with = "name")]
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name to edit; alternative to --name"
+    )]
     pub name_positional: Option<String>,
     /// Memory name to edit. Soft-deleted memories are not editable; use `restore` first.
     #[arg(long)]
@@ -66,11 +79,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
     let mut conn = open_rw(&paths.db)?;
 
     let (memory_id, current_updated_at, _current_version) =
@@ -179,24 +188,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn edit_response_serializa_todos_campos() {
+    fn edit_response_serializes_all_fields() {
         let resp = EditResponse {
             memory_id: 42,
-            name: "minha-memoria".to_string(),
+            name: "my-memory".to_string(),
             action: "updated".to_string(),
             version: 3,
             elapsed_ms: 7,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memory_id"], 42i64);
-        assert_eq!(json["name"], "minha-memoria");
+        assert_eq!(json["name"], "my-memory");
         assert_eq!(json["action"], "updated");
         assert_eq!(json["version"], 3i64);
         assert!(json["elapsed_ms"].is_number());
     }
 
     #[test]
-    fn edit_response_action_contem_updated() {
+    fn edit_response_action_contains_updated() {
         let resp = EditResponse {
             memory_id: 1,
             name: "n".to_string(),
@@ -206,27 +215,27 @@ mod tests {
         };
         assert_eq!(
             resp.action, "updated",
-            "action deve ser 'updated' para edições bem-sucedidas"
+            "action must be 'updated' for successful edits"
         );
     }
 
     #[test]
     fn edit_body_exceeds_limit_returns_error() {
-        let limite = crate::constants::MAX_MEMORY_BODY_LEN;
-        let corpo_grande: String = "a".repeat(limite + 1);
+        let limit = crate::constants::MAX_MEMORY_BODY_LEN;
+        let large_body: String = "a".repeat(limit + 1);
         assert!(
-            corpo_grande.len() > limite,
-            "corpo acima do limite deve ter tamanho > MAX_MEMORY_BODY_LEN"
+            large_body.len() > limit,
+            "body above limit must have length > MAX_MEMORY_BODY_LEN"
         );
     }
 
     #[test]
     fn edit_description_exceeds_limit_returns_error() {
-        let limite = crate::constants::MAX_MEMORY_DESCRIPTION_LEN;
-        let desc_grande: String = "d".repeat(limite + 1);
+        let limit = crate::constants::MAX_MEMORY_DESCRIPTION_LEN;
+        let large_desc: String = "d".repeat(limit + 1);
         assert!(
-            desc_grande.len() > limite,
-            "descrição acima do limite deve ter tamanho > MAX_MEMORY_DESCRIPTION_LEN"
+            large_desc.len() > limit,
+            "description above limit must have length > MAX_MEMORY_DESCRIPTION_LEN"
         );
     }
 }

@@ -92,21 +92,18 @@ mod tests {
 
     #[test]
     fn check_available_memory_with_zero_always_passes() {
-        let resultado = check_available_memory(0);
-        assert!(
-            resultado.is_ok(),
-            "min_mb=0 deve sempre passar, got: {resultado:?}"
-        );
-        let mb = resultado.unwrap();
-        assert!(mb > 0, "sistema deve reportar memória positiva");
+        let result = check_available_memory(0);
+        assert!(result.is_ok(), "min_mb=0 must always pass, got: {result:?}");
+        let mb = result.unwrap();
+        assert!(mb > 0, "system must report positive memory");
     }
 
     #[test]
     fn check_available_memory_with_huge_value_fails() {
-        let resultado = check_available_memory(u64::MAX);
+        let result = check_available_memory(u64::MAX);
         assert!(
-            matches!(resultado, Err(AppError::LowMemory { .. })),
-            "u64::MAX MiB deve falhar com LowMemory, got: {resultado:?}"
+            matches!(result, Err(AppError::LowMemory { .. })),
+            "u64::MAX MiB must fail with LowMemory, got: {result:?}"
         );
     }
 

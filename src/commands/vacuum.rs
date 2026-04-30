@@ -1,7 +1,6 @@
 //! Handler for the `vacuum` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::output::JsonOutputFormat;
 use crate::paths::AppPaths;
@@ -9,6 +8,13 @@ use crate::storage::connection::open_rw;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Run VACUUM after WAL checkpoint (default)\n  \
+    sqlite-graphrag vacuum\n\n  \
+    # Vacuum a database at a custom path\n  \
+    sqlite-graphrag vacuum --db /path/to/graphrag.sqlite\n\n  \
+    # Vacuum via SQLITE_GRAPHRAG_DB_PATH env var\n  \
+    SQLITE_GRAPHRAG_DB_PATH=/data/graphrag.sqlite sqlite-graphrag vacuum")]
 pub struct VacuumArgs {
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
@@ -33,15 +39,11 @@ struct VacuumResponse {
 }
 
 pub fn run(args: VacuumArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     let _ = args.format;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let size_before_bytes = std::fs::metadata(&paths.db)
         .map(|meta| meta.len())
@@ -64,7 +66,7 @@ pub fn run(args: VacuumArgs) -> Result<(), AppError> {
         size_before_bytes,
         size_after_bytes,
         status: "ok".to_string(),
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())
@@ -75,7 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vacuum_response_serializa_todos_campos() {
+    fn vacuum_response_serializes_all_fields() {
         let resp = VacuumResponse {
             db_path: "/home/user/.local/share/sqlite-graphrag/db.sqlite".to_string(),
             size_before_bytes: 32768,
@@ -83,7 +85,7 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 55,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(
             json["db_path"],
             "/home/user/.local/share/sqlite-graphrag/db.sqlite"
@@ -103,12 +105,12 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 100,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         let before = json["size_before_bytes"].as_u64().unwrap();
         let after = json["size_after_bytes"].as_u64().unwrap();
         assert!(
             after <= before,
-            "size_after_bytes deve ser <= size_before_bytes após VACUUM"
+            "size_after_bytes must be <= size_before_bytes after VACUUM"
         );
     }
 
@@ -121,7 +123,7 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["status"], "ok");
     }
 
@@ -134,14 +136,14 @@ mod tests {
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
-        let json = serde_json::to_value(&resp).expect("serialização falhou");
+        let json = serde_json::to_value(&resp).expect("serialization failed");
         assert!(
             json.get("elapsed_ms").is_some(),
-            "campo elapsed_ms deve estar presente"
+            "elapsed_ms field must be present"
         );
         assert!(
             json["elapsed_ms"].as_u64().is_some(),
-            "elapsed_ms deve ser inteiro não negativo"
+            "elapsed_ms must be a non-negative integer"
         );
     }
 }

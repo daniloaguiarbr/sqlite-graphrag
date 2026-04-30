@@ -13,6 +13,13 @@ use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Restore the latest non-`restore` version of a memory\n  \
+    sqlite-graphrag restore --name onboarding\n\n  \
+    # Restore a specific version\n  \
+    sqlite-graphrag restore --name onboarding --version 3\n\n  \
+    # Restore within a specific namespace\n  \
+    sqlite-graphrag restore --name onboarding --namespace my-project")]
 pub struct RestoreArgs {
     /// Memory name to restore (must exist, including soft-deleted/forgotten).
     #[arg(long)]
@@ -53,13 +60,13 @@ struct RestoreResponse {
 }
 
 pub fn run(args: RestoreArgs) -> Result<(), AppError> {
-    let inicio = std::time::Instant::now();
+    let start = std::time::Instant::now();
     let _ = args.format;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
 
-    // PRD linha 1118: buscar SEM filtro deleted_at — restore deve funcionar em memórias soft-deletadas
+    // PRD line 1118: query WITHOUT a deleted_at filter — restore must work on soft-deleted memories
     let result: Option<(i64, i64)> = conn
         .query_row(
             "SELECT id, updated_at FROM memories WHERE namespace = ?1 AND name = ?2",
@@ -79,9 +86,9 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         }
     }
 
-    // v1.0.22 P0: resolve `--version` opcional. Quando ausente, usa a maior versão
-    // cujo `change_reason` não seja 'restore' (recupera o estado real, não meta-restore).
-    // Permite o workflow forget+restore funcionar sem ler memory_versions manualmente.
+    // v1.0.22 P0: resolve optional `--version`. When absent, uses the highest version
+    // whose `change_reason` is not 'restore' (recovers the real state, not meta-restore).
+    // Lets the forget+restore workflow function without manually reading memory_versions.
     let target_version: i64 = match args.version {
         Some(v) => v,
         None => {
@@ -122,19 +129,19 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
 
-    // v1.0.21 P1-D: re-embed body restaurado para manter `vec_memories` sincronizado
-    // com `memories`. Sem isso, queries semânticas usavam o vetor da versão pós-forget,
-    // causando recall inconsistente (vec_memories=2 vs memories=3 após forget+restore).
+    // v1.0.21 P1-D: re-embed restored body to keep `vec_memories` synchronized
+    // with `memories`. Without this, semantic queries used the post-forget version
+    // vector, causing inconsistent recall (vec_memories=2 vs memories=3 after forget+restore).
     output::emit_progress_i18n(
         "Re-computing embedding for restored memory...",
-        "Recalculando embedding da memória restaurada...",
+        crate::i18n::validation::runtime_pt::restore_recomputing_embedding(),
     );
     let embedding = crate::daemon::embed_passage_or_local(&paths.models, &old_body)?;
     let snippet: String = old_body.chars().take(300).collect();
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-    // deleted_at = NULL reativa memórias soft-deletadas; sem filtro deleted_at no WHERE
+    // deleted_at = NULL reactivates soft-deleted memories; no deleted_at filter in the WHERE
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
             "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6, deleted_at=NULL
@@ -195,7 +202,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         name: old_name,
         version: next_v,
         restored_from: target_version,
-        elapsed_ms: inicio.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
     Ok(())

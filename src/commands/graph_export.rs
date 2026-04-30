@@ -2,7 +2,6 @@
 
 use crate::cli::GraphExportFormat;
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -204,11 +203,7 @@ fn run_entities_snapshot(
     let inicio = Instant::now();
     let paths = AppPaths::resolve(db)?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -278,11 +273,7 @@ fn run_traverse(args: GraphTraverseArgs) -> Result<(), AppError> {
     let _ = args.format;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -349,11 +340,7 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
     let inicio = Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
     let ns = args.namespace.as_deref();
@@ -430,11 +417,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
     let inicio = Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if !paths.db.exists() {
-        return Err(AppError::NotFound(errors_msg::database_not_found(
-            &paths.db.display().to_string(),
-        )));
-    }
+    crate::storage::connection::ensure_db_ready(&paths)?;
 
     let conn = open_ro(&paths.db)?;
 
@@ -600,7 +583,7 @@ mod tests {
     fn make_node(kind: &str) -> NodeOut {
         NodeOut {
             id: 1,
-            name: "entidade-teste".to_string(),
+            name: "test-entity".to_string(),
             namespace: "default".to_string(),
             kind: kind.to_string(),
             r#type: kind.to_string(),
@@ -610,7 +593,7 @@ mod tests {
     #[test]
     fn node_out_type_duplicates_kind() {
         let node = make_node("agent");
-        let json = serde_json::to_value(&node).expect("serialização deve funcionar");
+        let json = serde_json::to_value(&node).expect("serialization must work");
         assert_eq!(json["kind"], json["type"]);
         assert_eq!(json["kind"], "agent");
         assert_eq!(json["type"], "agent");
@@ -619,7 +602,7 @@ mod tests {
     #[test]
     fn node_out_serializes_all_fields() {
         let node = make_node("document");
-        let json = serde_json::to_value(&node).expect("serialização deve funcionar");
+        let json = serde_json::to_value(&node).expect("serialization must work");
         assert!(json.get("id").is_some());
         assert!(json.get("name").is_some());
         assert!(json.get("namespace").is_some());
@@ -635,11 +618,11 @@ mod tests {
             edges: vec![],
             elapsed_ms: 0,
         };
-        let json_str = render_json(&snapshot).expect("renderização deve funcionar");
-        let json: serde_json::Value = serde_json::from_str(&json_str).expect("json válido");
-        let primeiro_node = &json["nodes"][0];
-        assert_eq!(primeiro_node["kind"], primeiro_node["type"]);
-        assert_eq!(primeiro_node["type"], "concept");
+        let json_str = render_json(&snapshot).expect("rendering must work");
+        let json: serde_json::Value = serde_json::from_str(&json_str).expect("valid json");
+        let first_node = &json["nodes"][0];
+        assert_eq!(first_node["kind"], first_node["type"]);
+        assert_eq!(first_node["type"], "concept");
     }
 
     #[test]
