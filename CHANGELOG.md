@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.34] - 2026-04-30
+
+### Added
+- **JS7 (LOW)**: `vacuum --json` response now includes `reclaimed_bytes: u64` derived field, computed as `size_before_bytes.saturating_sub(size_after_bytes)`. Callers no longer need to compute the delta themselves. Schema in `src/commands/vacuum.rs:32-41`. Existing fields `size_before_bytes` and `size_after_bytes` preserved unchanged.
+
+### Documentation
+- **PRD-sync (LOW)**: Updated `docs_rules/prd.md` (excluded from published crate via `Cargo.toml exclude`) to reflect schema reality after V008 (v1.0.25) and V009 (v1.0.30) migrations:
+  - MemoryType enum: 7 → 9 (added `document`, `note` per V009 CHECK constraint and `MemoryType` enum in `src/cli.rs`).
+  - EntityType enum: 10 → 13 (added `organization`, `location`, `date` per V008 CHECK constraint and BERT NER types).
+
+### Notes
+- Audit dimension `unwrap`/`expect` reaffirmed clean by `audit-team-v1033/diagnostician`: ZERO production unwraps; 12 production expects all carry English-language documented invariants (regex literal compilation, BERT NER no-NaN logits, OnceLock just-set get, const compile-time invariants) — all fall under CLAUDE.md's "casos impossíveis" exception.
+- Unsafe blocks audit reaffirmed clean: all ~14 `unsafe { }` blocks across `main.rs` (4×), `embedder.rs` (1×), `storage/connection.rs` (1×), `commands/optimize.rs` (2×), and `paths.rs` (6× tests) carry SAFETY comments. The earlier finding flagging missing SAFETY comments was a false positive (the comments precede the `unsafe` keyword, outside `-B3` grep context).
+- Bumped patch (1.0.33 → 1.0.34) because the new `reclaimed_bytes` field is purely additive (`#[derive(Serialize)]` adds the key) and PRD changes are doc-only (file is in `Cargo.toml exclude`). No API removed; no behavior changed.
+
 ## [1.0.33] - 2026-04-30
 
 ### Fixed (Linguistic Policy)

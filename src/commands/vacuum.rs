@@ -33,6 +33,9 @@ struct VacuumResponse {
     db_path: String,
     size_before_bytes: u64,
     size_after_bytes: u64,
+    /// Bytes reclaimed by VACUUM (size_before_bytes - size_after_bytes), saturating to zero.
+    /// Derived field added in v1.0.34 so callers do not have to compute the delta themselves.
+    reclaimed_bytes: u64,
     status: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
@@ -65,6 +68,7 @@ pub fn run(args: VacuumArgs) -> Result<(), AppError> {
         db_path: paths.db.display().to_string(),
         size_before_bytes,
         size_after_bytes,
+        reclaimed_bytes: size_before_bytes.saturating_sub(size_after_bytes),
         status: "ok".to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
@@ -82,6 +86,7 @@ mod tests {
             db_path: "/home/user/.local/share/sqlite-graphrag/db.sqlite".to_string(),
             size_before_bytes: 32768,
             size_after_bytes: 16384,
+            reclaimed_bytes: 16384,
             status: "ok".to_string(),
             elapsed_ms: 55,
         };
@@ -92,6 +97,7 @@ mod tests {
         );
         assert_eq!(json["size_before_bytes"], 32768u64);
         assert_eq!(json["size_after_bytes"], 16384u64);
+        assert_eq!(json["reclaimed_bytes"], 16384u64);
         assert_eq!(json["status"], "ok");
         assert_eq!(json["elapsed_ms"], 55u64);
     }
@@ -102,15 +108,22 @@ mod tests {
             db_path: "/data/db.sqlite".to_string(),
             size_before_bytes: 65536,
             size_after_bytes: 32768,
+            reclaimed_bytes: 32768,
             status: "ok".to_string(),
             elapsed_ms: 100,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         let before = json["size_before_bytes"].as_u64().unwrap();
         let after = json["size_after_bytes"].as_u64().unwrap();
+        let reclaimed = json["reclaimed_bytes"].as_u64().unwrap();
         assert!(
             after <= before,
             "size_after_bytes must be <= size_before_bytes after VACUUM"
+        );
+        assert_eq!(
+            reclaimed,
+            before - after,
+            "reclaimed_bytes must equal size_before_bytes - size_after_bytes"
         );
     }
 
@@ -120,6 +133,7 @@ mod tests {
             db_path: "/data/db.sqlite".to_string(),
             size_before_bytes: 0,
             size_after_bytes: 0,
+            reclaimed_bytes: 0,
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
@@ -133,6 +147,7 @@ mod tests {
             db_path: "/data/db.sqlite".to_string(),
             size_before_bytes: 1024,
             size_after_bytes: 1024,
+            reclaimed_bytes: 0,
             status: "ok".to_string(),
             elapsed_ms: 0,
         };
