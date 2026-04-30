@@ -32,7 +32,7 @@ pub struct HybridSearchArgs {
     #[arg(long, default_value = "1.0")]
     pub weight_fts: f32,
     /// Filter by memory.type. Note: distinct from graph entity_type
-    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
+    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date)
     /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
@@ -236,24 +236,24 @@ mod tests {
     fn hybrid_search_response_empty_serializes_correct_fields() {
         let resp = empty_response(10, 60, 1.0, 1.0);
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"results\""), "deve conter campo results");
-        assert!(json.contains("\"query\""), "deve conter campo query");
-        assert!(json.contains("\"k\""), "deve conter campo k");
+        assert!(json.contains("\"results\""), "must contain results field");
+        assert!(json.contains("\"query\""), "must contain query field");
+        assert!(json.contains("\"k\""), "must contain k field");
         assert!(
             json.contains("\"graph_matches\""),
-            "deve conter campo graph_matches"
+            "must contain graph_matches field"
         );
         assert!(
             !json.contains("\"combined_rank\""),
-            "NÃO deve conter combined_rank"
+            "must not contain combined_rank"
         );
         assert!(
             !json.contains("\"vec_rank_list\""),
-            "NÃO deve conter vec_rank_list"
+            "must not contain vec_rank_list"
         );
         assert!(
             !json.contains("\"fts_rank_list\""),
-            "NÃO deve conter fts_rank_list"
+            "must not contain fts_rank_list"
         );
     }
 
@@ -261,10 +261,10 @@ mod tests {
     fn hybrid_search_response_serializes_rrf_k_and_weights() {
         let resp = empty_response(5, 60, 0.7, 0.3);
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"rrf_k\""), "deve conter campo rrf_k");
-        assert!(json.contains("\"weights\""), "deve conter campo weights");
-        assert!(json.contains("\"vec\""), "deve conter campo weights.vec");
-        assert!(json.contains("\"fts\""), "deve conter campo weights.fts");
+        assert!(json.contains("\"rrf_k\""), "must contain rrf_k field");
+        assert!(json.contains("\"weights\""), "must contain weights field");
+        assert!(json.contains("\"vec\""), "must contain weights.vec field");
+        assert!(json.contains("\"fts\""), "must contain weights.fts field");
     }
 
     #[test]
@@ -274,7 +274,7 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         assert!(
             json.contains("\"elapsed_ms\""),
-            "deve conter campo elapsed_ms"
+            "must contain elapsed_ms field"
         );
         assert!(json.contains("123"), "deve serializar valor de elapsed_ms");
     }
@@ -306,11 +306,11 @@ mod tests {
         let json = serde_json::to_string(&item).unwrap();
         assert!(
             json.contains("\"vec_rank\""),
-            "deve conter vec_rank quando Some"
+            "must contain vec_rank when Some"
         );
         assert!(
             !json.contains("\"fts_rank\""),
-            "NÃO deve conter fts_rank quando None"
+            "must not contain fts_rank when None"
         );
     }
 
@@ -333,11 +333,11 @@ mod tests {
         let json = serde_json::to_string(&item).unwrap();
         assert!(
             !json.contains("\"vec_rank\""),
-            "NÃO deve conter vec_rank quando None"
+            "must not contain vec_rank when None"
         );
         assert!(
             json.contains("\"fts_rank\""),
-            "deve conter fts_rank quando Some"
+            "must contain fts_rank when Some"
         );
     }
 
@@ -358,10 +358,10 @@ mod tests {
             rrf_score: Some(0.05),
         };
         let json = serde_json::to_string(&item).unwrap();
-        assert!(json.contains("\"vec_rank\""), "deve conter vec_rank");
-        assert!(json.contains("\"fts_rank\""), "deve conter fts_rank");
+        assert!(json.contains("\"vec_rank\""), "must contain vec_rank");
+        assert!(json.contains("\"fts_rank\""), "must contain fts_rank");
         assert!(json.contains("\"type\""), "deve serializar type renomeado");
-        assert!(!json.contains("memory_type"), "NÃO deve expor memory_type");
+        assert!(!json.contains("memory_type"), "must not expose memory_type");
     }
 
     #[test]

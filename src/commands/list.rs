@@ -27,7 +27,7 @@ pub struct ListArgs {
     )]
     pub namespace: Option<String>,
     /// Filter by memory.type. Note: distinct from graph entity_type
-    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker)
+    /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date)
     /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
@@ -208,7 +208,7 @@ mod tests {
         );
         assert!(
             iso.contains('+') || iso.contains('-'),
-            "deve conter sinal de offset, obtido: {iso}"
+            "must contain offset sign, got: {iso}"
         );
     }
 }

@@ -1,8 +1,8 @@
--- Tabela dedicada para URLs extraídas de corpos de memória.
+-- Dedicated table for URLs extracted from memory bodies.
 --
--- URLs eram inseridas como entidades com entity_type='concept', poluindo o grafo
--- (26.3% dos nós em v1.0.23). Esta migração cria armazenamento separado e
--- idempotente para URLs, preservando offset de origem e deduplicação por memória.
+-- URLs were previously inserted as entities with entity_type='concept', polluting
+-- the graph (26.3% of nodes in v1.0.23). This migration creates separate, idempotent
+-- storage for URLs, preserving source offset and per-memory deduplication.
 
 CREATE TABLE IF NOT EXISTS memory_urls (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.33] - 2026-04-30
+
+### Fixed (Linguistic Policy)
+- **C3-residual (HIGH)**: Translated remaining Portuguese string in `src/daemon.rs:183` (Drop impl `tracing::debug!` for spawn lock removal). v1.0.32 A1 covered lines 113/131/154/307/419 but missed line 183 inside `impl Drop for DaemonSpawnGuard`. Audit gate `rg '[áéíóúâêôãõç]' src/ -g '!i18n.rs'` now returns ZERO matches.
+- **PT-V007 (HIGH)**: Translated 5-line Portuguese SQL header comment in `migrations/V007__memory_urls.sql` to English. The file is part of the published crate (not in `Cargo.toml exclude`), so docs.rs and crates.io tarball previously shipped Portuguese SQL comments.
+- **AS-PT (MEDIUM)**: Translated 20 Portuguese `assert!` messages to English across `src/commands/hybrid_search.rs` (19 occurrences) and `src/commands/list.rs` (1 occurrence). All `mem-* deveria existir` assertion messages in `src/storage/memories.rs` (9 occurrences) translated to `mem-* should exist`. Per CLAUDE.md "NUNCA `assert!` com mensagem em português" — even test code is EN-only.
+
+### Fixed (Documentation)
+- **D3 (MEDIUM)**: Synchronized `--type` doc-comment in `src/commands/recall.rs:33`, `src/commands/list.rs:30`, `src/commands/hybrid_search.rs:35` to list all 13 graph entity types (`project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date`). Previously listed only 10, omitting `organization/location/date` added by `migrations/V008__expand_entity_types.sql` (BERT NER types). Aligns CLI help with PRD `docs_rules/prd.md` and the V008 CHECK constraint.
+
+### Notes
+- Validated against real-world ingest of 50 representative `.md` files (~6.6 MB corpus): 50/50 indexed in 56.9s with `--skip-extraction`; 5/5 indexed with full BERT NER extraction in 57.3s. All 12 functional CLI scenarios (init, ingest, recall, hybrid-search, list, related, graph, health, stats, lifecycle, vacuum, sync-safe-copy) returned exit 0 with valid JSON. Auto-create of `graphrag.sqlite` in CWD (without prior `init`) confirmed working with mode 0600.
+- Backwards-compatible duplicate fields in `stats --json` (`memories`/`memories_total`, `entities`/`entities_total`, `relationships`/`relationships_total`, `db_size_bytes`/`db_bytes`, `edges`/`relationships`) and `list --json` (`id`/`memory_id`) are intentional per existing test assertions in `src/commands/stats.rs:244-248` and `src/commands/list.rs:190`. They are deliberately preserved for backwards compatibility with existing JSON parsers.
+- `schema_version` type asymmetry between `stats --json` (`String`) and `health --json` (`u32`) is documented as a known issue. Normalization to `u32` everywhere would be a breaking change deferred to v2.0.
+- `kill_on_drop(true)` for the daemon child process remains N/A (the orphan detach is deliberate, documented in `src/daemon.rs:491-499` and v1.0.32 M4 / C2). The CLI must return immediately while the daemon stays warm.
+
 ## [1.0.32] - 2026-04-30
 
 ### Fixed (Critical — Audit findings from v1.0.31)

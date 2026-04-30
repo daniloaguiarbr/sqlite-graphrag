@@ -715,7 +715,7 @@ mod tests {
 
         let found = find_by_name(&conn, "global", "mem-alpha")?;
         assert!(found.is_some());
-        let (found_id, _, _) = found.ok_or("mem-alpha deveria existir")?;
+        let (found_id, _, _) = found.ok_or("mem-alpha should exist")?;
         assert_eq!(found_id, id);
         Ok(())
     }
@@ -764,7 +764,7 @@ mod tests {
         let m = new_memory("mem-read");
         let id = insert(&conn, &m)?;
 
-        let row = read_by_name(&conn, "global", "mem-read")?.ok_or("mem-read deveria existir")?;
+        let row = read_by_name(&conn, "global", "mem-read")?.ok_or("mem-read should exist")?;
         assert_eq!(row.id, id);
         assert_eq!(row.name, "mem-read");
         assert_eq!(row.memory_type, "user");
@@ -787,7 +787,7 @@ mod tests {
         let m = new_memory("mem-full");
         let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id)?.ok_or("mem-full deveria existir")?;
+        let row = read_full(&conn, id)?.ok_or("mem-full should exist")?;
         assert_eq!(row.id, id);
         assert_eq!(row.name, "mem-full");
         Ok(())
@@ -813,7 +813,7 @@ mod tests {
         let ok = update(&conn, id, &m2, None)?;
         assert!(ok);
 
-        let row = read_full(&conn, id)?.ok_or("mem-upd deveria existir")?;
+        let row = read_full(&conn, id)?.ok_or("mem-upd should exist")?;
         assert_eq!(row.body, "corpo atualizado");
         assert_eq!(row.body_hash, "hash-novo");
         Ok(())
@@ -826,7 +826,7 @@ mod tests {
         let id = insert(&conn, &m)?;
 
         let (_, updated_at, _) =
-            find_by_name(&conn, "global", "mem-opt")?.ok_or("mem-opt deveria existir")?;
+            find_by_name(&conn, "global", "mem-opt")?.ok_or("mem-opt should exist")?;
 
         let mut m2 = new_memory("mem-opt");
         m2.body = "optimistic body".to_string();
@@ -851,7 +851,7 @@ mod tests {
         let ok = update(&conn, id, &m2, Some(0))?;
         assert!(!ok);
 
-        let row = read_full(&conn, id)?.ok_or("mem-conflict deveria existir")?;
+        let row = read_full(&conn, id)?.ok_or("mem-conflict should exist")?;
         assert_eq!(row.body, "corpo da memoria de teste");
         Ok(())
     }
@@ -1157,8 +1157,7 @@ mod tests {
         let m = new_memory("mem-ver");
         let id = insert(&conn, &m)?;
 
-        let (_, _, v0) =
-            find_by_name(&conn, "global", "mem-ver")?.ok_or("mem-ver deveria existir")?;
+        let (_, _, v0) = find_by_name(&conn, "global", "mem-ver")?.ok_or("mem-ver should exist")?;
         assert_eq!(v0, 0);
 
         conn.execute(
@@ -1180,7 +1179,7 @@ mod tests {
         m.metadata = serde_json::json!({"chave": "valor", "numero": 42});
         let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id)?.ok_or("mem-meta deveria existir")?;
+        let row = read_full(&conn, id)?.ok_or("mem-meta should exist")?;
         let meta: serde_json::Value = serde_json::from_str(&row.metadata)?;
         assert_eq!(meta["chave"], "valor");
         assert_eq!(meta["numero"], 42);
@@ -1194,7 +1193,7 @@ mod tests {
         m.session_id = Some("sessao-xyz".to_string());
         let id = insert(&conn, &m)?;
 
-        let row = read_full(&conn, id)?.ok_or("mem-session deveria existir")?;
+        let row = read_full(&conn, id)?.ok_or("mem-session should exist")?;
         assert_eq!(row.session_id, Some("sessao-xyz".to_string()));
         Ok(())
     }

@@ -180,7 +180,7 @@ impl Drop for DaemonSpawnGuard {
                 Ok(()) => {
                     tracing::debug!(
                         path = %lock_path.display(),
-                        "lock file de spawn removido ao encerrar daemon graciosamente"
+                        "spawn lock file removed during graceful daemon shutdown"
                     );
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
