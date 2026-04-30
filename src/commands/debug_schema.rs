@@ -128,7 +128,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn debug_schema_response_serializa_campos_obrigatorios() {
+    fn debug_schema_response_serializes_required_fields() {
         let resp = DebugSchemaResponse {
             schema_version: 42,
             user_version: 49,
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_record_serializa_todos_campos() {
+    fn migration_record_serializes_all_fields() {
         let rec = MigrationRecord {
             version: 3,
             name: "V003__indexes".to_string(),

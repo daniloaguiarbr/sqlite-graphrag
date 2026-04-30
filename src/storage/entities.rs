@@ -171,7 +171,7 @@ pub fn increment_degree(conn: &Connection, entity_id: i64) -> Result<(), AppErro
     Ok(())
 }
 
-/// Busca a entidade por nome e namespace. Retorna o id se existir.
+/// Looks up the entity by name and namespace. Returns the id when it exists.
 pub fn find_entity_id(
     conn: &Connection,
     namespace: &str,
@@ -644,30 +644,30 @@ mod tests {
     #[test]
     fn test_delete_entities_by_ids_empty_list_returns_zero() -> TestResult {
         let (_tmp, conn) = setup_db()?;
-        let removidos = delete_entities_by_ids(&conn, &[])?;
-        assert_eq!(removidos, 0);
+        let removed = delete_entities_by_ids(&conn, &[])?;
+        assert_eq!(removed, 0);
         Ok(())
     }
 
     #[test]
     fn test_delete_entities_by_ids_removes_valid_entity() -> TestResult {
         let (_tmp, conn) = setup_db()?;
-        let e = new_entity_helper("para-deletar");
+        let e = new_entity_helper("to-delete");
         let entity_id = upsert_entity(&conn, "global", &e)?;
 
-        let removidos = delete_entities_by_ids(&conn, &[entity_id])?;
-        assert_eq!(removidos, 1);
+        let removed = delete_entities_by_ids(&conn, &[entity_id])?;
+        assert_eq!(removed, 1);
 
-        let id = find_entity_id(&conn, "global", "para-deletar")?;
-        assert_eq!(id, None, "entidade deve ter sido removida");
+        let id = find_entity_id(&conn, "global", "to-delete")?;
+        assert_eq!(id, None, "entity must have been removed");
         Ok(())
     }
 
     #[test]
     fn test_delete_entities_by_ids_missing_id_returns_zero() -> TestResult {
         let (_tmp, conn) = setup_db()?;
-        let removidos = delete_entities_by_ids(&conn, &[9999])?;
-        assert_eq!(removidos, 0);
+        let removed = delete_entities_by_ids(&conn, &[9999])?;
+        assert_eq!(removed, 0);
         Ok(())
     }
 
@@ -678,8 +678,8 @@ mod tests {
         let id2 = upsert_entity(&conn, "global", &new_entity_helper("del-b"))?;
         let id3 = upsert_entity(&conn, "global", &new_entity_helper("del-c"))?;
 
-        let removidos = delete_entities_by_ids(&conn, &[id1, id2])?;
-        assert_eq!(removidos, 2);
+        let removed = delete_entities_by_ids(&conn, &[id1, id2])?;
+        assert_eq!(removed, 2);
 
         assert!(find_entity_id(&conn, "global", "del-a")?.is_none());
         assert!(find_entity_id(&conn, "global", "del-b")?.is_none());
@@ -1011,10 +1011,10 @@ mod tests {
         let id_a = upsert_entity(&conn, "global", &new_entity_helper("cf-a"))?;
         let id_b = upsert_entity(&conn, "global", &new_entity_helper("cf-b"))?;
 
-        let (rel_id, criada) =
+        let (rel_id, created) =
             create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
         assert!(rel_id > 0);
-        assert!(criada);
+        assert!(created);
         Ok(())
     }
 
@@ -1025,9 +1025,12 @@ mod tests {
         let id_b = upsert_entity(&conn, "global", &new_entity_helper("cf2-b"))?;
 
         create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
-        let (_, criada) =
+        let (_, created) =
             create_or_fetch_relationship(&conn, "global", id_a, id_b, "uses", 0.5, None)?;
-        assert!(!criada, "second call must return the existing relationship");
+        assert!(
+            !created,
+            "second call must return the existing relationship"
+        );
         Ok(())
     }
 

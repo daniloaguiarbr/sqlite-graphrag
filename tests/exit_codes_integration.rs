@@ -41,7 +41,7 @@ fn remember_ok(tmp: &TempDir, name: &str, body: &str) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_exit_01_validation_nome_invalido() {
+fn test_exit_01_validation_invalid_name() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -63,7 +63,7 @@ fn test_exit_01_validation_nome_invalido() {
 }
 
 #[test]
-fn test_exit_01_validation_namespace_invalido() {
+fn test_exit_01_validation_invalid_namespace() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -174,7 +174,7 @@ fn test_exit_03_conflict_updated_at_stale() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_exit_04_not_found_memoria_ausente() {
+fn test_exit_04_not_found_missing_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -186,7 +186,7 @@ fn test_exit_04_not_found_memoria_ausente() {
 }
 
 #[test]
-fn test_exit_04_not_found_forget_inexistente() {
+fn test_exit_04_not_found_forget_nonexistent() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -300,7 +300,7 @@ fn test_exit_10_database_arquivo_corrompido() {
 #[test]
 fn test_exit_11_embedding_exit_code_correto() {
     use sqlite_graphrag::errors::AppError;
-    let err = AppError::Embedding("falha no modelo de embedding".into());
+    let err = AppError::Embedding("failure no modelo de embedding".into());
     assert_eq!(err.exit_code(), 11, "Embedding deve mapear para exit 11");
 }
 
@@ -311,7 +311,7 @@ fn test_exit_11_embedding_exit_code_correto() {
 #[test]
 fn test_exit_12_vec_extension_exit_code_correto() {
     use sqlite_graphrag::errors::AppError;
-    let err = AppError::VecExtension("falha na extensao vec".into());
+    let err = AppError::VecExtension("failure na extensao vec".into());
     assert_eq!(err.exit_code(), 12, "VecExtension deve mapear para exit 12");
 }
 
@@ -425,13 +425,13 @@ fn test_exit_77_low_memory_guard_direto() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_exit_00_sucesso_init_retorna_zero() {
+fn test_exit_00_success_init_returns_zero() {
     let tmp = TempDir::new().unwrap();
     cmd_base(&tmp).arg("init").assert().success().code(0);
 }
 
 #[test]
-fn test_exit_00_sucesso_health_apos_init() {
+fn test_exit_00_success_health_after_init() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
     cmd_base(&tmp).arg("health").assert().success().code(0);
@@ -489,7 +489,7 @@ fn test_exit_codes_messages_non_empty_in_all_languages() {
         AppError::NamespaceError("sem ns".into()),
         AppError::LimitExceeded("limite".into()),
         AppError::Embedding("dim".into()),
-        AppError::VecExtension("falha".into()),
+        AppError::VecExtension("failure".into()),
         AppError::DbBusy("busy".into()),
         AppError::BatchPartialFailure {
             total: 5,

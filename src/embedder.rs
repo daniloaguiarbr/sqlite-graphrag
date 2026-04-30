@@ -300,25 +300,25 @@ mod tests {
     // --- testes com modelo real (ignorados no CI normal) ---
 
     #[test]
-    #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
+    #[ignore = "requires ~600 MB model on disk; run with --include-ignored"]
     fn embed_passage_returns_vector_with_correct_dimension() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
-        let result = embed_passage(embedder, "texto de teste").unwrap();
+        let result = embed_passage(embedder, "test text").unwrap();
         assert_eq!(result.len(), EMBEDDING_DIM);
     }
 
     #[test]
-    #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
+    #[ignore = "requires ~600 MB model on disk; run with --include-ignored"]
     fn embed_query_returns_vector_with_correct_dimension() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();
-        let result = embed_query(embedder, "consulta de teste").unwrap();
+        let result = embed_query(embedder, "test query").unwrap();
         assert_eq!(result.len(), EMBEDDING_DIM);
     }
 
     #[test]
-    #[ignore = "requer modelo ~600 MB em disco; executar com --include-ignored"]
+    #[ignore = "requires ~600 MB model on disk; run with --include-ignored"]
     fn embed_passages_batch_returns_one_vector_per_text() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = get_embedder(dir.path()).unwrap();

@@ -257,7 +257,7 @@ impl Cli {
 }
 
 impl Commands {
-    /// Retorna true para subcomandos que carregam o modelo ONNX localmente.
+    /// Returns true for subcommands that load the ONNX model locally.
     pub fn is_embedding_heavy(&self) -> bool {
         matches!(
             self,

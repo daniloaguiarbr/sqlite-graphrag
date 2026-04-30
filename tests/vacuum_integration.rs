@@ -27,7 +27,7 @@ fn test_vacuum_fails_without_init() {
 }
 
 #[test]
-fn test_vacuum_sucesso_apos_init() {
+fn test_vacuum_success_after_init() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

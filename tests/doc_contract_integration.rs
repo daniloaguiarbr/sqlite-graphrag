@@ -56,7 +56,7 @@ impl Env {
             ])
             .output()
             .unwrap();
-        assert!(out.status.success(), "remember falhou: {:?}", out.status);
+        assert!(out.status.success(), "remember failed: {:?}", out.status);
         serde_json::from_slice(&out.stdout).unwrap()
     }
 
@@ -87,7 +87,7 @@ impl Env {
             .unwrap();
         assert!(
             out.status.success(),
-            "remember com entidades falhou: {:?}",
+            "remember com entidades failed: {:?}",
             out.status
         );
         (ent_a, ent_b)
@@ -107,7 +107,7 @@ impl Env {
 fn assert_has_keys(cmd: &str, v: &Value, keys: &[&str]) {
     let obj = v
         .as_object()
-        .unwrap_or_else(|| panic!("[{cmd}] esperado JSON object, recebido: {v}"));
+        .unwrap_or_else(|| panic!("[{cmd}] expected JSON object, got: {v}"));
     for key in keys {
         assert!(
             obj.contains_key(*key),
@@ -121,7 +121,7 @@ fn assert_has_keys(cmd: &str, v: &Value, keys: &[&str]) {
 fn assert_array_items_have_keys(cmd: &str, v: &Value, keys: &[&str]) {
     let arr = v
         .as_array()
-        .unwrap_or_else(|| panic!("[{cmd}] esperado JSON array, recebido: {v}"));
+        .unwrap_or_else(|| panic!("[{cmd}] expected JSON array, got: {v}"));
     for (i, item) in arr.iter().enumerate() {
         let obj = item
             .as_object()
@@ -279,7 +279,7 @@ fn contract_05_list() {
 
     let items = json
         .get("items")
-        .unwrap_or_else(|| panic!("list: esperado objeto com {{items:[...]}}, recebido: {json}"));
+        .unwrap_or_else(|| panic!("list: expected object with {{items:[...]}}, got: {json}"));
 
     assert!(items.is_array(), "list: 'items' nao e array: {items}");
     let arr = items.as_array().unwrap();
@@ -661,7 +661,7 @@ fn contract_15_link() {
         .unwrap();
     assert!(
         out.status.success(),
-        "link falhou: {:?}\nstderr: {}",
+        "link failed: {:?}\nstderr: {}",
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
@@ -714,7 +714,7 @@ fn contract_16_unlink() {
         .unwrap();
     assert!(
         out.status.success(),
-        "unlink falhou: {:?}\nstderr: {}",
+        "unlink failed: {:?}\nstderr: {}",
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
@@ -777,7 +777,7 @@ fn contract_17_related() {
     if code == 0 {
         let json = Env::parse_stdout(&out);
         let results = json.get("results").unwrap_or_else(|| {
-            panic!("related: esperado objeto com {{results:[...]}}, recebido: {json}")
+            panic!("related: expected object with {{results:[...]}}, got: {json}")
         });
         assert!(
             results.is_array(),
@@ -969,7 +969,7 @@ fn contract_25_debug_schema() {
     let out = env.cmd().arg("__debug_schema").output().unwrap();
     assert!(
         out.status.success(),
-        "__debug_schema falhou: {:?}\nstderr: {}",
+        "__debug_schema failed: {:?}\nstderr: {}",
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );

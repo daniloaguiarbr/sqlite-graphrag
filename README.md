@@ -113,6 +113,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 
 ## Installation
+### Minimum supported toolchain
+- Rust 1.88 or newer (`rust-version = "1.88"` in `Cargo.toml`); older toolchains will fail with an MSRV error during `cargo install`.
 ### Multiple distribution channels
 - Install the latest published release with `cargo install sqlite-graphrag --locked`
 - Upgrade an existing published binary with `cargo install sqlite-graphrag --locked --force`
@@ -621,6 +623,14 @@ let out = Command::new("sqlite-graphrag")
 ### Responsible disclosure policy
 - Security reports follow the policy described in [SECURITY.md](SECURITY.md)
 - Contact the maintainer privately before disclosing vulnerabilities publicly
+
+
+## JSON Schemas
+### Canonical contracts for every subcommand response
+- Authoritative JSON Schemas for every `--json` response live under [`docs/schemas/`](docs/schemas/) and are versioned alongside the crate
+- 30 schemas cover `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`
+- Treat these schemas as the agent contract; SKILL.md documents the same shapes in human-readable form
+- Validate downstream consumers with any standard JSON Schema validator (e.g. `ajv`, `jsonschema`)
 
 
 ## Changelog

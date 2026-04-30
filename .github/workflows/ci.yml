@@ -214,6 +214,37 @@ jobs:
             echo "::error::Portuguese in thiserror attributes. Use English."
             exit 1
           fi
+      - name: Forbid Portuguese-without-accent words in tracing/error/doc/assert/expect/panic
+        # v1.0.36 (M1): the accent-only audit gates above missed several PT
+        # strings such as `tracing::warn!("NER falhou, usando apenas regex")`,
+        # `"batch NER falhou (chunk de N janelas)..."`, and `"falha ao persistir
+        # url '...'"`. This gate complements the accent gate by scanning the
+        # specific surfaces where PT/EN drift hurts most: log lines, error
+        # attributes, doc comments, and runtime assertions.
+        # Plain string literals are NOT scanned because intentional fixtures
+        # (PT test inputs that exercise multilingual extraction) live there.
+        run: |
+          PT_PATTERN='\b(falhou|falha|falham|falhar|falhas|janelas?|invalido|invalida|invalidos|invalidas|inicializando|inicializar|inicializa|inicializou|persistir|persistencia|persistido|persistida|configuracao|autenticacao|validacao|verificacao|compactacao|substituicao|usando apenas|nao foi|nao pode|nao tem|nao deve|nao precisa|nao consegue|nao possui|nao encontrou|nao existe|nao sera|ja foi|ja existe|ja tem|ja esta|esperado|requerido|obrigatorio|obrigatoria|obrigatorios|obrigatorias|memoria|memorias|criando|criada|criadas|criados|criou|atualizado|atualizada|atualizados|atualizadas|deletado|deletada|deletados|deletadas|inserido|inserida|inseridos|inseridas|removido|removida|removidos|removidas|busca|propaga|retorna)\b'
+          # 1. Tracing macros
+          if rg --no-messages -i "tracing::(info|warn|error|debug|trace)!.*${PT_PATTERN}" src/ -g '!i18n.rs'; then
+            echo "::error::PT-no-accent word detected in tracing log (src/). Translate or move to i18n.rs."
+            exit 1
+          fi
+          # 2. thiserror attributes
+          if rg --no-messages -i "#\[error.*${PT_PATTERN}" src/ -g '!i18n.rs'; then
+            echo "::error::PT-no-accent word detected in #[error(...)] (src/). Translate or move to i18n.rs."
+            exit 1
+          fi
+          # 3. /// and //! doc comments
+          if rg --no-messages -i "(///|//!).*${PT_PATTERN}" src/ tests/ -g '!i18n.rs'; then
+            echo "::error::PT-no-accent word detected in doc comment. Translate to English."
+            exit 1
+          fi
+          # 4. assert/panic/unreachable/bail/ensure/expect macros and methods
+          if rg --no-messages -i "(panic|assert|assert_eq|assert_ne|unreachable|todo|unimplemented|bail|ensure|expect)!?\([^)]*${PT_PATTERN}" src/ tests/ -g '!i18n.rs'; then
+            echo "::error::PT-no-accent word detected in panic/assert/expect (src/ or tests/). Translate to English."
+            exit 1
+          fi
 
   loom:
     name: Loom Concurrency

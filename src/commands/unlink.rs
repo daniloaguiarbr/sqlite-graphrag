@@ -111,7 +111,7 @@ mod tests {
     use crate::cli::RelationKind;
 
     #[test]
-    fn unlink_response_serializa_todos_campos() {
+    fn unlink_response_serializes_all_fields() {
         let resp = UnlinkResponse {
             action: "deleted".to_string(),
             relationship_id: 99,

@@ -102,16 +102,16 @@ mod tests {
 
     #[test]
     fn namespace_source_serializes_in_snake_case() {
-        let casos = vec![
+        let cases = vec![
             (NamespaceSource::ExplicitFlag, "explicit_flag"),
             (NamespaceSource::Environment, "environment"),
             (NamespaceSource::Default, "default"),
         ];
-        for (source, esperado) in casos {
+        for (source, expected) in cases {
             let json = serde_json::to_value(source).unwrap();
             assert_eq!(
-                json, esperado,
-                "NamespaceSource::{source:?} deve serializar como \"{esperado}\""
+                json, expected,
+                "NamespaceSource::{source:?} must serialize as \"{expected}\""
             );
         }
     }
@@ -124,13 +124,13 @@ mod tests {
             "--db",
             "/tmp/graphrag.sqlite",
         ])
-        .expect("namespace-detect deve aceitar --db como no-op");
+        .expect("namespace-detect must accept --db as a no-op");
 
         match cli.command {
             crate::cli::Commands::NamespaceDetect(args) => {
                 assert_eq!(args.db.as_deref(), Some("/tmp/graphrag.sqlite"));
             }
-            _ => unreachable!("comando incorreto parseado"),
+            _ => unreachable!("unexpected command parsed"),
         }
     }
 }

@@ -34,7 +34,7 @@ pub fn insert_urls(conn: &Connection, memory_id: i64, urls: &[MemoryUrl]) -> usi
                 }
             }
             Err(e) => {
-                tracing::warn!("falha ao persistir url '{}': {e:#}", entry.url);
+                tracing::warn!("failed to persist url '{}': {e:#}", entry.url);
             }
         }
     }

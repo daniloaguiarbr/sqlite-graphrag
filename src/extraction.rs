@@ -61,6 +61,10 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "ACL",
     "ACRESCENTADO",
     "ADAPTER",
+    "ADICIONADA",
+    "ADICIONADAS",
+    "ADICIONADO",
+    "ADICIONADOS",
     "ADICIONAR",
     "AGENTS",
     "ALL",
@@ -78,9 +82,13 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
     "CAPÍTULO",
     "CASO",
     "CHECKLIST",
+    "CLARO",
     "CLI",
     "COMPLETED",
     "CONFIRMADO",
+    "CONFIRMARAM",
+    "CONFIRMEI",
+    "CONFIRMOU",
     "CONFIRME",
     "CONTRATO",
     "CRÍTICO",
@@ -209,11 +217,13 @@ fn regex_all_caps() -> &'static Regex {
 
 fn regex_section_marker() -> &'static Regex {
     REGEX_SECTION_MARKER.get_or_init(|| {
-        // Matches PT-BR document-structure labels followed by a number: "Etapa 3", "Fase 1", etc.
+        // Matches PT-BR document-structure labels followed by a number: "Etapa 3", "Fase 1",
+        // "Camada 5", "Passo 2", etc. v1.0.36 (H5): added "Camada" after audit found
+        // "Camada 1".."Camada 5" leaking through into entity extraction with degree>=3.
         // Accented characters expressed as escapes to keep this source file ASCII-only
         // per the project language policy. Pattern is equivalent to:
-        //   \b(?:Etapa|Fase|Passo|Se\xe7\xe3o|Cap\xedtulo)\s+\d+\b
-        Regex::new("\\b(?:Etapa|Fase|Passo|Se\u{00e7}\u{00e3}o|Cap\u{00ed}tulo)\\s+\\d+\\b")
+        //   \b(?:Etapa|Fase|Passo|Camada|Se\xe7\xe3o|Cap\xedtulo)\s+\d+\b
+        Regex::new("\\b(?:Etapa|Fase|Passo|Camada|Se\u{00e7}\u{00e3}o|Cap\u{00ed}tulo)\\s+\\d+\\b")
             .expect("compile-time validated section marker regex literal")
     })
 }
@@ -337,11 +347,11 @@ impl BertNerModel {
         let mask_i64: Vec<i64> = attention_mask.iter().map(|&x| x as i64).collect();
 
         let input_ids = Tensor::from_vec(ids_i64, (1, len), &self.device)
-            .context("criando tensor input_ids")?;
+            .context("creating tensor input_ids")?;
         let token_type_ids = Tensor::zeros((1, len), DType::I64, &self.device)
-            .context("criando tensor token_type_ids")?;
+            .context("creating tensor token_type_ids")?;
         let attn_mask = Tensor::from_vec(mask_i64, (1, len), &self.device)
-            .context("criando tensor attention_mask")?;
+            .context("creating tensor attention_mask")?;
 
         let sequence_output = self
             .bert
@@ -961,7 +971,7 @@ fn run_ner_sliding_window(
             }
             Err(e) => {
                 tracing::warn!(
-                    "batch NER falhou (chunk de {} janelas): {e:#} — fallback single-window",
+                    "batch NER failed (chunk of {} windows): {e:#} — falling back to single-window",
                     chunk.len()
                 );
                 // Fallback: process each window individually to preserve entities
@@ -1201,7 +1211,7 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
                 ents
             }
             Err(e) => {
-                tracing::warn!("NER falhou, usando apenas regex: {e:#}");
+                tracing::warn!("NER failed, falling back to regex-only extraction: {e:#}");
                 Vec::new()
             }
         },

@@ -15,7 +15,7 @@ fn run_with_env(cache_dir: &PathBuf, args: &[&str]) -> std::process::Output {
         .env("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART", "1")
         .args(args)
         .output()
-        .expect("subprocesso sqlite-graphrag falhou")
+        .expect("subprocesso sqlite-graphrag failed")
 }
 
 fn ping_until_ready(cache_dir: &PathBuf) -> Value {
@@ -23,7 +23,7 @@ fn ping_until_ready(cache_dir: &PathBuf) -> Value {
     loop {
         let out = run_with_env(cache_dir, &["daemon", "--ping"]);
         if out.status.success() {
-            return serde_json::from_slice(&out.stdout).expect("ping json invalido");
+            return serde_json::from_slice(&out.stdout).expect("invalid ping json");
         }
         assert!(Instant::now() < deadline, "daemon nao ficou pronto a tempo");
         thread::sleep(Duration::from_millis(200));
@@ -33,7 +33,7 @@ fn ping_until_ready(cache_dir: &PathBuf) -> Value {
 fn wait_child_exit(child: &mut std::process::Child) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match child.try_wait().expect("try_wait falhou") {
+        match child.try_wait().expect("try_wait failed") {
             Some(status) => {
                 assert!(status.success(), "daemon terminou com erro: {status}");
                 return;
@@ -57,7 +57,7 @@ fn start_daemon(cache_dir: &PathBuf) -> std::process::Child {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn do daemon falhou")
+        .expect("spawn do daemon failed")
 }
 
 fn run_heavy_command(
@@ -87,7 +87,7 @@ fn daemon_ping_and_stop_roundtrip() {
     assert_eq!(ping["handled_embed_requests"], 0);
 
     let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
-    assert!(stop.status.success(), "stop falhou: {stop:?}");
+    assert!(stop.status.success(), "stop failed: {stop:?}");
     let stop_json: Value = serde_json::from_slice(&stop.stdout).unwrap();
     assert_eq!(stop_json["status"], "shutting_down");
 
@@ -114,7 +114,7 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
         .unwrap();
     assert!(
         init.status.success(),
-        "init falhou: {}",
+        "init failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
 
@@ -142,7 +142,7 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
         .unwrap();
     assert!(
         remember.status.success(),
-        "remember falhou: {}",
+        "remember failed: {}",
         String::from_utf8_lossy(&remember.stderr)
     );
 
@@ -161,7 +161,7 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
         .unwrap();
     assert!(
         recall.status.success(),
-        "recall falhou: {}",
+        "recall failed: {}",
         String::from_utf8_lossy(&recall.stderr)
     );
 
@@ -179,7 +179,7 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
         .unwrap();
     assert!(
         hybrid.status.success(),
-        "hybrid-search falhou: {}",
+        "hybrid-search failed: {}",
         String::from_utf8_lossy(&hybrid.stderr)
     );
 
@@ -201,7 +201,7 @@ fn init_autospawns_daemon_when_missing() {
     let init = run_heavy_command(&cache_dir, &db_path, &["init"]);
     assert!(
         init.status.success(),
-        "init falhou: {}",
+        "init failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
 
@@ -210,7 +210,7 @@ fn init_autospawns_daemon_when_missing() {
     assert!(ping["handled_embed_requests"].as_u64().unwrap() >= 1);
 
     let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
-    assert!(stop.status.success(), "stop falhou: {stop:?}");
+    assert!(stop.status.success(), "stop failed: {stop:?}");
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn daemon_respawns_automatically_after_stop() {
     let init = run_heavy_command(&cache_dir, &db_path, &["init"]);
     assert!(
         init.status.success(),
-        "init falhou: {}",
+        "init failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
 
@@ -230,7 +230,7 @@ fn daemon_respawns_automatically_after_stop() {
     let first_pid = first_ping["pid"].as_u64().unwrap();
 
     let stop = run_with_env(&cache_dir, &["daemon", "--stop"]);
-    assert!(stop.status.success(), "stop falhou: {stop:?}");
+    assert!(stop.status.success(), "stop failed: {stop:?}");
 
     let stopped_ping = run_with_env(&cache_dir, &["daemon", "--ping"]);
     assert!(
@@ -245,7 +245,7 @@ fn daemon_respawns_automatically_after_stop() {
     );
     assert!(
         recall.status.success(),
-        "recall falhou: {}",
+        "recall failed: {}",
         String::from_utf8_lossy(&recall.stderr)
     );
 
@@ -259,7 +259,7 @@ fn daemon_respawns_automatically_after_stop() {
     let stop_again = run_with_env(&cache_dir, &["daemon", "--stop"]);
     assert!(
         stop_again.status.success(),
-        "stop final falhou: {stop_again:?}"
+        "stop final failed: {stop_again:?}"
     );
 }
 
@@ -279,7 +279,7 @@ fn skip_memory_guard_does_not_autostart_daemon_without_force() {
         .unwrap();
     assert!(
         init.status.success(),
-        "init sem auto-start falhou: {}",
+        "init sem auto-start failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
 

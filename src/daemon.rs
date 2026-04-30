@@ -594,8 +594,19 @@ fn record_spawn_failure(models_dir: &Path, message: String) -> Result<(), AppErr
     let mut state = load_spawn_state(models_dir)?;
     state.consecutive_failures = state.consecutive_failures.saturating_add(1);
     let exponent = state.consecutive_failures.saturating_sub(1).min(6);
-    let backoff_ms =
+    let base_ms =
         (DAEMON_SPAWN_BACKOFF_BASE_MS * (1_u64 << exponent)).min(DAEMON_AUTO_START_MAX_BACKOFF_MS);
+    // v1.0.36 (L2): half jitter to avoid retry herd when multiple CLI instances
+    // detect daemon failure simultaneously. Effective backoff range is
+    // `[base/2, base)`. Uses SystemTime nanoseconds as a dependency-free
+    // randomness source; daemon spawn frequency is low so quality is sufficient.
+    let half = base_ms / 2;
+    let jitter_seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let jitter = if half == 0 { 0 } else { jitter_seed % half };
+    let backoff_ms = half + jitter;
     state.not_before_epoch_ms = now_epoch_ms() + backoff_ms;
     state.last_error = Some(message);
     save_spawn_state(models_dir, &state)

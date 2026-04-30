@@ -48,7 +48,7 @@ impl SlotSemaforo {
         }
     }
 
-    /// Tenta adquirir um slot sem bloquear. Retorna `true` se adquiriu.
+    /// Tries to acquire a slot without blocking. Returns `true` se adquiriu.
     fn try_acquire(&self) -> bool {
         let mut atual = self.contador.load(Ordering::Acquire);
         loop {
@@ -219,7 +219,7 @@ fn release_frees_slot_for_next_thread() {
 /// loom::MAX_THREADS = 5 (main + 4 spawned). Aqui usamos exatamente 4.
 #[serial(loom_model)]
 #[test]
-fn shutdown_limpo_todos_slots_liberados() {
+fn clean_shutdown_releases_all_slots() {
     const NUM_THREADS: usize = 4;
     const MAX_SLOTS: usize = 4;
 

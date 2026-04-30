@@ -723,7 +723,7 @@ mod tests {
         let json = serde_json::to_value(&item).unwrap();
         assert!(
             !json["entity_type"].is_null(),
-            "entity_type nao deve ser null"
+            "entity_type must not be null"
         );
         assert!(json["entity_type"].is_string());
     }
@@ -739,25 +739,22 @@ mod tests {
             "--format",
             "dot",
         ]);
-        assert!(
-            parsed.is_err(),
-            "graph traverse nao deve aceitar format=dot"
-        );
+        assert!(parsed.is_err(), "graph traverse must reject format=dot");
     }
 
     #[test]
     fn graph_stats_cli_accepts_format_text() {
         let parsed = Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "text"])
-            .expect("graph stats --format text deve ser aceito");
+            .expect("graph stats --format text must be accepted");
 
         match parsed.command {
             Commands::Graph(args) => match args.subcommand {
                 Some(GraphSubcommand::Stats(stats)) => {
                     assert_eq!(stats.format, GraphStatsFormat::Text);
                 }
-                _ => unreachable!("subcomando inesperado"),
+                _ => unreachable!("unexpected subcommand"),
             },
-            _ => unreachable!("comando inesperado"),
+            _ => unreachable!("unexpected command"),
         }
     }
 
@@ -765,9 +762,6 @@ mod tests {
     fn graph_stats_cli_rejects_format_mermaid() {
         let parsed =
             Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "mermaid"]);
-        assert!(
-            parsed.is_err(),
-            "graph stats nao deve aceitar format=mermaid"
-        );
+        assert!(parsed.is_err(), "graph stats must reject format=mermaid");
     }
 }

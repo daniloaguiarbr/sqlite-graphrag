@@ -32,19 +32,24 @@ impl Language {
     }
 
     pub fn from_env_or_locale() -> Self {
+        // v1.0.36 (L5): empty `SQLITE_GRAPHRAG_LANG` is treated as unset (no warning),
+        // matching POSIX convention where empty-string env vars are equivalent to
+        // missing ones for locale detection.
         if let Ok(v) = std::env::var("SQLITE_GRAPHRAG_LANG") {
-            let lower = v.to_lowercase();
-            if lower.starts_with("pt") {
-                return Language::Portuguese;
+            if !v.is_empty() {
+                let lower = v.to_lowercase();
+                if lower.starts_with("pt") {
+                    return Language::Portuguese;
+                }
+                if lower.starts_with("en") {
+                    return Language::English;
+                }
+                // Unrecognized non-empty value: warn and fall through to locale detection.
+                tracing::warn!(
+                    value = %v,
+                    "SQLITE_GRAPHRAG_LANG value not recognized, falling back to locale detection"
+                );
             }
-            if lower.starts_with("en") {
-                return Language::English;
-            }
-            // Unrecognized value: warn and fall through to locale detection.
-            tracing::warn!(
-                value = %v,
-                "SQLITE_GRAPHRAG_LANG value not recognized, falling back to locale detection"
-            );
         }
         for var in &["LC_ALL", "LANG"] {
             if let Ok(v) = std::env::var(var) {
@@ -61,7 +66,16 @@ static GLOBAL_LANGUAGE: OnceLock<Language> = OnceLock::new();
 
 /// Initializes the global language. Subsequent calls are silently ignored
 /// (OnceLock semantics) — guaranteeing thread-safety and determinism.
+///
+/// v1.0.36 (L6): early-return when already initialized so the env-fallback
+/// resolver (`from_env_or_locale`) does not run a second time. Without this
+/// guard, calling `init(None)` after `current()` already populated the
+/// OnceLock causes `from_env_or_locale` to fire its `tracing::warn!` twice
+/// for unrecognized `SQLITE_GRAPHRAG_LANG` values.
 pub fn init(explicit: Option<Language>) {
+    if GLOBAL_LANGUAGE.get().is_some() {
+        return;
+    }
     let resolved = explicit.unwrap_or_else(Language::from_env_or_locale);
     let _ = GLOBAL_LANGUAGE.set(resolved);
 }
@@ -72,14 +86,16 @@ pub fn current() -> Language {
 }
 
 /// Translates a bilingual message by selecting the active variant.
-pub fn tr(en: &str, pt: &str) -> &'static str {
-    // SAFETY: We return one of the two static strings passed as &str.
-    // Since we cannot prove to the borrow checker that the references outlive,
-    // we use Box::leak to promote to &'static str. Minimal cost (tens of
-    // distinct strings during the CLI process lifetime).
+///
+/// v1.0.36 (M4): inputs are constrained to `&'static str` so the function
+/// can return one of them directly without `Box::leak`. The previous
+/// implementation leaked one allocation per call which accumulated in
+/// long-running pipelines; this version is allocation-free. All in-tree
+/// callers already pass string literals, which are `&'static str`.
+pub fn tr(en: &'static str, pt: &'static str) -> &'static str {
     match current() {
-        Language::English => Box::leak(en.to_string().into_boxed_str()),
-        Language::Portuguese => Box::leak(pt.to_string().into_boxed_str()),
+        Language::English => en,
+        Language::Portuguese => pt,
     }
 }
 

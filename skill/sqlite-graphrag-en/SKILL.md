@@ -43,7 +43,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 ## Contract
 - Input `--name <slug>` accepts kebab-case identifier up to 128 characters.
-- Input `--type <kind>` accepts `user`, `feedback`, `project`, or `reference`.
+- Input `--type <kind>` accepts `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, or `note` (9 memory types).
 - Input `--body <text>` accepts raw text; stdin requires explicit `--body-stdin`.
 - Database default is `./graphrag.sqlite` in the invocation directory.
 - Database override happens only through `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`.
@@ -53,6 +53,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Stdin accepts body content only with `--body-stdin` on `remember` or `edit`.
 - Stdin accepts graph JSON only with `--graph-stdin`; the object may contain optional `body`, `entities`, and `relationships`; invalid JSON must fail.
 - `remember` accepts body payloads up to `512000` bytes and up to `512` chunks.
+- Input `--max-concurrency <N>` caps simultaneous CLI invocations on heavy commands; the value MUST stay within `[1, 2*nCPUs]`. Defaults to 4. Out-of-range values exit `2`. For audit runs on large corpora start with `--max-concurrency 1`.
+- Input `--wait-lock <SECONDS>` waits up to N seconds for a free concurrency slot before exiting `75`. Default 300 (5 minutes).
 
 
 ## Prohibitions
@@ -77,7 +79,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `remember --json` returns `{memory_id, version, namespace, operation, created_at}`.
 - `recall --json` returns `{query, k, direct_matches, graph_matches, results[{memory_id, name, namespace, type, description, snippet, distance, source}], elapsed_ms}`.
 - `hybrid-search --json` returns `{query, k, rrf_k, weights:{vec,fts}, results[{memory_id, name, namespace, type, description, body, combined_score, score, source, vec_rank, fts_rank}], graph_matches, elapsed_ms}`.
-- `list --json` returns a root JSON array of `[{memory_id, id, name, namespace, type, description, snippet, updated_at, updated_at_iso}]`.
+- `list --json` returns `{items: [{memory_id, id, name, namespace, type, description, snippet, updated_at, updated_at_iso}], elapsed_ms}` (object wrapping the array, NOT a root array).
 - `read --json` returns `{memory_id, name, type, body, version, created_at, updated_at}`.
 - `health --json` returns `{integrity, wal_size_mb, journal_mode, db_size_bytes, integrity_ok, wal_ok}`.
 - `stats --json` returns `{memories, memories_total, entities, entities_total, relationships, relationships_total, edges, chunks_total, avg_body_len, namespaces, db_size_bytes, db_bytes, schema_version}`.

@@ -18,7 +18,7 @@ use rusqlite::{params, Connection};
 ///
 /// # Errors
 ///
-/// Propaga [`AppError::Database`] (exit 10) em falhas de consulta SQLite.
+/// Propagates [`AppError::Database`] (exit 10) on SQLite query failures.
 ///
 /// # Examples
 ///
@@ -26,7 +26,7 @@ use rusqlite::{params, Connection};
 /// use rusqlite::Connection;
 /// use sqlite_graphrag::graph::traverse_from_memories;
 ///
-/// // Lista de sementes vazia retorna imediatamente sem consultar o banco.
+/// // Empty seed list returns immediately without querying the database.
 /// let conn = Connection::open_in_memory().unwrap();
 /// let ids = traverse_from_memories(&conn, &[], "global", 0.5, 3).unwrap();
 /// assert!(ids.is_empty());
@@ -36,7 +36,7 @@ use rusqlite::{params, Connection};
 /// use rusqlite::Connection;
 /// use sqlite_graphrag::graph::traverse_from_memories;
 ///
-/// // max_hops == 0 retorna imediatamente sem traversal.
+/// // max_hops == 0 returns immediately without traversal.
 /// let conn = Connection::open_in_memory().unwrap();
 /// let ids = traverse_from_memories(&conn, &[1, 2], "global", 0.5, 0).unwrap();
 /// assert!(ids.is_empty());
@@ -136,7 +136,7 @@ pub fn traverse_from_memories(
 ///
 /// # Errors
 ///
-/// Propaga [`AppError::Database`] (exit 10) em falhas de consulta SQLite.
+/// Propagates [`AppError::Database`] (exit 10) on SQLite query failures.
 pub fn traverse_from_memories_with_hops(
     conn: &Connection,
     seed_memory_ids: &[i64],

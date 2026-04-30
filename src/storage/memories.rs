@@ -698,7 +698,7 @@ mod tests {
             name: name.to_string(),
             memory_type: "user".to_string(),
             description: "descricao de teste".to_string(),
-            body: "corpo da memoria de teste".to_string(),
+            body: "test memory body".to_string(),
             body_hash: format!("hash-{name}"),
             session_id: None,
             source: "agent".to_string(),
@@ -768,7 +768,7 @@ mod tests {
         assert_eq!(row.id, id);
         assert_eq!(row.name, "mem-read");
         assert_eq!(row.memory_type, "user");
-        assert_eq!(row.body, "corpo da memoria de teste");
+        assert_eq!(row.body, "test memory body");
         assert_eq!(row.namespace, "global");
         Ok(())
     }
@@ -808,13 +808,13 @@ mod tests {
         let id = insert(&conn, &m)?;
 
         let mut m2 = new_memory("mem-upd");
-        m2.body = "corpo atualizado".to_string();
+        m2.body = "updated body".to_string();
         m2.body_hash = "hash-novo".to_string();
         let ok = update(&conn, id, &m2, None)?;
         assert!(ok);
 
         let row = read_full(&conn, id)?.ok_or("mem-upd should exist")?;
-        assert_eq!(row.body, "corpo atualizado");
+        assert_eq!(row.body, "updated body");
         assert_eq!(row.body_hash, "hash-novo");
         Ok(())
     }
@@ -846,13 +846,13 @@ mod tests {
         let id = insert(&conn, &m)?;
 
         let mut m2 = new_memory("mem-conflict");
-        m2.body = "nao deve aparecer".to_string();
+        m2.body = "must not appear".to_string();
         m2.body_hash = "hash-x".to_string();
         let ok = update(&conn, id, &m2, Some(0))?;
         assert!(!ok);
 
         let row = read_full(&conn, id)?.ok_or("mem-conflict should exist")?;
-        assert_eq!(row.body, "corpo da memoria de teste");
+        assert_eq!(row.body, "test memory body");
         Ok(())
     }
 
@@ -1121,7 +1121,7 @@ mod tests {
     fn fts_search_excludes_deleted() -> TestResult {
         let conn = setup_conn()?;
         let mut m = new_memory("mem-fts-del");
-        m.body = "conteudo deletado fts".to_string();
+        m.body = "deleted fts content".to_string();
         insert(&conn, &m)?;
 
         conn.execute_batch(
@@ -1131,7 +1131,7 @@ mod tests {
 
         soft_delete(&conn, "global", "mem-fts-del")?;
 
-        let rows = fts_search(&conn, "deletado", "global", None, 10)?;
+        let rows = fts_search(&conn, "deleted", "global", None, 10)?;
         assert!(rows.iter().all(|r| r.name != "mem-fts-del"));
         Ok(())
     }

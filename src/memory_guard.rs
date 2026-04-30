@@ -117,7 +117,7 @@ mod tests {
                 assert_eq!(required_mb, u64::MAX);
                 assert!(available_mb < u64::MAX);
             }
-            outro => unreachable!("esperado LowMemory, got: {outro:?}"),
+            other => unreachable!("expected LowMemory, got: {other:?}"),
         }
     }
 

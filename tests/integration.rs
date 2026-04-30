@@ -3,7 +3,7 @@
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-/// Cria um Command isolado com db em TempDir dedicado e cache de modelos compartilhado.
+/// Builds an isolated `Command` with a per-test `TempDir` database and shared model cache.
 fn cmd(tmp: &TempDir) -> Command {
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
@@ -197,7 +197,7 @@ fn test_crud_uses_graphrag_sqlite_in_invocation_directory() {
         .args([
             "remember",
             "--name",
-            "memoria-cwd",
+            "memory-cwd",
             "--type",
             "user",
             "--description",
@@ -209,14 +209,14 @@ fn test_crud_uses_graphrag_sqlite_in_invocation_directory() {
         .success();
 
     let read_output = isolated_cmd_in(pasta.path())
-        .args(["read", "--name", "memoria-cwd"])
+        .args(["read", "--name", "memory-cwd"])
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
     let read_json: serde_json::Value = serde_json::from_slice(&read_output).unwrap();
-    assert_eq!(read_json["name"], "memoria-cwd");
+    assert_eq!(read_json["name"], "memory-cwd");
     assert_eq!(read_json["description"], "crud cwd");
 
     let list_output = isolated_cmd_in(pasta.path())
@@ -229,12 +229,12 @@ fn test_crud_uses_graphrag_sqlite_in_invocation_directory() {
     let list_json: serde_json::Value = serde_json::from_slice(&list_output).unwrap();
     let itens = list_json["items"].as_array().unwrap();
     assert!(
-        itens.iter().any(|item| item["name"] == "memoria-cwd"),
+        itens.iter().any(|item| item["name"] == "memory-cwd"),
         "list deve ler a memoria persistida em ./graphrag.sqlite"
     );
 
     isolated_cmd_in(pasta.path())
-        .args(["forget", "--name", "memoria-cwd"])
+        .args(["forget", "--name", "memory-cwd"])
         .assert()
         .success();
 
@@ -263,7 +263,7 @@ fn test_remember_without_init_creates_migrated_local_db() {
         .args([
             "remember",
             "--name",
-            "memoria-sem-init",
+            "memory-without-init",
             "--type",
             "user",
             "--description",
@@ -282,14 +282,14 @@ fn test_remember_without_init_creates_migrated_local_db() {
     );
 
     let read_output = isolated_cmd_in(pasta.path())
-        .args(["read", "--name", "memoria-sem-init", "--json"])
+        .args(["read", "--name", "memory-without-init", "--json"])
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
     let read_json: serde_json::Value = serde_json::from_slice(&read_output).unwrap();
-    assert_eq!(read_json["name"], "memoria-sem-init");
+    assert_eq!(read_json["name"], "memory-without-init");
     assert_eq!(read_json["body"], "conteudo salvo sem init explicito");
 }
 
@@ -389,7 +389,7 @@ fn test_remember_creates_memory() {
         .args([
             "remember",
             "--name",
-            "memoria-teste",
+            "memory-test",
             "--type",
             "user",
             "--description",
@@ -405,7 +405,7 @@ fn test_remember_creates_memory() {
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["action"], "created");
-    assert_eq!(json["name"], "memoria-teste");
+    assert_eq!(json["name"], "memory-test");
     assert!(json["memory_id"].as_i64().unwrap() > 0);
 }
 
@@ -455,7 +455,7 @@ fn test_remember_force_merge_updates() {
         .args([
             "remember",
             "--name",
-            "memoria-merge",
+            "memory-merge",
             "--type",
             "feedback",
             "--description",
@@ -470,7 +470,7 @@ fn test_remember_force_merge_updates() {
         .args([
             "remember",
             "--name",
-            "memoria-merge",
+            "memory-merge",
             "--type",
             "feedback",
             "--description",
@@ -487,7 +487,7 @@ fn test_remember_force_merge_updates() {
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["action"], "updated");
-    assert_eq!(json["name"], "memoria-merge");
+    assert_eq!(json["name"], "memory-merge");
 }
 
 #[test]
@@ -605,11 +605,11 @@ fn test_read_existing_memory() {
         .args([
             "remember",
             "--name",
-            "memoria-legivel",
+            "memory-readable",
             "--type",
             "project",
             "--description",
-            "Uma memoria legivel",
+            "A readable memory",
             "--body",
             "O conteudo do corpo da memoria",
         ])
@@ -617,7 +617,7 @@ fn test_read_existing_memory() {
         .success();
 
     let output = cmd(&tmp)
-        .args(["read", "--name", "memoria-legivel"])
+        .args(["read", "--name", "memory-readable"])
         .assert()
         .success()
         .get_output()
@@ -625,9 +625,9 @@ fn test_read_existing_memory() {
         .clone();
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(json["name"], "memoria-legivel");
+    assert_eq!(json["name"], "memory-readable");
     assert_eq!(json["memory_type"], "project");
-    assert_eq!(json["description"], "Uma memoria legivel");
+    assert_eq!(json["description"], "A readable memory");
 }
 
 #[test]
@@ -951,7 +951,7 @@ fn test_rename_memory_works() {
             "--name",
             "memoria-antiga",
             "--new-name",
-            "memoria-renomeada",
+            "memory-renamed",
         ])
         .assert()
         .success()
@@ -960,7 +960,7 @@ fn test_rename_memory_works() {
         .clone();
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(json["name"], "memoria-renomeada");
+    assert_eq!(json["name"], "memory-renamed");
     assert!(json["memory_id"].as_i64().unwrap() > 0);
 }
 
@@ -1087,7 +1087,7 @@ fn test_edit_rejects_body_and_body_stdin_together() {
 }
 
 #[test]
-fn test_edit_inexistente_retorna_exit_4() {
+fn test_edit_nonexistent_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1099,7 +1099,7 @@ fn test_edit_inexistente_retorna_exit_4() {
 }
 
 #[test]
-fn test_edit_com_conflict_retorna_exit_3() {
+fn test_edit_with_conflict_returns_exit_3() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1144,7 +1144,7 @@ fn test_edit_com_conflict_retorna_exit_3() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_history_retorna_versoes() {
+fn test_history_returns_versions() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1193,7 +1193,7 @@ fn test_history_retorna_versoes() {
 }
 
 #[test]
-fn test_history_inexistente_retorna_exit_4() {
+fn test_history_nonexistent_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1258,7 +1258,7 @@ fn test_restore_memory_works() {
 }
 
 #[test]
-fn test_restore_versao_inexistente_retorna_exit_4() {
+fn test_restore_nonexistent_version_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1415,7 +1415,7 @@ fn test_link_creates_explicit_relationship() {
 }
 
 #[test]
-fn test_link_idempotente_retorna_already_exists() {
+fn test_link_idempotent_returns_already_exists() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1462,7 +1462,7 @@ fn test_link_idempotente_retorna_already_exists() {
 }
 
 #[test]
-fn test_link_entidade_inexistente_retorna_exit_4() {
+fn test_link_nonexistent_entity_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1482,7 +1482,7 @@ fn test_link_entidade_inexistente_retorna_exit_4() {
 }
 
 #[test]
-fn test_link_reflexivo_retorna_exit_1() {
+fn test_link_reflexive_returns_exit_1() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1502,7 +1502,7 @@ fn test_link_reflexivo_retorna_exit_1() {
 }
 
 #[test]
-fn test_link_peso_invalido_retorna_exit_1() {
+fn test_link_invalid_weight_returns_exit_1() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1577,7 +1577,7 @@ fn test_unlink_removes_existing_relationship() {
 }
 
 #[test]
-fn test_unlink_relacao_inexistente_retorna_exit_4() {
+fn test_unlink_nonexistent_relation_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1606,7 +1606,7 @@ fn test_unlink_relacao_inexistente_retorna_exit_4() {
 }
 
 #[test]
-fn test_unlink_entidade_ausente_retorna_exit_4() {
+fn test_unlink_missing_entity_returns_exit_4() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1713,7 +1713,7 @@ fn test_related_finds_memories_via_graph() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     let arr = json["results"]
         .as_array()
-        .expect("related retorna results array");
+        .expect("related must return results array");
     // should contain at least one of the other two memories via hop
     let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();
     assert!(

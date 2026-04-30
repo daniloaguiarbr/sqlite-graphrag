@@ -54,7 +54,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn optimize_response_serializa_campos_obrigatorios() {
+    fn optimize_response_serializes_required_fields() {
         let resp = OptimizeResponse {
             db_path: "/tmp/graphrag.sqlite".to_string(),
             status: "ok".to_string(),

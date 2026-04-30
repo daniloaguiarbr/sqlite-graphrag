@@ -22,16 +22,16 @@ fn bin_path() -> PathBuf {
     assert_cmd::cargo::cargo_bin("sqlite-graphrag")
 }
 
-/// Cria um TempDir isolado e inicializa o banco antes de retornar.
+/// Creates an isolated TempDir and initializes the database before returning.
 fn setup_db() -> TempDir {
-    let tmp = TempDir::new().expect("TempDir falhou");
+    let tmp = TempDir::new().expect("TempDir failed");
     let status = Command::new(bin_path())
         .arg("init")
         .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .status()
-        .expect("init falhou");
+        .expect("init failed");
     assert!(status.success(), "init deve ter sucesso: {status:?}");
     tmp
 }
@@ -58,7 +58,7 @@ fn send_signal(child: &Child, signal: libc::c_int) -> Result<(), i32> {
 }
 
 /// Verifica integridade do banco SQLite usando `PRAGMA integrity_check`.
-/// Retorna `true` se o resultado for "ok".
+/// Returns `true` when the result is "ok".
 fn db_integro(tmp: &TempDir) -> bool {
     let db_path = tmp.path().join("test.sqlite");
     if !db_path.exists() {
@@ -70,7 +70,7 @@ fn db_integro(tmp: &TempDir) -> bool {
         Ok(c) => {
             let resultado: String = c
                 .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-                .unwrap_or_else(|_| "falhou".to_string());
+                .unwrap_or_else(|_| "failed".to_string());
             resultado.trim() == "ok"
         }
     }
@@ -94,7 +94,7 @@ fn sigint_during_health_exits_with_db_integrity() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn de health falhou");
+        .expect("spawn de health failed");
 
     // Minimum delay to ensure process has started
     std::thread::sleep(Duration::from_millis(50));
@@ -103,10 +103,10 @@ fn sigint_during_health_exits_with_db_integrity() {
     match send_signal(&child, libc::SIGINT) {
         Ok(()) => {}
         Err(3) => {} // ESRCH: processo já encerrou — tudo bem
-        Err(e) => panic!("kill(SIGINT) falhou com errno={e}"),
+        Err(e) => panic!("kill(SIGINT) failed com errno={e}"),
     }
 
-    let status = child.wait().expect("wait falhou");
+    let status = child.wait().expect("wait failed");
 
     // Process exited normally (exit 0) or by signal — both acceptable
     // What matters is that no panic occurred and the DB is intact
@@ -125,14 +125,14 @@ fn sigint_during_health_exits_with_db_integrity() {
 /// with signal code — both are valid, but DB must be intact.
 #[test]
 fn sigterm_during_init_graceful_exit_db_integrity() {
-    let tmp = TempDir::new().expect("TempDir falhou");
+    let tmp = TempDir::new().expect("TempDir failed");
 
     let mut child: Child = sqlite_graphrag_cmd(&tmp)
         .arg("init")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn de init falhou");
+        .expect("spawn de init failed");
 
     // Wait briefly for the process to start running
     std::thread::sleep(Duration::from_millis(100));
@@ -140,10 +140,10 @@ fn sigterm_during_init_graceful_exit_db_integrity() {
     match send_signal(&child, libc::SIGTERM) {
         Ok(()) => {}
         Err(3) => {} // ESRCH: processo já encerrou
-        Err(e) => panic!("kill(SIGTERM) falhou com errno={e}"),
+        Err(e) => panic!("kill(SIGTERM) failed com errno={e}"),
     }
 
-    let status = child.wait().expect("wait falhou");
+    let status = child.wait().expect("wait failed");
 
     // Accept both exit 0 (completed before signal) and signal termination
     let encerrou_ok =
@@ -185,7 +185,7 @@ fn sigterm_after_remember_does_not_corrupt_db() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .expect("remember falhou");
+        .expect("remember failed");
 
     assert!(
         status.success(),
@@ -208,17 +208,17 @@ fn sigterm_after_remember_does_not_corrupt_db() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn de segundo remember falhou");
+        .expect("spawn de segundo remember failed");
 
     std::thread::sleep(Duration::from_millis(50));
 
     match send_signal(&child, libc::SIGTERM) {
         Ok(()) => {}
         Err(3) => {}
-        Err(e) => panic!("kill(SIGTERM) falhou com errno={e}"),
+        Err(e) => panic!("kill(SIGTERM) failed com errno={e}"),
     }
 
-    let _ = child.wait().expect("wait falhou");
+    let _ = child.wait().expect("wait failed");
 
     // DB must be intact after signal — critical invariant
     assert!(
@@ -241,14 +241,14 @@ fn sigkill_process_does_not_become_zombie() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn de health falhou");
+        .expect("spawn de health failed");
 
     std::thread::sleep(Duration::from_millis(30));
 
     match send_signal(&child, libc::SIGKILL) {
         Ok(()) => {}
         Err(3) => {}
-        Err(e) => panic!("kill(SIGKILL) falhou com errno={e}"),
+        Err(e) => panic!("kill(SIGKILL) failed com errno={e}"),
     }
 
     // `.wait()` must return without blocking — process must not become zombie

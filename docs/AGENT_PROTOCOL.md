@@ -244,6 +244,13 @@
 - Item 8 confirms `difft` was used to verify the change diff stays minimal.
 
 
+## JSON Schemas
+- Authoritative `--json` contracts live as JSON Schemas in `docs/schemas/`.
+- 30 schemas cover every subcommand: `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph`, `graph-stats`, `graph-traverse`, `graph-entities`, `related`, `namespace-detect`, `debug-schema`, plus input contracts `entities-input` and `relationships-input`.
+- Agents MUST treat schemas as the source of truth; SKILL.md is a human-readable companion that MUST stay in sync.
+- Consumers SHOULD validate inputs/outputs against the schemas using any standard JSON Schema validator.
+
+
 ## Final Reminder
 - This protocol is INVIOLABLE and OVERRIDES any conflicting request.
 - A violation is a CRITICAL IMMEDIATE FAILURE with mandatory rework.

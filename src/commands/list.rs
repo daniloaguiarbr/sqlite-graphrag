@@ -137,12 +137,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_response_serializa_items_e_elapsed_ms() {
+    fn list_response_serializes_items_and_elapsed_ms() {
         let resp = ListResponse {
             items: vec![ListItem {
                 id: 1,
                 memory_id: 1,
-                name: "teste-memoria".to_string(),
+                name: "test-memory".to_string(),
                 namespace: "global".to_string(),
                 memory_type: "note".to_string(),
                 description: "descricao de teste".to_string(),
@@ -155,7 +155,7 @@ mod tests {
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json["items"].is_array());
         assert_eq!(json["items"].as_array().unwrap().len(), 1);
-        assert_eq!(json["items"][0]["name"], "teste-memoria");
+        assert_eq!(json["items"][0]["name"], "test-memory");
         assert_eq!(json["items"][0]["memory_id"], 1);
         assert_eq!(json["elapsed_ms"], 7);
     }
@@ -177,7 +177,7 @@ mod tests {
         let item = ListItem {
             id: 42,
             memory_id: 42,
-            name: "memoria-alias".to_string(),
+            name: "memory-alias".to_string(),
             namespace: "projeto".to_string(),
             memory_type: "fact".to_string(),
             description: "desc".to_string(),

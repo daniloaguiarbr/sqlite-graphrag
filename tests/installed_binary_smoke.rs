@@ -65,7 +65,7 @@ fn installed_version(bin: &PathBuf) -> String {
     let out = Command::new(bin)
         .arg("--version")
         .output()
-        .expect("--version falhou");
+        .expect("--version failed");
     let s = String::from_utf8_lossy(&out.stdout);
     // formato: "sqlite-graphrag 1.2.3\n"
     s.split_whitespace().nth(1).unwrap_or("0.0.0").to_string()
@@ -108,7 +108,7 @@ impl Env {
     fn new() -> Self {
         let bin = skip_if_not_installed();
         assert_expected_installed_version(&bin);
-        let tmp = TempDir::new().expect("TempDir falhou");
+        let tmp = TempDir::new().expect("TempDir failed");
         Self { bin, tmp }
     }
 
@@ -137,8 +137,8 @@ impl Env {
     }
 
     fn init(&self) {
-        let out = self.cmd().arg("init").output().expect("init falhou");
-        assert!(out.status.success(), "init falhou: {}", stderr(&out));
+        let out = self.cmd().arg("init").output().expect("init failed");
+        assert!(out.status.success(), "init failed: {}", stderr(&out));
     }
 
     fn remember(&self, name: &str, body: &str) {
@@ -156,10 +156,10 @@ impl Env {
                 body,
             ])
             .output()
-            .expect("remember falhou");
+            .expect("remember failed");
         assert!(
             out.status.success(),
-            "remember {name} falhou: {}",
+            "remember {name} failed: {}",
             stderr(&out)
         );
     }
@@ -173,7 +173,7 @@ impl Env {
         let ents_json = format!(
             r#"[{{"name":"{ent_a}","entity_type":"concept"}},{{"name":"{ent_b}","entity_type":"concept"}}]"#
         );
-        std::fs::write(&ents_path, ents_json).expect("escrita entities-file falhou");
+        std::fs::write(&ents_path, ents_json).expect("escrita entities-file failed");
 
         let out = self
             .cmd()
@@ -191,10 +191,10 @@ impl Env {
                 ents_path.to_str().unwrap(),
             ])
             .output()
-            .expect("remember com entities falhou");
+            .expect("remember com entities failed");
         assert!(
             out.status.success(),
-            "remember {name} com entities falhou: {}",
+            "remember {name} com entities failed: {}",
             stderr(&out)
         );
         (ent_a, ent_b)
@@ -239,7 +239,7 @@ fn assert_json_or_not_found(out: &Output) {
 #[test]
 fn smoke_01_init() {
     let env = Env::new();
-    let out = env.cmd().arg("init").output().expect("init falhou");
+    let out = env.cmd().arg("init").output().expect("init failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["status"], "ok", "init deve retornar status=ok: {json}");
@@ -253,7 +253,7 @@ fn smoke_01_init() {
 fn smoke_02_health() {
     let env = Env::new();
     env.init();
-    let out = env.cmd().arg("health").output().expect("health falhou");
+    let out = env.cmd().arg("health").output().expect("health failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
@@ -284,7 +284,7 @@ fn smoke_03_remember() {
             "Conteúdo da memória de smoke test para validar o subcomando remember.",
         ])
         .output()
-        .expect("remember falhou");
+        .expect("remember failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     // v2.0.4: remember returns action "created", not a status field
@@ -311,7 +311,7 @@ fn smoke_04_recall() {
         .cmd()
         .args(["recall", "busca semântica", "-k", "5"])
         .output()
-        .expect("recall falhou");
+        .expect("recall failed");
     assert_json_or_not_found(&out);
 }
 
@@ -328,7 +328,7 @@ fn smoke_05_read() {
         .cmd()
         .args(["read", "--name", "smoke-read-01"])
         .output()
-        .expect("read falhou");
+        .expect("read failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
@@ -350,7 +350,7 @@ fn smoke_06_list() {
         .cmd()
         .args(["list", "--limit", "10"])
         .output()
-        .expect("list falhou");
+        .expect("list failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let arr = json["items"]
@@ -375,7 +375,7 @@ fn smoke_07_forget() {
         .cmd()
         .args(["forget", "--name", "smoke-forget-01"])
         .output()
-        .expect("forget falhou");
+        .expect("forget failed");
     assert_json_stdout(&out);
     // v2.0.4: forget retorna {forgotten: true, name, namespace} — sem campo status
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -403,7 +403,7 @@ fn smoke_08_purge() {
         .cmd()
         .args(["purge", "--yes"])
         .output()
-        .expect("purge falhou");
+        .expect("purge failed");
     assert_json_stdout(&out);
 }
 
@@ -427,7 +427,7 @@ fn smoke_09_rename() {
             "smoke-rename-dst",
         ])
         .output()
-        .expect("rename falhou");
+        .expect("rename failed");
     assert_json_stdout(&out);
     // v2.0.4: rename retorna {memory_id, name, version} — sem campo status
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -460,7 +460,7 @@ fn smoke_10_edit() {
             "conteúdo editado pelo smoke test",
         ])
         .output()
-        .expect("edit falhou");
+        .expect("edit failed");
     assert_json_stdout(&out);
     // v2.0.4: edit retorna {memory_id, name, action: "updated", version} — sem campo status
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -498,7 +498,7 @@ fn smoke_11_history() {
         .cmd()
         .args(["history", "--name", "smoke-history-01"])
         .output()
-        .expect("history falhou");
+        .expect("history failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
@@ -546,7 +546,7 @@ fn smoke_12_restore() {
                 &version_id.to_string(),
             ])
             .output()
-            .expect("restore falhou");
+            .expect("restore failed");
         assert_json_stdout(&out);
     }
 }
@@ -567,7 +567,7 @@ fn smoke_13_hybrid_search() {
         .cmd()
         .args(["hybrid-search", "busca híbrida", "-k", "5"])
         .output()
-        .expect("hybrid-search falhou");
+        .expect("hybrid-search failed");
     assert_json_or_not_found(&out);
 }
 
@@ -579,7 +579,7 @@ fn smoke_13_hybrid_search() {
 fn smoke_14_stats() {
     let env = Env::new();
     env.init();
-    let out = env.cmd().arg("stats").output().expect("stats falhou");
+    let out = env.cmd().arg("stats").output().expect("stats failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
@@ -596,7 +596,7 @@ fn smoke_14_stats() {
 fn smoke_15_migrate() {
     let env = Env::new();
     env.init();
-    let out = env.cmd().arg("migrate").output().expect("migrate falhou");
+    let out = env.cmd().arg("migrate").output().expect("migrate failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
@@ -617,7 +617,7 @@ fn smoke_16_namespace_detect() {
         .cmd()
         .arg("namespace-detect")
         .output()
-        .expect("namespace-detect falhou");
+        .expect("namespace-detect failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
@@ -634,7 +634,7 @@ fn smoke_16_namespace_detect() {
 fn smoke_17_optimize() {
     let env = Env::new();
     env.init();
-    let out = env.cmd().arg("optimize").output().expect("optimize falhou");
+    let out = env.cmd().arg("optimize").output().expect("optimize failed");
     assert_json_stdout(&out);
 }
 
@@ -651,7 +651,7 @@ fn smoke_18_sync_safe_copy() {
         .cmd()
         .args(["sync-safe-copy", "--dest", dest.to_str().unwrap()])
         .output()
-        .expect("sync-safe-copy falhou");
+        .expect("sync-safe-copy failed");
     assert_json_stdout(&out);
     assert!(dest.exists(), "snapshot deve ter sido criado em {dest:?}");
 }
@@ -664,7 +664,7 @@ fn smoke_18_sync_safe_copy() {
 fn smoke_19_vacuum() {
     let env = Env::new();
     env.init();
-    let out = env.cmd().arg("vacuum").output().expect("vacuum falhou");
+    let out = env.cmd().arg("vacuum").output().expect("vacuum failed");
     assert_json_stdout(&out);
 }
 
@@ -694,7 +694,7 @@ fn smoke_20_link() {
             "related",
         ])
         .output()
-        .expect("link falhou");
+        .expect("link failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
@@ -742,7 +742,7 @@ fn smoke_21_unlink() {
             "related",
         ])
         .output()
-        .expect("unlink falhou");
+        .expect("unlink failed");
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
@@ -764,7 +764,7 @@ fn smoke_22_related() {
         .cmd()
         .args(["related", "smoke-related-01"])
         .output()
-        .expect("related falhou");
+        .expect("related failed");
     // Aceita 0 (encontrou relacionados) ou 4 (sem relacionados)
     assert_json_or_not_found(&out);
 }
@@ -781,7 +781,7 @@ fn smoke_23_graph() {
         .cmd()
         .args(["graph", "--format", "json"])
         .output()
-        .expect("graph falhou");
+        .expect("graph failed");
     assert_json_stdout(&out);
 }
 
@@ -797,7 +797,7 @@ fn smoke_24_cleanup_orphans() {
         .cmd()
         .arg("cleanup-orphans")
         .output()
-        .expect("cleanup-orphans falhou");
+        .expect("cleanup-orphans failed");
     assert_json_stdout(&out);
 }
 
@@ -818,7 +818,7 @@ fn smoke_25_debug_schema() {
         .cmd()
         .arg("__debug_schema")
         .output()
-        .expect("__debug_schema falhou");
+        .expect("__debug_schema failed");
 
     if !out.status.success() {
         let err = stderr(&out);
@@ -833,7 +833,7 @@ fn smoke_25_debug_schema() {
             return;
         }
 
-        panic!("__debug_schema falhou: {err}");
+        panic!("__debug_schema failed: {err}");
     }
 
     assert_json_stdout(&out);
@@ -862,7 +862,7 @@ fn smoke_26_default_db_in_current_dir() {
         .cmd_default_db_in_tmp_dir()
         .arg("init")
         .output()
-        .expect("init cwd falhou");
+        .expect("init cwd failed");
     assert_json_stdout(&init_out);
     let init_json: serde_json::Value = serde_json::from_slice(&init_out.stdout).unwrap();
 
@@ -890,14 +890,14 @@ fn smoke_26_default_db_in_current_dir() {
             "memoria persistida no banco default do diretorio atual",
         ])
         .output()
-        .expect("remember cwd falhou");
+        .expect("remember cwd failed");
     assert_json_stdout(&remember_out);
 
     let read_out = env
         .cmd_default_db_in_tmp_dir()
         .args(["read", "--name", "smoke-cwd-default"])
         .output()
-        .expect("read cwd falhou");
+        .expect("read cwd failed");
     assert_json_stdout(&read_out);
     let read_json: serde_json::Value = serde_json::from_slice(&read_out.stdout).unwrap();
     assert_eq!(
@@ -909,7 +909,7 @@ fn smoke_26_default_db_in_current_dir() {
         .cmd_default_db_in_tmp_dir()
         .args(["list", "--limit", "10"])
         .output()
-        .expect("list cwd falhou");
+        .expect("list cwd failed");
     assert_json_stdout(&list_out);
     let list_json: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
     let items = list_json["items"]

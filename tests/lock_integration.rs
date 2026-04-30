@@ -21,7 +21,7 @@ use tempfile::TempDir;
 // helpers
 // ---------------------------------------------------------------------------
 
-/// Retorna o caminho do arquivo de lock para o slot indicado (1-based)
+/// Returns the lock file path for the given slot (1-based)
 /// within the provided `TempDir`, mirroring the logic of `lock.rs`.
 fn slot_path(tmp: &TempDir, slot: usize) -> std::path::PathBuf {
     tmp.path().join(format!("cli-slot-{slot}.lock"))

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.36] - 2026-04-30
+
+### Fixed (Linguistic policy)
+- **C1 (CRITICAL)**: Synced `--type` enum in `skill/sqlite-graphrag-en/SKILL.md:46` and `-pt/SKILL.md:46` from 4 listed values to the full set of 9 (`user, feedback, project, reference, decision, incident, skill, document, note`). Agents using SKILL.md as a contract had been silently losing five memory types since v1.0.30. Source of truth: `src/cli.rs:364-374` (`MemoryType` enum) and `src/commands/remember.rs:26` long-help.
+- **H1+H2+H3 (HIGH)**: Translated three Portuguese-without-accent strings in `tracing::warn!` macros that escaped the audit gate `rg '[áéíóúâêôãõç]' src/` documented in v1.0.33: `src/extraction.rs:1204` (`"NER falhou..."` → `"NER failed..."`), `src/extraction.rs:964` (`"batch NER falhou (chunk de N janelas)..."` → `"batch NER failed (chunk of N windows)..."`), `src/commands/remember.rs:345` (`"auto-extraction falhou..."` → `"auto-extraction failed..."`). Bonus: also translated `src/storage/urls.rs:37` (`"falha ao persistir url..."` → `"failed to persist url..."`) and the production error in `src/commands/remember.rs:367` (`"limite de N namespaces ativos excedido..."` → `"active namespace limit of N reached..."`).
+- **M1 (MEDIUM)**: Added a complementary CI gate in `.github/workflows/ci.yml language-check` job that scans `tracing::*!`, `#[error(...)]`, doc comments, and `panic!`/`assert!`/`expect`/`bail!`/`ensure!` macros for Portuguese words without diacritical marks (`falhou`, `janelas`, `usando apenas`, `nao foi`, `ja existe`, `obrigatorio`, `memoria`, etc.). Plain string literals are intentionally not scanned because they hold legitimate PT test fixtures for multilingual extraction.
+- **M3 (MEDIUM)**: Renamed 33 Portuguese test function names to English across `tests/integration.rs`, `tests/exit_codes_integration.rs`, `tests/concurrency_limit_integration.rs`, `tests/recall_integration.rs`, `tests/prd_compliance.rs`, `tests/loom_lock_slots.rs`, `tests/vacuum_integration.rs`, `src/commands/optimize.rs`, `list.rs`, `health.rs`, `debug_schema.rs`, `unlink.rs`. Examples: `test_link_idempotente_retorna_already_exists` → `test_link_idempotent_returns_already_exists`; `prd_optimize_executa_e_retorna_status_ok` → `prd_optimize_runs_and_returns_status_ok`; `optimize_response_serializa_campos_obrigatorios` → `optimize_response_serializes_required_fields`. Plus ~80 `.expect("X falhou")` test helpers translated to `.expect("X failed")`, doc comments and assert messages cleaned in `src/graph.rs`, `src/memory_guard.rs`, `src/cli.rs`, `src/storage/entities.rs`, and several `tests/*.rs` files. Test fixture STRINGS that exercise PT-BR ingestion (e.g. multilingual NER inputs) remain intentionally in PT-BR.
+
+### Fixed (Code logic)
+- **H5 (HIGH)**: Extended `regex_section_marker()` in `src/extraction.rs:210-218` to include `Camada` alongside `Etapa`, `Fase`, `Passo`, `Seção`, `Capítulo`. Audit on a 50-file PT-BR corpus showed `Camada 1` through `Camada 5` leaking through to `entities` with degree 3 each, polluting the graph. The filter now strips them at both the regex prefilter and the BERT NER post-merge stages.
+- **M7 (MEDIUM)**: Expanded `ALL_CAPS_STOPWORDS` in `src/extraction.rs:60-165` with `ADICIONADA`, `ADICIONADAS`, `ADICIONADO`, `ADICIONADOS`, `CLARO`, `CONFIRMARAM`, `CONFIRMEI`, `CONFIRMOU` (alphabetically merged into the list). The earlier audit found these PT-BR adjective/verb forms being captured as `concept` entities by `regex_all_caps()` in `apply_regex_prefilter`.
+- **L2 (LOW)**: Daemon spawn backoff in `src/daemon.rs:record_spawn_failure` now applies half jitter (`base/2 + rand([0, base/2))`) instead of pure exponential. Avoids retry herd if multiple CLI instances detect daemon failure simultaneously. Uses `SystemTime::now().subsec_nanos()` as a dependency-free entropy source — sufficient for low-frequency spawn coordination.
+- **L5+L6 (LOW)**: `src/i18n.rs::Language::from_env_or_locale` now treats empty `SQLITE_GRAPHRAG_LANG=""` as unset (no `tracing::warn!` emitted), matching POSIX convention. `src/i18n.rs::init` short-circuits when the OnceLock is already populated, preventing the env-resolver from running a second time and emitting the warning twice.
+
+### Improved
+- **M2 (MEDIUM)**: Added a "JSON Schemas" section to `README.md`, `README.pt-BR.md`, `docs/AGENT_PROTOCOL.md`, and `docs/AGENT_PROTOCOL.pt-BR.md` linking to the 30 canonical JSON Schema files in `docs/schemas/`. These contracts existed since v1.0.33 but were undiscoverable from the public docs.
+- **M4 (MEDIUM)**: `src/i18n.rs::tr` no longer leaks one allocation per call. The signature now requires `&'static str` inputs (which all in-tree callers already pass — they are string literals) and returns one of them directly. The previous `Box::leak(en.to_string().into_boxed_str())` pattern accumulated allocations in long-running pipelines.
+- **L3 (LOW)**: Added an MSRV (Rust 1.88) callout to `README.md` and `README.pt-BR.md` Installation sections. Previously documented only as a footnote in the Mac Intel notes.
+
+### Notes
+- **M6 was reclassified as a documentation/test artefact**: `related --json` was reported to return `graph_depth: null`, but the field is named `hop_distance` (`src/commands/related.rs:77` and serialised key). The audit query used `.graph_depth` which did not exist. The field has always been populated correctly. No code change required.
+- **L1 (sys_locale) was deferred**: the manual `LC_ALL`/`LANG` parsing in `src/i18n.rs:34-57` works correctly across the targets used in CI. Adding `sys_locale` would introduce a dependency for marginal benefit (macOS CFLocale APIs and Windows GetUserDefaultLocaleName) without a confirmed reproducer.
+- **L4 (BERT NER misclassifications) is out of scope**: `Tokio=location`, `Borda=person`, `Campos=location`, and `AdapterRun=organization` are limitations of `Davlan/bert-base-multilingual-cased-ner-hrl`. Filtering would require either a different model or a curated whitelist; both deferred until they cause concrete user impact.
+- All 427 lib tests pass with the new test names and translated assertions. `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo doc`, `cargo audit`, and `cargo deny check advisories licenses bans sources` are clean.
+- The new `language-check` gate in CI now blocks any PR re-introducing PT in tracing/error/doc/assert surfaces.
+
 ## [1.0.35] - 2026-04-30
 
 ### Fixed

@@ -67,7 +67,7 @@ fn paridade_localized_message_todas_variantes_apperror() {
         AppError::NamespaceError("sem marcador".into()),
         AppError::LimitExceeded("corpo enorme".into()),
         AppError::Embedding("dim errada".into()),
-        AppError::VecExtension("extensao falhou".into()),
+        AppError::VecExtension("extensao failed".into()),
         AppError::DbBusy("retries esgotados".into()),
         AppError::BatchPartialFailure {
             total: 10,
@@ -153,7 +153,7 @@ fn localized_message_pt_cada_variante_contem_termo_portugues() {
         ),
         (AppError::LimitExceeded("l".into()), "limite excedido"),
         (AppError::Embedding("e".into()), "erro de embedding"),
-        (AppError::VecExtension("v".into()), "sqlite-vec falhou"),
+        (AppError::VecExtension("v".into()), "sqlite-vec failed"),
         (AppError::DbBusy("d".into()), "banco ocupado"),
         (AppError::LockBusy("l".into()), "lock ocupado"),
     ];

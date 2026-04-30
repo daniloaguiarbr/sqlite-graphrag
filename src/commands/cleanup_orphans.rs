@@ -148,7 +148,7 @@ mod tests {
         };
         assert_eq!(
             resp.deleted, resp.orphan_count,
-            "ao executar sem dry_run, deleted deve igualar orphan_count"
+            "when running without dry_run, deleted must equal orphan_count"
         );
     }
 }

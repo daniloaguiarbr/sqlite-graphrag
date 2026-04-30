@@ -305,7 +305,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_serializa_todos_os_campos_novos() {
+    fn health_check_serializes_all_new_fields() {
         let resposta = HealthResponse {
             status: "ok".to_string(),
             integrity: "ok".to_string(),

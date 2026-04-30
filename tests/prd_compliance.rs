@@ -802,7 +802,7 @@ fn prd_hybrid_search_rrf_k_default_60() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_purge_retention_remove_deletados_antigos() {
+fn prd_purge_retention_removes_old_soft_deleted() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -843,7 +843,7 @@ fn prd_purge_retention_remove_deletados_antigos() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_optimize_executa_e_retorna_status_ok() {
+fn prd_optimize_runs_and_returns_status_ok() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -864,7 +864,7 @@ fn prd_optimize_executa_e_retorna_status_ok() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_vacuum_retorna_size_before_e_size_after() {
+fn prd_vacuum_returns_size_before_and_size_after() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1001,7 +1001,7 @@ fn prd_list_respeita_limit() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_rename_atualiza_versao() {
+fn prd_rename_updates_version() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -1196,7 +1196,7 @@ fn prd_cleanup_orphans_removes_entities_without_memories() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn prd_sync_safe_copy_gera_snapshot_coerente() {
+fn prd_sync_safe_copy_generates_coherent_snapshot() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

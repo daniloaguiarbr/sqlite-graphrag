@@ -39,14 +39,14 @@ fn limite_respeitado_sob_carga() {
                     "namespace-detect",
                 ])
                 .spawn()
-                .expect("falha ao spawnar invocação paralela")
+                .expect("failure ao spawnar invocação paralela")
         })
         .collect();
 
     // Aguarda todas e coleta exit codes.
     let resultados: Vec<_> = handles
         .into_iter()
-        .map(|h| h.wait_with_output().expect("wait falhou"))
+        .map(|h| h.wait_with_output().expect("wait failed"))
         .collect();
 
     let successos = resultados.iter().filter(|r| r.status.success()).count();
@@ -93,7 +93,7 @@ fn max_concurrency_zero_rejected_with_exit_2() {
 
 #[test]
 #[serial]
-fn todos_slots_ocupados_retornam_75() {
+fn all_slots_busy_return_75() {
     use fs4::fs_std::FileExt;
     use std::fs::OpenOptions;
 

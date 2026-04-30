@@ -53,12 +53,12 @@ fn test_recall_fails_without_init() {
 
 #[test]
 #[serial]
-fn test_recall_banco_vazio_retorna_listas_vazias() {
+fn test_recall_empty_db_returns_empty_lists() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
     let output = cmd(&tmp)
-        .args(["recall", "busca-em-banco-vazio"])
+        .args(["recall", "search-on-empty-db"])
         .assert()
         .success()
         .get_output()
@@ -66,7 +66,7 @@ fn test_recall_banco_vazio_retorna_listas_vazias() {
         .clone();
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(json["query"], "busca-em-banco-vazio");
+    assert_eq!(json["query"], "search-on-empty-db");
     assert_eq!(json["direct_matches"].as_array().unwrap().len(), 0);
     assert_eq!(json["graph_matches"].as_array().unwrap().len(), 0);
 }
@@ -77,7 +77,7 @@ fn test_recall_banco_vazio_retorna_listas_vazias() {
 
 #[test]
 #[serial]
-fn test_recall_query_simples_encontra_memoria() {
+fn test_recall_simple_query_finds_memory() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -344,7 +344,7 @@ fn test_recall_type_filters_by_type() {
 
 #[test]
 #[serial]
-fn test_recall_estrutura_json_valida() {
+fn test_recall_json_structure_valid() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 

@@ -201,7 +201,7 @@ proptest! {
         prop_assert_eq!(
             &original,
             &restored,
-            "Round-trip JSON falhou para nome={:?}",
+            "Round-trip JSON failed para nome={:?}",
             name
         );
     }

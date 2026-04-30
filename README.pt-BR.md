@@ -621,6 +621,14 @@ let out = Command::new("sqlite-graphrag")
 - Contate o mantenedor em privado antes de divulgar vulnerabilidades publicamente
 
 
+## JSON Schemas
+### Contratos canônicos para cada resposta de subcomando
+- JSON Schemas autoritativos para cada resposta `--json` ficam em [`docs/schemas/`](docs/schemas/) e são versionados junto com a crate
+- 30 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`
+- Trate estes schemas como o contrato de agente; SKILL.md documenta as mesmas formas em formato humano
+- Valide consumidores downstream com qualquer validador JSON Schema padrão (e.g. `ajv`, `jsonschema`)
+
+
 ## Histórico de Mudanças
 ### Histórico de releases mantido em arquivo separado
 - Leia o histórico completo de releases em [CHANGELOG.md](CHANGELOG.md)

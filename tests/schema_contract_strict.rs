@@ -20,7 +20,7 @@ struct Env {
 
 impl Env {
     fn new() -> Self {
-        let tmp = TempDir::new().expect("TempDir::new falhou");
+        let tmp = TempDir::new().expect("TempDir::new failed");
         Self { tmp }
     }
 
@@ -57,7 +57,7 @@ impl Env {
                 "corpo-de-teste-schema-contract",
             ])
             .output()
-            .expect("remember falhou ao executar");
+            .expect("remember failed ao executar");
         assert!(
             saida.status.success(),
             "remember retornou erro: {:?}\nstdout: {}",
@@ -74,7 +74,7 @@ impl Env {
         let json_ents = format!(
             r#"[{{"name":"{ent_a}","entity_type":"concept"}},{{"name":"{ent_b}","entity_type":"concept"}}]"#
         );
-        std::fs::write(&caminho_ents, &json_ents).expect("escrita de entidades falhou");
+        std::fs::write(&caminho_ents, &json_ents).expect("escrita de entidades failed");
         let saida = self
             .cmd()
             .args([
@@ -91,7 +91,7 @@ impl Env {
                 caminho_ents.to_str().expect("caminho inválido"),
             ])
             .output()
-            .expect("remember com entidades falhou");
+            .expect("remember com entidades failed");
         assert!(
             saida.status.success(),
             "remember com entidades retornou erro: {:?}",
@@ -116,7 +116,7 @@ fn validar_schema(cmd: &str, schema_str: &str, instancia: &Value) {
     let schema: Value =
         serde_json::from_str(schema_str).unwrap_or_else(|e| panic!("[{cmd}] schema inválido: {e}"));
     let validador = jsonschema::Validator::new(&schema)
-        .unwrap_or_else(|e| panic!("[{cmd}] falha ao compilar schema: {e}"));
+        .unwrap_or_else(|e| panic!("[{cmd}] failure ao compilar schema: {e}"));
     let erros: Vec<String> = validador
         .iter_errors(instancia)
         .map(|e| format!("  - caminho={} tipo={:?}", e.instance_path, e.kind))
@@ -138,7 +138,7 @@ fn validar_schema(cmd: &str, schema_str: &str, instancia: &Value) {
 #[serial]
 fn schema_01_init() {
     let env = Env::new();
-    let saida = env.cmd().arg("init").output().expect("init falhou");
+    let saida = env.cmd().arg("init").output().expect("init failed");
     assert!(
         saida.status.success(),
         "init: exit {:?}",
@@ -161,7 +161,7 @@ fn schema_01_init() {
 fn schema_02_stats() {
     let env = Env::new();
     env.init();
-    let saida = env.cmd().arg("stats").output().expect("stats falhou");
+    let saida = env.cmd().arg("stats").output().expect("stats failed");
     assert!(
         saida.status.success(),
         "stats: exit {:?}",
@@ -206,7 +206,7 @@ fn schema_04_list() {
         .cmd()
         .args(["list", "--namespace", "global"])
         .output()
-        .expect("list falhou");
+        .expect("list failed");
     assert!(
         saida.status.success(),
         "list: exit {:?}",
@@ -234,7 +234,7 @@ fn schema_05_read() {
         .cmd()
         .args(["read", "--name", "mem-schema-read"])
         .output()
-        .expect("read falhou");
+        .expect("read failed");
     assert!(
         saida.status.success(),
         "read: exit {:?}",
@@ -268,7 +268,7 @@ fn schema_06_edit() {
             "corpo-editado-para-schema",
         ])
         .output()
-        .expect("edit falhou");
+        .expect("edit failed");
     assert!(
         saida.status.success(),
         "edit: exit {:?}",
@@ -302,7 +302,7 @@ fn schema_07_rename() {
             "mem-schema-rename-destino",
         ])
         .output()
-        .expect("rename falhou");
+        .expect("rename failed");
     assert!(
         saida.status.success(),
         "rename: exit {:?}",
@@ -330,7 +330,7 @@ fn schema_08_history() {
         .cmd()
         .args(["history", "--name", "mem-schema-history"])
         .output()
-        .expect("history falhou");
+        .expect("history failed");
     assert!(
         saida.status.success(),
         "history: exit {:?}",
@@ -358,7 +358,7 @@ fn schema_09_forget() {
         .cmd()
         .args(["forget", "--name", "mem-schema-forget"])
         .output()
-        .expect("forget falhou");
+        .expect("forget failed");
     assert!(
         saida.status.success(),
         "forget: exit {:?}",
@@ -397,7 +397,7 @@ fn schema_10_restore() {
         .cmd()
         .args(["restore", "--name", "mem-schema-restore", "--version", "1"])
         .output()
-        .expect("restore falhou");
+        .expect("restore failed");
     assert!(
         saida.status.success(),
         "restore: exit {:?}",
@@ -424,7 +424,7 @@ fn schema_11_purge() {
         .cmd()
         .args(["purge", "--dry-run", "--namespace", "global"])
         .output()
-        .expect("purge falhou");
+        .expect("purge failed");
     assert!(
         saida.status.success(),
         "purge: exit {:?}",
@@ -452,7 +452,7 @@ fn schema_12_recall() {
         .cmd()
         .args(["recall", "schema recall teste", "--k", "3"])
         .output()
-        .expect("recall falhou");
+        .expect("recall failed");
     assert!(
         saida.status.success(),
         "recall: exit {:?}",
@@ -480,7 +480,7 @@ fn schema_13_hybrid_search() {
         .cmd()
         .args(["hybrid-search", "busca hibrida schema", "--k", "3"])
         .output()
-        .expect("hybrid-search falhou");
+        .expect("hybrid-search failed");
     assert!(
         saida.status.success(),
         "hybrid-search: exit {:?}",
@@ -508,7 +508,7 @@ fn schema_14_related() {
         .cmd()
         .args(["related", "--name", "mem-schema-related", "--hops", "1"])
         .output()
-        .expect("related falhou");
+        .expect("related failed");
     assert!(
         saida.status.success(),
         "related: exit {:?}",
@@ -546,7 +546,7 @@ fn schema_15_link() {
             "global",
         ])
         .output()
-        .expect("link falhou");
+        .expect("link failed");
     assert!(
         saida.status.success(),
         "link: exit {:?}",
@@ -599,7 +599,7 @@ fn schema_16_unlink() {
             "global",
         ])
         .output()
-        .expect("unlink falhou");
+        .expect("unlink failed");
     assert!(
         saida.status.success(),
         "unlink: exit {:?}",
@@ -627,7 +627,7 @@ fn schema_17_graph() {
         .cmd()
         .args(["graph", "--format", "json", "--namespace", "global"])
         .output()
-        .expect("graph falhou");
+        .expect("graph failed");
     assert!(
         saida.status.success(),
         "graph: exit {:?}",
@@ -650,7 +650,7 @@ fn schema_17_graph() {
 fn schema_18_health() {
     let env = Env::new();
     env.init();
-    let saida = env.cmd().arg("health").output().expect("health falhou");
+    let saida = env.cmd().arg("health").output().expect("health failed");
     assert!(
         saida.status.success(),
         "health: exit {:?}",
@@ -673,7 +673,7 @@ fn schema_18_health() {
 fn schema_19_migrate() {
     let env = Env::new();
     env.init();
-    let saida = env.cmd().arg("migrate").output().expect("migrate falhou");
+    let saida = env.cmd().arg("migrate").output().expect("migrate failed");
     assert!(
         saida.status.success(),
         "migrate: exit {:?}",
@@ -696,7 +696,7 @@ fn schema_19_migrate() {
 fn schema_20_optimize() {
     let env = Env::new();
     env.init();
-    let saida = env.cmd().arg("optimize").output().expect("optimize falhou");
+    let saida = env.cmd().arg("optimize").output().expect("optimize failed");
     assert!(
         saida.status.success(),
         "optimize: exit {:?}",
@@ -719,7 +719,7 @@ fn schema_20_optimize() {
 fn schema_21_vacuum() {
     let env = Env::new();
     env.init();
-    let saida = env.cmd().arg("vacuum").output().expect("vacuum falhou");
+    let saida = env.cmd().arg("vacuum").output().expect("vacuum failed");
     assert!(
         saida.status.success(),
         "vacuum: exit {:?}",
@@ -751,7 +751,7 @@ fn schema_22_sync_safe_copy() {
             destino.to_str().expect("caminho inválido"),
         ])
         .output()
-        .expect("sync-safe-copy falhou");
+        .expect("sync-safe-copy failed");
     assert!(
         saida.status.success(),
         "sync-safe-copy: exit {:?}",
@@ -778,7 +778,7 @@ fn schema_23_cleanup_orphans() {
         .cmd()
         .args(["cleanup-orphans", "--dry-run"])
         .output()
-        .expect("cleanup-orphans falhou");
+        .expect("cleanup-orphans failed");
     assert!(
         saida.status.success(),
         "cleanup-orphans: exit {:?}",
@@ -805,7 +805,7 @@ fn schema_24_namespace_detect() {
         .cmd()
         .arg("namespace-detect")
         .output()
-        .expect("namespace-detect falhou");
+        .expect("namespace-detect failed");
     assert!(
         saida.status.success(),
         "namespace-detect: exit {:?}",
@@ -832,7 +832,7 @@ fn schema_25_debug_schema() {
         .cmd()
         .arg("__debug_schema")
         .output()
-        .expect("__debug_schema falhou");
+        .expect("__debug_schema failed");
     assert!(
         saida.status.success(),
         "debug-schema: exit {:?}",

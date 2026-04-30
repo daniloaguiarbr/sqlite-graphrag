@@ -342,7 +342,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 normalize_and_validate_graph_input(&mut graph)?;
             }
             Err(e) => {
-                tracing::warn!("auto-extraction falhou (graceful degradation): {e:#}");
+                tracing::warn!("auto-extraction failed (graceful degradation): {e:#}");
             }
         }
     }
@@ -364,7 +364,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         )?;
         if !ns_exists && active_count >= MAX_NAMESPACES_ACTIVE {
             return Err(AppError::NamespaceError(format!(
-                "limite de {MAX_NAMESPACES_ACTIVE} namespaces ativos excedido ao tentar criar '{namespace}'"
+                "active namespace limit of {MAX_NAMESPACES_ACTIVE} reached while trying to create '{namespace}'"
             )));
         }
     }
