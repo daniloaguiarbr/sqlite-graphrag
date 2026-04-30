@@ -638,8 +638,18 @@ fn to_local_socket_name(name: &str) -> std::io::Result<interprocess::local_socke
         return Ok(ns_name);
     }
 
+    // Fallback when abstract namespaces are unavailable. Honours XDG_RUNTIME_DIR
+    // (Linux user-private runtime dir) or SQLITE_GRAPHRAG_HOME (project override)
+    // before falling back to /tmp, which can collide when the same name is used
+    // by another user/project on a multi-tenant host. Added in v1.0.35.
     let path = if cfg!(unix) {
-        format!("/tmp/{name}.sock")
+        let base = std::env::var_os("XDG_RUNTIME_DIR")
+            .or_else(|| std::env::var_os("SQLITE_GRAPHRAG_HOME"))
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+        base.join(format!("{name}.sock"))
+            .to_string_lossy()
+            .into_owned()
     } else {
         format!(r"\\.\pipe\{name}")
     };

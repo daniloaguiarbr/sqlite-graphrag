@@ -24,7 +24,7 @@
     "namespaces":           { "type": "array", "items": { "type": "string" }, "description": "List of namespace strings present in the database." },
     "db_size_bytes":        { "type": "integer", "minimum": 0 },
     "db_bytes":             { "type": "integer", "minimum": 0, "description": "Alias of db_size_bytes." },
-    "schema_version":       { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version. Emitted as string by binary." },
+    "schema_version":       { "type": "integer", "minimum": 0, "description": "Latest applied migration number from refinery_schema_history. Emitted as JSON number since v1.0.35 (was string in v1.0.34 and earlier)." },
     "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

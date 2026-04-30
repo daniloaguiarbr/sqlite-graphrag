@@ -6,14 +6,22 @@ use rusqlite::Connection;
 pub fn apply_init_pragmas(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
     apply_connection_pragmas(conn)?;
-    let mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
-    if mode != "wal" {
-        tracing::warn!(mode = %mode, "journal_mode did not switch to WAL");
-    }
     conn.execute_batch(&format!(
         "PRAGMA wal_autocheckpoint = {};",
         crate::constants::WAL_AUTOCHECKPOINT_PAGES
     ))?;
+    Ok(())
+}
+
+/// Re-asserts `PRAGMA journal_mode = WAL` after operations that may revert it
+/// (notably refinery-driven migrations, which can open internal handles that
+/// reset the journal mode in some scenarios). Idempotent and cheap; emits
+/// `tracing::warn!` if WAL fails to engage so degraded behaviour is observable.
+pub fn ensure_wal_mode(conn: &Connection) -> Result<(), AppError> {
+    let mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
+    if mode != "wal" {
+        tracing::warn!(mode = %mode, "journal_mode did not switch to WAL after re-assertion");
+    }
     Ok(())
 }
 
@@ -29,5 +37,9 @@ pub fn apply_connection_pragmas(conn: &Connection) -> Result<(), AppError> {
         cache = crate::constants::CACHE_SIZE_KB,
         mmap = crate::constants::MMAP_SIZE_BYTES,
     ))?;
+    let mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
+    if mode != "wal" {
+        tracing::warn!(mode = %mode, "journal_mode did not switch to WAL");
+    }
     Ok(())
 }

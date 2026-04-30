@@ -312,15 +312,21 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Save a memory with optional entity graph |
-| `recall` | `<query>`, `--k`, `--type` | Search memories semantically via KNN |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--skip-extraction` | Save a memory with optional entity graph |
+| `recall` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Search memories semantically via KNN + graph traversal |
 | `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
-| `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |
+| `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at` |
 | `forget` | `[name]` or `--name <name>` | Soft-delete a memory preserving history |
-| `rename` | `[old]` or `--old <name>`, `--new <name>` | Rename a memory while keeping versions |
+| `rename` | `[old]`, or `--name`/`--old`/`--from <NAME>` (since v1.0.35), `--new-name`/`--new`/`--to <NAME>` (since v1.0.35) | Rename a memory while keeping versions |
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--max-concurrency`, `--skip-extraction`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
+| `cache clear-models` | `--yes` | Remove cached embedding/NER models from the XDG cache directory |
+
+> **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
+> Unicode and uppercase are rejected with exit code 1. Names longer than 60 chars
+> emitted by `ingest` are truncated to fit; review the WARN log to spot mangled names.
 ### Retrieval and graph
 | Command | Arguments | Description |
 | --- | --- | --- |

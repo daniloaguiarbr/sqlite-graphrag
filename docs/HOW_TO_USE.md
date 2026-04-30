@@ -429,10 +429,11 @@ sqlite-graphrag __debug_schema --db /path/to/custom.db
 
 ### Using rename
 - Renames a memory preserving its full version history and entity graph connections
-- Use `--name`/`--old` and `--new-name`/`--new` interchangeably; legacy aliases remain supported
+- Use `--name`/`--old`/`--from` (since v1.0.35) and `--new-name`/`--new`/`--to` (since v1.0.35) interchangeably; legacy aliases remain supported
 ```bash
 sqlite-graphrag rename --name old-name --new-name new-name
 sqlite-graphrag rename --old old-name --new new-name
+sqlite-graphrag rename --from old-name --to new-name
 ```
 - Prerequisites: the source memory must exist; the target name must be available
 - `--expected-updated-at` enables optimistic locking to prevent concurrent rename conflicts

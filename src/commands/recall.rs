@@ -27,7 +27,7 @@ pub struct RecallArgs {
     /// cap them independently. The `results` field aggregates both lists.
     /// Validated to the inclusive range `1..=4096` (the upper bound matches
     /// `sqlite-vec`'s knn limit; out-of-range values are rejected at parse time).
-    #[arg(short = 'k', long, default_value = "10", value_parser = crate::parsers::parse_k_range)]
+    #[arg(short = 'k', long, alias = "limit", default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     /// Filter by memory.type. Note: distinct from graph entity_type
     /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date)

@@ -46,7 +46,10 @@ struct StatsResponse {
     db_size_bytes: u64,
     /// Semantic alias of `db_size_bytes` for the documented contract.
     db_bytes: u64,
-    schema_version: String,
+    /// Latest applied migration number from `refinery_schema_history`.
+    /// Emitted as a JSON number for cross-command consistency with `health` (since v1.0.35).
+    /// Returns `0` when the database has no recorded migrations yet.
+    schema_version: u32,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -77,7 +80,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
         .query_map([], |r| r.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let schema_version: String = conn
+    let schema_version: u32 = conn
         .query_row(
             "SELECT MAX(version) FROM refinery_schema_history",
             [],
@@ -85,8 +88,8 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
         )
         .ok()
         .flatten()
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map(|v| v.max(0) as u32)
+        .unwrap_or(0);
 
     let db_size_bytes = std::fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
@@ -151,7 +154,7 @@ mod tests {
             namespaces: vec!["global".to_string(), "project".to_string()],
             db_size_bytes: 8192,
             db_bytes: 8192,
-            schema_version: "6".to_string(),
+            schema_version: 6,
             elapsed_ms: 7,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -165,7 +168,7 @@ mod tests {
         assert_eq!(json["chunks_total"], 20);
         assert_eq!(json["db_size_bytes"], 8192u64);
         assert_eq!(json["db_bytes"], 8192u64);
-        assert_eq!(json["schema_version"], "6");
+        assert_eq!(json["schema_version"], 6);
         assert_eq!(json["elapsed_ms"], 7u64);
     }
 
@@ -184,7 +187,7 @@ mod tests {
             namespaces: vec!["ns1".to_string(), "ns2".to_string(), "ns3".to_string()],
             db_size_bytes: 0,
             db_bytes: 0,
-            schema_version: "unknown".to_string(),
+            schema_version: 0,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -212,7 +215,7 @@ mod tests {
             namespaces: vec![],
             db_size_bytes: 0,
             db_bytes: 0,
-            schema_version: "unknown".to_string(),
+            schema_version: 0,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -237,7 +240,7 @@ mod tests {
             namespaces: vec![],
             db_size_bytes: 0,
             db_bytes: 0,
-            schema_version: "6".to_string(),
+            schema_version: 6,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");

@@ -7,6 +7,13 @@
 - Every recipe below is ready to copy and costs nothing to run
 
 
+## CLI Flag Aliases (since v1.0.35)
+- `recall` and `hybrid-search` accept `--limit` as an alias of `-k`/`--k`. Existing examples below use `--k` and remain valid.
+- `rename` accepts `--from`/`--to` as aliases of `--name`/`--new-name` (legacy `--old`/`--new` also remain valid).
+- All `schema_version` JSON fields (`init`, `stats`, `migrate`, `health`) are emitted as JSON numbers (was string in `init`/`stats`/`migrate` before v1.0.35).
+- Auto-init via `remember`/`ingest`/etc. now activates `journal_mode = wal` correctly (regression fix).
+
+
 ## Summary Table
 ### Catalog — Every Supported Integration
 | Name | Type | Minimum Version | Example | Official Docs |

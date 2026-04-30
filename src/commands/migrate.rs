@@ -29,7 +29,9 @@ pub struct MigrateArgs {
 #[derive(Serialize)]
 struct MigrateResponse {
     db_path: String,
-    schema_version: String,
+    /// Latest applied migration number from `refinery_schema_history`.
+    /// Emitted as JSON number for cross-command consistency with `health`/`stats`/`init` (since v1.0.35).
+    schema_version: u32,
     status: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
@@ -39,7 +41,8 @@ struct MigrateResponse {
 struct MigrateStatusResponse {
     db_path: String,
     applied_migrations: Vec<MigrationEntry>,
-    schema_version: String,
+    /// Latest applied migration number. JSON number since v1.0.35.
+    schema_version: u32,
     elapsed_ms: u64,
 }
 
@@ -59,7 +62,7 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     if args.status {
-        let schema_version = latest_schema_version(&conn).unwrap_or_else(|_| "0".to_string());
+        let schema_version = latest_schema_version(&conn).unwrap_or(0);
         let applied = list_applied_migrations(&conn)?;
         output::emit_json(&MigrateStatusResponse {
             db_path: paths.db.display().to_string(),
@@ -121,14 +124,14 @@ fn list_applied_migrations(conn: &rusqlite::Connection) -> Result<Vec<MigrationE
     Ok(entries)
 }
 
-fn latest_schema_version(conn: &rusqlite::Connection) -> Result<String, AppError> {
+fn latest_schema_version(conn: &rusqlite::Connection) -> Result<u32, AppError> {
     match conn.query_row(
         "SELECT version FROM refinery_schema_history ORDER BY version DESC LIMIT 1",
         [],
         |row| row.get::<_, i64>(0),
     ) {
-        Ok(version) => Ok(version.to_string()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok("0".to_string()),
+        Ok(version) => Ok(version.max(0) as u32),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
         Err(err) => Err(AppError::Database(err)),
     }
 }
@@ -173,20 +176,20 @@ mod tests {
     fn latest_schema_version_returns_max_version() {
         let conn = create_db_with_history(6);
         let version = latest_schema_version(&conn).unwrap();
-        assert_eq!(version, "6");
+        assert_eq!(version, 6u32);
     }
 
     #[test]
     fn migrate_response_serializes_required_fields() {
         let resp = MigrateResponse {
             db_path: "/tmp/test.sqlite".to_string(),
-            schema_version: "6".to_string(),
+            schema_version: 6,
             status: "ok".to_string(),
             elapsed_ms: 12,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], "ok");
-        assert_eq!(json["schema_version"], "6");
+        assert_eq!(json["schema_version"], 6);
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
         assert_eq!(json["elapsed_ms"], 12);
     }
@@ -201,8 +204,8 @@ mod tests {
             );",
         )
         .expect("table creation");
-        // Table exists but is empty -> QueryReturnedNoRows -> "0"
+        // Table exists but is empty -> QueryReturnedNoRows -> 0
         let version = latest_schema_version(&conn).unwrap();
-        assert_eq!(version, "0");
+        assert_eq!(version, 0u32);
     }
 }

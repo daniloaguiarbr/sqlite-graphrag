@@ -107,19 +107,19 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` | Save a memory with optional entity graph |
-| `recall` | `<query>`, `--k`, `--type` | Search memories semantically via KNN |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`) | Save a memory with optional entity graph |
+| `recall` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--type` | Search memories semantically via KNN |
 | `read` | `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |
 | `forget` | `--name <name>` | Soft-delete a memory preserving history |
-| `rename` | `--old <name>`, `--new <name>` | Rename a memory while keeping versions |
+| `rename` | `--old`/`--from` (since v1.0.35) `<name>`, `--new`/`--to` (since v1.0.35) `<name>` | Rename a memory while keeping versions |
 | `edit` | `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
 ### Retrieval and graph
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
+| `hybrid-search` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
 | `link` | `--source`, `--target`, `--relation` | Create an explicit relationship between two entities |
 | `unlink` | `--source`, `--target`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |

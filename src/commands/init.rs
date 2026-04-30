@@ -3,7 +3,7 @@
 use crate::errors::AppError;
 use crate::output;
 use crate::paths::AppPaths;
-use crate::pragmas::apply_init_pragmas;
+use crate::pragmas::{apply_init_pragmas, ensure_wal_mode};
 use crate::storage::connection::open_rw;
 use serde::Serialize;
 
@@ -44,7 +44,9 @@ pub struct InitArgs {
 #[derive(Serialize)]
 struct InitResponse {
     db_path: String,
-    schema_version: String,
+    /// Latest applied migration number from `refinery_schema_history`.
+    /// Emitted as a JSON number for cross-command consistency with `health` and `stats` (since v1.0.35).
+    schema_version: u32,
     model: String,
     dim: usize,
     /// Active namespace resolved during initialisation, aligned with the bilingual docs.
@@ -73,6 +75,9 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         "PRAGMA user_version = {};",
         crate::constants::SCHEMA_USER_VERSION
     ))?;
+
+    // Defensive re-assertion: refinery may revert journal_mode during migrations.
+    ensure_wal_mode(&conn)?;
 
     let schema_version = latest_schema_version(&conn)?;
 
@@ -122,14 +127,14 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     Ok(())
 }
 
-fn latest_schema_version(conn: &rusqlite::Connection) -> Result<String, AppError> {
+fn latest_schema_version(conn: &rusqlite::Connection) -> Result<u32, AppError> {
     match conn.query_row(
         "SELECT version FROM refinery_schema_history ORDER BY version DESC LIMIT 1",
         [],
         |row| row.get::<_, i64>(0),
     ) {
-        Ok(version) => Ok(version.to_string()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok("0".to_string()),
+        Ok(version) => Ok(version.max(0) as u32),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
         Err(err) => Err(AppError::Database(err)),
     }
 }
@@ -142,7 +147,7 @@ mod tests {
     fn init_response_serializes_all_fields() {
         let resp = InitResponse {
             db_path: "/tmp/test.sqlite".to_string(),
-            schema_version: "6".to_string(),
+            schema_version: 6,
             model: "multilingual-e5-small".to_string(),
             dim: 384,
             namespace: "global".to_string(),
@@ -151,7 +156,7 @@ mod tests {
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
-        assert_eq!(json["schema_version"], "6");
+        assert_eq!(json["schema_version"], 6);
         assert_eq!(json["model"], "multilingual-e5-small");
         assert_eq!(json["dim"], 384usize);
         assert_eq!(json["namespace"], "global");
@@ -166,7 +171,7 @@ mod tests {
             .expect("failed to create table");
 
         let version = latest_schema_version(&conn).expect("latest_schema_version failed");
-        assert_eq!(version, "0", "empty db must return schema_version '0'");
+        assert_eq!(version, 0u32, "empty db must return schema_version 0");
     }
 
     #[test]
@@ -181,7 +186,7 @@ mod tests {
         .expect("failed to populate table");
 
         let version = latest_schema_version(&conn).expect("latest_schema_version failed");
-        assert_eq!(version, "3", "must return the highest version present");
+        assert_eq!(version, 3u32, "must return the highest version present");
     }
 
     #[test]
@@ -198,7 +203,7 @@ mod tests {
         // Verify namespace field survives round-trip serialization with correct value.
         let resp = InitResponse {
             db_path: "/tmp/x.sqlite".to_string(),
-            schema_version: "6".to_string(),
+            schema_version: 6,
             model: "multilingual-e5-small".to_string(),
             dim: 384,
             namespace: "my-project".to_string(),

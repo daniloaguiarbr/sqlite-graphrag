@@ -6,6 +6,12 @@
 - Leia a versão em inglês em [AGENTS.md](AGENTS.md)
 
 
+## Aliases de Flags CLI (desde v1.0.35)
+- `recall` e `hybrid-search` aceitam `--limit` como alias de `-k`/`--k`. Os snippets abaixo usam `--k` e continuam válidos.
+- `rename` aceita `--from`/`--to` como aliases de `--name`/`--new-name`.
+- Campos JSON `schema_version` (`init`, `stats`, `migrate`, `health`) são emitidos como números JSON desde v1.0.35.
+
+
 ## A Pergunta Que Nenhum Framework Responde
 ### Open Loop — Por Que 27 Agentes de IA Escolhem Esta Como Sua Camada de Memória
 - Por que 27 agentes de IA escolhem sqlite-graphrag como sua camada de memória persistente?

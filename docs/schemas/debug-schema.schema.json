@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/debug-schema.schema.json",
   "title": "DebugSchemaResponse",
-  "description": "Response emitted by the hidden `sqlite-graphrag __debug_schema` subcommand on stdout as a single JSON line. Intended for diagnostic tooling only. The binary exposes this command as `__debug_schema` (double-underscore prefix) while this schema file uses the kebab-case convention `debug-schema.schema.json`. IMPORTANT: `user_version` is a compile-time constant (SCHEMA_USER_VERSION) that is ONE AHEAD of the applied migrations count; `schema_version` is `MAX(version)` from `refinery_schema_history` (the last applied migration). Both values are logically correct but serve distinct purposes: `user_version` signals the target schema the binary was built for; `schema_version` signals what is actually applied in the database. A healthy database has `user_version = schema_version + 1`.",
+  "description": "Response emitted by the hidden `sqlite-graphrag __debug_schema` subcommand on stdout as a single JSON line. Intended for diagnostic tooling only. The binary exposes this command as `__debug_schema` (double-underscore prefix) while this schema file uses the kebab-case convention `debug-schema.schema.json`. IMPORTANT: `user_version` and `schema_version` are INTENTIONALLY UNRELATED values that serve distinct purposes. `user_version` is a project-signature constant (SCHEMA_USER_VERSION = 49) baked into the binary so external tools (`sqlite3 ... 'PRAGMA user_version'`, the `file` command, SQLite browsers) can identify a sqlite-graphrag database at a glance. It does NOT track the migration count. `schema_version` is `MAX(version)` from `refinery_schema_history` (the last applied migration, currently 9 after V009). The constants are independent: bumping migrations does not touch `user_version` and vice versa.",
   "$defs": {
     "SchemaObject": {
       "type": "object",
@@ -29,7 +29,7 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": { "type": "integer", "description": "MAX(version) from refinery_schema_history — the last migration actually applied to this database file. Grows by 1 per migration." },
-    "user_version":   { "type": "integer", "description": "SQLite PRAGMA user_version — compile-time constant SCHEMA_USER_VERSION baked into the binary. Equals schema_version + 1 in a healthy, fully-migrated database." },
+    "user_version":   { "type": "integer", "description": "SQLite PRAGMA user_version — project-signature constant SCHEMA_USER_VERSION (49) baked into the binary. Independent from migration count; serves as an external-tool marker only." },
     "objects":        { "type": "array", "items": { "$ref": "#/$defs/SchemaObject" } },
     "migrations":     { "type": "array", "items": { "$ref": "#/$defs/MigrationRecord" } },
     "elapsed_ms":     { "type": "integer", "minimum": 0 }

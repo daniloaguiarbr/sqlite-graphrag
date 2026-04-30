@@ -25,11 +25,11 @@ pub struct RenameArgs {
         help = "Current memory name to rename; alternative to --name/--old"
     )]
     pub name_positional: Option<String>,
-    /// Current memory name. Also accepts the alias `--old`.
-    #[arg(long, alias = "old")]
+    /// Current memory name. Also accepts the aliases `--old` and `--from` (since v1.0.35).
+    #[arg(long, alias = "old", alias = "from")]
     pub name: Option<String>,
-    /// New memory name. Also accepts the alias `--new`.
-    #[arg(long, alias = "new")]
+    /// New memory name. Also accepts the aliases `--new` and `--to` (since v1.0.35).
+    #[arg(long, alias = "new", alias = "to")]
     pub new_name: String,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,

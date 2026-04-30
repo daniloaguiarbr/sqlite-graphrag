@@ -23,7 +23,7 @@ pub struct HybridSearchArgs {
     ///
     /// Validated to the inclusive range `1..=4096` (the upper bound matches `sqlite-vec`'s knn
     /// limit). Each underlying search fetches `k * 2` candidates before fusion.
-    #[arg(short = 'k', long, default_value = "10", value_parser = crate::parsers::parse_k_range)]
+    #[arg(short = 'k', long, alias = "limit", default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     #[arg(long, default_value = "60")]
     pub rrf_k: u32,

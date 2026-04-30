@@ -5,7 +5,7 @@
 
 use crate::errors::AppError;
 use crate::paths::AppPaths;
-use crate::pragmas::{apply_connection_pragmas, apply_init_pragmas};
+use crate::pragmas::{apply_connection_pragmas, apply_init_pragmas, ensure_wal_mode};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
@@ -110,6 +110,12 @@ pub fn ensure_db_ready(paths: &AppPaths) -> Result<(), AppError> {
         if !db_existed {
             insert_default_schema_meta(&conn)?;
         }
+
+        // Defensive re-assertion: refinery's migration runner may open internal
+        // handles that revert journal_mode to delete on some platforms. Re-apply
+        // WAL after migrations to guarantee the documented contract holds for
+        // every command that goes through the auto-init path.
+        ensure_wal_mode(&conn)?;
     }
 
     Ok(())

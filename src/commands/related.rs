@@ -57,6 +57,11 @@ pub struct RelatedArgs {
 
 #[derive(Serialize)]
 struct RelatedResponse {
+    /// Echo of the seed memory name resolved from `--name` or the positional argument.
+    /// Added in v1.0.35 for input transparency in JSON output.
+    name: String,
+    /// Echo of the resolved `--max-hops` value (default 2). Added in v1.0.35.
+    max_hops: u32,
     results: Vec<RelatedMemory>,
     elapsed_ms: u64,
 }
@@ -140,6 +145,8 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
 
     match args.format {
         OutputFormat::Json => output::emit_json(&RelatedResponse {
+            name: name.clone(),
+            max_hops: args.max_hops,
             results,
             elapsed_ms: inicio.elapsed().as_millis() as u64,
         })?,
@@ -471,11 +478,13 @@ mod tests {
     #[test]
     fn related_response_serializes_results_and_elapsed_ms() {
         let resp = RelatedResponse {
+            name: "seed-mem".to_string(),
+            max_hops: 2,
             results: vec![RelatedMemory {
                 memory_id: 1,
                 name: "neighbor-mem".to_string(),
                 namespace: "global".to_string(),
-                memory_type: "fact".to_string(),
+                memory_type: "document".to_string(),
                 description: "desc".to_string(),
                 hop_distance: 1,
                 source_entity: Some("entity-a".to_string()),
@@ -490,7 +499,7 @@ mod tests {
         assert!(json["results"].is_array());
         assert_eq!(json["results"].as_array().unwrap().len(), 1);
         assert_eq!(json["elapsed_ms"], 7u64);
-        assert_eq!(json["results"][0]["type"], "fact");
+        assert_eq!(json["results"][0]["type"], "document");
         assert_eq!(json["results"][0]["hop_distance"], 1);
     }
 

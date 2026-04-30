@@ -110,8 +110,11 @@ struct NodeOut {
     id: i64,
     name: String,
     namespace: String,
+    /// Deprecated alias of `type` kept for backward-compat with pre-v1.0.35 clients.
+    /// New consumers MUST read `type` instead. Will be removed in a future major release.
     kind: String,
-    /// Duplicata de `kind` para compatibilidade com docs que usam `type`.
+    /// Canonical entity classification (organization, concept, person, etc.).
+    /// Mirrors `kind` while the deprecation window is active.
     #[serde(rename = "type")]
     r#type: String,
 }

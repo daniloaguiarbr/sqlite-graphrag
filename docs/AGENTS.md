@@ -6,6 +6,12 @@
 - Read the Portuguese version at [AGENTS.pt-BR.md](AGENTS.pt-BR.md)
 
 
+## CLI Flag Aliases (since v1.0.35)
+- `recall` and `hybrid-search` accept `--limit` as an alias of `-k`/`--k`. Existing snippets below use `--k` and remain valid.
+- `rename` accepts `--from`/`--to` as aliases of `--name`/`--new-name`.
+- `schema_version` JSON fields (`init`, `stats`, `migrate`, `health`) are emitted as JSON numbers since v1.0.35.
+
+
 ## The Question No Agent Framework Answers
 ### Open Loop — Why 27 AI Agents Choose This As Their Memory Layer
 - Why do 27 AI agents choose sqlite-graphrag as their persistent memory layer?

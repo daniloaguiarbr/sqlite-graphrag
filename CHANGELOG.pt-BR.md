@@ -10,6 +10,94 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.35] - 2026-04-30
+
+### Corrigido
+- **WAL-AUTO-INIT (HIGH)**: O caminho de auto-init (`remember`, `ingest`, `recall`, `list`, ... — todo comando que passa por `ensure_db_ready()`) agora ativa `journal_mode=wal` consistentemente. Antes da v1.0.35 apenas o comando `init` explícito alterava o journal mode para WAL; bancos criados sob demanda por outros comandos permaneciam em `journal_mode=delete`, quebrando a semântica de checkpoint do `sync-safe-copy`, as garantias de concorrência documentadas e o conselho de troubleshooting que referenciava WAL. A correção move `PRAGMA journal_mode = WAL` para `apply_connection_pragmas` (chamado por todo `open_rw`) e adiciona uma re-asserção defensiva (`ensure_wal_mode`) após migrações para neutralizar o reuso interno de handles do refinery. Cobertura de regressão: `tests/wal_auto_init_regression.rs`.
+- **JSON-SCHEMA-VERSION (MEDIUM-HIGH)**: `init --json`, `stats --json` e `migrate --json` agora emitem `schema_version` como **número** JSON em vez de string, alinhando com `health --json` (que já usava número). Corrige inconsistência de parsing para clientes que consumiam ambos os formatos. **Quebra** clientes que comparavam explicitamente como string; clientes usando comparação numérica não são afetados.
+- **DAEMON-SOCKET-FALLBACK (LOW)**: Caminho de fallback do socket Unix em `to_local_socket_name()` agora respeita `XDG_RUNTIME_DIR` e em seguida `SQLITE_GRAPHRAG_HOME` antes de cair para `/tmp`. Reduz risco de colisão em hosts multi-tenant. O caminho só é usado quando sockets de namespace abstrato falham ao bindar (raro).
+
+### Adicionado
+- **CLI-LIMIT-ALIAS (UX)**: `recall` e `hybrid-search` agora aceitam `--limit` como alias de `-k/--k`. Alinhamento com `list`/`related` que já usavam `--limit`. Não-quebrante, aditivo.
+- **CLI-RENAME-FROM-TO (UX)**: `rename` agora aceita `--from`/`--to` como aliases de `--name`/`--new-name`. Não-quebrante, aditivo.
+- **JSON-RELATED-INPUT-ECHO (UX)**: A resposta `related --json` agora inclui campos `name` e `max_hops` ecoando o input para transparência. Não-quebrante, aditivo.
+
+### Modificado
+- **GRAPH-NODE-KIND-DEPRECATED**: `graph --format json` ainda emite ambos os campos `kind` e `type` por nó, mas `kind` está agora formalmente documentado como **deprecated** (mantido para backward-compat pré-v1.0.35). Novos consumidores DEVEM ler `type`. O campo duplicado será removido em uma futura release maior.
+
+### Documentação
+- **PRAGMA-USER-VERSION-49**: Adicionado doc comment em `src/constants.rs` explicando por que `SCHEMA_USER_VERSION = 49` (assinatura do projeto para ferramentas externas) versus `CURRENT_SCHEMA_VERSION = 9` (contagem de migrações aplicacional). São intencionalmente diferentes e servem propósitos distintos.
+- **README**: Tabela do ciclo de vida de conteúdo de memória expandida com flags `--body-file`/`--body-stdin`/`--entities-file`/`--relationships-file`/`--graph-stdin` para `remember`, novos aliases para `recall`/`rename`, e callout sobre validação de nomes em ASCII kebab-case. Linhas explícitas para `ingest` e `cache clear-models` adicionadas.
+- **JSON Schemas**: `docs/schemas/stats.schema.json`, `docs/schemas/migrate.schema.json` e `docs/schemas/debug-schema.schema.json` atualizados refletindo `schema_version` como integer e clarificando a relação `user_version` (49) vs `schema_version` (9) como intencionalmente independentes.
+
+### Notas
+- Achados da auditoria #4 (flags estruturadas de truncamento na saída JSON) e #6 (progress/ETA no resumo de ingest) ficam diferidos para v1.0.36 — requerem design de schema além de uma release de patch. Truncamento atualmente é exposto apenas via `tracing::warn!`; consumidores de pipeline devem monitorar stderr.
+- Todos os 427 testes de lib passam. Teste de regressão `wal_auto_init_regression.rs` adicionado (usa `assert_cmd` + `tempfile`, mesmo padrão dos testes de integração existentes).
+- Entradas detalhadas para v1.0.32, v1.0.33 e v1.0.34 abaixo trazem resumo executivo; o detalhamento completo permanece em `CHANGELOG.md` (EN) que é a fonte canônica.
+
+## [1.0.34] - 2026-04-30
+
+### Adicionado
+- **JS7 (LOW)**: `vacuum --json` agora inclui o campo `reclaimed_bytes: u64` (calculado como `size_before_bytes.saturating_sub(size_after_bytes)`).
+
+### Documentação
+- **PRD-sync (LOW)**: `docs_rules/prd.md` (excluído do crate publicado) atualizado para refletir os enums atuais de MemoryType (9) e EntityType (13) após V008 e V009.
+
+### Notas
+- Auditoria de `unwrap`/`expect`: ZERO unwraps em produção; 12 expects em produção todos com invariantes documentados (compile-time, BERT NER, OnceLock, regex literais).
+- Auditoria de blocos `unsafe`: todos com comentários SAFETY (~14 blocos em main.rs/embedder.rs/connection.rs/optimize.rs/paths.rs).
+- Bump de patch: `reclaimed_bytes` é puramente aditivo; sem API removida; sem mudança comportamental.
+
+## [1.0.33] - 2026-04-30
+
+### Corrigido (Política Linguística)
+- **C3-residual (HIGH)**: Traduzida string em português remanescente em `src/daemon.rs:183` (Drop impl). Gate `rg '[áéíóúâêôãõç]' src/ -g '!i18n.rs'` agora retorna ZERO matches.
+- **PT-V007 (HIGH)**: Traduzido cabeçalho SQL de 5 linhas em português em `migrations/V007__memory_urls.sql` para inglês (arquivo é parte do crate publicado).
+- **AS-PT (MEDIUM)**: Traduzidas 20 mensagens de `assert!` em português para inglês em `src/commands/hybrid_search.rs` (19) e `src/commands/list.rs` (1) + 9 mensagens em `src/storage/memories.rs`.
+
+### Corrigido (Documentação)
+- **D3 (MEDIUM)**: Sincronizado doc-comment de `--type` em `recall.rs`, `list.rs`, `hybrid_search.rs` para listar todos os 13 tipos de entidade do grafo (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date) — antes listava apenas 10.
+
+### Notas
+- Validado contra ingest real de 50 arquivos `.md` (~6.6 MB): 50/50 indexados em 56.9s com `--skip-extraction`; 5/5 com extração BERT completa em 57.3s. Auto-create de `graphrag.sqlite` com modo 0600 confirmado.
+- Campos JSON duplicados em `stats --json` e `list --json` preservados intencionalmente para backward compat.
+- Assimetria de tipo `schema_version` entre `stats --json` (String) e `health --json` (u32) documentada como issue conhecida — corrigida posteriormente em v1.0.35.
+
+## [1.0.32] - 2026-04-30
+
+### Corrigido (Crítico — achados de auditoria de v1.0.31)
+- **C1 (CRITICAL)**: Auto-init unificado em todos os handlers CRUD via novo helper `ensure_db_ready` em `src/storage/connection.rs`. Antes apenas `remember` auto-criava o DB; agora todos os subcomandos CRUD criam o banco no primeiro uso.
+- **C2 (CRITICAL)**: Documentado o detach deliberado do daemon órfão em `src/daemon.rs:487` com comentário SAFETY explicando ownership de ciclo de vida via spawn lock + ready file + idle-timeout shutdown.
+- **C3 (CRITICAL)**: Novo teste de integração `tests/readme_examples_executable.rs` parseia todos os blocos bash de `README.md` e `README.pt-BR.md` em compile time e executa cada invocação contra um binário real.
+
+### Corrigido (Alto)
+- **A1 (HIGH)**: Traduzidas 8 strings PT runtime para EN em `src/lock.rs`, `src/daemon.rs`. Adicionadas mensagens i18n bilíngues para validação de query/body vazios.
+- **A2 (HIGH)**: Refatorado `src/commands/ingest.rs` de fork-spawn por arquivo para pipeline in-process. **40× mais rápido**: 50 arquivos em 21s (vs ~14 min antes).
+- **A3 (HIGH)**: Substituído `.expect("OnceLock populated by set() above")` em `src/embedder.rs:56` por `.ok_or_else(...)?` propagando erro real.
+- **A4 (HIGH)**: Adicionado `#[command(after_long_help = "EXAMPLES: ...")]` com 2-4 invocações realistas a 21 subcomandos previamente sem.
+- **A5 (HIGH)**: Auto-migração transparente. `ensure_db_ready` compara `PRAGMA user_version` com `SCHEMA_USER_VERSION` e roda migrações pendentes automaticamente quando DB antigo é aberto por binário novo.
+- **A6 (HIGH)**: Renomeados 23 identificadores PT para EN em testes e fontes; comentários PT residuais traduzidos.
+
+### Corrigido (Médio)
+- **M1 (MEDIUM)**: `recall -k` e `hybrid-search -k` agora usam `value_parser = parse_k_range` validando intervalo `1..=4096` em parse time.
+- **M2 (MEDIUM)**: UX de `purge` clarificada com alias `--max-age-days` e mensagem helpful quando `purged_count == 0`.
+- **M3 (MEDIUM)**: Adicionado `#[arg(help = "...")]` a 9 argumentos posicionais previamente sem help.
+- **M4 (MEDIUM)**: Verificado que `daemon --stop` já existe; design de detach orfão documentado.
+
+### Corrigido (Baixo)
+- **B_1-B_4 (LOW)**: Estrutura README, badge CI, exemplos bash para 16 subcomandos, e campos `name_was_normalized`/`original_name` em saída JSON de `remember`.
+
+### Adicionado
+- `tests/readme_examples_executable.rs` (442 linhas, 10 testes).
+- `parse_k_range` value parser em `src/parsers/mod.rs`.
+- `validation::empty_query()` / `validation::empty_body()` em `src/i18n.rs`.
+- `ensure_db_ready(&AppPaths)` em `src/storage/connection.rs`.
+
+### Notas
+- Pipeline de validação: `cargo fmt --check` ✓, `cargo clippy -- -D warnings` ✓, `cargo test --lib` 427/427 ✓, `cargo doc --no-deps` ✓, `cargo audit` ✓, `cargo deny` ✓.
+- Gate de linguagem: `rg '[áéíóúâêôãõç]' src/ -g '!i18n.rs'` ZERO matches.
+- Performance: 50 arquivos ingest em 21s (≈40× mais rápido que v1.0.31).
+
 ## [1.0.31] - 2026-04-30
 
 ### Corrigido

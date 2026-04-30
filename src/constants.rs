@@ -316,9 +316,15 @@ pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
 
 /// Canonical value of `PRAGMA user_version` written after migrations.
 ///
-/// Must stay in sync with the human-readable schema version identifier.
-/// Refinery uses its own history table; `user_version` is an auxiliary
-/// diagnostic field for external tools (e.g. `sqlite3 db.sqlite "PRAGMA user_version"`).
+/// **Why 49 instead of `CURRENT_SCHEMA_VERSION` (9)?**
+/// `user_version` is a 32-bit integer that SQLite reserves for application use.
+/// We deliberately set it to a project-specific marker (49 = decimal) so external
+/// inspection tools (`sqlite3 db.sqlite "PRAGMA user_version"`, the `file` command,
+/// SQLite browser GUIs) can distinguish a sqlite-graphrag database from a generic
+/// SQLite file at a glance. The application-level schema version (9, matching
+/// `CURRENT_SCHEMA_VERSION`) is stored in the `schema_meta` table and exposed via
+/// `health --json`/`stats --json`. Bumping migrations does NOT change this constant.
+/// Refinery uses its own `refinery_schema_history` table for migration bookkeeping.
 pub const SCHEMA_USER_VERSION: i64 = 49;
 
 /// Current schema version, equal to the highest migration number in `migrations/Vnnn__*.sql`.

@@ -862,11 +862,11 @@ fn contract_20_migrate() {
     assert!(out.status.success());
     let json = Env::parse_stdout(&out);
     assert_has_keys("migrate", &json, &["db_path", "schema_version", "status"]);
-    // schema_version may be emitted as string or number depending on the implementation
+    // Since v1.0.35, migrate emits schema_version as JSON number (was string before).
     let sv = &json["schema_version"];
     assert!(
-        sv.is_number() || sv.is_string(),
-        "migrate schema_version deve ser número ou string, recebido: {sv}"
+        sv.is_number(),
+        "migrate schema_version must be a JSON number since v1.0.35, got: {sv}"
     );
 }
 

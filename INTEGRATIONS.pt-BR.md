@@ -7,6 +7,13 @@
 - Cada receita abaixo está pronta para copiar e custa zero para executar
 
 
+## Aliases de Flags CLI (desde v1.0.35)
+- `recall` e `hybrid-search` aceitam `--limit` como alias de `-k`/`--k`. Os exemplos abaixo usam `--k` e continuam válidos.
+- `rename` aceita `--from`/`--to` como aliases de `--name`/`--new-name` (aliases legados `--old`/`--new` continuam suportados).
+- Todos os campos JSON `schema_version` (`init`, `stats`, `migrate`, `health`) são emitidos como números JSON (eram string em `init`/`stats`/`migrate` antes da v1.0.35).
+- Auto-init via `remember`/`ingest`/etc. agora ativa `journal_mode = wal` corretamente (correção de regressão).
+
+
 ## Tabela Resumo
 ### Catálogo — Toda Integração Suportada
 | Nome | Tipo | Versão Mínima | Exemplo | Docs Oficiais |

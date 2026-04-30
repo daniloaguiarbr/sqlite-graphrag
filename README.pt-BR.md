@@ -310,15 +310,21 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Ciclo de vida do conteúdo de memória
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body`, `--skip-extraction` | Salva memória com grafo de entidades opcional |
-| `recall` | `<query>`, `--k`, `--type` | Busca memórias semanticamente via KNN |
+| `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--skip-extraction` | Salva memória com grafo de entidades opcional |
+| `recall` | `<query>`, `-k`/`--k` (alias `--limit` desde v1.0.35), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Busca memórias semanticamente via KNN + travessia do grafo |
 | `read` | `[nome]` ou `--name <nome>` | Recupera memória por nome kebab-case exato |
-| `list` | `--type`, `--limit`, `--offset` | Pagina memórias ordenadas por `updated_at` |
+| `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Pagina memórias ordenadas por `updated_at` |
 | `forget` | `[nome]` ou `--name <nome>` | Remove memória logicamente preservando histórico |
-| `rename` | `[antigo]` ou `--old <nome>`, `--new <nome>` | Renomeia memória mantendo versões |
+| `rename` | `[antigo]`, ou `--name`/`--old`/`--from <NOME>` (desde v1.0.35), `--new-name`/`--new`/`--to <NOME>` (desde v1.0.35) | Renomeia memória mantendo versões |
 | `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
 | `history` | `[nome]` ou `--name <nome>` | Lista todas as versões da memória |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--max-concurrency`, `--skip-extraction`, `--fail-fast` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON) |
+| `cache clear-models` | `--yes` | Remove modelos de embedding/NER cacheados do diretório XDG cache |
+
+> **Validação de nomes de memória.** Nomes devem corresponder a `[a-z0-9-]+` (kebab-case, somente ASCII).
+> Unicode e maiúsculas são rejeitados com exit code 1. Nomes maiores que 60 caracteres
+> emitidos por `ingest` são truncados; revise o log WARN para identificar nomes mutilados.
 ### Recuperação e grafo
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |

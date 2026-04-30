@@ -24,7 +24,7 @@
       "additionalProperties": false,
       "properties": {
         "db_path":        { "type": "string" },
-        "schema_version": { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version. Emitted as string by binary." },
+        "schema_version": { "type": "integer", "minimum": 0, "description": "Latest applied migration number from refinery_schema_history. Emitted as JSON number since v1.0.35 (was string in v1.0.34 and earlier)." },
         "status":         { "type": "string", "enum": ["ok", "already_up_to_date"] },
         "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
       }
@@ -37,7 +37,7 @@
       "additionalProperties": false,
       "properties": {
         "db_path":             { "type": "string" },
-        "schema_version":      { "type": ["integer", "string"], "description": "MAX(version) from refinery_schema_history." },
+        "schema_version":      { "type": "integer", "minimum": 0, "description": "MAX(version) from refinery_schema_history. Emitted as JSON number since v1.0.35." },
         "applied_migrations":  { "type": "array", "items": { "$ref": "#/$defs/MigrationEntry" }, "description": "List of migrations already applied to this database." },
         "elapsed_ms":          { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
       }

@@ -6,6 +6,12 @@
 - Read the Portuguese version at [COOKBOOK.pt-BR.md](COOKBOOK.pt-BR.md)
 
 
+## CLI Flag Aliases (since v1.0.35)
+- `recall` and `hybrid-search` accept `--limit` as an alias of `-k`/`--k`. Recipes below use `--k`; either works.
+- `rename` accepts `--from`/`--to` as aliases of `--name`/`--new-name`.
+- `schema_version` JSON fields (`init`, `stats`, `migrate`, `health`) are emitted as JSON numbers since v1.0.35.
+
+
 ## Latency Note
 - The CLI can run stateless, but `sqlite-graphrag daemon` keeps the embedding model resident for repeated heavy commands
 - For production workflows requiring lower latency, start `sqlite-graphrag daemon` once and let `init`, `remember`, `recall`, and `hybrid-search` reuse it automatically

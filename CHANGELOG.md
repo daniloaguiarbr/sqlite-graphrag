@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.35] - 2026-04-30
+
+### Fixed
+- **WAL-AUTO-INIT (HIGH)**: Auto-init path (`remember`, `ingest`, `recall`, `list`, ... — every command that goes through `ensure_db_ready()`) now activates `journal_mode=wal` consistently. Before v1.0.35 only the explicit `init` command flipped journal mode to WAL; databases created on-demand by other commands stayed in `journal_mode=delete`, breaking `sync-safe-copy` checkpoint semantics, the documented concurrency guarantees, and the troubleshooting advice that referenced WAL. Fix moves `PRAGMA journal_mode = WAL` into `apply_connection_pragmas` (called by every `open_rw`) and adds a defensive re-assertion (`ensure_wal_mode`) after migrations to neutralise refinery's internal handle reuse. Regression coverage: `tests/wal_auto_init_regression.rs`.
+- **JSON-SCHEMA-VERSION (MEDIUM-HIGH)**: `init --json`, `stats --json` and `migrate --json` now emit `schema_version` as a JSON **number** instead of a string, aligning with `health --json` (which already used number). Fixes parsing inconsistency for clients that consumed both shapes. JSON Schemas (`docs/schemas/stats.schema.json`, `docs/schemas/migrate.schema.json`, `docs/schemas/debug-schema.schema.json`) updated to reflect the canonical type. **Breaking** for clients that explicitly compared as string; clients using numeric comparisons are unaffected.
+- **DAEMON-SOCKET-FALLBACK (LOW)**: Unix socket fallback path in `to_local_socket_name()` now respects `XDG_RUNTIME_DIR` then `SQLITE_GRAPHRAG_HOME` before falling back to `/tmp`. Reduces collision risk on multi-tenant hosts. Path is only used when abstract namespace sockets fail to bind (rare).
+
+### Added
+- **CLI-LIMIT-ALIAS (UX)**: `recall` and `hybrid-search` now accept `--limit` as alias of `-k/--k`. Aligns with `list`/`related` which already used `--limit`. Non-breaking, additive.
+- **CLI-RENAME-FROM-TO (UX)**: `rename` now accepts `--from`/`--to` as aliases of `--name`/`--new-name`. Non-breaking, additive.
+- **JSON-RELATED-INPUT-ECHO (UX)**: `related --json` response now includes `name` and `max_hops` echo fields for input transparency. Non-breaking, additive.
+
+### Changed
+- **GRAPH-NODE-KIND-DEPRECATED**: `graph --format json` still emits both `kind` and `type` fields per node, but `kind` is now formally documented as **deprecated** (kept for pre-v1.0.35 backward compat). New consumers MUST read `type`. The duplicate field will be removed in a future major release.
+
+### Documentation
+- **PRAGMA-USER-VERSION-49**: Added doc comment in `src/constants.rs` explaining why `SCHEMA_USER_VERSION = 49` (project signature for external diagnostic tools) versus `CURRENT_SCHEMA_VERSION = 9` (application-level migration count). They are intentionally different and serve distinct purposes.
+- **README**: Expanded the Memory content lifecycle table with `--body-file`/`--body-stdin`/`--entities-file`/`--relationships-file`/`--graph-stdin` flags for `remember`, the new aliases for `recall`/`rename`, and a callout about kebab-case ASCII memory name validation. Added explicit rows for `ingest` and `cache clear-models`.
+
+### Notes
+- Audit findings #4 (structured truncation flags in JSON output) and #6 (progress/ETA in ingest summary) are deferred to v1.0.36 — they require schema design beyond a patch release. Truncation is currently surfaced via `tracing::warn!` only; pipeline consumers should monitor stderr.
+- All 427 lib tests pass. Regression test `wal_auto_init_regression.rs` added (uses `assert_cmd` + `tempfile`, same pattern as existing integration tests).
+
 ## [1.0.34] - 2026-04-30
 
 ### Added
