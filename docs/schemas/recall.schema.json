@@ -6,7 +6,7 @@
   "$defs": {
     "RecallItem": {
       "type": "object",
-      "required": ["memory_id", "name", "namespace", "type", "description", "snippet", "distance", "source"],
+      "required": ["memory_id", "name", "namespace", "type", "description", "snippet", "distance", "score", "source"],
       "additionalProperties": false,
       "properties": {
         "memory_id":   { "type": "integer" },
@@ -16,7 +16,9 @@
         "description": { "type": "string" },
         "snippet":     { "type": "string", "description": "First 200 chars of the body." },
         "distance":    { "type": "number",  "description": "Cosine distance (lower = more similar)." },
-        "source":      { "type": "string",  "enum": ["direct", "graph"] }
+        "score":       { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Cosine similarity in [0, 1] derived as 1 - distance and clamped. Always populated (M-A5 fix in v1.0.40)." },
+        "source":      { "type": "string",  "enum": ["direct", "graph"] },
+        "graph_depth": { "type": "integer", "minimum": 0, "description": "Number of graph hops between this match and the seed memories. Present only for traversal results." }
       }
     }
   },

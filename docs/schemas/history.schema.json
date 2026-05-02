@@ -6,16 +6,17 @@
   "$defs": {
     "HistoryVersion": {
       "type": "object",
-      "required": ["version", "name", "type", "description", "body", "metadata", "change_reason", "changed_by", "created_at", "created_at_iso"],
+      "required": ["version", "name", "type", "description", "metadata", "action", "change_reason", "changed_by", "created_at", "created_at_iso"],
       "additionalProperties": false,
       "properties": {
         "version":       { "type": "integer", "minimum": 1 },
         "name":          { "type": "string" },
         "type":          { "type": "string" },
         "description":   { "type": "string" },
-        "body":          { "type": "string" },
+        "body":          { "type": "string", "description": "Memory body at this version. Omitted from the response when --no-body is passed." },
         "metadata":      { "type": "string" },
-        "change_reason": { "type": ["string", "null"] },
+        "action":        { "type": "string", "description": "Past-tense label derived from change_reason (created, edited, renamed, restored, merged, forgotten). Always populated." },
+        "change_reason": { "type": ["string", "null"], "description": "Raw verb stored in memory_versions; preserved for backwards compatibility." },
         "changed_by":    { "type": ["string", "null"] },
         "created_at":    { "type": "integer" },
         "created_at_iso":{ "type": "string", "format": "date-time" }

@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.39"
+version = "1.0.40"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -56,6 +56,11 @@ name = "loom_lock_slots"
 path = "tests/loom_lock_slots.rs"
 
 [dependencies]
+# rusqlite pinned at 0.37; upgrade to 0.39 deferred — refinery 0.9.1 (currently
+# published) constrains rusqlite to ">=0.23, <=0.38" (refinery_core/Cargo.toml at
+# v0.9.1). Native SQLite linking forbids two rusqlite versions in the graph
+# (see https://stackoverflow.com/questions/69403524). Reassess when a refinery
+# release supporting rusqlite 0.39 ships; tracked for v1.0.41.
 rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
 sqlite-vec = "0.1.9"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
@@ -90,10 +95,18 @@ candle-nn = { version = "0.10.2", default-features = false }
 candle-transformers = { version = "0.10.2", default-features = false }
 unicode-normalization = "0.1.25"
 
+# ort pinned at =2.0.0-rc.11; upgrade to rc.12 deferred — fastembed 5.13.2
+# (currently resolved) hard-pins `ort = "=2.0.0-rc.11"` and Cargo cannot satisfy
+# both pins simultaneously. fastembed 5.13.4 ships rc.12 support but bumping
+# fastembed is out of scope for this task. rc.12 also brings module reshuffles
+# (`ort::tensor` -> `ort::value`, `execution_providers` -> `ep`, IoBinding moved)
+# that require touching `src/embedder.rs`. Reassess as part of a coordinated
+# fastembed + ort bump; tracked for v1.0.41.
 [target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
 
+# Same defer rationale as above (ort rc.11 -> rc.12 blocked by fastembed pin).
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }

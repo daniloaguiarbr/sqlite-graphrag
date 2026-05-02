@@ -161,6 +161,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                 description: row.description,
                 snippet,
                 distance,
+                score: RecallItem::score_from_distance(distance),
                 source: "direct".to_string(),
                 // Direct vector matches do not have a graph depth; rely on `distance`.
                 graph_depth: None,
@@ -238,6 +239,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                         description: row.description,
                         snippet,
                         distance: graph_distance,
+                        score: RecallItem::score_from_distance(graph_distance),
                         source: "graph".to_string(),
                         graph_depth: Some(hop),
                     });
@@ -291,9 +293,34 @@ mod tests {
             description: "desc".to_string(),
             snippet: "snippet".to_string(),
             distance,
+            score: RecallItem::score_from_distance(distance),
             source: source.to_string(),
             graph_depth: if source == "graph" { Some(0) } else { None },
         }
+    }
+
+    // Bug M-A5: every RecallItem carries a non-null cosine similarity score.
+    #[test]
+    fn recall_item_score_is_present_and_finite_for_direct_match() {
+        let item = make_item("mem", 0.25, "direct");
+        let json = serde_json::to_value(&item).expect("serialization failed");
+        let score = json["score"].as_f64().expect("score must be a number");
+        assert!(
+            (0.0..=1.0).contains(&score),
+            "score must be in [0, 1], got {score}"
+        );
+        assert!(
+            (score - 0.75).abs() < 1e-6,
+            "score must equal 1 - distance for canonical case"
+        );
+    }
+
+    #[test]
+    fn recall_item_score_clamps_distance_outside_unit_range() {
+        // Pathological distances must not yield score outside [0, 1] or NaN.
+        assert_eq!(RecallItem::score_from_distance(2.0), 0.0);
+        assert_eq!(RecallItem::score_from_distance(-0.5), 1.0);
+        assert_eq!(RecallItem::score_from_distance(f32::NAN), 0.0);
     }
 
     #[test]

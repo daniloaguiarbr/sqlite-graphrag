@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.40] - 2026-05-02
+
+### Fixed
+- **H-A2** README documents `relation` values with hyphens (CLI input form: `applies-to`, `depends-on`, `tracked-in`); underscore form clarified as JSON storage representation. Mirrored in `README.pt-BR.md`.
+- **H-M8** `chunks_persisted` contract clarified and unit-tested via `compute_chunks_persisted()` helper in `src/commands/remember.rs`. Single-chunk bodies live in the `memories` row itself (no `memory_chunks` insert), so `chunks_persisted = 0` for `chunks_created = 1` is correct by design. Schema and tests now document this invariant explicitly.
+- **M-A3** Derived memory names from filenames apply Unicode NFD normalization plus combining-mark stripping before kebab-case sanitization (`src/commands/ingest.rs:944`). `açaí🦜.md` now produces `acai`-prefixed kebab name instead of dropping all non-ASCII characters.
+- **M-A5** `recall` results expose a non-null `score: f32` field on every `RecallItem`, derived from vector distance via `RecallItem::score_from_distance()` and clamped to `[0.0, 1.0]`. Test ensures direct matches return `score = 1 - distance`.
+- **M-A6** `history.versions[].action` is always populated (never `null`). `change_reason_to_action()` maps internal change reasons to past-tense labels (`created`, `edited`, `restored`, `renamed`).
+- **M-A7** `deny.toml` registers explicit ignore entries for transitive RUSTSEC-2025-0119 (`number_prefix` via `indicatif`/`hf-hub`) and RUSTSEC-2024-0436 (`paste` via `tokenizers`/`text-splitter`) with upstream tracking links.
+
+### Added
+- **H-A1** `--low-memory` ingest flag plus `SQLITE_GRAPHRAG_LOW_MEMORY` env var (truthy values: `1`, `true`, `yes`, `on`) force `--ingest-parallelism 1`. Reduces RSS pressure (~40 % drop measured at 30-file ingest) at the cost of 3-4× wall-time. Precedence: CLI flag > env var > explicit `--ingest-parallelism N`. Override emits a `tracing::warn!` when an explicit higher parallelism is also provided.
+- **H-A1** README adds a `## Memory Requirements` section documenting the ~2 GB ONNX runtime + BERT NER + fastembed model floor, scaling behaviour with default parallelism, the `--low-memory` mitigation, container/cgroup guidance, and a link to the upstream onnxruntime memory-growth tracking issue (microsoft/onnxruntime#22271).
+- **M-A4** `remember --body` help and README document the 500 KB (512000-byte) inline body limit and recommend `--body-file` for larger inputs.
+- **M-A10** README adds a `cache` subcommands table documenting `clear-models` as the sole subcommand.
+
+### Documentation
+- All EN README additions mirrored in `README.pt-BR.md` (H2 section count preserved at 24=24).
+- `docs/schemas/recall.schema.json`, `docs/schemas/history.schema.json`, and `docs/schemas/remember.schema.json` updated to reflect the populated `score`, `action`, and `chunks_persisted` semantics.
+
+### Deferred (tracked for v1.0.41)
+- **M-A8** `rusqlite 0.37 → 0.39` upgrade blocked by `refinery 0.9.1`'s `rusqlite >=0.23, <=0.38` constraint plus the 0.38 `cache` feature-flag breaking change. Comment in `Cargo.toml` documents the rationale.
+- **M-A9** `ort =2.0.0-rc.11 → =2.0.0-rc.12` upgrade blocked by `fastembed 5.13.2` hard-pinning rc.11. Coordinated bump (`fastembed 5.13.4` + `ort rc.12`) deferred; rc.12 also reshuffles modules (`ort::tensor` → `ort::value`, `execution_providers` → `ep`, `IoBinding` moved) which requires touching `src/embedder.rs`.
+
 ## [1.0.39] - 2026-05-02
 
 ### Fixed

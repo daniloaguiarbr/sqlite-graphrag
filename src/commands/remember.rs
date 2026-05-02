@@ -13,6 +13,22 @@ use crate::storage::memories::NewMemory;
 use crate::storage::{entities, memories, urls as storage_urls, versions};
 use serde::Deserialize;
 
+/// Returns the number of rows that will be written to `memory_chunks` for the
+/// given chunk count. Single-chunk bodies are stored directly in the
+/// `memories` row, so no chunk row is appended (returns `0`). Multi-chunk
+/// bodies persist every chunk and the count equals `chunks_created`.
+///
+/// Centralized as a function so the H-M8 invariant is unit-testable without
+/// running the full handler. The schema for `chunks_persisted` documents this
+/// contract explicitly (see `docs/schemas/remember.schema.json`).
+fn compute_chunks_persisted(chunks_created: usize) -> usize {
+    if chunks_created > 1 {
+        chunks_created
+    } else {
+        0
+    }
+}
+
 #[derive(clap::Args)]
 pub struct RememberArgs {
     /// Memory name in kebab-case (lowercase letters, digits, hyphens).
@@ -32,6 +48,7 @@ pub struct RememberArgs {
     /// Maximum 512000 bytes; rejected if empty without an external graph.
     #[arg(
         long,
+        help = "Inline body content (max 500 KB / 512000 bytes; for larger inputs split into multiple memories or use --body-file)",
         conflicts_with_all = ["body_file", "body_stdin", "graph_stdin"]
     )]
     pub body: Option<String>,
@@ -393,11 +410,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     // For single-chunk bodies the memory row itself stores the content and no
     // entry is appended to `memory_chunks` (see line ~545). For multi-chunk
     // bodies every chunk is persisted via `insert_chunk_slices`.
-    let chunks_persisted = if chunks_info.len() > 1 {
-        chunks_info.len()
-    } else {
-        0
-    };
+    let chunks_persisted = compute_chunks_persisted(chunks_info.len());
 
     output::emit_progress_i18n(
         &format!(
@@ -685,7 +698,29 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    use super::compute_chunks_persisted;
     use crate::output::RememberResponse;
+
+    // Bug H-M8: chunks_persisted contract is unit-testable and matches schema.
+    #[test]
+    fn chunks_persisted_zero_for_zero_chunks() {
+        assert_eq!(compute_chunks_persisted(0), 0);
+    }
+
+    #[test]
+    fn chunks_persisted_zero_for_single_chunk_body() {
+        // Single-chunk bodies live in the memories row itself; no row is
+        // appended to memory_chunks. This is the documented contract.
+        assert_eq!(compute_chunks_persisted(1), 0);
+    }
+
+    #[test]
+    fn chunks_persisted_equals_count_for_multi_chunk_body() {
+        // Every chunk above the first triggers a row in memory_chunks.
+        assert_eq!(compute_chunks_persisted(2), 2);
+        assert_eq!(compute_chunks_persisted(7), 7);
+        assert_eq!(compute_chunks_persisted(64), 64);
+    }
 
     #[test]
     fn remember_response_serializes_required_fields() {

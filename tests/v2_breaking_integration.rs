@@ -184,6 +184,7 @@ fn hybrid_search_response_shape_tem_results() {
             description: "desc2".to_string(),
             snippet: "trecho".to_string(),
             distance: 0.3,
+            score: RecallItem::score_from_distance(0.3),
             source: "graph".to_string(),
             graph_depth: Some(1),
         }],

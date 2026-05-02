@@ -263,3 +263,209 @@ fn list_include_deleted_emits_deleted_at_and_deleted_at_iso() {
         "deleted_at_iso must be RFC 3339 (contains 'T'); got: {iso_str}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Wave 2 logic bug regressions (v1.0.40)
+// ---------------------------------------------------------------------------
+
+// Bug M-A6: history JSON populates a non-null `action` field for the
+// initial memory version, mapped from the underlying `change_reason`.
+#[test]
+#[serial]
+fn history_initial_version_emits_action_created() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "wave2-history-action",
+            "--type",
+            "note",
+            "--description",
+            "test note",
+            "--body",
+            "Hello world. This is a note about Rust.",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["history", "--name", "wave2-history-action"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).expect("stdout must be valid JSON");
+    let versions = json["versions"]
+        .as_array()
+        .expect("versions must be an array");
+    assert!(!versions.is_empty(), "versions must not be empty");
+
+    let v0 = &versions[0];
+    let action = v0
+        .get("action")
+        .expect("history version must expose `action`");
+    assert!(
+        action.is_string(),
+        "action must be a string, got: {action:?}"
+    );
+    assert_eq!(
+        action.as_str().unwrap(),
+        "created",
+        "first version action must be `created`"
+    );
+}
+
+// Bug M-A5: recall populates a non-null `score` in [0, 1] for every direct match.
+#[test]
+#[serial]
+fn recall_results_carry_score_in_unit_range() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "wave2-recall-score",
+            "--type",
+            "note",
+            "--description",
+            "rust adapter mechanism",
+            "--body",
+            "The rust adapter mechanism uses traits and generics to provide flexible type conversions.",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["recall", "rust adapter mechanism", "--k", "5", "--no-graph"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).expect("stdout must be valid JSON");
+    let results = json["results"]
+        .as_array()
+        .expect("results must be an array");
+    assert!(!results.is_empty(), "recall must return at least one match");
+
+    for item in results {
+        let score = item
+            .get("score")
+            .expect("every recall item must expose `score`");
+        let s = score.as_f64().unwrap_or_else(|| {
+            panic!("score must be a number, got {score:?}");
+        });
+        assert!((0.0..=1.0).contains(&s), "score must be in [0, 1], got {s}");
+    }
+}
+
+// Bug M-A3: ingest derives kebab names that preserve the base ASCII letters
+// of accented and emoji-bearing filenames instead of collapsing them to
+// stray characters. Validates via `list` after ingest.
+#[test]
+#[serial]
+fn ingest_unicode_filenames_yield_meaningful_names() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let corpus = tmp.path().join("corpus");
+    std::fs::create_dir(&corpus).unwrap();
+    std::fs::write(corpus.join("açaí.md"), "acai berry content").unwrap();
+    std::fs::write(corpus.join("naïve-test.md"), "naive test content").unwrap();
+    std::fs::write(corpus.join("🚀-rocket.md"), "rocket content").unwrap();
+
+    cmd(&tmp)
+        .args([
+            "ingest",
+            corpus.to_str().unwrap(),
+            "--type",
+            "note",
+            "--pattern",
+            "*.md",
+            "--skip-extraction",
+        ])
+        .assert()
+        .success();
+
+    let output = cmd(&tmp)
+        .args(["list", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).expect("stdout must be valid JSON");
+    let items = json["items"]
+        .as_array()
+        .or_else(|| json["memories"].as_array())
+        .expect("list must return items or memories array");
+
+    let names: Vec<String> = items
+        .iter()
+        .filter_map(|i| i.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect();
+
+    assert!(
+        names.iter().any(|n| n == "acai"),
+        "expected an entry named `acai`, got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "naive-test"),
+        "expected an entry named `naive-test`, got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "rocket"),
+        "expected an entry named `rocket`, got: {names:?}"
+    );
+}
+
+// Bug H-M8: chunks_persisted contract for single-chunk vs multi-chunk bodies.
+// Single-chunk bodies live in the memories row directly so chunks_persisted=0.
+// Multi-chunk bodies persist every chunk so chunks_persisted=chunks_created.
+#[test]
+#[serial]
+fn remember_single_chunk_body_reports_zero_persisted_chunks() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    let output = cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "wave2-single-chunk",
+            "--type",
+            "note",
+            "--description",
+            "short body",
+            "--body",
+            "Tiny body fits in one chunk.",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).expect("stdout must be valid JSON");
+    assert_eq!(
+        json["chunks_created"].as_u64().unwrap(),
+        1,
+        "single-chunk body must report chunks_created=1"
+    );
+    assert_eq!(
+        json["chunks_persisted"].as_u64().unwrap(),
+        0,
+        "single-chunk body MUST report chunks_persisted=0 \
+         because the memories row itself acts as the chunk \
+         (no row in memory_chunks)"
+    );
+}

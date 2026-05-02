@@ -41,6 +41,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use unicode_normalization::UnicodeNormalization;
 
 /// Maximum length of a derived kebab-case name. Longer basenames are truncated
 /// (with a `tracing::warn!`) to keep the `memories.name` column bounded.
@@ -116,6 +117,97 @@ pub struct IngestArgs {
         help = "Number of files to extract+embed in parallel; default = max(1, cpus/2).min(4)"
     )]
     pub ingest_parallelism: Option<usize>,
+
+    /// Force single-threaded ingest to reduce RSS pressure.
+    ///
+    /// Equivalent to `--ingest-parallelism 1`, takes precedence over any
+    /// explicit value. Recommended for environments with <4 GB available
+    /// RAM or container/cgroup constraints. Trade-off: 3-4x longer wall
+    /// time. Also honored via `SQLITE_GRAPHRAG_LOW_MEMORY=1` env var
+    /// (CLI flag has higher precedence than the env var).
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Forces single-threaded ingest (--ingest-parallelism 1) to reduce RSS pressure. \
+                Recommended for environments with <4 GB available RAM or container/cgroup \
+                constraints. Trade-off: 3-4x longer wall time. Also honored via \
+                SQLITE_GRAPHRAG_LOW_MEMORY=1 env var."
+    )]
+    pub low_memory: bool,
+}
+
+/// Returns true when the `SQLITE_GRAPHRAG_LOW_MEMORY` env var is set to a
+/// truthy value (`1`, `true`, `yes`, `on`, case-insensitive). Empty or unset
+/// values evaluate to false. Unrecognized non-empty values emit a
+/// `tracing::warn!` and evaluate to false.
+fn env_low_memory_enabled() -> bool {
+    match std::env::var("SQLITE_GRAPHRAG_LOW_MEMORY") {
+        Ok(v) if v.is_empty() => false,
+        Ok(v) => match v.to_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            other => {
+                tracing::warn!(
+                    target: "ingest",
+                    value = %other,
+                    "SQLITE_GRAPHRAG_LOW_MEMORY value not recognized; treating as disabled"
+                );
+                false
+            }
+        },
+        Err(_) => false,
+    }
+}
+
+/// Resolves the effective ingest parallelism honoring `--low-memory` and the
+/// `SQLITE_GRAPHRAG_LOW_MEMORY` env var.
+///
+/// Precedence:
+/// 1. `--low-memory` CLI flag forces parallelism = 1.
+/// 2. `SQLITE_GRAPHRAG_LOW_MEMORY=1` env var forces parallelism = 1.
+/// 3. Explicit `--ingest-parallelism N` (when low-memory is off).
+/// 4. Default heuristic `(cpus/2).clamp(1, 4)`.
+///
+/// When low-memory wins and the user also passed `--ingest-parallelism N>1`,
+/// emits a `tracing::warn!` advertising the override.
+fn resolve_parallelism(low_memory_flag: bool, ingest_parallelism: Option<usize>) -> usize {
+    let env_flag = env_low_memory_enabled();
+    let low_memory = low_memory_flag || env_flag;
+
+    if low_memory {
+        if let Some(n) = ingest_parallelism {
+            if n > 1 {
+                tracing::warn!(
+                    target: "ingest",
+                    requested = n,
+                    "--ingest-parallelism overridden by --low-memory; using 1"
+                );
+            }
+        }
+        if low_memory_flag {
+            tracing::info!(
+                target: "ingest",
+                source = "flag",
+                "low-memory mode enabled: forcing --ingest-parallelism 1"
+            );
+        } else {
+            tracing::info!(
+                target: "ingest",
+                source = "env",
+                "low-memory mode enabled via SQLITE_GRAPHRAG_LOW_MEMORY: forcing --ingest-parallelism 1"
+            );
+        }
+        return 1;
+    }
+
+    ingest_parallelism
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|v| v.get() / 2)
+                .unwrap_or(1)
+                .clamp(1, 4)
+        })
+        .max(1)
 }
 
 #[derive(Serialize)]
@@ -593,16 +685,9 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         })
         .collect();
 
-    // Determine rayon thread pool size.
-    let parallelism = args
-        .ingest_parallelism
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|v| v.get() / 2)
-                .unwrap_or(1)
-                .clamp(1, 4)
-        })
-        .max(1);
+    // Determine rayon thread pool size, honoring --low-memory and the
+    // SQLITE_GRAPHRAG_LOW_MEMORY env var (both force parallelism = 1).
+    let parallelism = resolve_parallelism(args.low_memory, args.ingest_parallelism);
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(parallelism)
@@ -846,10 +931,18 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
 /// Returns `(final_name, truncated, original_name)`.
 /// `truncated` is true when the derived name exceeded `DERIVED_NAME_MAX_LEN`.
 /// `original_name` holds the pre-truncation name only when `truncated=true`.
+///
+/// Non-ASCII characters are first decomposed via NFD and then stripped of
+/// combining marks so accented letters fold to their base ASCII letter
+/// (e.g. `açaí` → `acai`, `naïve` → `naive`). Characters with no ASCII
+/// fallback (emoji, CJK ideographs, symbols) are dropped silently. This
+/// preserves meaningful word content rather than collapsing the basename
+/// to a few stray ASCII letters as the previous filter did.
 fn derive_kebab_name(path: &Path) -> (String, bool, Option<String>) {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let lowered: String = stem
-        .chars()
+        .nfd()
+        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
         .map(|c| {
             if c == '_' || c.is_whitespace() {
                 '-'
@@ -983,6 +1076,43 @@ mod tests {
         assert!(original.is_none());
     }
 
+    // Bug M-A3: NFD-based unicode normalization preserves base letters of
+    // accented characters instead of dropping them entirely.
+    #[test]
+    fn derive_kebab_folds_accented_letters_to_ascii() {
+        let p = PathBuf::from("/tmp/açaí.md");
+        let (name, _, _) = derive_kebab_name(&p);
+        assert_eq!(name, "acai", "got '{name}'");
+    }
+
+    #[test]
+    fn derive_kebab_handles_naive_with_diaeresis() {
+        let p = PathBuf::from("/tmp/naïve-test.md");
+        let (name, _, _) = derive_kebab_name(&p);
+        assert_eq!(name, "naive-test", "got '{name}'");
+    }
+
+    #[test]
+    fn derive_kebab_drops_emoji_keeps_word() {
+        let p = PathBuf::from("/tmp/🚀-rocket.md");
+        let (name, _, _) = derive_kebab_name(&p);
+        assert_eq!(name, "rocket", "got '{name}'");
+    }
+
+    #[test]
+    fn derive_kebab_mixed_unicode_emoji_keeps_letters() {
+        let p = PathBuf::from("/tmp/açaí🦜.md");
+        let (name, _, _) = derive_kebab_name(&p);
+        assert_eq!(name, "acai", "got '{name}'");
+    }
+
+    #[test]
+    fn derive_kebab_pure_emoji_yields_empty() {
+        let p = PathBuf::from("/tmp/🦜🚀🌟.md");
+        let (name, _, _) = derive_kebab_name(&p);
+        assert!(name.is_empty(), "got '{name}'");
+    }
+
     #[test]
     fn derive_kebab_collapses_consecutive_dashes() {
         let p = PathBuf::from("/tmp/a__b___c.md");
@@ -1095,5 +1225,148 @@ mod tests {
         assert!(is_valid_relation("applies_to"));
         assert!(is_valid_relation("depends_on"));
         assert!(!is_valid_relation("foo_bar"));
+    }
+
+    // ── v1.0.40 H-A1: --low-memory flag and SQLITE_GRAPHRAG_LOW_MEMORY env var ──
+
+    use serial_test::serial;
+
+    /// Helper: scrubs the env var around a closure to keep tests deterministic.
+    fn with_env_var<F: FnOnce()>(value: Option<&str>, f: F) {
+        let key = "SQLITE_GRAPHRAG_LOW_MEMORY";
+        let prev = std::env::var(key).ok();
+        match value {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        f();
+        match prev {
+            Some(p) => std::env::set_var(key, p),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn env_low_memory_enabled_unset_returns_false() {
+        with_env_var(None, || assert!(!env_low_memory_enabled()));
+    }
+
+    #[test]
+    #[serial]
+    fn env_low_memory_enabled_empty_returns_false() {
+        with_env_var(Some(""), || assert!(!env_low_memory_enabled()));
+    }
+
+    #[test]
+    #[serial]
+    fn env_low_memory_enabled_truthy_values_return_true() {
+        for v in ["1", "true", "TRUE", "yes", "YES", "on", "On"] {
+            with_env_var(Some(v), || {
+                assert!(env_low_memory_enabled(), "value {v:?} should be truthy")
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn env_low_memory_enabled_falsy_values_return_false() {
+        for v in ["0", "false", "FALSE", "no", "off"] {
+            with_env_var(Some(v), || {
+                assert!(!env_low_memory_enabled(), "value {v:?} should be falsy")
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn env_low_memory_enabled_unrecognized_value_returns_false() {
+        with_env_var(Some("maybe"), || assert!(!env_low_memory_enabled()));
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_parallelism_flag_forces_one_overriding_explicit_value() {
+        with_env_var(None, || {
+            assert_eq!(resolve_parallelism(true, Some(4)), 1);
+            assert_eq!(resolve_parallelism(true, Some(8)), 1);
+            assert_eq!(resolve_parallelism(true, None), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_parallelism_env_forces_one_when_flag_off() {
+        with_env_var(Some("1"), || {
+            assert_eq!(resolve_parallelism(false, Some(4)), 1);
+            assert_eq!(resolve_parallelism(false, None), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_parallelism_falsy_env_does_not_override() {
+        with_env_var(Some("0"), || {
+            assert_eq!(resolve_parallelism(false, Some(4)), 4);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_parallelism_explicit_value_when_low_memory_off() {
+        with_env_var(None, || {
+            assert_eq!(resolve_parallelism(false, Some(3)), 3);
+            assert_eq!(resolve_parallelism(false, Some(1)), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_parallelism_default_when_unset() {
+        with_env_var(None, || {
+            let p = resolve_parallelism(false, None);
+            assert!((1..=4).contains(&p), "default must be in [1, 4]; got {p}");
+        });
+    }
+
+    #[test]
+    fn ingest_args_parses_low_memory_flag_via_clap() {
+        use clap::Parser;
+        // Parse a synthetic Cli that contains the `ingest` subcommand. We rely
+        // on the public `Cli` definition so the flag is wired end-to-end.
+        let cli = crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "ingest",
+            "/tmp/dummy",
+            "--type",
+            "document",
+            "--low-memory",
+        ])
+        .expect("parse must succeed");
+        match cli.command {
+            crate::cli::Commands::Ingest(args) => {
+                assert!(args.low_memory, "--low-memory must set field to true");
+            }
+            _ => panic!("expected Ingest subcommand"),
+        }
+    }
+
+    #[test]
+    fn ingest_args_low_memory_defaults_false() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "ingest",
+            "/tmp/dummy",
+            "--type",
+            "document",
+        ])
+        .expect("parse must succeed");
+        match cli.command {
+            crate::cli::Commands::Ingest(args) => {
+                assert!(!args.low_memory, "default must be false");
+            }
+            _ => panic!("expected Ingest subcommand"),
+        }
     }
 }

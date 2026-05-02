@@ -60,10 +60,33 @@ struct HistoryVersion {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<String>,
     metadata: serde_json::Value,
+    /// Past-tense action label derived from `change_reason`; always populated
+    /// so consumers do not see `null` for the documented `action` contract
+    /// (M-A6 fix in v1.0.40). Known mappings: `create→created`, `edit→edited`,
+    /// `rename→renamed`, `restore→restored`, `merge→merged`, `forget→forgotten`.
+    /// Unknown verbs are passed through unchanged.
+    action: String,
     change_reason: String,
     changed_by: Option<String>,
     created_at: i64,
     created_at_iso: String,
+}
+
+/// Maps the raw `change_reason` stored in `memory_versions` to the past-tense
+/// `action` exposed in the JSON contract. Centralized so future call sites
+/// (e.g. `read --include-history`) reuse the same mapping.
+fn change_reason_to_action(reason: &str) -> String {
+    match reason {
+        "create" => "created",
+        "edit" => "edited",
+        "update" => "updated",
+        "rename" => "renamed",
+        "restore" => "restored",
+        "merge" => "merged",
+        "forget" => "forgotten",
+        other => other,
+    }
+    .to_string()
 }
 
 #[derive(Serialize)]
@@ -120,6 +143,8 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
             let metadata_str: String = r.get(5)?;
             let metadata_value: serde_json::Value = serde_json::from_str(&metadata_str)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let change_reason: String = r.get(6)?;
+            let action = change_reason_to_action(&change_reason);
             Ok(HistoryVersion {
                 version: r.get(0)?,
                 name: r.get(1)?,
@@ -127,7 +152,8 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
                 description: r.get(3)?,
                 body: if no_body { None } else { Some(body_str) },
                 metadata: metadata_value,
-                change_reason: r.get(6)?,
+                action,
+                change_reason,
                 changed_by: r.get(7)?,
                 created_at,
                 created_at_iso,
@@ -148,6 +174,44 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    use super::change_reason_to_action;
+
+    // Bug M-A6: action is always populated and maps known reasons to past tense.
+    #[test]
+    fn change_reason_create_maps_to_created() {
+        assert_eq!(change_reason_to_action("create"), "created");
+    }
+
+    #[test]
+    fn change_reason_edit_maps_to_edited() {
+        assert_eq!(change_reason_to_action("edit"), "edited");
+    }
+
+    #[test]
+    fn change_reason_rename_maps_to_renamed() {
+        assert_eq!(change_reason_to_action("rename"), "renamed");
+    }
+
+    #[test]
+    fn change_reason_restore_maps_to_restored() {
+        assert_eq!(change_reason_to_action("restore"), "restored");
+    }
+
+    #[test]
+    fn change_reason_merge_maps_to_merged() {
+        assert_eq!(change_reason_to_action("merge"), "merged");
+    }
+
+    #[test]
+    fn change_reason_forget_maps_to_forgotten() {
+        assert_eq!(change_reason_to_action("forget"), "forgotten");
+    }
+
+    #[test]
+    fn change_reason_unknown_passes_through() {
+        assert_eq!(change_reason_to_action("custom-action"), "custom-action");
+    }
+
     #[test]
     fn epoch_zero_yields_valid_iso() {
         // epoch_to_iso uses chrono-tz with explicit offset (+00:00 for UTC)

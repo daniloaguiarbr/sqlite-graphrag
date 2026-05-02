@@ -59,7 +59,7 @@ sqlite-graphrag --version
 ## Graph Schema
 ### Entity types, relation labels and edge strength
 - `entity_type` accepts exactly 13 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- `relation` accepts exactly 12 values: `applies_to`, `uses`, `depends_on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked_in`
+- `relation` (CLI input) accepts exactly 12 hyphenated values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. JSON output stores them with underscores (e.g., `applies_to`).
 - `strength` is a float in `[0.0, 1.0]` representing edge weight; mapped to `weight` in all read outputs
 - Unlisted `entity_type` or `relation` values are rejected at write time with exit code 1
 - Use `sqlite-graphrag graph --format json` to inspect the full stored graph at any time
@@ -106,6 +106,7 @@ sqlite-graphrag remember --name onboarding-note --type user --description "first
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 > **Required flags for `remember`:** `--name`, `--type`, `--description`. Body via `--body "text"`, `--body-file <path>`, or `--body-stdin` (pipe from stdin).
+> **Body limit: 500 KB (512000 bytes).** Larger inputs are rejected with exit code 6 (`limit exceeded`); split into multiple memories or trim before sending.
 - **Run `sqlite-graphrag init` first** before any other command (creates the SQLite file and downloads the embedding model on first run)
 - **`graphrag.sqlite` is created in the current working directory by default** (override with `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`)
 - For the local checkout, `cargo install --path .` is enough
@@ -279,6 +280,16 @@ sqlite-graphrag daemon --stop            # graceful shutdown
 ```bash
 sqlite-graphrag ingest ./docs --type document --pattern '*.md' --recursive
 ```
+### Bulk-ingest with low-memory mode (single worker)
+<!-- skip-test: requires a `./docs` directory; demonstrates the --low-memory flag. -->
+```bash
+# Force single-threaded ingest to reduce RSS pressure (recommended for <4 GB RAM
+# environments and container/cgroup constraints). Trade-off: 3-4x longer wall time.
+sqlite-graphrag ingest ./docs --type document --pattern '*.md' --low-memory
+
+# Or via env var (CLI flag takes precedence):
+SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
+```
 ### Rename a memory while keeping its version history
 <!-- skip-test: illustrative names (`old-name`, `new-name`) — the source memory does not exist in this isolated test database. -->
 ```bash
@@ -379,7 +390,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--max-concurrency`, `--skip-extraction`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--skip-extraction`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
 | `cache clear-models` | `--yes` | Remove cached embedding/NER models from the XDG cache directory |
 
 > **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
@@ -407,6 +418,11 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entities that have no memories and no relationships |
+
+### `cache` subcommands
+| Subcommand | Description |
+| --- | --- |
+| `clear-models` | Remove cached embedding/NER model files (forces re-download on next `init`) |
 
 
 ## Environment Variables
@@ -488,6 +504,15 @@ RUN cargo install --path .
 - Warm in-process recall can stay well below the stateless subprocess timing once the model is already resident
 - First `init` downloads the quantized model once and caches it locally
 - Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.18 daemon-based RSS calibration (52 GiB regression in v1.0.17 reduced to 1.03 GiB peak)
+
+
+## Memory Requirements
+### Sizing RAM for ingest and recall workloads
+- Minimum 3 GB RAM recommended (4 GB+ for large corpora). Floor sits around 2 GB just to load ONNX runtime + BERT NER + fastembed multilingual-e5-small models.
+- Default parallelism (`--ingest-parallelism = min(4, cpus/2)`) increases RSS roughly linearly per worker. With 4 workers, ingest of 30 files peaks around 4.4 GB.
+- Low-memory mode: pass `--low-memory` (or set `SQLITE_GRAPHRAG_LOW_MEMORY=1`) to force single-threaded ingest. Equivalent to `--ingest-parallelism 1` and overrides any explicit value. Reduces peak RSS to about 2.6 GB at the cost of 3-4x wall time.
+- Container/cgroup users: a cap below 3 GB causes OOM-kill during model load. Use cgroup `MemoryMax=4G` or higher in production.
+- Upstream tracking: see https://github.com/microsoft/onnxruntime/issues/22271 for ONNX CPU memory growth across many runs.
 
 
 ## Storage Footprint

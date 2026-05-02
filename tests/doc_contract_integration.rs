@@ -490,6 +490,7 @@ fn contract_11_history() {
             "description",
             "body",
             "metadata",
+            "action",
             "change_reason",
             "changed_by",
             "created_at",
@@ -497,6 +498,16 @@ fn contract_11_history() {
         ] {
             assert!(obj.contains_key(*key), "versão sem key '{key}'");
         }
+        // Bug M-A6: action must be a non-null string for the documented contract.
+        let action = obj.get("action").unwrap();
+        assert!(
+            action.is_string(),
+            "action must be a string, got {action:?}"
+        );
+        assert!(
+            !action.as_str().unwrap().is_empty(),
+            "action must not be empty"
+        );
     }
 }
 

@@ -17,7 +17,18 @@ version = 2
 yanked = "warn"
 unmaintained = "workspace"
 # Transitive advisories without upgrade available (all via fastembed):
-ignore = []
+ignore = [
+    # RUSTSEC-2025-0119: number_prefix 0.4.0 unmaintained.
+    # Transitive via indicatif 0.17 -> hf-hub 0.4 -> fastembed 5.13.
+    # Upstream tracking: https://github.com/console-rs/indicatif/issues/752
+    # Reassess when hf-hub ships with a newer indicatif that drops number_prefix.
+    "RUSTSEC-2025-0119",
+    # RUSTSEC-2024-0436: paste 1.0.15 unmaintained (archived upstream).
+    # Transitive via tokenizers 0.22 -> text-splitter 0.30 + fastembed 5.13.
+    # Upstream tracking: https://github.com/huggingface/tokenizers/pull/1834 (paste -> pastey).
+    # Reassess when tokenizers/text-splitter publish paste-free versions.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 confidence-threshold = 0.8

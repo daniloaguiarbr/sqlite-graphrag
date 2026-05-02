@@ -223,6 +223,7 @@ pub struct RememberResponse {
 ///     description: "aprendizado de Rust".into(),
 ///     snippet: "ownership e borrowing".into(),
 ///     distance: 0.12,
+///     score: 0.88,
 ///     source: "direct".into(),
 ///     graph_depth: None,
 /// };
@@ -243,6 +244,12 @@ pub struct RecallItem {
     pub description: String,
     pub snippet: String,
     pub distance: f32,
+    /// Cosine similarity in `[0.0, 1.0]` derived as `1.0 - distance` and clamped
+    /// to that interval. Always populated to satisfy the documented contract
+    /// (M-A5 in v1.0.40); higher means more similar. For graph hits the value
+    /// reflects the hop-derived distance proxy and should be interpreted
+    /// alongside `graph_depth` rather than as a true cosine score.
+    pub score: f32,
     pub source: String,
     /// Number of graph hops between this match and the seed memories.
     ///
@@ -253,6 +260,21 @@ pub struct RecallItem {
     /// Field is omitted from JSON output when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graph_depth: Option<u32>,
+}
+
+impl RecallItem {
+    /// Computes the similarity score from a vector distance, clamped to
+    /// `[0.0, 1.0]`. Cosine distance returned by sqlite-vec lives in `[0, 2]`
+    /// in theory but the embedder produces unit-norm vectors so the practical
+    /// range is `[0, 1]`. Centralized so every constructor keeps the contract.
+    pub fn score_from_distance(distance: f32) -> f32 {
+        let raw = 1.0 - distance;
+        if raw.is_nan() {
+            0.0
+        } else {
+            raw.clamp(0.0, 1.0)
+        }
+    }
 }
 
 /// Full response envelope returned by the `recall` subcommand.
@@ -373,6 +395,7 @@ mod tests {
             description: "desc".to_string(),
             snippet: "trecho".to_string(),
             distance: 0.5,
+            score: RecallItem::score_from_distance(0.5),
             source: "db".to_string(),
             graph_depth: None,
         };
@@ -381,6 +404,7 @@ mod tests {
         assert!(!json.contains("memory_type"));
         // Field is omitted from JSON when None.
         assert!(!json.contains("graph_depth"));
+        assert!(json.contains("\"score\":0.5"));
     }
 
     #[test]
@@ -424,6 +448,7 @@ mod tests {
             description: "d".to_string(),
             snippet: "s".to_string(),
             distance: 0.1,
+            score: RecallItem::score_from_distance(0.1),
             source: "src".to_string(),
             graph_depth: Some(2),
         };
