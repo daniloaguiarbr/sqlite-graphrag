@@ -13,21 +13,39 @@ use tokenizers::Tokenizer;
 // Conservative heuristic to reduce the risk of underestimating the real token count
 // in Markdown, code, and multilingual text. The previous value (4 chars/token) allowed
 // chunks that were too large for some real documents.
+/// Characters per token heuristic: 2 chars/token reduces the risk of underestimating
+/// real token counts in Markdown, code, and multilingual text.
 const CHARS_PER_TOKEN: usize = 2;
+
+/// Maximum character length of a single chunk (derived from token limit × chars-per-token).
 pub const CHUNK_SIZE_CHARS: usize = CHUNK_SIZE_TOKENS * CHARS_PER_TOKEN;
+
+/// Character overlap between consecutive chunks to preserve cross-boundary context.
 pub const CHUNK_OVERLAP_CHARS: usize = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
 
+/// A contiguous slice of a body string identified by byte offsets.
 #[derive(Debug, Clone)]
 pub struct Chunk {
+    /// Byte offset of the first character (inclusive).
     pub start_offset: usize,
+    /// Byte offset past the last character (exclusive).
     pub end_offset: usize,
+    /// Approximate token count for this chunk (chars / `CHARS_PER_TOKEN`).
     pub token_count_approx: usize,
 }
 
+/// Returns `true` when `body` exceeds `CHUNK_SIZE_CHARS` and must be split.
 pub fn needs_chunking(body: &str) -> bool {
     body.len() > CHUNK_SIZE_CHARS
 }
 
+/// Splits `body` into overlapping [`Chunk`]s using a character-based heuristic.
+///
+/// Short bodies (≤ `CHUNK_SIZE_CHARS`) are returned as a single chunk.
+/// Splits prefer paragraph breaks, then sentence-end punctuation, then word boundaries.
+///
+/// # Errors
+/// This function is infallible; it returns a `Vec` directly.
 pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     if !needs_chunking(body) {
         return vec![Chunk {
@@ -78,6 +96,11 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
     chunks
 }
 
+/// Splits `body` into [`Chunk`]s using pre-computed token byte-offsets.
+///
+/// Each element of `token_offsets` is a `(start, end)` byte range for one token.
+/// Respects `CHUNK_SIZE_TOKENS` and `CHUNK_OVERLAP_TOKENS` constants.
+/// Short bodies (≤ `CHUNK_SIZE_TOKENS` tokens) are returned as a single chunk.
 pub fn split_into_chunks_by_token_offsets(
     body: &str,
     token_offsets: &[(usize, usize)],
@@ -165,6 +188,7 @@ pub fn split_into_chunks_hierarchical(body: &str, tokenizer: &Tokenizer) -> Vec<
         .collect()
 }
 
+/// Returns the string slice of `body` described by `chunk`'s byte offsets.
 pub fn chunk_text<'a>(body: &'a str, chunk: &Chunk) -> &'a str {
     &body[chunk.start_offset..chunk.end_offset]
 }
@@ -199,6 +223,10 @@ fn next_char_boundary(body: &str, mut idx: usize) -> usize {
     idx
 }
 
+/// Computes the mean of `chunk_embeddings` and L2-normalizes the result.
+///
+/// Returns a zero-vector of length `EMBEDDING_DIM` when the input is empty.
+/// When a single embedding is provided it is returned as-is (no copy).
 pub fn aggregate_embeddings(chunk_embeddings: &[Vec<f32>]) -> Vec<f32> {
     if chunk_embeddings.is_empty() {
         return vec![0.0f32; EMBEDDING_DIM];

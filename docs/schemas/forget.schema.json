@@ -4,12 +4,15 @@
   "title": "ForgetResponse",
   "description": "Response emitted by `sqlite-graphrag forget` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["forgotten", "name", "namespace", "elapsed_ms"],
+  "required": ["action", "forgotten", "name", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "forgotten":  { "type": "boolean", "description": "True when the memory was soft-deleted." },
-    "name":       { "type": "string" },
-    "namespace":  { "type": "string" },
-    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+    "action":          { "type": "string", "enum": ["soft_deleted", "already_deleted", "not_found"], "description": "Outcome of the forget operation." },
+    "forgotten":       { "type": "boolean", "description": "True when the memory was soft-deleted by this invocation." },
+    "name":            { "type": "string" },
+    "namespace":       { "type": "string" },
+    "deleted_at":      { "type": "integer", "description": "Unix epoch seconds when the memory was soft-deleted. Absent when action=not_found." },
+    "deleted_at_iso":  { "type": "string", "description": "RFC 3339 timestamp parallel to deleted_at for ISO 8601 parsers. Absent when action=not_found." },
+    "elapsed_ms":      { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

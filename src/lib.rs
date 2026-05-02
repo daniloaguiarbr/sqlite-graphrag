@@ -129,6 +129,9 @@ pub mod storage;
 /// Display time zone for `*_iso` fields (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
 pub mod tz;
 
+/// Stdin reader with configurable timeout to prevent indefinite blocking.
+pub mod stdin_helper;
+
 /// Real tokenizer of the embedding model for accurate token counting and chunking.
 pub mod tokenizer;
 

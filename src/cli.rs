@@ -6,6 +6,17 @@ use crate::commands::*;
 use crate::i18n::{current, Language};
 use clap::{Parser, Subcommand};
 
+/// Common daemon-control options shared across embedding-heavy subcommands.
+#[derive(clap::Args, Debug, Clone)]
+pub struct DaemonOpts {
+    /// Allow the CLI to spawn a background daemon if none is running.
+    ///
+    /// Default `true`. Pass `--autostart-daemon=false` to disable.
+    /// Env var `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1` is honoured only when this flag is unset.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub autostart_daemon: bool,
+}
+
 /// Returns the maximum simultaneous invocations allowed by the CPU heuristic.
 fn max_concurrency_ceiling() -> usize {
     std::thread::available_parallelism()

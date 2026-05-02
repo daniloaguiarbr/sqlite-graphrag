@@ -220,6 +220,36 @@ sqlite-graphrag daemon --idle-shutdown-secs 600
 sqlite-graphrag daemon --ping --json
 sqlite-graphrag daemon --stop --json
 ```
+
+### Daemon auto-spawn behavior
+
+`recall`, `hybrid-search`, and other embedding-heavy subcommands automatically spawn a background daemon (`sqlite-graphrag daemon`) when none is running, to amortise the model warm-up cost across multiple invocations.
+
+**Default**: auto-spawn enabled (idle timeout 600s).
+
+**Disable per-invocation** via flag:
+
+```bash
+sqlite-graphrag recall "query" --autostart-daemon=false
+```
+
+**Disable globally** via env var:
+
+```bash
+export SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1
+```
+
+The CLI flag takes precedence over the env var.
+
+**Explicit lifecycle control**:
+
+```bash
+sqlite-graphrag daemon                   # foreground, default 600s idle timeout
+sqlite-graphrag daemon --idle-shutdown-secs 3600
+sqlite-graphrag daemon --ping            # health-check
+sqlite-graphrag daemon --stop            # graceful shutdown
+```
+
 ### Bulk-ingest every Markdown file under a directory
 <!-- skip-test: requires a `./docs` directory containing Markdown files relative to the invocation cwd. -->
 ```bash

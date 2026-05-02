@@ -98,6 +98,10 @@ fn maybe_init_dynamic_ort(_models_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Embeds a single passage using the `passage:` prefix required by E5 models.
+///
+/// # Errors
+/// Returns `Err` when the mutex is poisoned or the model returns an unexpected result.
 pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
     let results = embedder
@@ -113,6 +117,10 @@ pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<
     Ok(emb)
 }
 
+/// Embeds a search query using the `query:` prefix required by E5 models.
+///
+/// # Errors
+/// Returns `Err` when the mutex is poisoned or the model returns an unexpected result.
 pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let prefixed = format!("{QUERY_PREFIX}{text}");
     let results = embedder
@@ -127,6 +135,12 @@ pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f3
     Ok(emb)
 }
 
+/// Embeds multiple passages in a single ONNX batch call.
+///
+/// `batch_size` is capped at `FASTEMBED_BATCH_SIZE`. All texts receive the `passage:` prefix.
+///
+/// # Errors
+/// Returns `Err` when the mutex is poisoned or the model inference fails.
 pub fn embed_passages_batch(
     embedder: &Mutex<TextEmbedding>,
     texts: &[&str],
@@ -148,10 +162,19 @@ pub fn embed_passages_batch(
     Ok(results)
 }
 
+/// Returns the number of batches that [`embed_passages_controlled`] would produce
+/// for the given `token_counts` slice without running inference.
 pub fn controlled_batch_count(token_counts: &[usize]) -> usize {
     plan_controlled_batches(token_counts).len()
 }
 
+/// Embeds passages grouped into token-budget-aware batches to avoid OOM on variable-length inputs.
+///
+/// `texts` and `token_counts` must have the same length. Batches are planned using an
+/// internal budget algorithm and single-item batches fall back to [`embed_passage`].
+///
+/// # Errors
+/// Returns `Err` when lengths differ, the mutex is poisoned, or inference fails.
 pub fn embed_passages_controlled(
     embedder: &Mutex<TextEmbedding>,
     texts: &[&str],

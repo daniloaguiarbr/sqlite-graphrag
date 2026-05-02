@@ -7,7 +7,6 @@ use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use crate::storage::{memories, versions};
 use serde::Serialize;
-use std::io::Read as _;
 
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
@@ -102,11 +101,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         } else if let Some(path) = &args.body_file {
             std::fs::read_to_string(path).map_err(AppError::Io)?
         } else {
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(AppError::Io)?;
-            buf
+            crate::stdin_helper::read_stdin_with_timeout(60)?
         };
         if b.len() > MAX_MEMORY_BODY_LEN {
             return Err(AppError::LimitExceeded(

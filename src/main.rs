@@ -150,12 +150,16 @@ fn main() {
     // Initialize display timezone (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
     if let Err(e) = sqlite_graphrag::tz::init(cli.tz) {
         sqlite_graphrag::output::emit_error(&e.localized_message());
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let _ = std::io::Write::flush(&mut std::io::stderr());
         std::process::exit(e.exit_code());
     }
 
     // Validate flags before any heavy initialization.
     if let Err(msg) = cli.validate_flags() {
         sqlite_graphrag::output::emit_error(&msg);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let _ = std::io::Write::flush(&mut std::io::stderr());
         std::process::exit(2);
     }
 
@@ -168,6 +172,8 @@ fn main() {
                 Ok(available_mb) => available_mb,
                 Err(e) => {
                     sqlite_graphrag::output::emit_error(&e.localized_message());
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
                     std::process::exit(e.exit_code());
                 }
             }
@@ -192,6 +198,8 @@ fn main() {
                 "embedding-heavy command must measure available RAM",
                 &sqlite_graphrag::i18n::validation::runtime_pt::embedding_heavy_must_measure_ram(),
             );
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let _ = std::io::Write::flush(&mut std::io::stderr());
             std::process::exit(20);
         });
         let safe_concurrency = calculate_safe_concurrency(
@@ -237,6 +245,8 @@ fn main() {
             Ok(pair) => pair,
             Err(e) => {
                 sqlite_graphrag::output::emit_error(&e.localized_message());
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let _ = std::io::Write::flush(&mut std::io::stderr());
                 std::process::exit(e.exit_code());
             }
         })
@@ -292,6 +302,8 @@ fn main() {
 
     if let Err(e) = result {
         sqlite_graphrag::output::emit_error(&e.localized_message());
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let _ = std::io::Write::flush(&mut std::io::stderr());
         std::process::exit(e.exit_code());
     }
 }

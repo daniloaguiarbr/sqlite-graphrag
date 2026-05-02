@@ -3,6 +3,13 @@
 use crate::errors::AppError;
 use rusqlite::Connection;
 
+/// Applies one-time PRAGMAs on a freshly opened connection (e.g. `auto_vacuum`).
+///
+/// Calls [`apply_connection_pragmas`] internally and then sets `wal_autocheckpoint`.
+/// Must be called once per database file, not once per connection.
+///
+/// # Errors
+/// Returns `Err` when any PRAGMA execution fails.
 pub fn apply_init_pragmas(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
     apply_connection_pragmas(conn)?;
@@ -25,6 +32,12 @@ pub fn ensure_wal_mode(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Applies per-connection PRAGMAs: synchronous, foreign keys, busy timeout, cache, mmap, WAL.
+///
+/// Safe to call on every new connection; all settings are idempotent.
+///
+/// # Errors
+/// Returns `Err` when any PRAGMA execution fails.
 pub fn apply_connection_pragmas(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(&format!(
         "PRAGMA synchronous   = NORMAL;

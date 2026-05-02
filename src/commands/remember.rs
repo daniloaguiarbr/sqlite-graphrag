@@ -12,7 +12,6 @@ use crate::storage::entities::{NewEntity, NewRelationship};
 use crate::storage::memories::NewMemory;
 use crate::storage::{entities, memories, urls as storage_urls, versions};
 use serde::Deserialize;
-use std::io::Read as _;
 
 #[derive(clap::Args)]
 pub struct RememberArgs {
@@ -248,11 +247,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     } else if let Some(path) = args.body_file {
         std::fs::read_to_string(&path).map_err(AppError::Io)?
     } else if args.body_stdin || args.graph_stdin {
-        let mut buf = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buf)
-            .map_err(AppError::Io)?;
-        buf
+        crate::stdin_helper::read_stdin_with_timeout(60)?
     } else {
         String::new()
     };

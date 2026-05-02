@@ -6,6 +6,7 @@
 use crate::errors::AppError;
 use serde::Serialize;
 
+/// Output format variants accepted by `--format` CLI flags.
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Default)]
 pub enum OutputFormat {
     #[default]
@@ -14,28 +15,67 @@ pub enum OutputFormat {
     Markdown,
 }
 
+/// Restricted JSON-only format for commands that always emit JSON.
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Default)]
 pub enum JsonOutputFormat {
     #[default]
     Json,
 }
 
+/// Serializes `value` as pretty-printed JSON and writes it to stdout with a trailing newline.
+///
+/// Flushes stdout after writing. A `BrokenPipe` error is silenced so that
+/// piping to consumers that close early (e.g. `head`) does not surface an error.
+///
+/// # Errors
+/// Returns `Err` when serialization fails or when a non-`BrokenPipe` I/O error occurs.
 pub fn emit_json<T: Serialize>(value: &T) -> Result<(), AppError> {
     let json = serde_json::to_string_pretty(value)?;
-    println!("{json}");
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = std::io::Write::write_all(&mut out, json.as_bytes())
+        .and_then(|()| std::io::Write::write_all(&mut out, b"\n"))
+        .and_then(|()| std::io::Write::flush(&mut out))
+    {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(AppError::Io(e));
+    }
     Ok(())
 }
 
+/// Serializes `value` as compact (single-line) JSON and writes it to stdout with a trailing newline.
+///
+/// Flushes stdout after writing. A `BrokenPipe` error is silenced.
+///
+/// # Errors
+/// Returns `Err` when serialization fails or when a non-`BrokenPipe` I/O error occurs.
 pub fn emit_json_compact<T: Serialize>(value: &T) -> Result<(), AppError> {
     let json = serde_json::to_string(value)?;
-    println!("{json}");
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = std::io::Write::write_all(&mut out, json.as_bytes())
+        .and_then(|()| std::io::Write::write_all(&mut out, b"\n"))
+        .and_then(|()| std::io::Write::flush(&mut out))
+    {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(AppError::Io(e));
+    }
     Ok(())
 }
 
+/// Writes `msg` followed by a newline to stdout and flushes.
+///
+/// A `BrokenPipe` error is silenced gracefully.
 pub fn emit_text(msg: &str) {
-    println!("{msg}");
+    let mut out = std::io::stdout().lock();
+    let _ = std::io::Write::write_all(&mut out, msg.as_bytes())
+        .and_then(|()| std::io::Write::write_all(&mut out, b"\n"))
+        .and_then(|()| std::io::Write::flush(&mut out));
 }
 
+/// Logs `msg` as a structured `tracing::info!` event (does not write to stdout).
 pub fn emit_progress(msg: &str) {
     tracing::info!(message = msg);
 }
@@ -214,6 +254,11 @@ pub struct RecallItem {
     pub graph_depth: Option<u32>,
 }
 
+/// Full response envelope returned by the `recall` subcommand.
+///
+/// Contains both direct vector matches and graph-traversal matches, plus the
+/// aggregated `results` list that merges both for callers that do not need
+/// to distinguish the source.
 #[derive(Serialize)]
 pub struct RecallResponse {
     pub query: String,

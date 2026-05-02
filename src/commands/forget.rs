@@ -46,7 +46,11 @@ struct ForgetResponse {
     name: String,
     namespace: String,
     /// Unix epoch seconds when the memory was soft-deleted; `None` when `action="not_found"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    /// RFC 3339 UTC timestamp parallel to `deleted_at` for ISO 8601 parsers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted_at_iso: Option<String>,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -117,12 +121,14 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         }
     }
 
+    let deleted_at_iso = deleted_at.map(crate::tz::epoch_to_iso);
     let response = ForgetResponse {
         action: action.to_string(),
         forgotten,
         name: name.clone(),
         namespace: namespace.clone(),
         deleted_at,
+        deleted_at_iso,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
     output::emit_json(&response)?;
@@ -148,6 +154,7 @@ mod tests {
             name: "my-memory".to_string(),
             namespace: "global".to_string(),
             deleted_at: Some(1_700_000_000),
+            deleted_at_iso: Some("2023-11-14T22:13:20+00:00".to_string()),
             elapsed_ms: 5,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -156,6 +163,7 @@ mod tests {
         assert_eq!(json["name"], "my-memory");
         assert_eq!(json["namespace"], "global");
         assert_eq!(json["deleted_at"], 1_700_000_000i64);
+        assert!(json["deleted_at_iso"].is_string());
         assert!(json["elapsed_ms"].is_number());
     }
 
@@ -167,11 +175,13 @@ mod tests {
             name: "test".to_string(),
             namespace: "ns".to_string(),
             deleted_at: Some(42),
+            deleted_at_iso: Some(crate::tz::epoch_to_iso(42)),
             elapsed_ms: 1,
         };
         assert_eq!(resp.action, "soft_deleted");
         assert!(resp.forgotten);
         assert_eq!(resp.deleted_at, Some(42));
+        assert!(resp.deleted_at_iso.is_some());
     }
 
     #[test]
@@ -182,28 +192,33 @@ mod tests {
             name: "abc".to_string(),
             namespace: "my-project".to_string(),
             deleted_at: Some(1_650_000_000),
+            deleted_at_iso: Some(crate::tz::epoch_to_iso(1_650_000_000)),
             elapsed_ms: 2,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "already_deleted");
         assert_eq!(json["forgotten"], false);
         assert_eq!(json["deleted_at"], 1_650_000_000i64);
+        assert!(json["deleted_at_iso"].is_string());
     }
 
     #[test]
-    fn forget_response_not_found_emits_deleted_at_null() {
+    fn forget_response_not_found_omits_deleted_at_fields() {
         let resp = ForgetResponse {
             action: "not_found".to_string(),
             forgotten: false,
             name: "phantom".to_string(),
             namespace: "global".to_string(),
             deleted_at: None,
+            deleted_at_iso: None,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "not_found");
         assert_eq!(json["forgotten"], false);
-        assert!(json["deleted_at"].is_null());
+        // skip_serializing_if = "Option::is_none" means both fields are absent
+        assert!(json.get("deleted_at").is_none());
+        assert!(json.get("deleted_at_iso").is_none());
         assert_eq!(json["elapsed_ms"], 0u64);
     }
 }

@@ -105,6 +105,7 @@ pub fn embed_passage_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>,
         &DaemonRequest::EmbedPassage {
             text: text.to_string(),
         },
+        true,
     )? {
         Some(DaemonResponse::PassageEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
@@ -118,12 +119,17 @@ pub fn embed_passage_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>,
     }
 }
 
-pub fn embed_query_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, AppError> {
+pub fn embed_query_or_local(
+    models_dir: &Path,
+    text: &str,
+    cli_autostart: bool,
+) -> Result<Vec<f32>, AppError> {
     match request_or_autostart(
         models_dir,
         &DaemonRequest::EmbedQuery {
             text: text.to_string(),
         },
+        cli_autostart,
     )? {
         Some(DaemonResponse::QueryEmbedding { embedding, .. }) => Ok(embedding),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
@@ -147,7 +153,7 @@ pub fn embed_passages_controlled_or_local(
         token_counts: token_counts.to_vec(),
     };
 
-    match request_or_autostart(models_dir, &request)? {
+    match request_or_autostart(models_dir, &request, true)? {
         Some(DaemonResponse::PassageEmbeddings { embeddings, .. }) => Ok(embeddings),
         Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
@@ -425,16 +431,24 @@ fn request_if_available(
     Ok(Some(response))
 }
 
+fn should_autostart(cli_flag: bool) -> bool {
+    if !cli_flag {
+        return false; // explicit CLI override wins
+    }
+    !autostart_disabled_by_env()
+}
+
 fn request_or_autostart(
     models_dir: &Path,
     request: &DaemonRequest,
+    cli_autostart: bool,
 ) -> Result<Option<DaemonResponse>, AppError> {
     if let Some(response) = request_if_available(models_dir, request)? {
         clear_spawn_backoff_state(models_dir).ok();
         return Ok(Some(response));
     }
 
-    if autostart_disabled() {
+    if !should_autostart(cli_autostart) {
         return Ok(None);
     }
 
@@ -538,7 +552,7 @@ fn wait_for_daemon_ready(models_dir: &Path) -> Result<bool, AppError> {
     Ok(false)
 }
 
-fn autostart_disabled() -> bool {
+fn autostart_disabled_by_env() -> bool {
     std::env::var("SQLITE_GRAPHRAG_DAEMON_CHILD").as_deref() == Ok("1")
         || std::env::var("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").as_deref() != Ok("1")
             && std::env::var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART").as_deref() == Ok("1")
@@ -657,7 +671,7 @@ fn to_local_socket_name(name: &str) -> std::io::Result<interprocess::local_socke
         let base = std::env::var_os("XDG_RUNTIME_DIR")
             .or_else(|| std::env::var_os("SQLITE_GRAPHRAG_HOME"))
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+            .unwrap_or_else(std::env::temp_dir);
         base.join(format!("{name}.sock"))
             .to_string_lossy()
             .into_owned()

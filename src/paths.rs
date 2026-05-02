@@ -8,9 +8,15 @@ use crate::i18n::validation;
 use directories::ProjectDirs;
 use std::path::{Component, Path, PathBuf};
 
+/// Resolved filesystem paths used by the CLI at runtime.
+///
+/// Constructed via [`AppPaths::resolve`], which applies the three-layer precedence:
+/// CLI flag → `SQLITE_GRAPHRAG_DB_PATH` env var → `SQLITE_GRAPHRAG_HOME` env var → cwd.
 #[derive(Debug)]
 pub struct AppPaths {
+    /// Absolute path to the SQLite database file.
     pub db: PathBuf,
+    /// Directory where embedding model files are cached.
     pub models: PathBuf,
 }
 

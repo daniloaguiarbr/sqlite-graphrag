@@ -18,19 +18,41 @@ struct TokenizerRuntime {
 
 static TOKENIZER_RUNTIME: OnceLock<TokenizerRuntime> = OnceLock::new();
 
+/// Returns the process-wide [`Tokenizer`] singleton, initializing it on first call.
+///
+/// # Errors
+/// Returns `Err` when the tokenizer files cannot be loaded from `models_dir`.
 pub fn get_tokenizer(models_dir: &Path) -> Result<&'static Tokenizer, AppError> {
     Ok(&get_runtime(models_dir)?.tokenizer)
 }
 
+/// Returns the model's `model_max_length` from `tokenizer_config.json`.
+///
+/// # Errors
+/// Returns `Err` when the tokenizer files cannot be loaded or the field is missing.
 pub fn get_model_max_length(models_dir: &Path) -> Result<usize, AppError> {
     Ok(get_runtime(models_dir)?.model_max_length)
 }
 
+/// Counts the tokens produced by encoding `text` with the passage prefix.
+///
+/// Prepends `PASSAGE_PREFIX` before tokenizing so the count reflects the actual
+/// number of tokens consumed by the embedding model.
+///
+/// # Errors
+/// Returns `Err` when the tokenizer fails to encode the input.
 pub fn count_passage_tokens(tokenizer: &Tokenizer, text: &str) -> Result<usize, AppError> {
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
     count_tokens(tokenizer, &prefixed)
 }
 
+/// Returns the byte-offset pairs `(start, end)` for each token in `text`.
+///
+/// The passage prefix is prepended before tokenizing; offsets in the returned
+/// vector are adjusted back to be relative to the original `text` slice.
+///
+/// # Errors
+/// Returns `Err` when the tokenizer fails to encode the input.
 pub fn passage_token_offsets(
     tokenizer: &Tokenizer,
     text: &str,
@@ -120,7 +142,9 @@ fn load_runtime(models_dir: &Path) -> Result<TokenizerRuntime, AppError> {
                 .as_f64()
                 .map(|n| n as usize)
         })
-        .ok_or_else(|| AppError::Embedding("tokenizer_config.json sem model_max_length".into()))?;
+        .ok_or_else(|| {
+            AppError::Embedding("tokenizer_config.json missing model_max_length field".into())
+        })?;
 
     Ok(TokenizerRuntime {
         tokenizer,

@@ -12,7 +12,13 @@ use crate::paths::AppPaths;
     # Health-check a running daemon (exit 4 if not running)\n  \
     sqlite-graphrag daemon --ping\n\n  \
     # Request graceful shutdown of a running daemon\n  \
-    sqlite-graphrag daemon --stop")]
+    sqlite-graphrag daemon --stop\n\n\
+AUTO-SPAWN BEHAVIOR:\n  \
+    recall and hybrid-search spawn a daemon automatically when none is running,\n  \
+    amortising model warm-up across multiple invocations (idle timeout 600s).\n\n  \
+    Disable per-invocation:  sqlite-graphrag recall \"query\" --autostart-daemon=false\n  \
+    Disable globally:        export SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1\n\n  \
+    The --autostart-daemon flag takes precedence over the env var.")]
 pub struct DaemonArgs {
     /// Idle timeout in seconds before the daemon auto-shuts down to release the embedding model.
     /// Default 600s; raise for long-running batch ingestion to avoid cold-start overhead.

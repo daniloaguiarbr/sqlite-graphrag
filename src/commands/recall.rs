@@ -75,6 +75,8 @@ pub struct RecallArgs {
     /// every namespace and results include a `namespace` field to identify origin.
     #[arg(long, conflicts_with = "namespace")]
     pub all_namespaces: bool,
+    #[command(flatten)]
+    pub daemon: crate::cli::DaemonOpts,
 }
 
 pub fn run(args: RecallArgs) -> Result<(), AppError> {
@@ -106,7 +108,11 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         "Computing query embedding...",
         "Calculando embedding da consulta...",
     );
-    let embedding = crate::daemon::embed_query_or_local(&paths.models, &args.query)?;
+    let embedding = crate::daemon::embed_query_or_local(
+        &paths.models,
+        &args.query,
+        args.daemon.autostart_daemon,
+    )?;
 
     let conn = open_ro(&paths.db)?;
 

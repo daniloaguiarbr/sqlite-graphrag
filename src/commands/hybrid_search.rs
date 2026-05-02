@@ -51,6 +51,8 @@ pub struct HybridSearchArgs {
     /// Accept `--json` as a no-op because output is already JSON by default.
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
+    #[command(flatten)]
+    pub daemon: crate::cli::DaemonOpts,
 }
 
 #[derive(serde::Serialize)]
@@ -109,7 +111,11 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         "Computing query embedding...",
         "Calculando embedding da consulta...",
     );
-    let embedding = crate::daemon::embed_query_or_local(&paths.models, &args.query)?;
+    let embedding = crate::daemon::embed_query_or_local(
+        &paths.models,
+        &args.query,
+        args.daemon.autostart_daemon,
+    )?;
 
     let conn = open_ro(&paths.db)?;
 

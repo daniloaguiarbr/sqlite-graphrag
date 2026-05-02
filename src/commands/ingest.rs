@@ -104,6 +104,11 @@ struct IngestFileEvent<'a> {
     file: &'a str,
     name: &'a str,
     status: &'a str,
+    /// True when the derived name was truncated to fit `DERIVED_NAME_MAX_LEN`. False otherwise.
+    truncated: bool,
+    /// Original derived name before truncation; only present when `truncated=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,13 +195,15 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
 
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();
-        let derived_base = derive_kebab_name(path);
+        let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
 
         if derived_base.is_empty() {
             output::emit_json_compact(&IngestFileEvent {
                 file: &file_str,
                 name: "",
                 status: "skipped",
+                truncated: false,
+                original_name: None,
                 error: Some(
                     "could not derive a non-empty kebab-case name from filename".to_string(),
                 ),
@@ -214,6 +221,8 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     file: &file_str,
                     name: &derived_base,
                     status: "skipped",
+                    truncated: name_truncated,
+                    original_name: original_name.clone(),
                     error: Some(e.to_string()),
                     memory_id: None,
                     action: None,
@@ -234,6 +243,8 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     file: &file_str,
                     name: &derived_name,
                     status: "failed",
+                    truncated: name_truncated,
+                    original_name: original_name.clone(),
                     error: Some(err_clone.clone()),
                     memory_id: None,
                     action: None,
@@ -275,6 +286,8 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     file: &file_str,
                     name: &derived_name,
                     status: "indexed",
+                    truncated: name_truncated,
+                    original_name: original_name.clone(),
                     error: None,
                     memory_id: Some(memory_id),
                     action: Some(action),
@@ -287,6 +300,8 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     file: &file_str,
                     name: &derived_name,
                     status: "failed",
+                    truncated: name_truncated,
+                    original_name: original_name.clone(),
                     error: Some(err_msg.clone()),
                     memory_id: None,
                     action: None,
@@ -725,7 +740,10 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
     }
 }
 
-fn derive_kebab_name(path: &Path) -> String {
+/// Returns `(final_name, truncated, original_name)`.
+/// `truncated` is true when the derived name exceeded `DERIVED_NAME_MAX_LEN`.
+/// `original_name` holds the pre-truncation name only when `truncated=true`.
+fn derive_kebab_name(path: &Path) -> (String, bool, Option<String>) {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let lowered: String = stem
         .chars()
@@ -754,9 +772,9 @@ fn derive_kebab_name(path: &Path) -> String {
             max_len = DERIVED_NAME_MAX_LEN,
             "derived memory name truncated to fit length cap; collisions will be resolved with numeric suffixes"
         );
-        truncated
+        (truncated, true, Some(trimmed))
     } else {
-        trimmed
+        (trimmed, false, None)
     }
 }
 
@@ -838,32 +856,47 @@ mod tests {
     #[test]
     fn derive_kebab_underscore_to_dash() {
         let p = PathBuf::from("/tmp/claude_code_headless.md");
-        assert_eq!(derive_kebab_name(&p), "claude-code-headless");
+        let (name, truncated, original) = derive_kebab_name(&p);
+        assert_eq!(name, "claude-code-headless");
+        assert!(!truncated);
+        assert!(original.is_none());
     }
 
     #[test]
     fn derive_kebab_uppercase_lowered() {
         let p = PathBuf::from("/tmp/README.md");
-        assert_eq!(derive_kebab_name(&p), "readme");
+        let (name, truncated, original) = derive_kebab_name(&p);
+        assert_eq!(name, "readme");
+        assert!(!truncated);
+        assert!(original.is_none());
     }
 
     #[test]
     fn derive_kebab_strips_non_kebab_chars() {
         let p = PathBuf::from("/tmp/some@weird#name!.md");
-        assert_eq!(derive_kebab_name(&p), "someweirdname");
+        let (name, truncated, original) = derive_kebab_name(&p);
+        assert_eq!(name, "someweirdname");
+        assert!(!truncated);
+        assert!(original.is_none());
     }
 
     #[test]
     fn derive_kebab_collapses_consecutive_dashes() {
         let p = PathBuf::from("/tmp/a__b___c.md");
-        assert_eq!(derive_kebab_name(&p), "a-b-c");
+        let (name, truncated, original) = derive_kebab_name(&p);
+        assert_eq!(name, "a-b-c");
+        assert!(!truncated);
+        assert!(original.is_none());
     }
 
     #[test]
     fn derive_kebab_truncates_to_60_chars() {
         let p = PathBuf::from(format!("/tmp/{}.md", "a".repeat(80)));
-        let name = derive_kebab_name(&p);
+        let (name, truncated, original) = derive_kebab_name(&p);
         assert!(name.len() <= 60, "got len {}", name.len());
+        assert!(truncated);
+        assert!(original.is_some());
+        assert!(original.unwrap().len() > 60);
     }
 
     #[test]
@@ -906,13 +939,15 @@ mod tests {
     #[test]
     fn derive_kebab_long_basename_truncated_within_cap() {
         let p = PathBuf::from(format!("/tmp/{}.md", "a".repeat(120)));
-        let name = derive_kebab_name(&p);
+        let (name, truncated, original) = derive_kebab_name(&p);
         assert!(
             name.len() <= DERIVED_NAME_MAX_LEN,
             "truncated name must respect cap; got {} chars",
             name.len()
         );
         assert!(!name.is_empty());
+        assert!(truncated);
+        assert!(original.is_some());
     }
 
     #[test]
