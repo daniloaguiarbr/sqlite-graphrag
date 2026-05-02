@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.37] - 2026-04-30
+
+### Fixed
+- **B1+B2 (BLOCKER, docs)**: Synced `CHANGELOG.pt-BR.md` with the v1.0.36 entry (was missing in the PT mirror) and added two missing callouts to `README.pt-BR.md:108-109` mirroring `README.md` ("**Run `init` first**" and "**`graphrag.sqlite` is created in the current working directory by default**"). Audit on flowaiper docs corpus revealed PT-BR users could not discover the implicit cwd behavior.
+- **H7+M9 (HIGH, behavior)**: `list --include-deleted --json` now emits `deleted_at` (Unix epoch) and `deleted_at_iso` (RFC 3339) for soft-deleted memories. Active memories continue to omit both fields via `#[serde(skip_serializing_if = "Option::is_none")]` for backward compatibility. `MemoryRow` in `src/storage/memories.rs` gained a `deleted_at: Option<i64>` field; all four SQL SELECTs (read_by_name, read_full, list-with-type, list-without-type, fts_search-with-type, fts_search-without-type) updated to include the column. `docs/schemas/list.schema.json` updated to document both optional fields. Previously LLM agents calling `list --include-deleted` could not distinguish active from soft-deleted rows without a second SQL query.
+- **H8 (HIGH, behavior)**: `src/i18n.rs::Language::from_env_or_locale` now respects POSIX locale precedence `LC_ALL > LC_MESSAGES > LANG`. The previous loop iterated all three vars and returned PT on the first "pt" prefix, violating POSIX semantics where `LC_ALL` overrides `LANG` regardless of value (`LC_ALL=en_US LANG=pt_BR` returned PT instead of EN). The fix stops iteration at the first set var, recognizes both "pt" and "en" prefixes, and falls through to English default only when no locale var is set. Three new regression tests cover the precedence rule.
+
+### Added
+- **H9 (CI hardening)**: New `cargo-audit` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings`. Complements `cargo deny check`, which previously did not flag `RUSTSEC-2025-0119` (number_prefix unmaintained, transitive via fastembed/hf-hub/indicatif) or `RUSTSEC-2024-0436` (paste unmaintained, transitive via tokenizers/text-splitter). Any new advisory now blocks merge until acknowledged or pinned.
+- **B6 (multi-platform)**: Added `x86_64-unknown-linux-musl` target to `.github/workflows/release.yml` matrix (uses the existing `Install musl tools` step gated on `matrix.musl == true`). Enables Alpine Linux and distroless container deployments without forcing users to compile from source.
+- **B3 (docs)**: Created `docs_rules/rules_rust.md` as the canonical Regra Zero index referenced by the project's `CLAUDE.md`. Lists all eight specific rule files under `docs_rules/` with one-line summaries and inviolable principles.
+- **B4 (docs)**: Renamed `docs_rules/rules_rusts_paralelismo_e_multiprocessamento.md` to `rules_rust_paralelismo_e_multiprocessamento.md` (typo fix: extra `s`). The file is gitignored and excluded from the published tarball, so the rename is not visible to crates.io consumers.
+
+### Improved
+- **H1 (HIGH, extraction)**: Expanded `ALL_CAPS_STOPWORDS` in `src/extraction.rs:58-173` with 23 additional PT-BR technical/generic words found leaking through into `entities` during a 50-file flowaiper corpus audit: `ACID`, `AINDA`, `APENAS`, `CEO`, `CRIE`, `DDL`, `DEFINIR`, `DEPARTMENT`, `DESC`, `DSL`, `DTO`, `EPERM` (POSIX errno), `ESCREVA`, `ESRCH` (POSIX errno), `ESTADO`, `FATO`, `FIFO` (data structure), `FLUXO`, `FONTES`, `FUNCIONA`, `MESMO`, `METADADOS`, `PONTEIROS`. List grew from 108 to 131 entries; previously these words were captured by `regex_all_caps()` as spurious `concept` entities, polluting the graph with non-entities (~27% of 402 entities in 50-doc corpus were noise). Stopword filter is alphabetically ordered for review readability and uses linear scan via `.contains()`.
+
+### Notes
+- Findings discovered during the v1.0.36 audit cycle on the `flowaiper/docs_flowaiper` real-world corpus (495 PT-BR markdown files). Audit phases A/B/C/D completed (D=200/200), phase E (495/495) was running at the time of these fixes.
+- Remaining v1.0.38+ backlog: case-insensitive entity dedupe (CLAUDE/Claude, GEMINI/Gemini, GITHUB/GitHub leaking as separate entities), hyphen vs underscore relation alignment (CLI accepts `depends-on`, schema CHECK uses `depends_on`), ADR for daemon vs `rules_rust_cli_stdin_stdout` ("PROIBIDO daemons persistentes") policy, and remaining multi-platform targets (`x86_64-apple-darwin`, `wasm32-wasip2`, universal2 macOS).
+- All eight CLAUDE.md validation gates pass: fmt, clippy `-D warnings`, test (431/434, 3 ignored), doc with `RUSTDOCFLAGS="-D warnings"`, audit with documented ignores for two transitive unmaintained advisories pending upstream, deny check, publish dry-run, package list (138 files, zero sensitive).
+
 ## [1.0.36] - 2026-04-30
 
 ### Fixed (Linguistic policy)

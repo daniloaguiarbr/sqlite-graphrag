@@ -45,6 +45,11 @@ pub struct MemoryRow {
     pub metadata: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Unix epoch when the memory was soft-deleted, or `None` for active memories.
+    /// Surfaced in `list --include-deleted --json` so LLM consumers can distinguish
+    /// active from soft-deleted rows without a second SQL query (v1.0.37 H7+M9 fix).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<i64>,
 }
 
 /// Finds a live memory by `(namespace, name)` and returns key metadata.
@@ -278,7 +283,7 @@ pub fn read_by_name(
 ) -> Result<Option<MemoryRow>, AppError> {
     let mut stmt = conn.prepare_cached(
         "SELECT id, namespace, name, type, description, body, body_hash,
-                session_id, source, metadata, created_at, updated_at
+                session_id, source, metadata, created_at, updated_at, deleted_at
          FROM memories WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
     )?;
     match stmt.query_row(params![namespace, name], |r| {
@@ -295,6 +300,7 @@ pub fn read_by_name(
             metadata: r.get(9)?,
             created_at: r.get(10)?,
             updated_at: r.get(11)?,
+            deleted_at: r.get(12)?,
         })
     }) {
         Ok(m) => Ok(Some(m)),
@@ -350,7 +356,7 @@ pub fn list(
     if let Some(mt) = memory_type {
         let sql = format!(
             "SELECT id, namespace, name, type, description, body, body_hash,
-                    session_id, source, metadata, created_at, updated_at
+                    session_id, source, metadata, created_at, updated_at, deleted_at
              FROM memories WHERE namespace=?1 AND type=?2{deleted_clause}
              ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4"
         );
@@ -370,6 +376,7 @@ pub fn list(
                     metadata: r.get(9)?,
                     created_at: r.get(10)?,
                     updated_at: r.get(11)?,
+                    deleted_at: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -377,7 +384,7 @@ pub fn list(
     } else {
         let sql = format!(
             "SELECT id, namespace, name, type, description, body, body_hash,
-                    session_id, source, metadata, created_at, updated_at
+                    session_id, source, metadata, created_at, updated_at, deleted_at
              FROM memories WHERE namespace=?1{deleted_clause}
              ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"
         );
@@ -397,6 +404,7 @@ pub fn list(
                     metadata: r.get(9)?,
                     created_at: r.get(10)?,
                     updated_at: r.get(11)?,
+                    deleted_at: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -552,7 +560,7 @@ pub fn knn_search(
 pub fn read_full(conn: &Connection, memory_id: i64) -> Result<Option<MemoryRow>, AppError> {
     let mut stmt = conn.prepare_cached(
         "SELECT id, namespace, name, type, description, body, body_hash,
-                session_id, source, metadata, created_at, updated_at
+                session_id, source, metadata, created_at, updated_at, deleted_at
          FROM memories WHERE id=?1 AND deleted_at IS NULL",
     )?;
     match stmt.query_row(params![memory_id], |r| {
@@ -569,6 +577,7 @@ pub fn read_full(conn: &Connection, memory_id: i64) -> Result<Option<MemoryRow>,
             metadata: r.get(9)?,
             created_at: r.get(10)?,
             updated_at: r.get(11)?,
+            deleted_at: r.get(12)?,
         })
     }) {
         Ok(m) => Ok(Some(m)),
@@ -618,7 +627,7 @@ pub fn fts_search(
     if let Some(mt) = memory_type {
         let mut stmt = conn.prepare(
             "SELECT m.id, m.namespace, m.name, m.type, m.description, m.body, m.body_hash,
-                    m.session_id, m.source, m.metadata, m.created_at, m.updated_at
+                    m.session_id, m.source, m.metadata, m.created_at, m.updated_at, m.deleted_at
              FROM fts_memories fts
              JOIN memories m ON m.id = fts.rowid
              WHERE fts_memories MATCH ?1 AND m.namespace = ?2 AND m.type = ?3 AND m.deleted_at IS NULL
@@ -639,6 +648,7 @@ pub fn fts_search(
                     metadata: r.get(9)?,
                     created_at: r.get(10)?,
                     updated_at: r.get(11)?,
+                    deleted_at: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -646,7 +656,7 @@ pub fn fts_search(
     } else {
         let mut stmt = conn.prepare(
             "SELECT m.id, m.namespace, m.name, m.type, m.description, m.body, m.body_hash,
-                    m.session_id, m.source, m.metadata, m.created_at, m.updated_at
+                    m.session_id, m.source, m.metadata, m.created_at, m.updated_at, m.deleted_at
              FROM fts_memories fts
              JOIN memories m ON m.id = fts.rowid
              WHERE fts_memories MATCH ?1 AND m.namespace = ?2 AND m.deleted_at IS NULL
@@ -667,6 +677,7 @@ pub fn fts_search(
                     metadata: r.get(9)?,
                     created_at: r.get(10)?,
                     updated_at: r.get(11)?,
+                    deleted_at: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

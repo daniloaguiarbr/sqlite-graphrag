@@ -140,6 +140,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                     metadata: r.get(9)?,
                     created_at: r.get(10)?,
                     updated_at: r.get(11)?,
+                    deleted_at: None,
                 })
             })
             .ok()
@@ -210,6 +211,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                             metadata: r.get(9)?,
                             created_at: r.get(10)?,
                             updated_at: r.get(11)?,
+                            deleted_at: None,
                         })
                     })
                     .ok()

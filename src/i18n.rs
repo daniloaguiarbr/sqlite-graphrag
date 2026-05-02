@@ -51,11 +51,24 @@ impl Language {
                 );
             }
         }
-        for var in &["LC_ALL", "LANG"] {
+        // POSIX locale precedence: LC_ALL > LC_MESSAGES > LANG.
+        // If LC_ALL is set, LANG must be IGNORED regardless of value.
+        // Previous implementation iterated both and returned PT on any "pt" prefix,
+        // violating POSIX semantics (e.g. `LC_ALL=en_US LANG=pt_BR` returned PT).
+        // Now: stop at first set var; recognize both "pt" and "en" prefixes; fall
+        // through to English default only when no locale var is set.
+        for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(v) = std::env::var(var) {
-                if v.to_lowercase().starts_with("pt") {
+                let lower = v.to_lowercase();
+                if lower.starts_with("pt") {
                     return Language::Portuguese;
                 }
+                if lower.starts_with("en") {
+                    return Language::English;
+                }
+                // Found var but unrecognized prefix: respect POSIX precedence by
+                // stopping iteration here. Do NOT fall through to the next var.
+                break;
             }
         }
         Language::English
@@ -587,6 +600,49 @@ mod tests {
         std::env::set_var("LC_ALL", "pt_BR.UTF-8");
         assert_eq!(Language::from_env_or_locale(), Language::Portuguese);
         std::env::remove_var("LC_ALL");
+    }
+
+    #[test]
+    #[serial]
+    fn posix_precedence_lc_all_overrides_lang() {
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
+        std::env::remove_var("LC_MESSAGES");
+        std::env::set_var("LC_ALL", "en_US.UTF-8");
+        std::env::set_var("LANG", "pt_BR.UTF-8");
+        assert_eq!(
+            Language::from_env_or_locale(),
+            Language::English,
+            "LC_ALL=en_US must override LANG=pt_BR per POSIX"
+        );
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
+    }
+
+    #[test]
+    #[serial]
+    fn posix_precedence_lc_all_unrecognized_stops_iteration() {
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
+        std::env::remove_var("LC_MESSAGES");
+        std::env::set_var("LC_ALL", "ja_JP.UTF-8");
+        std::env::set_var("LANG", "pt_BR.UTF-8");
+        assert_eq!(
+            Language::from_env_or_locale(),
+            Language::English,
+            "LC_ALL=ja_JP set must stop iteration; falls back to English default"
+        );
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
+    }
+
+    #[test]
+    #[serial]
+    fn lang_pt_selects_portuguese_when_lc_all_unset() {
+        std::env::remove_var("SQLITE_GRAPHRAG_LANG");
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LC_MESSAGES");
+        std::env::set_var("LANG", "pt_BR.UTF-8");
+        assert_eq!(Language::from_env_or_locale(), Language::Portuguese);
+        std::env::remove_var("LANG");
     }
 
     mod validation_tests {

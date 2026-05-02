@@ -105,6 +105,8 @@ sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
+- **Execute `sqlite-graphrag init` primeiro** antes de qualquer outro comando (cria o arquivo SQLite e baixa o modelo de embedding na primeira execução)
+- **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
 - Reexecute `sqlite-graphrag --version` após qualquer upgrade para confirmar o binário ativo
 - Depois da release pública, prefira `--locked` para preservar o grafo de dependências validado para o MSRV

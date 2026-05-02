@@ -22,7 +22,9 @@
           "description":    { "type": "string" },
           "snippet":        { "type": "string" },
           "updated_at":     { "type": "integer" },
-          "updated_at_iso": { "type": "string", "format": "date-time" }
+          "updated_at_iso": { "type": "string", "format": "date-time" },
+          "deleted_at":     { "type": "integer", "description": "Unix epoch when the memory was soft-deleted. Present only when `--include-deleted` is used and the memory is soft-deleted; omitted for active memories. (v1.0.37 H7+M9)" },
+          "deleted_at_iso": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC mirror of `deleted_at`. Present only alongside `deleted_at`." }
         }
       }
     },

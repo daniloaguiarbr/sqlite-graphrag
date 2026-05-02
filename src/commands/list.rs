@@ -72,6 +72,14 @@ struct ListItem {
     updated_at: i64,
     /// Timestamp RFC 3339 UTC paralelo a `updated_at`.
     updated_at_iso: String,
+    /// Unix epoch when the memory was soft-deleted, or omitted for active memories.
+    /// Surfaced only in `list --include-deleted --json` so LLM consumers can
+    /// distinguish active rows from soft-deleted ones in a single query (v1.0.37 H7+M9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted_at: Option<i64>,
+    /// RFC 3339 UTC mirror of `deleted_at`, omitted when `deleted_at` is None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted_at_iso: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -104,6 +112,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         .map(|r| {
             let snippet: String = r.body.chars().take(200).collect();
             let updated_at_iso = crate::tz::epoch_to_iso(r.updated_at);
+            let deleted_at_iso = r.deleted_at.map(crate::tz::epoch_to_iso);
             ListItem {
                 id: r.id,
                 memory_id: r.id,
@@ -114,6 +123,8 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
                 snippet,
                 updated_at: r.updated_at,
                 updated_at_iso,
+                deleted_at: r.deleted_at,
+                deleted_at_iso,
             }
         })
         .collect();
@@ -149,6 +160,8 @@ mod tests {
                 snippet: "corpo resumido".to_string(),
                 updated_at: 1_745_000_000,
                 updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
+                deleted_at: None,
+                deleted_at_iso: None,
             }],
             elapsed_ms: 7,
         };
@@ -158,6 +171,29 @@ mod tests {
         assert_eq!(json["items"][0]["name"], "test-memory");
         assert_eq!(json["items"][0]["memory_id"], 1);
         assert_eq!(json["elapsed_ms"], 7);
+        // deleted_at/deleted_at_iso must be omitted when None (skip_serializing_if)
+        assert!(json["items"][0].get("deleted_at").is_none());
+        assert!(json["items"][0].get("deleted_at_iso").is_none());
+    }
+
+    #[test]
+    fn list_item_with_deleted_at_serializes_both_fields() {
+        let item = ListItem {
+            id: 99,
+            memory_id: 99,
+            name: "soft-deleted-memory".to_string(),
+            namespace: "global".to_string(),
+            memory_type: "note".to_string(),
+            description: "deleted".to_string(),
+            snippet: "snip".to_string(),
+            updated_at: 1_745_000_000,
+            updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
+            deleted_at: Some(1_745_100_000),
+            deleted_at_iso: Some("2025-04-20T03:46:40Z".to_string()),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["deleted_at"], 1_745_100_000_i64);
+        assert_eq!(json["deleted_at_iso"], "2025-04-20T03:46:40Z");
     }
 
     #[test]
@@ -184,6 +220,8 @@ mod tests {
             snippet: "snip".to_string(),
             updated_at: 0,
             updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            deleted_at_iso: None,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(
