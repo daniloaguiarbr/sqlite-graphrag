@@ -6,7 +6,7 @@
   "type": "object",
   "required": [
     "memory_id", "name", "namespace", "action", "operation", "version",
-    "entities_persisted", "relationships_persisted", "chunks_created",
+    "entities_persisted", "relationships_persisted", "chunks_created", "chunks_persisted",
     "warnings", "created_at", "created_at_iso", "elapsed_ms"
   ],
   "additionalProperties": false,
@@ -19,7 +19,8 @@
     "version":                  { "type": "integer", "description": "Version number after the write (starts at 1)." },
     "entities_persisted":       { "type": "integer", "minimum": 0 },
     "relationships_persisted":  { "type": "integer", "minimum": 0 },
-    "chunks_created":           { "type": "integer", "minimum": 0 },
+    "chunks_created":           { "type": "integer", "minimum": 0, "description": "Total number of chunks the body was split into BEFORE dedup." },
+    "chunks_persisted":         { "type": "integer", "minimum": 0, "description": "Number of chunks actually written to chunks/embeddings tables. Always <= chunks_created. Equal when no chunk had identical normalized text already in DB; less when dedup skipped some." },
     "merged_into_memory_id":    { "type": ["integer", "null"], "description": "Present when action=merged; the target memory_id." },
     "warnings":                 { "type": "array", "items": { "type": "string" } },
     "created_at":               { "type": "integer", "description": "Unix epoch seconds." },

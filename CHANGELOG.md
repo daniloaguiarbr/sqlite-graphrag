@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.39] - 2026-05-02
+
+### Fixed
+- **B1** doctest assertion in `src/errors.rs::localized_message_for` (Portuguese localized message check)
+- **H1** ingest pipeline parallelizes extract+embed via rayon (new `--ingest-parallelism` flag); NDJSON ordering preserved
+- **H2** `build_relationships*` use index-based dedup `HashSet<(usize,usize)>`, eliminating O(N²) String clones
+- **M1** README documents required flags for `remember` (--name, --type, --description)
+- **M2** README documents `purge --retention-days` default (90 days) and `--retention-days 0` for full purge
+- **M3** embedder serialization documented (parallelism lives in ingest.rs)
+- **M4** daemon adds Semaphore-based concurrency limit; `worker_threads` scales with `available_parallelism().clamp(2, 8)`
+- **M5** NER `seen` dedup uses `HashSet<u64>` (DefaultHasher), reducing String clones
+- **M6** hot-path `format!` calls in extraction replaced with `String::with_capacity` pre-allocation
+- **M7** `f32_to_bytes` SAFETY comment expanded with explicit invariants (no padding, lifetime, endianness)
+- **M8** `remember.schema.json` lists `chunks_persisted` in required fields
+- **M9** README documents empty-result conditions for `related`
+- **M10** README documents daemon convention (flags vs subcommands, systemd-style)
+
+### Documentation
+- **L1** tokenizer expect message clarified ("OnceLock::set succeeded above; get cannot fail in this single-init path")
+- **L2** extraction regex SAFETY comments standardized (regex_email/url/uuid)
+- **L3** daemon Child detach SAFETY cross-references rules_rust_processos_externos.md
+- **L4** README adds runnable Memory Lifecycle Quick Start (init→remember→recall→forget→purge)
+- **L5** schema describes `chunks_created` vs `chunks_persisted` semantics
+- **L6** ingest error-path clones naturally eliminated by 2-phase pipeline refactor
+- **L7** acknowledged: `format!` count remains; further reduction is micro-optimization
+- **L8** README adds "Storage Footprint" section explaining ~8× DB bloat for GraphRAG
+
+### Dependencies
+- Added `rayon = "1.10"` for ingest parallelization
+
 ## [1.0.38] - 2026-05-02
 
 ### Fixed

@@ -103,7 +103,7 @@ fn get_runtime(models_dir: &Path) -> Result<&'static TokenizerRuntime, AppError>
     let _ = TOKENIZER_RUNTIME.set(runtime);
     Ok(TOKENIZER_RUNTIME
         .get()
-        .expect("tokenizer runtime just initialized"))
+        .expect("OnceLock::set succeeded above; get cannot fail in this single-init path"))
 }
 
 fn load_runtime(models_dir: &Path) -> Result<TokenizerRuntime, AppError> {

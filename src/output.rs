@@ -164,17 +164,18 @@ pub struct RememberResponse {
     /// True when the relationship builder hit the cap before covering all entity pairs.
     /// Callers can use this to decide whether to increase GRAPHRAG_MAX_RELATIONSHIPS_PER_MEMORY.
     pub relationships_truncated: bool,
-    /// Total chunks produced by the hierarchical splitter for this body.
+    /// Total number of chunks the body was split into BEFORE dedup.
     ///
     /// For single-chunk bodies this equals 1 even though no row is added to
     /// the `memory_chunks` table — the memory row itself acts as the chunk.
     /// Use `chunks_persisted` to know how many rows were actually written.
     pub chunks_created: usize,
-    /// Number of rows actually inserted into the `memory_chunks` table.
+    /// Number of chunks actually written to chunks/embeddings tables. Always <= chunks_created.
     ///
-    /// Equals zero for single-chunk bodies (the memory row is the chunk) and
-    /// equals `chunks_created` for multi-chunk bodies. Added in v1.0.23 to
-    /// disambiguate from `chunks_created` and reflect database state precisely.
+    /// Equal when no chunk had identical normalized text already in DB; less when dedup skipped
+    /// some. Equals zero for single-chunk bodies (the memory row is the chunk) and equals
+    /// `chunks_created` for multi-chunk bodies. Added in v1.0.23 to disambiguate from
+    /// `chunks_created` and reflect database state precisely.
     pub chunks_persisted: usize,
     /// Number of unique URLs inserted into `memory_urls` for this memory.
     /// Added in v1.0.24 — split URLs out of the entity graph (P0-2 fix).

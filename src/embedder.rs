@@ -203,10 +203,13 @@ pub fn embed_passages_controlled(
     Ok(results)
 }
 
-/// Embed multiple passages serially.
+/// Embed multiple passages one-by-one (serial ONNX inference).
 ///
-/// This path intentionally avoids ONNX batch inference for robustness when
-/// real-world Markdown chunks trigger pathological runtime behavior.
+/// Serialization is **intentional**: ONNX batch inference can trigger pathological
+/// runtime behaviour on real-world Markdown chunks (variable token lengths cause
+/// extreme padding overhead). Callers that need parallelism should use the rayon
+/// `ThreadPool` in `src/commands/ingest.rs::run`, which partitions work across
+/// CPU threads and calls this function per shard.
 pub fn embed_passages_serial<'a, I>(
     embedder: &Mutex<TextEmbedding>,
     texts: I,
@@ -248,10 +251,19 @@ fn plan_controlled_batches(token_counts: &[usize]) -> Vec<(usize, usize)> {
     batches
 }
 
-/// Convert &[f32] to &[u8] for sqlite-vec storage.
+/// Convert `&[f32]` to `&[u8]` for sqlite-vec storage.
+///
 /// # Safety
-/// Safe because f32 has no padding and is well-defined bit pattern.
+///
+/// This function is sound when the following invariants hold:
+/// 1. `f32` has no padding bytes per the Rust reference
+///    (<https://doc.rust-lang.org/reference/types/numeric.html>);
+///    `[f32]` has the same byte representation as `[u8; size_of_val(v)]`.
+/// 2. The returned `&[u8]` borrows from `v`; its lifetime is tied to the input slice.
+/// 3. Endianness matches sqlite-vec on supported platforms (x86_64, aarch64 little-endian).
+///    Targets with big-endian `f32` storage are not supported by sqlite-vec.
 pub fn f32_to_bytes(v: &[f32]) -> &[u8] {
+    // SAFETY: see invariants above. f32→u8 transmute via from_raw_parts is sound.
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
 }
 

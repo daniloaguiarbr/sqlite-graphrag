@@ -13,6 +13,16 @@
 //! ASCII alphanumerics + hyphens). Output is line-delimited JSON: one
 //! object per processed file (success or error), followed by a final
 //! summary object. Designed for streaming consumption by agents.
+//!
+//! ## Two-phase pipeline (v1.0.39)
+//!
+//! Phase A runs on a rayon thread pool (size = `--ingest-parallelism`):
+//! read + chunk + embed + NER per file, results stored in a pre-sized
+//! `Vec<Mutex<Option<Result<StagedFile>>>>` indexed by submission order.
+//!
+//! Phase B runs on the main thread sequentially by index: pulls each
+//! `StagedFile` and writes to SQLite. `Connection` is not `Sync` so it
+//! never crosses thread boundaries. NDJSON output order equals input order.
 
 use crate::chunking;
 use crate::cli::MemoryType;
@@ -25,10 +35,12 @@ use crate::storage::connection::{ensure_db_ready, open_rw};
 use crate::storage::entities::{NewEntity, NewRelationship};
 use crate::storage::memories::NewMemory;
 use crate::storage::{entities, memories, urls as storage_urls, versions};
+use rayon::prelude::*;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Maximum length of a derived kebab-case name. Longer basenames are truncated
 /// (with a `tracing::warn!`) to keep the `memories.name` column bounded.
@@ -97,6 +109,13 @@ pub struct IngestArgs {
 
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
+
+    /// Number of files to extract+embed in parallel; default = max(1, cpus/2).min(4).
+    #[arg(
+        long,
+        help = "Number of files to extract+embed in parallel; default = max(1, cpus/2).min(4)"
+    )]
+    pub ingest_parallelism: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -136,238 +155,32 @@ struct FileSuccess {
     action: String,
 }
 
-pub fn run(args: IngestArgs) -> Result<(), AppError> {
-    let started = std::time::Instant::now();
-
-    if !args.dir.exists() {
-        return Err(AppError::NotFound(format!(
-            "directory not found: {}",
-            args.dir.display()
-        )));
-    }
-    if !args.dir.is_dir() {
-        return Err(AppError::Validation(format!(
-            "path is not a directory: {}",
-            args.dir.display()
-        )));
-    }
-
-    let mut files: Vec<PathBuf> = Vec::new();
-    collect_files(&args.dir, &args.pattern, args.recursive, &mut files)?;
-    files.sort();
-
-    if files.len() > args.max_files {
-        return Err(AppError::Validation(format!(
-            "found {} files matching pattern, exceeds --max-files cap of {} (raise the cap or narrow the pattern)",
-            files.len(),
-            args.max_files
-        )));
-    }
-
-    let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
-    let memory_type_str = args.r#type.as_str().to_string();
-
-    // v1.0.32 Onda 4B: open the DB once and reuse the connection (and the
-    // warm embedder via `crate::daemon::embed_passage_or_local`) across every
-    // file, eliminating the ~17s ONNX cold-start that the previous
-    // fork-spawn-per-file design paid on each iteration. We tolerate a startup
-    // failure (e.g. an unwritable `--db` path) by capturing the error string
-    // and surfacing it as a per-file failure event so callers preserve the
-    // existing fail-fast / continue-on-error contract.
-    let paths = AppPaths::resolve(args.db.as_deref())?;
-    let mut conn_or_err = match init_storage(&paths) {
-        Ok(c) => Ok(c),
-        Err(e) => Err(format!("{e}")),
-    };
-
-    let mut succeeded: usize = 0;
-    let mut failed: usize = 0;
-    let mut skipped: usize = 0;
-    let total = files.len();
-
-    // v1.0.31 A10: track names produced during this run so two files with the
-    // same kebab basename (after truncation, transliteration, etc.) get
-    // distinct `-1`, `-2` suffixes within the same ingest invocation.
-    // Cross-run collisions are intentionally left to the per-file persistence
-    // path so re-ingesting an identical corpus still surfaces duplicates
-    // instead of silently creating shadow copies.
-    let mut taken_names: BTreeSet<String> = BTreeSet::new();
-
-    for path in &files {
-        let file_str = path.to_string_lossy().into_owned();
-        let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
-
-        if derived_base.is_empty() {
-            output::emit_json_compact(&IngestFileEvent {
-                file: &file_str,
-                name: "",
-                status: "skipped",
-                truncated: false,
-                original_name: None,
-                error: Some(
-                    "could not derive a non-empty kebab-case name from filename".to_string(),
-                ),
-                memory_id: None,
-                action: None,
-            })?;
-            skipped += 1;
-            continue;
-        }
-
-        let derived_name = match unique_name(&derived_base, &taken_names) {
-            Ok(n) => n,
-            Err(e) => {
-                output::emit_json_compact(&IngestFileEvent {
-                    file: &file_str,
-                    name: &derived_base,
-                    status: "skipped",
-                    truncated: name_truncated,
-                    original_name: original_name.clone(),
-                    error: Some(e.to_string()),
-                    memory_id: None,
-                    action: None,
-                })?;
-                skipped += 1;
-                continue;
-            }
-        };
-        taken_names.insert(derived_name.clone());
-
-        // If startup failed, every file inherits the same fatal error rather
-        // than silently succeeding against a non-existent database.
-        let conn = match conn_or_err.as_mut() {
-            Ok(c) => c,
-            Err(err_msg) => {
-                let err_clone = err_msg.clone();
-                output::emit_json_compact(&IngestFileEvent {
-                    file: &file_str,
-                    name: &derived_name,
-                    status: "failed",
-                    truncated: name_truncated,
-                    original_name: original_name.clone(),
-                    error: Some(err_clone.clone()),
-                    memory_id: None,
-                    action: None,
-                })?;
-                failed += 1;
-                if args.fail_fast {
-                    output::emit_json_compact(&IngestSummary {
-                        summary: true,
-                        dir: args.dir.display().to_string(),
-                        pattern: args.pattern.clone(),
-                        recursive: args.recursive,
-                        files_total: total,
-                        files_succeeded: succeeded,
-                        files_failed: failed,
-                        files_skipped: skipped,
-                        elapsed_ms: started.elapsed().as_millis() as u64,
-                    })?;
-                    return Err(AppError::Validation(format!(
-                        "ingest aborted on first failure: {err_clone}"
-                    )));
-                }
-                continue;
-            }
-        };
-
-        let outcome = process_file(
-            conn,
-            &paths,
-            &namespace,
-            &memory_type_str,
-            args.skip_extraction,
-            path,
-            &derived_name,
-        );
-
-        match outcome {
-            Ok(FileSuccess { memory_id, action }) => {
-                output::emit_json_compact(&IngestFileEvent {
-                    file: &file_str,
-                    name: &derived_name,
-                    status: "indexed",
-                    truncated: name_truncated,
-                    original_name: original_name.clone(),
-                    error: None,
-                    memory_id: Some(memory_id),
-                    action: Some(action),
-                })?;
-                succeeded += 1;
-            }
-            Err(e) => {
-                let err_msg = format!("{e}");
-                output::emit_json_compact(&IngestFileEvent {
-                    file: &file_str,
-                    name: &derived_name,
-                    status: "failed",
-                    truncated: name_truncated,
-                    original_name: original_name.clone(),
-                    error: Some(err_msg.clone()),
-                    memory_id: None,
-                    action: None,
-                })?;
-                failed += 1;
-                if args.fail_fast {
-                    output::emit_json_compact(&IngestSummary {
-                        summary: true,
-                        dir: args.dir.display().to_string(),
-                        pattern: args.pattern.clone(),
-                        recursive: args.recursive,
-                        files_total: total,
-                        files_succeeded: succeeded,
-                        files_failed: failed,
-                        files_skipped: skipped,
-                        elapsed_ms: started.elapsed().as_millis() as u64,
-                    })?;
-                    return Err(AppError::Validation(format!(
-                        "ingest aborted on first failure: {err_msg}"
-                    )));
-                }
-            }
-        }
-    }
-
-    output::emit_json_compact(&IngestSummary {
-        summary: true,
-        dir: args.dir.display().to_string(),
-        pattern: args.pattern.clone(),
-        recursive: args.recursive,
-        files_total: total,
-        files_succeeded: succeeded,
-        files_failed: failed,
-        files_skipped: skipped,
-        elapsed_ms: started.elapsed().as_millis() as u64,
-    })?;
-
-    Ok(())
+/// All artefacts pre-computed by Phase A (CPU-bound, runs on rayon thread pool).
+/// Phase B persists these to SQLite on the main thread in submission order.
+struct StagedFile {
+    body: String,
+    body_hash: String,
+    snippet: String,
+    name: String,
+    description: String,
+    embedding: Vec<f32>,
+    chunk_embeddings: Option<Vec<Vec<f32>>>,
+    chunks_info: Vec<crate::chunking::Chunk>,
+    entities: Vec<NewEntity>,
+    relationships: Vec<NewRelationship>,
+    entity_embeddings: Vec<Vec<f32>>,
+    urls: Vec<crate::extraction::ExtractedUrl>,
 }
 
-/// Auto-initialises the database (matches the contract of every other CRUD
-/// handler) and returns a fresh read/write connection ready for the ingest
-/// loop. Errors here are recoverable per-file: the caller surfaces them as
-/// failure events so `--fail-fast` and the continue-on-error path keep
-/// working when, for example, the user points `--db` at an unwritable path.
-fn init_storage(paths: &AppPaths) -> Result<Connection, AppError> {
-    ensure_db_ready(paths)?;
-    let conn = open_rw(&paths.db)?;
-    Ok(conn)
-}
-
-/// In-process equivalent of `remember::run` for a single file. Mirrors the
-/// canonical pipeline: read body, validate length, chunk, embed via the
-/// daemon-or-local fallback (the warm embedder is reused across every file),
-/// optionally extract entities, then persist memory + chunks + entities +
-/// URLs in a single immediate transaction.
-#[allow(clippy::too_many_arguments)]
-fn process_file(
-    conn: &mut Connection,
-    paths: &AppPaths,
-    namespace: &str,
-    memory_type: &str,
-    skip_extraction: bool,
+/// Phase A worker: reads, chunks, embeds and extracts NER for one file.
+/// Never touches the database — safe to run on any rayon thread.
+fn stage_file(
+    _idx: usize,
     path: &Path,
     name: &str,
-) -> Result<FileSuccess, AppError> {
+    paths: &AppPaths,
+    skip_extraction: bool,
+) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
     if name.len() > MAX_MEMORY_NAME_LEN {
@@ -407,26 +220,20 @@ fn process_file(
         ));
     }
 
-    // Auto-extraction is best-effort — failures degrade gracefully like in
-    // `remember::run`. With `--skip-extraction` we bypass the BERT NER cost
-    // entirely (the chunking + embedding cost is independent).
     let mut extracted_entities: Vec<NewEntity> = Vec::new();
     let mut extracted_relationships: Vec<NewRelationship> = Vec::new();
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
-    let mut relationships_truncated = false;
     if !skip_extraction {
         match crate::extraction::extract_graph_auto(&raw_body, paths) {
             Ok(extracted) => {
                 extracted_urls = extracted.urls;
                 extracted_entities = extracted.entities;
                 extracted_relationships = extracted.relationships;
-                relationships_truncated = extracted.relationships_truncated;
 
                 if extracted_entities.len() > MAX_ENTITIES_PER_MEMORY {
                     extracted_entities.truncate(MAX_ENTITIES_PER_MEMORY);
                 }
                 if extracted_relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
-                    relationships_truncated = true;
                     extracted_relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
                 }
             }
@@ -439,7 +246,6 @@ fn process_file(
         }
     }
 
-    // Validate extracted graph types/relations to match `remember::run` rules.
     for entity in &extracted_entities {
         if !is_valid_entity_type(&entity.entity_type) {
             return Err(AppError::Validation(format!(
@@ -477,10 +283,7 @@ fn process_file(
         )));
     }
 
-    // Reuse the warm embedder (daemon when available, in-process otherwise).
-    // This is the load-bearing change of Onda 4B: the model is loaded ONCE
-    // for the whole ingest run, not once per file.
-    let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
+    let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
     let embedding = if chunks_info.len() == 1 {
         crate::daemon::embed_passage_or_local(&paths.models, &raw_body)?
     } else {
@@ -496,12 +299,44 @@ fn process_file(
             )?);
         }
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
-        chunk_embeddings_cache = Some(chunk_embeddings);
+        chunk_embeddings_opt = Some(chunk_embeddings);
         aggregated
     };
 
-    // Namespace bookkeeping (mirrors remember::run): reject when active
-    // namespaces already hit the cap and this file would create a new one.
+    let entity_embeddings = extracted_entities
+        .iter()
+        .map(|entity| {
+            let entity_text = match &entity.description {
+                Some(desc) => format!("{} {}", entity.name, desc),
+                None => entity.name.clone(),
+            };
+            crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(StagedFile {
+        body: raw_body,
+        body_hash,
+        snippet,
+        name: name.to_string(),
+        description,
+        embedding,
+        chunk_embeddings: chunk_embeddings_opt,
+        chunks_info,
+        entities: extracted_entities,
+        relationships: extracted_relationships,
+        entity_embeddings,
+        urls: extracted_urls,
+    })
+}
+
+/// Phase B: persists one `StagedFile` to the database on the main thread.
+fn persist_staged(
+    conn: &mut Connection,
+    namespace: &str,
+    memory_type: &str,
+    staged: StagedFile,
+) -> Result<FileSuccess, AppError> {
     {
         let active_count: u32 = conn.query_row(
             "SELECT COUNT(DISTINCT namespace) FROM memories WHERE deleted_at IS NULL",
@@ -513,52 +348,34 @@ fn process_file(
             rusqlite::params![namespace],
             |r| r.get::<_, i64>(0).map(|v| v > 0),
         )?;
-        if !ns_exists && active_count >= MAX_NAMESPACES_ACTIVE {
+        if !ns_exists && active_count >= crate::constants::MAX_NAMESPACES_ACTIVE {
             return Err(AppError::NamespaceError(format!(
-                "active namespace limit of {MAX_NAMESPACES_ACTIVE} exceeded while creating '{namespace}'"
+                "active namespace limit of {} exceeded while creating '{namespace}'",
+                crate::constants::MAX_NAMESPACES_ACTIVE
             )));
         }
     }
 
-    let existing_memory = memories::find_by_name(conn, namespace, name)?;
+    let existing_memory = memories::find_by_name(conn, namespace, &staged.name)?;
     if existing_memory.is_some() {
-        // Ingest does not implement merge semantics; surface the duplicate as
-        // a per-file failure so the caller can decide whether to remove the
-        // existing memory or rename the source file.
         return Err(AppError::Duplicate(errors_msg::duplicate_memory(
-            name, namespace,
+            &staged.name,
+            namespace,
         )));
     }
-    let duplicate_hash_id = memories::find_by_hash(conn, namespace, &body_hash)?;
+    let duplicate_hash_id = memories::find_by_hash(conn, namespace, &staged.body_hash)?;
 
     let new_memory = NewMemory {
         namespace: namespace.to_string(),
-        name: name.to_string(),
+        name: staged.name.clone(),
         memory_type: memory_type.to_string(),
-        description: description.clone(),
-        body: raw_body,
-        body_hash: body_hash.clone(),
+        description: staged.description.clone(),
+        body: staged.body,
+        body_hash: staged.body_hash,
         session_id: None,
         source: "agent".to_string(),
         metadata: serde_json::json!({}),
     };
-
-    // Pre-compute entity embeddings BEFORE the transaction so the embedder
-    // (and any daemon socket) is touched outside the immediate write lock.
-    let graph_entity_embeddings = extracted_entities
-        .iter()
-        .map(|entity| {
-            let entity_text = match &entity.description {
-                Some(desc) => format!("{} {}", entity.name, desc),
-                None => entity.name.clone(),
-            };
-            crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let _ = relationships_truncated; // not surfaced in the per-file event today
-
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     if let Some(hash_id) = duplicate_hash_id {
         tracing::debug!(
@@ -568,14 +385,16 @@ fn process_file(
         );
     }
 
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
     let memory_id = memories::insert(&tx, &new_memory)?;
     versions::insert_version(
         &tx,
         memory_id,
         1,
-        name,
+        &staged.name,
         memory_type,
-        &description,
+        &staged.description,
         &new_memory.body,
         &serde_json::to_string(&new_memory.metadata)?,
         None,
@@ -586,14 +405,14 @@ fn process_file(
         memory_id,
         namespace,
         memory_type,
-        &embedding,
-        name,
-        &snippet,
+        &staged.embedding,
+        &staged.name,
+        &staged.snippet,
     )?;
 
-    if chunks_info.len() > 1 {
-        storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
-        let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
+    if staged.chunks_info.len() > 1 {
+        storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &staged.chunks_info)?;
+        let chunk_embeddings = staged.chunk_embeddings.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
                 "missing chunk embeddings cache on multi-chunk ingest path"
             ))
@@ -603,10 +422,10 @@ fn process_file(
         }
     }
 
-    if !extracted_entities.is_empty() || !extracted_relationships.is_empty() {
-        for (idx, entity) in extracted_entities.iter().enumerate() {
+    if !staged.entities.is_empty() || !staged.relationships.is_empty() {
+        for (idx, entity) in staged.entities.iter().enumerate() {
             let entity_id = entities::upsert_entity(&tx, namespace, entity)?;
-            let entity_embedding = &graph_entity_embeddings[idx];
+            let entity_embedding = &staged.entity_embeddings[idx];
             entities::upsert_entity_vec(
                 &tx,
                 entity_id,
@@ -618,11 +437,12 @@ fn process_file(
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
             entities::increment_degree(&tx, entity_id)?;
         }
-        let entity_types: std::collections::HashMap<&str, &str> = extracted_entities
+        let entity_types: std::collections::HashMap<&str, &str> = staged
+            .entities
             .iter()
             .map(|entity| (entity.name.as_str(), entity.entity_type.as_str()))
             .collect();
-        for rel in &extracted_relationships {
+        for rel in &staged.relationships {
             let source_entity = NewEntity {
                 name: rel.source.clone(),
                 entity_type: entity_types
@@ -650,10 +470,9 @@ fn process_file(
 
     tx.commit()?;
 
-    // URLs persistence is non-critical (failures don't propagate) and lives
-    // outside the main transaction to mirror `remember::run` semantics.
-    if !extracted_urls.is_empty() {
-        let url_entries: Vec<storage_urls::MemoryUrl> = extracted_urls
+    if !staged.urls.is_empty() {
+        let url_entries: Vec<storage_urls::MemoryUrl> = staged
+            .urls
             .into_iter()
             .map(|u| storage_urls::MemoryUrl {
                 url: u.url,
@@ -667,6 +486,290 @@ fn process_file(
         memory_id,
         action: "created".to_string(),
     })
+}
+
+pub fn run(args: IngestArgs) -> Result<(), AppError> {
+    let started = std::time::Instant::now();
+
+    if !args.dir.exists() {
+        return Err(AppError::NotFound(format!(
+            "directory not found: {}",
+            args.dir.display()
+        )));
+    }
+    if !args.dir.is_dir() {
+        return Err(AppError::Validation(format!(
+            "path is not a directory: {}",
+            args.dir.display()
+        )));
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files(&args.dir, &args.pattern, args.recursive, &mut files)?;
+    files.sort();
+
+    if files.len() > args.max_files {
+        return Err(AppError::Validation(format!(
+            "found {} files matching pattern, exceeds --max-files cap of {} (raise the cap or narrow the pattern)",
+            files.len(),
+            args.max_files
+        )));
+    }
+
+    let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+    let memory_type_str = args.r#type.as_str().to_string();
+
+    let paths = AppPaths::resolve(args.db.as_deref())?;
+    let mut conn_or_err = match init_storage(&paths) {
+        Ok(c) => Ok(c),
+        Err(e) => Err(format!("{e}")),
+    };
+
+    let mut succeeded: usize = 0;
+    let mut failed: usize = 0;
+    let mut skipped: usize = 0;
+    let total = files.len();
+
+    // Pre-resolve all names before parallelisation so Phase A workers see a
+    // consistent, immutable name assignment (v1.0.31 A10 contract preserved).
+    let mut taken_names: BTreeSet<String> = BTreeSet::new();
+
+    // Each entry: (path, file_str, derived_name, name_truncated, original_name)
+    // or None when the file should be skipped immediately.
+    struct FileSlot {
+        path: PathBuf,
+        file_str: String,
+        derived_name: String,
+        name_truncated: bool,
+        original_name: Option<String>,
+    }
+    enum Slot {
+        Skip {
+            file_str: String,
+            derived_base: String,
+            name_truncated: bool,
+            original_name: Option<String>,
+            reason: String,
+        },
+        Process(FileSlot),
+    }
+
+    let slots: Vec<Slot> = files
+        .iter()
+        .map(|path| {
+            let file_str = path.to_string_lossy().into_owned();
+            let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
+
+            if derived_base.is_empty() {
+                return Slot::Skip {
+                    file_str,
+                    derived_base: String::new(),
+                    name_truncated: false,
+                    original_name: None,
+                    reason: "could not derive a non-empty kebab-case name from filename"
+                        .to_string(),
+                };
+            }
+
+            match unique_name(&derived_base, &taken_names) {
+                Ok(derived_name) => {
+                    taken_names.insert(derived_name.clone());
+                    Slot::Process(FileSlot {
+                        path: path.clone(),
+                        file_str,
+                        derived_name,
+                        name_truncated,
+                        original_name,
+                    })
+                }
+                Err(e) => Slot::Skip {
+                    file_str,
+                    derived_base,
+                    name_truncated,
+                    original_name,
+                    reason: e.to_string(),
+                },
+            }
+        })
+        .collect();
+
+    // Determine rayon thread pool size.
+    let parallelism = args
+        .ingest_parallelism
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|v| v.get() / 2)
+                .unwrap_or(1)
+                .clamp(1, 4)
+        })
+        .max(1);
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(parallelism)
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("rayon pool: {e}")))?;
+
+    // Phase A: parallel compute. Indexed slot matches `slots` index for ordering.
+    let staged: Vec<Mutex<Option<Result<StagedFile, AppError>>>> =
+        (0..slots.len()).map(|_| Mutex::new(None)).collect();
+
+    let skip_extraction = args.skip_extraction;
+    let paths_ref = &paths;
+
+    pool.install(|| {
+        slots.par_iter().enumerate().for_each(|(idx, slot)| {
+            if let Slot::Process(fs) = slot {
+                let result =
+                    stage_file(idx, &fs.path, &fs.derived_name, paths_ref, skip_extraction);
+                // SAFETY: staged[idx] is only written once by this worker.
+                *staged[idx].lock().expect("staged slot poisoned") = Some(result);
+            }
+        });
+    });
+
+    // Phase B: sequential persist on main thread (Connection is !Sync).
+    let fail_fast = args.fail_fast;
+    for (idx, slot) in slots.iter().enumerate() {
+        match slot {
+            Slot::Skip {
+                file_str,
+                derived_base,
+                name_truncated,
+                original_name,
+                reason,
+            } => {
+                output::emit_json_compact(&IngestFileEvent {
+                    file: file_str,
+                    name: derived_base,
+                    status: "skipped",
+                    truncated: *name_truncated,
+                    original_name: original_name.clone(),
+                    error: Some(reason.clone()),
+                    memory_id: None,
+                    action: None,
+                })?;
+                skipped += 1;
+            }
+            Slot::Process(fs) => {
+                // If storage init failed, every file fails with the same error.
+                let conn = match conn_or_err.as_mut() {
+                    Ok(c) => c,
+                    Err(err_msg) => {
+                        let err_clone = err_msg.clone();
+                        output::emit_json_compact(&IngestFileEvent {
+                            file: &fs.file_str,
+                            name: &fs.derived_name,
+                            status: "failed",
+                            truncated: fs.name_truncated,
+                            original_name: fs.original_name.clone(),
+                            error: Some(err_clone.clone()),
+                            memory_id: None,
+                            action: None,
+                        })?;
+                        failed += 1;
+                        if fail_fast {
+                            output::emit_json_compact(&IngestSummary {
+                                summary: true,
+                                dir: args.dir.display().to_string(),
+                                pattern: args.pattern.clone(),
+                                recursive: args.recursive,
+                                files_total: total,
+                                files_succeeded: succeeded,
+                                files_failed: failed,
+                                files_skipped: skipped,
+                                elapsed_ms: started.elapsed().as_millis() as u64,
+                            })?;
+                            return Err(AppError::Validation(format!(
+                                "ingest aborted on first failure: {err_clone}"
+                            )));
+                        }
+                        continue;
+                    }
+                };
+
+                // Take the Phase A result (always Some for Process slots).
+                let stage_result = staged[idx]
+                    .lock()
+                    .expect("staged slot poisoned")
+                    .take()
+                    .expect("staged slot empty for Process slot");
+
+                let outcome = stage_result
+                    .and_then(|sf| persist_staged(conn, &namespace, &memory_type_str, sf));
+
+                match outcome {
+                    Ok(FileSuccess { memory_id, action }) => {
+                        output::emit_json_compact(&IngestFileEvent {
+                            file: &fs.file_str,
+                            name: &fs.derived_name,
+                            status: "indexed",
+                            truncated: fs.name_truncated,
+                            original_name: fs.original_name.clone(),
+                            error: None,
+                            memory_id: Some(memory_id),
+                            action: Some(action),
+                        })?;
+                        succeeded += 1;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{e}");
+                        output::emit_json_compact(&IngestFileEvent {
+                            file: &fs.file_str,
+                            name: &fs.derived_name,
+                            status: "failed",
+                            truncated: fs.name_truncated,
+                            original_name: fs.original_name.clone(),
+                            error: Some(err_msg.clone()),
+                            memory_id: None,
+                            action: None,
+                        })?;
+                        failed += 1;
+                        if fail_fast {
+                            output::emit_json_compact(&IngestSummary {
+                                summary: true,
+                                dir: args.dir.display().to_string(),
+                                pattern: args.pattern.clone(),
+                                recursive: args.recursive,
+                                files_total: total,
+                                files_succeeded: succeeded,
+                                files_failed: failed,
+                                files_skipped: skipped,
+                                elapsed_ms: started.elapsed().as_millis() as u64,
+                            })?;
+                            return Err(AppError::Validation(format!(
+                                "ingest aborted on first failure: {err_msg}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    output::emit_json_compact(&IngestSummary {
+        summary: true,
+        dir: args.dir.display().to_string(),
+        pattern: args.pattern.clone(),
+        recursive: args.recursive,
+        files_total: total,
+        files_succeeded: succeeded,
+        files_failed: failed,
+        files_skipped: skipped,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })?;
+
+    Ok(())
+}
+
+/// Auto-initialises the database (matches the contract of every other CRUD
+/// handler) and returns a fresh read/write connection ready for the ingest
+/// loop. Errors here are recoverable per-file: the caller surfaces them as
+/// failure events so `--fail-fast` and the continue-on-error path keep
+/// working when, for example, the user points `--db` at an unwritable path.
+fn init_storage(paths: &AppPaths) -> Result<Connection, AppError> {
+    ensure_db_ready(paths)?;
+    let conn = open_rw(&paths.db)?;
+    Ok(conn)
 }
 
 fn is_valid_entity_type(entity_type: &str) -> bool {

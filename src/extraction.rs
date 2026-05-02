@@ -211,6 +211,7 @@ fn is_filtered_all_caps(token: &str) -> bool {
 }
 
 fn regex_email() -> &'static Regex {
+    // SAFETY: regex literal validated at compile-time via test::regex_literals_compile
     REGEX_EMAIL.get_or_init(|| {
         Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
             .expect("compile-time validated email regex literal")
@@ -218,6 +219,7 @@ fn regex_email() -> &'static Regex {
 }
 
 fn regex_url() -> &'static Regex {
+    // SAFETY: regex literal validated at compile-time via test::regex_literals_compile
     REGEX_URL.get_or_init(|| {
         Regex::new(r#"https?://[^\s\)\]\}"'<>]+"#)
             .expect("compile-time validated URL regex literal")
@@ -225,6 +227,7 @@ fn regex_url() -> &'static Regex {
 }
 
 fn regex_uuid() -> &'static Regex {
+    // SAFETY: regex literal validated at compile-time via test::regex_literals_compile
     REGEX_UUID.get_or_init(|| {
         Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
             .expect("compile-time validated UUID regex literal")
@@ -573,6 +576,15 @@ fn load_model(paths: &AppPaths) -> Result<BertNerModel> {
     BertNerModel::load(&dir)
 }
 
+/// Hashes a string to u64 using DefaultHasher to avoid cloning in seen-sets.
+#[inline]
+fn hash_str(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
 fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     let mut entities = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -792,7 +804,7 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
     let max_rels = crate::constants::max_relationships_per_memory();
     let n = entities.len().min(MAX_ENTS);
     let mut rels: Vec<NewRelationship> = Vec::new();
-    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
 
     let mut hit_cap = false;
     'outer: for i in 0..n {
@@ -811,18 +823,14 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
                 break 'outer;
             }
 
-            let src = &entities[i].name;
-            let tgt = &entities[j].name;
-            let key = (src.clone(), tgt.clone());
-
-            if seen.contains(&key) {
+            let key = (i.min(j), i.max(j));
+            if !seen.insert(key) {
                 continue;
             }
-            seen.insert(key);
 
             rels.push(NewRelationship {
-                source: src.clone(),
-                target: tgt.clone(),
+                source: entities[i].name.clone(),
+                target: entities[j].name.clone(),
                 relation: DEFAULT_RELATION.to_string(),
                 strength: 0.5,
                 description: None,
@@ -869,7 +877,7 @@ fn build_relationships_by_sentence_cooccurrence(
         .collect();
 
     let mut rels: Vec<NewRelationship> = Vec::new();
-    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     let mut hit_cap = false;
 
     for sentence in body.split(['.', '!', '?', '\n']) {
@@ -896,13 +904,13 @@ fn build_relationships_by_sentence_cooccurrence(
                     );
                     return (rels, hit_cap);
                 }
-                let a = &entities[present[i]];
-                let b = &entities[present[j]];
-                let key = (a.name.to_lowercase(), b.name.to_lowercase());
+                let ei = present[i];
+                let ej = present[j];
+                let key = (ei.min(ej), ei.max(ej));
                 if seen.insert(key) {
                     rels.push(NewRelationship {
-                        source: a.name.clone(),
-                        target: b.name.clone(),
+                        source: entities[ei].name.clone(),
+                        target: entities[ej].name.clone(),
                         relation: DEFAULT_RELATION.to_string(),
                         strength: 0.5,
                         description: None,
@@ -979,14 +987,14 @@ fn run_ner_sliding_window(
     // Phase 3: batched inference with fallback to single-window predict on error
     let batch_size = crate::constants::ner_batch_size();
     let mut entities: Vec<ExtractedEntity> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     for chunk in windows.chunks(batch_size) {
         match model.predict_batch(chunk) {
             Ok(batch_labels) => {
                 for (labels, (_, tokens)) in batch_labels.iter().zip(chunk.iter()) {
                     for ent in iob_to_entities(tokens, labels) {
-                        if seen.insert(ent.name.clone()) {
+                        if seen.insert(hash_str(&ent.name)) {
                             entities.push(ent);
                         }
                     }
@@ -1003,7 +1011,7 @@ fn run_ner_sliding_window(
                     match model.predict(ids, &mask) {
                         Ok(labels) => {
                             for ent in iob_to_entities(tokens, &labels) {
-                                if seen.insert(ent.name.clone()) {
+                                if seen.insert(hash_str(&ent.name)) {
                                     entities.push(ent);
                                 }
                             }
@@ -1048,7 +1056,9 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
                         // Conservative: cap suffix length to 7 chars to avoid grabbing
                         // long hyphenated phrases while allowing "4o", "5b", "3.5b".
                         if suffix.len() <= 7 {
-                            let extended = format!("{}{}", ent.name, suffix);
+                            let mut extended = String::with_capacity(ent.name.len() + suffix.len());
+                            extended.push_str(&ent.name);
+                            extended.push_str(suffix);
                             return ExtractedEntity {
                                 name: extended,
                                 entity_type: ent.entity_type,
@@ -1157,16 +1167,27 @@ fn merge_and_deduplicate(
         // Composite key: entity_type + NUL + normalised lowercase name.
         // Collision search is scoped to the same type so that e.g.
         // "Apple/organization" and "Apple/concept" are kept separately.
-        let key = format!("{}\0{}", ent.entity_type, name_lc);
+        let key = {
+            let mut k = String::with_capacity(ent.entity_type.len() + 1 + name_lc.len());
+            k.push_str(&ent.entity_type);
+            k.push('\0');
+            k.push_str(&name_lc);
+            k
+        };
 
         // Scan stored entries for substring containment within the same type.
         // Two names collide when one is a case-insensitive substring of the other:
         //   "sonne" ⊂ "sonnet"  → collision, keep "sonnet" (longest-wins)
         //   "open"  ⊂ "openai"  → collision, keep "openai" (longest-wins)
+        let type_prefix = {
+            let mut p = String::with_capacity(ent.entity_type.len() + 1);
+            p.push_str(&ent.entity_type);
+            p.push('\0');
+            p
+        };
         let mut collision_idx: Option<usize> = None;
         for (existing_key, idx) in &by_lc {
             // Fast-path: check type prefix matches before scanning the name.
-            let type_prefix = format!("{}\0", ent.entity_type);
             if !existing_key.starts_with(&type_prefix) {
                 continue;
             }
@@ -1185,7 +1206,14 @@ fn merge_and_deduplicate(
                 // longer; otherwise drop the new one.
                 if ent.name.len() > result[idx].name.len() {
                     let old_name_lc = result[idx].name.nfkc().collect::<String>().to_lowercase();
-                    let old_key = format!("{}\0{}", result[idx].entity_type, old_name_lc);
+                    let old_key = {
+                        let et = &result[idx].entity_type;
+                        let mut k = String::with_capacity(et.len() + 1 + old_name_lc.len());
+                        k.push_str(et);
+                        k.push('\0');
+                        k.push_str(&old_name_lc);
+                        k
+                    };
                     by_lc.remove(&old_key);
                     result[idx] = ent;
                     by_lc.insert(key, idx);

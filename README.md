@@ -105,11 +105,33 @@ sqlite-graphrag init
 sqlite-graphrag remember --name onboarding-note --type user --description "first memory" --body "hello graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
+> **Required flags for `remember`:** `--name`, `--type`, `--description`. Body via `--body "text"`, `--body-file <path>`, or `--body-stdin` (pipe from stdin).
 - **Run `sqlite-graphrag init` first** before any other command (creates the SQLite file and downloads the embedding model on first run)
 - **`graphrag.sqlite` is created in the current working directory by default** (override with `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`)
 - For the local checkout, `cargo install --path .` is enough
 - Re-run `sqlite-graphrag --version` after any upgrade to confirm the active binary
 - After the public release, prefer `--locked` to preserve the tested MSRV dependency graph
+
+
+## Memory Lifecycle
+### Runnable sequence: init → remember → recall → forget → purge
+```bash
+# 1. Initialize (once per database)
+sqlite-graphrag init
+
+# 2. Store a memory
+sqlite-graphrag remember --name my-note --type user --description "demo" --body "first entry"
+
+# 3. Retrieve by semantic similarity
+sqlite-graphrag recall "first entry" --k 5 --json
+
+# 4. Soft-delete (reversible)
+sqlite-graphrag forget my-note
+
+# 5. Permanently remove soft-deleted memories older than 0 days
+sqlite-graphrag purge --retention-days 0 --yes
+```
+> All five commands above are safe to run in sequence on a fresh database.
 
 
 ## Installation
@@ -212,6 +234,7 @@ sqlite-graphrag stats --json
 sqlite-graphrag purge --retention-days 90 --dry-run --json
 sqlite-graphrag purge --retention-days 90 --yes
 ```
+> **Default retention: 90 days.** To purge ALL forgotten memories regardless of age, pass `--retention-days 0`.
 
 ### Run or control the persistent embedding daemon
 <!-- skip-test: `daemon --idle-shutdown-secs` runs in the foreground and would block the test indefinitely. `--ping`/`--stop` require an already-running daemon. -->
@@ -249,6 +272,7 @@ sqlite-graphrag daemon --idle-shutdown-secs 3600
 sqlite-graphrag daemon --ping            # health-check
 sqlite-graphrag daemon --stop            # graceful shutdown
 ```
+> **Daemon convention:** uses `--ping`/`--stop`/`--idle-shutdown-secs` FLAGS, not subcommands. Mirrors systemd-style flags more than git's verb-noun pattern.
 
 ### Bulk-ingest every Markdown file under a directory
 <!-- skip-test: requires a `./docs` directory containing Markdown files relative to the invocation cwd. -->
@@ -304,6 +328,8 @@ sqlite-graphrag unlink --from "OpenAI" --to "GPT-4" --relation uses --json
 ```bash
 sqlite-graphrag related onboarding-note --max-hops 2 --limit 10 --json
 ```
+> **Empty results are normal** for memories without graph edges yet — extract entities first via `remember` or `ingest`. Edges form when ≥2 entities co-occur in the same memory body.
+
 ### Export a graph snapshot in json, dot or mermaid
 <!-- skip-test: `--output graph.json` writes a file relative to the invocation cwd; pollutes the test workspace. The remaining read-only graph subcommands are exercised by the cookbook integration tests. -->
 ```bash
@@ -462,6 +488,13 @@ RUN cargo install --path .
 - Warm in-process recall can stay well below the stateless subprocess timing once the model is already resident
 - First `init` downloads the quantized model once and caches it locally
 - Embedding model uses approximately 1100 MB of RAM per process instance after the v1.0.18 daemon-based RSS calibration (52 GiB regression in v1.0.17 reduced to 1.03 GiB peak)
+
+
+## Storage Footprint
+### Expected DB size relative to ingested content
+> **Expected overhead: roughly 8× the total ingested body size** (e.g., 7.6 MB of text → ~62.9 MB DB).
+> Overhead comes from 384-dim float embeddings, FTS5 full-text index, and the entities/relationships graph.
+> Run `sqlite-graphrag vacuum --json` after bulk `forget`+`purge` cycles to reclaim reclaimed space.
 
 
 ## Safe Parallel Invocation

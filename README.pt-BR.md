@@ -105,11 +105,33 @@ sqlite-graphrag init
 sqlite-graphrag remember --name primeira-memoria --type user --description "primeira memória" --body "olá graphrag"
 sqlite-graphrag recall "graphrag" --k 5 --json
 ```
+> **Flags obrigatórias para `remember`:** `--name`, `--type`, `--description`. Body via `--body "texto"`, `--body-file <caminho>`, ou `--body-stdin` (pipe do stdin).
 - **Execute `sqlite-graphrag init` primeiro** antes de qualquer outro comando (cria o arquivo SQLite e baixa o modelo de embedding na primeira execução)
 - **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
 - Reexecute `sqlite-graphrag --version` após qualquer upgrade para confirmar o binário ativo
 - Depois da release pública, prefira `--locked` para preservar o grafo de dependências validado para o MSRV
+
+
+## Ciclo de Vida da Memória
+### Sequência executável: init → remember → recall → forget → purge
+```bash
+# 1. Inicializar (uma vez por banco)
+sqlite-graphrag init
+
+# 2. Armazenar uma memória
+sqlite-graphrag remember --name minha-nota --type user --description "demo" --body "primeira entrada"
+
+# 3. Recuperar por similaridade semântica
+sqlite-graphrag recall "primeira entrada" --k 5 --json
+
+# 4. Exclusão suave (reversível)
+sqlite-graphrag forget minha-nota
+
+# 5. Remover permanentemente memórias soft-deleted com 0 dias de retenção
+sqlite-graphrag purge --retention-days 0 --yes
+```
+> Todos os cinco comandos acima são seguros para executar em sequência em um banco recém-criado.
 
 
 ## Instalação
@@ -210,6 +232,7 @@ sqlite-graphrag stats --json
 sqlite-graphrag purge --retention-days 90 --dry-run --json
 sqlite-graphrag purge --retention-days 90 --yes
 ```
+> **Retenção padrão: 90 dias.** Para purgar TODAS as memórias esquecidas independentemente da idade, passe `--retention-days 0`.
 
 ### Execute ou controle o daemon persistente de embeddings
 <!-- skip-test: `daemon --idle-shutdown-secs` roda em foreground e bloquearia o teste indefinidamente. `--ping`/`--stop` exigem um daemon já em execução. -->
@@ -247,6 +270,7 @@ sqlite-graphrag daemon --idle-shutdown-secs 3600
 sqlite-graphrag daemon --ping            # verificação de saúde
 sqlite-graphrag daemon --stop            # desligamento gracioso
 ```
+> **Convenção do daemon:** usa FLAGS `--ping`/`--stop`/`--idle-shutdown-secs`, não subcomandos. Espelha flags no estilo systemd em vez do padrão verbo-substantivo do git.
 
 ### Ingestão em massa de arquivos Markdown em um diretório
 <!-- skip-test: requer um diretório `./docs` com arquivos Markdown relativo ao cwd da invocação. -->
@@ -302,6 +326,8 @@ sqlite-graphrag unlink --from "OpenAI" --to "GPT-4" --relation uses --json
 ```bash
 sqlite-graphrag related primeira-memoria --max-hops 2 --limit 10 --json
 ```
+> **Resultados vazios são normais** para memórias sem arestas no grafo ainda — extraia entidades primeiro via `remember` ou `ingest`. Arestas se formam quando ≥2 entidades co-ocorrem no mesmo corpo de memória.
+
 ### Exporte um snapshot do grafo em json, dot ou mermaid
 <!-- skip-test: `--output graph.json` escreve um arquivo relativo ao cwd da invocação; polui o workspace de teste. Os demais subcomandos read-only do graph são exercitados pelos testes de integração do cookbook. -->
 ```bash
@@ -460,6 +486,13 @@ RUN cargo install --path .
 - Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
 - Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.18 com daemon (regressão de 52 GiB na v1.0.17 reduzida a pico de 1.03 GiB)
+
+
+## Espaço em Disco
+### Tamanho esperado do banco em relação ao conteúdo ingerido
+> **Overhead esperado: aproximadamente 8× o tamanho total dos corpos ingeridos** (ex.: 7,6 MB de texto → ~62,9 MB de banco).
+> O overhead vem dos embeddings float de 384 dimensões, do índice FTS5 e do grafo de entidades/relacionamentos.
+> Execute `sqlite-graphrag vacuum --json` após ciclos de `forget`+`purge` em massa para recuperar espaço.
 
 
 ## Invocação Paralela Segura

@@ -10,6 +10,36 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.39] - 2026-05-02
+
+### Corrigido
+- **B1** asserção de doctest em `src/errors.rs::localized_message_for` (verificação de mensagem localizada em português)
+- **H1** pipeline de ingest paraleliza extract+embed via rayon (nova flag `--ingest-parallelism`); ordenação NDJSON preservada
+- **H2** `build_relationships*` usa dedup por índice `HashSet<(usize,usize)>`, eliminando clones String O(N²)
+- **M1** README documenta flags obrigatórias para `remember` (--name, --type, --description)
+- **M2** README documenta padrão de `purge --retention-days` (90 dias) e `--retention-days 0` para purga total
+- **M3** serialização do embedder documentada (paralelismo vive em ingest.rs)
+- **M4** daemon adiciona limite de concorrência via Semaphore; `worker_threads` escala com `available_parallelism().clamp(2, 8)`
+- **M5** dedup `seen` do NER usa `HashSet<u64>` (DefaultHasher), reduzindo clones String
+- **M6** chamadas `format!` em hot-path da extração substituídas por pré-alocação `String::with_capacity`
+- **M7** comentário SAFETY de `f32_to_bytes` expandido com invariantes explícitos (sem padding, lifetime, endianness)
+- **M8** `remember.schema.json` lista `chunks_persisted` nos campos obrigatórios
+- **M9** README documenta condições de resultado vazio para `related`
+- **M10** README documenta convenção do daemon (flags vs subcomandos, estilo systemd)
+
+### Documentação
+- **L1** mensagem de expect do tokenizer esclarecida ("OnceLock::set succeeded above; get cannot fail in this single-init path")
+- **L2** comentários SAFETY de regex de extração padronizados (regex_email/url/uuid)
+- **L3** SAFETY de detach do Child do daemon referencia cruzada com rules_rust_processos_externos.md
+- **L4** README adiciona Quick Start executável do ciclo de vida de memória (init→remember→recall→forget→purge)
+- **L5** schema descreve a semântica de `chunks_created` vs `chunks_persisted`
+- **L6** clones no caminho de erro do ingest eliminados naturalmente pela refatoração de pipeline em 2 fases
+- **L7** reconhecido: contagem de `format!` permanece; redução adicional é micro-otimização
+- **L8** README adiciona seção "Storage Footprint" explicando ~8× de bloat do DB para GraphRAG
+
+### Dependências
+- Adicionado `rayon = "1.10"` para paralelização do ingest
+
 ## [1.0.38] - 2026-05-02
 
 ### Corrigido

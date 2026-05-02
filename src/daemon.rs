@@ -206,20 +206,27 @@ impl Drop for DaemonSpawnGuard {
 }
 
 pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
-    // Tokio runtime with 2 worker threads to reduce idle threads in the daemon.
-    // The accept loop remains synchronous; each connection is dispatched via spawn_blocking
-    // so heavy embeddings do not block the tokio workers.
+    // Scale worker threads to available parallelism so embedding tasks saturate CPU cores.
+    // Clamped to [2, 8] to avoid excessive threads on high-core machines.
+    let permits = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(2, 8);
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(permits)
         .thread_name("daemon-worker")
         .enable_all()
         .build()
         .map_err(AppError::Io)?;
 
-    rt.block_on(run_async(models_dir, idle_shutdown_secs))
+    rt.block_on(run_async(models_dir, idle_shutdown_secs, permits))
 }
 
-async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
+async fn run_async(
+    models_dir: &Path,
+    idle_shutdown_secs: u64,
+    permits: usize,
+) -> Result<(), AppError> {
     let socket = daemon_label(models_dir);
     let name = to_local_socket_name(&socket)?;
     let listener = ListenerOptions::new()
@@ -250,6 +257,8 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
     let handled_embed_requests = Arc::new(AtomicU64::new(0));
     let mut last_activity = Instant::now();
     let models_dir = models_dir.to_path_buf();
+    // Bound concurrent spawn_blocking tasks to the same thread count as the runtime.
+    let permit_pool = Arc::new(tokio::sync::Semaphore::new(permits));
 
     loop {
         if shutdown_requested() {
@@ -266,7 +275,12 @@ async fn run_async(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), App
                 last_activity = Instant::now();
                 let models_dir_clone = models_dir.clone();
                 let counter = Arc::clone(&handled_embed_requests);
+                let permit =
+                    permit_pool.clone().acquire_owned().await.map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("semaphore closed: {e}"))
+                    })?;
                 let should_exit = tokio::task::spawn_blocking(move || {
+                    let _permit = permit; // hold until end of scope
                     handle_client(stream, &models_dir_clone, &counter)
                 })
                 .await
@@ -511,6 +525,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
             // `daemon stop`/SIGTERM). Keeping the handle here would block the parent
             // CLI in the foreground until the daemon exited, defeating the autostart
             // contract that callers expect.
+            // See also: docs_rules/rules_rust_processos_externos.md "Child detach justificado"
             let pid = child_handle.id();
             drop(child_handle);
             tracing::debug!(
