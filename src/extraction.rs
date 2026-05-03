@@ -15,6 +15,7 @@ use regex::Regex;
 use serde::Deserialize;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::entity_type::EntityType;
 use crate::paths::AppPaths;
 use crate::storage::entities::{NewEntity, NewRelationship};
 
@@ -266,7 +267,7 @@ fn regex_brand_camel() -> &'static Regex {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtractedEntity {
     pub name: String,
-    pub entity_type: String,
+    pub entity_type: EntityType,
 }
 
 /// URL with source offset extracted from the memory body.
@@ -400,10 +401,7 @@ impl BertNerModel {
             let argmax = vec
                 .iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| {
-                    a.partial_cmp(b)
-                        .expect("BERT NER logits invariant: no NaN in classifier output")
-                })
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
             let label = self
@@ -492,8 +490,7 @@ impl BertNerModel {
                         .iter()
                         .enumerate()
                         .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b)
-                                .expect("BERT NER logits invariant: no NaN in classifier output")
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                         })
                         .map(|(idx, _)| idx)
                         .unwrap_or(0);
@@ -586,19 +583,16 @@ fn hash_str(s: &str) -> u64 {
 }
 
 fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
-    let mut entities = Vec::new();
+    let mut entities = Vec::with_capacity(16);
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let add = |entities: &mut Vec<ExtractedEntity>,
                seen: &mut std::collections::HashSet<String>,
                name: &str,
-               entity_type: &str| {
+               entity_type: EntityType| {
         let name = name.trim().to_string();
         if name.len() >= MIN_ENTITY_CHARS && seen.insert(name.clone()) {
-            entities.push(ExtractedEntity {
-                name,
-                entity_type: entity_type.to_string(),
-            });
+            entities.push(ExtractedEntity { name, entity_type });
         }
     };
 
@@ -609,16 +603,16 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
 
     for m in regex_email().find_iter(cleaned) {
         // v1.0.20: email is "concept" (regex alone cannot distinguish person from mailing list/role).
-        add(&mut entities, &mut seen, m.as_str(), "concept");
+        add(&mut entities, &mut seen, m.as_str(), EntityType::Concept);
     }
     for m in regex_uuid().find_iter(cleaned) {
-        add(&mut entities, &mut seen, m.as_str(), "concept");
+        add(&mut entities, &mut seen, m.as_str(), EntityType::Concept);
     }
     for m in regex_all_caps().find_iter(cleaned) {
         let candidate = m.as_str();
         // v1.0.22: filtro consolidado (stopwords + HTTP methods); preserva identificadores com underscore.
         if !is_filtered_all_caps(candidate) {
-            add(&mut entities, &mut seen, candidate, "concept");
+            add(&mut entities, &mut seen, candidate, EntityType::Concept);
         }
     }
     // v1.0.25 P0-2: capture CamelCase brand names that BERT NER often misses.
@@ -627,7 +621,7 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
         let name = m.as_str();
         // Skip if the uppercased form is a known stopword (e.g. "JsonSchema" → "JSONSCHEMA").
         if !ALL_CAPS_STOPWORDS.contains(&name.to_uppercase().as_str()) {
-            add(&mut entities, &mut seen, name, "organization");
+            add(&mut entities, &mut seen, name, EntityType::Organization);
         }
     }
 
@@ -639,7 +633,7 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
 /// v1.0.24: split of the URL block that polluted apply_regex_prefilter with entity_type='concept'.
 pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(4);
     for m in regex_url().find_iter(body) {
         let raw = m.as_str();
         let cleaned = raw
@@ -661,35 +655,36 @@ pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
 }
 
 fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity> {
-    let mut entities: Vec<ExtractedEntity> = Vec::new();
+    let mut entities: Vec<ExtractedEntity> = Vec::with_capacity(tokens.len() / 4);
     let mut current_parts: Vec<String> = Vec::new();
-    let mut current_type: Option<String> = None;
+    let mut current_type: Option<EntityType> = None;
 
-    let flush =
-        |parts: &mut Vec<String>, typ: &mut Option<String>, entities: &mut Vec<ExtractedEntity>| {
-            if let Some(t) = typ.take() {
-                let name = parts.join(" ").trim().to_string();
-                // v1.0.22: filters single-token entities that are ALL CAPS stopwords or HTTP methods.
-                // BERT NER classifies some of these as B-MISC/B-ORG; post-filtering here avoids
-                // polluting the graph with generic verbs/protocols.
-                let is_single_caps = !name.contains(' ')
-                    && name == name.to_uppercase()
-                    && name.len() >= MIN_ENTITY_CHARS;
-                let should_skip = is_single_caps && is_filtered_all_caps(&name);
-                // v1.0.25 P0-4: BERT may independently label section-structure tokens (e.g.
-                // "Etapa 3", "Fase 1") even though apply_regex_prefilter strips them from the
-                // input text before regex extraction. Apply the same guard here to avoid the
-                // BERT path re-introducing these markers as graph entities.
-                let is_section_marker = regex_section_marker().is_match(&name);
-                if name.len() >= MIN_ENTITY_CHARS && !should_skip && !is_section_marker {
-                    entities.push(ExtractedEntity {
-                        name,
-                        entity_type: t,
-                    });
-                }
-                parts.clear();
+    let flush = |parts: &mut Vec<String>,
+                 typ: &mut Option<EntityType>,
+                 entities: &mut Vec<ExtractedEntity>| {
+        if let Some(t) = typ.take() {
+            let name = parts.join(" ").trim().to_string();
+            // v1.0.22: filters single-token entities that are ALL CAPS stopwords or HTTP methods.
+            // BERT NER classifies some of these as B-MISC/B-ORG; post-filtering here avoids
+            // polluting the graph with generic verbs/protocols.
+            let is_single_caps = !name.contains(' ')
+                && name == name.to_uppercase()
+                && name.len() >= MIN_ENTITY_CHARS;
+            let should_skip = is_single_caps && is_filtered_all_caps(&name);
+            // v1.0.25 P0-4: BERT may independently label section-structure tokens (e.g.
+            // "Etapa 3", "Fase 1") even though apply_regex_prefilter strips them from the
+            // input text before regex extraction. Apply the same guard here to avoid the
+            // BERT path re-introducing these markers as graph entities.
+            let is_section_marker = regex_section_marker().is_match(&name);
+            if name.len() >= MIN_ENTITY_CHARS && !should_skip && !is_section_marker {
+                entities.push(ExtractedEntity {
+                    name,
+                    entity_type: t,
+                });
             }
-        };
+            parts.clear();
+        }
+    };
 
     for (token, label) in tokens.iter().zip(labels.iter()) {
         if label == "O" {
@@ -725,16 +720,16 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
             "Ter",
         ];
 
-        let entity_type = match bio_type {
+        let entity_type: EntityType = match bio_type {
             // v1.0.25 V008: DATE is now a first-class entity type instead of being discarded.
-            "DATE" => "date",
+            "DATE" => EntityType::Date,
             "PER" => {
                 // Filter well-known PT monosyllabic verbs misclassified as persons.
                 if PT_VERB_FALSE_POSITIVES.contains(&token.as_str()) {
                     flush(&mut current_parts, &mut current_type, &mut entities);
                     continue;
                 }
-                "person"
+                EntityType::Person
             }
             "ORG" => {
                 let t = token.to_lowercase();
@@ -744,15 +739,16 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
                     || t.contains("crate")
                     || t.contains("npm")
                 {
-                    "tool"
+                    EntityType::Tool
                 } else {
                     // v1.0.25 V008: "organization" replaces the v1.0.24 default "project".
-                    "organization"
+                    EntityType::Organization
                 }
             }
             // v1.0.25 V008: "location" replaces "concept" for geographic tokens.
-            "LOC" => "location",
-            other => other,
+            "LOC" => EntityType::Location,
+            // Unknown BERT label: fall back to concept; unknown labels cannot map to a canonical type.
+            _ => EntityType::Concept,
         };
 
         if prefix == "B" {
@@ -767,7 +763,7 @@ fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity>
             }
             flush(&mut current_parts, &mut current_type, &mut entities);
             current_parts.push(token.clone());
-            current_type = Some(entity_type.to_string());
+            current_type = Some(entity_type);
         } else if prefix == "I" && current_type.is_some() {
             let clean = token.strip_prefix("##").unwrap_or(token.as_str());
             if token.starts_with("##") {
@@ -829,6 +825,7 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
             }
 
             rels.push(NewRelationship {
+                // clone needed: NewRelationship requires owned String for source/target
                 source: entities[i].name.clone(),
                 target: entities[j].name.clone(),
                 relation: DEFAULT_RELATION.to_string(),
@@ -1132,7 +1129,7 @@ fn augment_versioned_model_names(
         existing_lc.insert(normalized_lc);
         result.push(ExtractedEntity {
             name: full_match.to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         });
     }
 
@@ -1168,8 +1165,9 @@ fn merge_and_deduplicate(
         // Collision search is scoped to the same type so that e.g.
         // "Apple/organization" and "Apple/concept" are kept separately.
         let key = {
-            let mut k = String::with_capacity(ent.entity_type.len() + 1 + name_lc.len());
-            k.push_str(&ent.entity_type);
+            let et = ent.entity_type.as_str();
+            let mut k = String::with_capacity(et.len() + 1 + name_lc.len());
+            k.push_str(et);
             k.push('\0');
             k.push_str(&name_lc);
             k
@@ -1180,8 +1178,9 @@ fn merge_and_deduplicate(
         //   "sonne" ⊂ "sonnet"  → collision, keep "sonnet" (longest-wins)
         //   "open"  ⊂ "openai"  → collision, keep "openai" (longest-wins)
         let type_prefix = {
-            let mut p = String::with_capacity(ent.entity_type.len() + 1);
-            p.push_str(&ent.entity_type);
+            let et = ent.entity_type.as_str();
+            let mut p = String::with_capacity(et.len() + 1);
+            p.push_str(et);
             p.push('\0');
             p
         };
@@ -1207,7 +1206,7 @@ fn merge_and_deduplicate(
                 if ent.name.len() > result[idx].name.len() {
                     let old_name_lc = result[idx].name.nfkc().collect::<String>().to_lowercase();
                     let old_key = {
-                        let et = &result[idx].entity_type;
+                        let et = result[idx].entity_type.as_str();
                         let mut k = String::with_capacity(et.len() + 1 + old_name_lc.len());
                         k.push_str(et);
                         k.push('\0');
@@ -1326,6 +1325,7 @@ impl Extractor for RegexExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity_type::EntityType;
 
     fn make_paths() -> AppPaths {
         use std::path::PathBuf;
@@ -1341,7 +1341,7 @@ mod tests {
         // v1.0.20: emails are classified as "concept" (regex alone cannot distinguish person from role).
         assert!(ents
             .iter()
-            .any(|e| e.name == "someone@company.com" && e.entity_type == "concept"));
+            .any(|e| e.name == "someone@company.com" && e.entity_type == EntityType::Concept));
     }
 
     #[test]
@@ -1416,7 +1416,7 @@ mod tests {
     #[test]
     fn regex_uuid_captura_identificador() {
         let ents = apply_regex_prefilter("id=550e8400-e29b-41d4-a716-446655440000 no sistema");
-        assert!(ents.iter().any(|e| e.entity_type == "concept"));
+        assert!(ents.iter().any(|e| e.entity_type == EntityType::Concept));
     }
 
     #[test]
@@ -1445,7 +1445,7 @@ mod tests {
         let labels = vec!["B-PER".to_string(), "I-PER".to_string(), "O".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert_eq!(ents.len(), 1);
-        assert_eq!(ents[0].entity_type, "person");
+        assert_eq!(ents[0].entity_type, EntityType::Person);
         assert!(ents[0].name.contains("John"));
     }
 
@@ -1485,7 +1485,7 @@ mod tests {
             1,
             "DATE must be emitted as an entity in v1.0.25"
         );
-        assert_eq!(ents[0].entity_type, "date");
+        assert_eq!(ents[0].entity_type, EntityType::Date);
     }
 
     #[test]
@@ -1494,7 +1494,7 @@ mod tests {
         let tokens = vec!["Empresa".to_string()];
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, "organization");
+        assert_eq!(ents[0].entity_type, EntityType::Organization);
     }
 
     #[test]
@@ -1502,7 +1502,7 @@ mod tests {
         let tokens = vec!["tokio-sdk".to_string()];
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, "tool");
+        assert_eq!(ents[0].entity_type, EntityType::Tool);
     }
 
     #[test]
@@ -1511,7 +1511,7 @@ mod tests {
         let tokens = vec!["Brasil".to_string()];
         let labels = vec!["B-LOC".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, "location");
+        assert_eq!(ents[0].entity_type, EntityType::Location);
     }
 
     #[test]
@@ -1519,7 +1519,7 @@ mod tests {
         let entities: Vec<NewEntity> = (0..20)
             .map(|i| NewEntity {
                 name: format!("entidade_{i}"),
-                entity_type: "concept".to_string(),
+                entity_type: EntityType::Concept,
                 description: None,
             })
             .collect();
@@ -1536,7 +1536,7 @@ mod tests {
         let entities: Vec<NewEntity> = (0..5)
             .map(|i| NewEntity {
                 name: format!("ent_{i}"),
-                entity_type: "concept".to_string(),
+                entity_type: EntityType::Concept,
                 description: None,
             })
             .collect();
@@ -1555,11 +1555,11 @@ mod tests {
         // must deduplicate to one entry. Different types are kept separately.
         let a = vec![ExtractedEntity {
             name: "Rust".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let b = vec![ExtractedEntity {
             name: "rust".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let merged = merge_and_deduplicate(a, b);
         assert_eq!(
@@ -1631,13 +1631,13 @@ mod tests {
         // normalization.
         let nfc = vec![ExtractedEntity {
             name: "Caf\u{e9}".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         // Build the NFD form: 'e' followed by combining acute accent U+0301
         let nfd_name = "Cafe\u{301}".to_string();
         let nfd = vec![ExtractedEntity {
             name: nfd_name,
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let merged = merge_and_deduplicate(nfc, nfd);
         assert_eq!(
@@ -1776,7 +1776,7 @@ mod tests {
         // Existing behaviour: pure-numeric suffix must still work after P2-E.
         let ents = vec![ExtractedEntity {
             name: "GPT".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let result = extend_with_numeric_suffix(ents, "using GPT-5 in the project");
         assert_eq!(
@@ -1790,7 +1790,7 @@ mod tests {
         // P2-E: "4o" suffix (digit + lowercase letter) must be captured.
         let ents = vec![ExtractedEntity {
             name: "GPT".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let result = extend_with_numeric_suffix(ents, "using GPT-4o for advanced tasks");
         assert_eq!(result[0].name, "GPT-4o", "suffix '4o' must be accepted");
@@ -1801,7 +1801,7 @@ mod tests {
         // P2-E: "5b" suffix (digit + 'b') must be captured.
         let ents = vec![ExtractedEntity {
             name: "Llama".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let result = extend_with_numeric_suffix(ents, "Llama-5b open-weight model");
         assert_eq!(result[0].name, "Llama-5b", "suffix '5b' must be accepted");
@@ -1812,7 +1812,7 @@ mod tests {
         // P2-E: "8x" suffix (digit + 'x') must be captured.
         let ents = vec![ExtractedEntity {
             name: "Mistral".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let result = extend_with_numeric_suffix(ents, "testing Mistral-8x in production");
         assert_eq!(result[0].name, "Mistral-8x", "suffix '8x' must be accepted");
@@ -1872,7 +1872,7 @@ mod tests {
         // P2-D back-compat: entities already present must not be duplicated.
         let existing = vec![ExtractedEntity {
             name: "Claude 4".to_string(),
-            entity_type: "concept".to_string(),
+            entity_type: EntityType::Concept,
         }];
         let result = augment_versioned_model_names(existing, "using Claude 4 in the project");
         let count = result.iter().filter(|e| e.name == "Claude 4").count();
@@ -1945,7 +1945,7 @@ mod tests {
         );
         assert_eq!(
             openai.unwrap().entity_type,
-            "organization",
+            EntityType::Organization,
             "brand CamelCase must map to organization (V008)"
         );
     }
@@ -1956,7 +1956,7 @@ mod tests {
         let ents = apply_regex_prefilter(body);
         assert!(
             ents.iter()
-                .any(|e| e.name == "PostgreSQL" && e.entity_type == "organization"),
+                .any(|e| e.name == "PostgreSQL" && e.entity_type == EntityType::Organization),
             "PostgreSQL must be extracted as organization; entities: {:?}",
             ents.iter()
                 .map(|e| (&e.name, &e.entity_type))
@@ -1973,7 +1973,8 @@ mod tests {
         let labels = vec!["B-ORG".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert_eq!(
-            ents[0].entity_type, "organization",
+            ents[0].entity_type,
+            EntityType::Organization,
             "B-ORG must map to organization (V008); got {}",
             ents[0].entity_type
         );
@@ -1987,7 +1988,8 @@ mod tests {
         let labels = vec!["B-LOC".to_string(), "I-LOC".to_string()];
         let ents = iob_to_entities(&tokens, &labels);
         assert_eq!(
-            ents[0].entity_type, "location",
+            ents[0].entity_type,
+            EntityType::Location,
             "B-LOC must map to location (V008); got {}",
             ents[0].entity_type
         );
@@ -2008,7 +2010,7 @@ mod tests {
             1,
             "DATE entity must be emitted (V008); entities: {ents:?}"
         );
-        assert_eq!(ents[0].entity_type, "date");
+        assert_eq!(ents[0].entity_type, EntityType::Date);
     }
 
     // ── v1.0.25 P0-2: PT verb false-positive filter ──
@@ -2023,7 +2025,7 @@ mod tests {
         assert!(
             !ents
                 .iter()
-                .any(|e| e.name == "L\u{ea}" && e.entity_type == "person"),
+                .any(|e| e.name == "L\u{ea}" && e.entity_type == EntityType::Person),
             "PT verb 'L\\u{{ea}}' tagged B-PER must be filtered; entities: {ents:?}"
         );
     }
@@ -2042,18 +2044,18 @@ mod tests {
 
     // --- P0-3 longest-wins v1.0.25 ---
 
-    fn entity(name: &str, entity_type: &str) -> ExtractedEntity {
+    fn entity(name: &str, entity_type: EntityType) -> ExtractedEntity {
         ExtractedEntity {
             name: name.to_string(),
-            entity_type: entity_type.to_string(),
+            entity_type,
         }
     }
 
     #[test]
     fn merge_resolves_sonne_vs_sonnet_keeps_longest_v1025() {
         // "Sonne" is a substring of "Sonnet" — longest-wins must keep "Sonnet".
-        let regex = vec![entity("Sonne", "concept")];
-        let ner = vec![entity("Sonnet", "concept")];
+        let regex = vec![entity("Sonne", EntityType::Concept)];
+        let ner = vec![entity("Sonnet", EntityType::Concept)];
         let result = merge_and_deduplicate(regex, ner);
         assert_eq!(result.len(), 1, "expected 1 entity, got: {result:?}");
         assert_eq!(result[0].name, "Sonnet");
@@ -2063,8 +2065,8 @@ mod tests {
     fn merge_resolves_open_vs_openai_keeps_longest_v1025() {
         // "Open" is a substring of "OpenAI" — longest-wins must keep "OpenAI".
         let regex = vec![
-            entity("Open", "organization"),
-            entity("OpenAI", "organization"),
+            entity("Open", EntityType::Organization),
+            entity("OpenAI", EntityType::Organization),
         ];
         let result = merge_and_deduplicate(regex, vec![]);
         assert_eq!(result.len(), 1, "expected 1 entity, got: {result:?}");
@@ -2074,7 +2076,10 @@ mod tests {
     #[test]
     fn merge_keeps_both_when_no_containment_v1025() {
         // "Alice" and "Bob" share no containment — both must be preserved.
-        let regex = vec![entity("Alice", "person"), entity("Bob", "person")];
+        let regex = vec![
+            entity("Alice", EntityType::Person),
+            entity("Bob", EntityType::Person),
+        ];
         let result = merge_and_deduplicate(regex, vec![]);
         assert_eq!(result.len(), 2, "expected 2 entities, got: {result:?}");
     }
@@ -2082,7 +2087,10 @@ mod tests {
     #[test]
     fn merge_respects_entity_type_boundary_v1025() {
         // Same name "Apple" but different types: both must survive independently.
-        let regex = vec![entity("Apple", "organization"), entity("Apple", "concept")];
+        let regex = vec![
+            entity("Apple", EntityType::Organization),
+            entity("Apple", EntityType::Concept),
+        ];
         let result = merge_and_deduplicate(regex, vec![]);
         assert_eq!(
             result.len(),
@@ -2095,8 +2103,8 @@ mod tests {
     fn merge_case_insensitive_dedup_v1025() {
         // "OpenAI" and "openai" are the same entity — deduplicate to exactly one.
         let regex = vec![
-            entity("OpenAI", "organization"),
-            entity("openai", "organization"),
+            entity("OpenAI", EntityType::Organization),
+            entity("openai", EntityType::Organization),
         ];
         let result = merge_and_deduplicate(regex, vec![]);
         assert_eq!(
@@ -2196,17 +2204,17 @@ mod tests {
         let entities = vec![
             NewEntity {
                 name: "Alice".to_string(),
-                entity_type: "person".to_string(),
+                entity_type: EntityType::Person,
                 description: None,
             },
             NewEntity {
                 name: "Bob".to_string(),
-                entity_type: "person".to_string(),
+                entity_type: EntityType::Person,
                 description: None,
             },
             NewEntity {
                 name: "Carol".to_string(),
-                entity_type: "person".to_string(),
+                entity_type: EntityType::Person,
                 description: None,
             },
         ];
@@ -2229,7 +2237,7 @@ mod tests {
         let body = "Alice is here.";
         let entities = vec![NewEntity {
             name: "Alice".to_string(),
-            entity_type: "person".to_string(),
+            entity_type: EntityType::Person,
             description: None,
         }];
         let (rels, truncated) = build_relationships_by_sentence_cooccurrence(body, &entities);
@@ -2243,12 +2251,12 @@ mod tests {
         let entities = vec![
             NewEntity {
                 name: "Alice".to_string(),
-                entity_type: "person".to_string(),
+                entity_type: EntityType::Person,
                 description: None,
             },
             NewEntity {
                 name: "Bob".to_string(),
-                entity_type: "person".to_string(),
+                entity_type: EntityType::Person,
                 description: None,
             },
         ];

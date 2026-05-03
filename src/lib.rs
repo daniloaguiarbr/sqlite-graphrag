@@ -93,6 +93,9 @@ pub mod daemon;
 /// Local embedding generation backed by `fastembed`.
 pub mod embedder;
 
+/// Canonical entity type taxonomy: 13 variants, ValueEnum + serde + rusqlite impls.
+pub mod entity_type;
+
 /// Library-wide error type and the mapping to process exit codes (see [`errors::AppError`]).
 pub mod errors;
 

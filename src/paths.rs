@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 ///
 /// Constructed via [`AppPaths::resolve`], which applies the three-layer precedence:
 /// CLI flag → `SQLITE_GRAPHRAG_DB_PATH` env var → `SQLITE_GRAPHRAG_HOME` env var → cwd.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppPaths {
     /// Absolute path to the SQLite database file.
     pub db: PathBuf,

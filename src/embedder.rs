@@ -9,7 +9,7 @@ use crate::constants::{
 };
 use crate::errors::AppError;
 use fastembed::{EmbeddingModel, ExecutionProviderDispatch, TextEmbedding, TextInitOptions};
-use ort::execution_providers::CPU;
+use ort::ep::CPU;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 

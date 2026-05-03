@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.42"
+version = "1.0.43"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -74,6 +74,8 @@ anyhow = "1"
 thiserror = "2"
 blake3 = "1"
 directories = "5"
+# fastrand: dependency-free PRNG for jitter (H7+M7); MSRV 1.36, ~30 LOC, no transitive deps
+fastrand = "2"
 fs4 = { version = "0.9", features = ["sync"] }
 interprocess = "2"
 regex = "1"
@@ -95,22 +97,20 @@ candle-nn = { version = "0.10.2", default-features = false }
 candle-transformers = { version = "0.10.2", default-features = false }
 unicode-normalization = "0.1.25"
 
-# ort pinned at =2.0.0-rc.11; upgrade to rc.12 deferred to v1.0.43 because rc.12
-# brings module reshuffles (`ort::tensor` -> `ort::value`, `execution_providers`
-# -> `ep`, IoBinding moved) that require coordinated changes to `src/embedder.rs`.
-# fastembed 5.13.4 already pins ort=2.0.0-rc.12 upstream, so a coordinated
-# fastembed + ort + embedder.rs bump is required (out of scope for v1.0.42).
-# Note: rc.12 also lacks a musl prebuilt (verified 2026-05-03 via
+# ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
+# pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:
+#   `ort::execution_providers::CPU` -> `ort::ep::CPU` (namespace reshuffle in rc.12).
+# Note: rc.12 lacks a musl prebuilt (verified 2026-05-03 via
 # https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt),
 # so the musl release target was dropped in v1.0.42 (HIGH 1).
 [target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
-fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
-ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
+fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
 
-# Same defer rationale as above (ort rc.11 -> rc.12 deferred to v1.0.43).
+# aarch64-linux-gnu uses load-dynamic; same ort/fastembed versions as above.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
-fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
-ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
+fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
 
 [dev-dependencies]
 assert_cmd = "2"

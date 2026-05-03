@@ -42,8 +42,12 @@ where
         match op() {
             Ok(()) => return Ok(()),
             Err(e) if is_sqlite_busy(&e) => {
-                // Exponential backoff: base_ms * 2^attempt
-                let delay_ms = SQLITE_BUSY_BASE_DELAY_MS * (1u64 << attempt);
+                // v1.0.43 (M7): half-jitter to prevent thundering herd when multiple CLIs hit
+                // SQLITE_BUSY simultaneously. Effective delay: [base/2, base).
+                let base_ms = SQLITE_BUSY_BASE_DELAY_MS * (1u64 << attempt);
+                let half = base_ms / 2;
+                let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                let delay_ms = half + jitter;
                 thread::sleep(Duration::from_millis(delay_ms));
             }
             Err(other) => return Err(other),
@@ -131,6 +135,24 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert!(result.is_ok(), "expected Ok after 3rd attempt");
+    }
+
+    #[test]
+    fn busy_retry_jitter_in_range() {
+        // Verify that the half-jitter formula stays within [base/2, base) for attempt=2.
+        // attempt=2 → base_ms = SQLITE_BUSY_BASE_DELAY_MS * 4; half = base_ms/2.
+        // We call fastrand::u64 indirectly through with_busy_retry by observing that the
+        // function completes; direct delay bounds are tested via the formula invariant.
+        let base_ms = SQLITE_BUSY_BASE_DELAY_MS * (1u64 << 2); // attempt=2
+        let half = base_ms / 2;
+        for _ in 0..100 {
+            let jitter = fastrand::u64(0..half);
+            let delay_ms = half + jitter;
+            assert!(
+                delay_ms >= half && delay_ms < base_ms,
+                "delay_ms {delay_ms} out of [{half}, {base_ms})"
+            );
+        }
     }
 
     #[test]

@@ -14,18 +14,26 @@
 //! object per processed file (success or error), followed by a final
 //! summary object. Designed for streaming consumption by agents.
 //!
-//! ## Two-phase pipeline (v1.0.39)
+//! ## Incremental pipeline (v1.0.43)
 //!
 //! Phase A runs on a rayon thread pool (size = `--ingest-parallelism`):
-//! read + chunk + embed + NER per file, results stored in a pre-sized
-//! `Vec<Mutex<Option<Result<StagedFile>>>>` indexed by submission order.
+//! read + chunk + embed + NER per file. Results are sent immediately via a
+//! bounded `mpsc::sync_channel` to Phase B so persistence starts as soon
+//! as the first file completes — no waiting for all files to finish Phase A.
 //!
-//! Phase B runs on the main thread sequentially by index: pulls each
-//! `StagedFile` and writes to SQLite. `Connection` is not `Sync` so it
-//! never crosses thread boundaries. NDJSON output order equals input order.
+//! Phase B runs on the main thread: receives staged files from the channel,
+//! writes to SQLite per-file (WAL absorbs individual commits), and emits
+//! NDJSON progress events to stderr as each file is persisted. `Connection`
+//! is not `Sync` so it never crosses thread boundaries.
+//!
+//! This fixes B1: with the old 2-phase design, a 50-file corpus with 27s/file
+//! NER would spend ~22min in Phase A alone, exceeding the user's 900s timeout
+//! before Phase B (and any DB writes) could begin. With this pipeline, the
+//! first file is committed within seconds of starting.
 
 use crate::chunking;
 use crate::cli::MemoryType;
+use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::i18n::errors_msg;
 use crate::output::{self, JsonOutputFormat};
@@ -40,7 +48,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::mpsc;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::constants::DERIVED_NAME_MAX_LEN;
@@ -245,6 +253,18 @@ struct FileSuccess {
     action: String,
 }
 
+/// NDJSON progress event emitted to stderr after each file completes Phase A.
+/// Schema version 1; consumers should check `schema_version` before parsing.
+#[derive(Serialize)]
+struct StageProgressEvent<'a> {
+    schema_version: u8,
+    event: &'a str,
+    path: &'a str,
+    ms: u64,
+    entities: usize,
+    relationships: usize,
+}
+
 /// All artefacts pre-computed by Phase A (CPU-bound, runs on rayon thread pool).
 /// Phase B persists these to SQLite on the main thread in submission order.
 struct StagedFile {
@@ -320,8 +340,8 @@ fn stage_file(
                 extracted_entities = extracted.entities;
                 extracted_relationships = extracted.relationships;
 
-                if extracted_entities.len() > MAX_ENTITIES_PER_MEMORY {
-                    extracted_entities.truncate(MAX_ENTITIES_PER_MEMORY);
+                if extracted_entities.len() > max_entities_per_memory() {
+                    extracted_entities.truncate(max_entities_per_memory());
                 }
                 if extracted_relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
                     extracted_relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
@@ -336,14 +356,6 @@ fn stage_file(
         }
     }
 
-    for entity in &extracted_entities {
-        if !is_valid_entity_type(&entity.entity_type) {
-            return Err(AppError::Validation(format!(
-                "invalid entity_type '{}' for entity '{}'",
-                entity.entity_type, entity.name
-            )));
-        }
-    }
     for rel in &mut extracted_relationships {
         rel.relation = rel.relation.replace('-', "_");
         if !is_valid_relation(&rel.relation) {
@@ -520,17 +532,17 @@ fn persist_staged(
                 &tx,
                 entity_id,
                 namespace,
-                &entity.entity_type,
+                entity.entity_type,
                 entity_embedding,
                 &entity.name,
             )?;
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
             entities::increment_degree(&tx, entity_id)?;
         }
-        let entity_types: std::collections::HashMap<&str, &str> = staged
+        let entity_types: std::collections::HashMap<&str, EntityType> = staged
             .entities
             .iter()
-            .map(|entity| (entity.name.as_str(), entity.entity_type.as_str()))
+            .map(|entity| (entity.name.as_str(), entity.entity_type))
             .collect();
         for rel in &staged.relationships {
             let source_entity = NewEntity {
@@ -538,8 +550,7 @@ fn persist_staged(
                 entity_type: entity_types
                     .get(rel.source.as_str())
                     .copied()
-                    .unwrap_or("concept")
-                    .to_string(),
+                    .unwrap_or(EntityType::Concept),
                 description: None,
             };
             let target_entity = NewEntity {
@@ -547,8 +558,7 @@ fn persist_staged(
                 entity_type: entity_types
                     .get(rel.target.as_str())
                     .copied()
-                    .unwrap_or("concept")
-                    .to_string(),
+                    .unwrap_or(EntityType::Concept),
                 description: None,
             };
             let source_id = entities::upsert_entity(&tx, namespace, &source_entity)?;
@@ -624,16 +634,12 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     // consistent, immutable name assignment (v1.0.31 A10 contract preserved).
     let mut taken_names: BTreeSet<String> = BTreeSet::new();
 
-    // Each entry: (path, file_str, derived_name, name_truncated, original_name)
-    // or None when the file should be skipped immediately.
-    struct FileSlot {
-        path: PathBuf,
-        file_str: String,
-        derived_name: String,
-        name_truncated: bool,
-        original_name: Option<String>,
-    }
-    enum Slot {
+    // SlotMeta: per-slot output metadata retained on the main thread for NDJSON.
+    // ProcessItem: the data moved into the producer thread for Phase A computation.
+    // We split these so `slots_meta` (non-Send BTreeSet-dependent) stays on main
+    // thread while `process_items` (Send: only PathBuf + String) crosses the thread
+    // boundary into the rayon producer.
+    enum SlotMeta {
         Skip {
             file_str: String,
             derived_base: String,
@@ -641,47 +647,67 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             original_name: Option<String>,
             reason: String,
         },
-        Process(FileSlot),
+        Process {
+            file_str: String,
+            derived_name: String,
+            name_truncated: bool,
+            original_name: Option<String>,
+        },
     }
 
-    let slots: Vec<Slot> = files
-        .iter()
-        .map(|path| {
-            let file_str = path.to_string_lossy().into_owned();
-            let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
+    struct ProcessItem {
+        idx: usize,
+        path: PathBuf,
+        file_str: String,
+        derived_name: String,
+    }
 
-            if derived_base.is_empty() {
-                return Slot::Skip {
+    let mut slots_meta: Vec<SlotMeta> = Vec::with_capacity(files.len());
+    let mut process_items: Vec<ProcessItem> = Vec::new();
+
+    for path in &files {
+        let file_str = path.to_string_lossy().into_owned();
+        let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
+
+        if derived_base.is_empty() {
+            slots_meta.push(SlotMeta::Skip {
+                file_str,
+                derived_base: String::new(),
+                name_truncated: false,
+                original_name: None,
+                reason: "could not derive a non-empty kebab-case name from filename".to_string(),
+            });
+            continue;
+        }
+
+        match unique_name(&derived_base, &taken_names) {
+            Ok(derived_name) => {
+                taken_names.insert(derived_name.clone());
+                let idx = slots_meta.len();
+                process_items.push(ProcessItem {
+                    idx,
+                    path: path.clone(),
+                    file_str: file_str.clone(),
+                    derived_name: derived_name.clone(),
+                });
+                slots_meta.push(SlotMeta::Process {
                     file_str,
-                    derived_base: String::new(),
-                    name_truncated: false,
-                    original_name: None,
-                    reason: "could not derive a non-empty kebab-case name from filename"
-                        .to_string(),
-                };
+                    derived_name,
+                    name_truncated,
+                    original_name,
+                });
             }
-
-            match unique_name(&derived_base, &taken_names) {
-                Ok(derived_name) => {
-                    taken_names.insert(derived_name.clone());
-                    Slot::Process(FileSlot {
-                        path: path.clone(),
-                        file_str,
-                        derived_name,
-                        name_truncated,
-                        original_name,
-                    })
-                }
-                Err(e) => Slot::Skip {
+            Err(e) => {
+                slots_meta.push(SlotMeta::Skip {
                     file_str,
                     derived_base,
                     name_truncated,
                     original_name,
                     reason: e.to_string(),
-                },
+                });
             }
-        })
-        .collect();
+        }
+    }
 
     // Determine rayon thread pool size, honoring --low-memory and the
     // SQLITE_GRAPHRAG_LOW_MEMORY env var (both force parallelism = 1).
@@ -692,172 +718,228 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("rayon pool: {e}")))?;
 
-    // Phase A: parallel compute. Indexed slot matches `slots` index for ordering.
-    let staged: Vec<Mutex<Option<Result<StagedFile, AppError>>>> =
-        (0..slots.len()).map(|_| Mutex::new(None)).collect();
-
     let skip_extraction = args.skip_extraction;
-    let paths_ref = &paths;
 
-    let total_to_process = slots
-        .iter()
-        .filter(|s| matches!(s, Slot::Process(_)))
-        .count();
+    let total_to_process = process_items.len();
     tracing::info!(
         target = "ingest",
-        phase = "stage_start",
+        phase = "pipeline_start",
         files = total_to_process,
         ingest_parallelism = parallelism,
-        "phase A (stage) starting: chunk + embed + NER on rayon pool",
+        "incremental pipeline starting: Phase A (rayon) → channel → Phase B (main thread)",
     );
-    let staged_done = std::sync::atomic::AtomicUsize::new(0);
 
-    pool.install(|| {
-        slots.par_iter().enumerate().for_each(|(idx, slot)| {
-            if let Slot::Process(fs) = slot {
-                let result =
-                    stage_file(idx, &fs.path, &fs.derived_name, paths_ref, skip_extraction);
-                // SAFETY: staged[idx] is only written once by this worker.
-                *staged[idx].lock().expect("staged slot poisoned") = Some(result);
-                let done = staged_done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if done % 10 == 0 || done == total_to_process {
-                    tracing::info!(
-                        target = "ingest",
-                        phase = "stage_progress",
-                        done = done,
-                        total = total_to_process,
-                        "phase A progress",
-                    );
+    // Bounded channel: producer never gets more than parallelism*2 items ahead of
+    // the consumer, preventing memory blowup when Phase A is faster than Phase B.
+    // Each message carries the slot index so Phase B can look up SlotMeta in order.
+    let channel_bound = (parallelism * 2).max(1);
+    let (tx, rx) = mpsc::sync_channel::<(usize, Result<StagedFile, AppError>)>(channel_bound);
+
+    // Phase A: launched in a dedicated OS thread so the main thread can consume
+    // the channel concurrently. pool.install() blocks the calling thread until
+    // all rayon workers finish — if called on the main thread it would
+    // reintroduce the 2-phase blocking behaviour we are eliminating.
+    let paths_owned = paths.clone();
+    let producer_handle = std::thread::spawn(move || {
+        pool.install(|| {
+            process_items.into_par_iter().for_each(|item| {
+                let t0 = std::time::Instant::now();
+                let result = stage_file(
+                    item.idx,
+                    &item.path,
+                    &item.derived_name,
+                    &paths_owned,
+                    skip_extraction,
+                );
+                let elapsed_ms = t0.elapsed().as_millis() as u64;
+
+                // Emit NDJSON progress event to stderr so the user sees work
+                // happening during long NER runs (e.g. 50 files × 27s each).
+                let (n_entities, n_relationships) = match &result {
+                    Ok(sf) => (sf.entities.len(), sf.relationships.len()),
+                    Err(_) => (0, 0),
+                };
+                let progress = StageProgressEvent {
+                    schema_version: 1,
+                    event: "file_extracted",
+                    path: &item.file_str,
+                    ms: elapsed_ms,
+                    entities: n_entities,
+                    relationships: n_relationships,
+                };
+                if let Ok(line) = serde_json::to_string(&progress) {
+                    eprintln!("{line}");
                 }
-            }
+
+                // Blocking send applies backpressure: if Phase B is slower,
+                // Phase A workers wait here instead of accumulating staged files
+                // in memory. If the receiver is dropped (fail_fast abort), ignore.
+                let _ = tx.send((item.idx, result));
+            });
+            // Explicit drop of tx signals Phase B (rx iteration) to stop.
+            drop(tx);
         });
     });
+
+    // Phase B: main thread persists files as results arrive from the channel.
+    // Results arrive in completion order (par_iter is unordered). We persist
+    // each file immediately on arrival — this is the key fix for B1: with the
+    // old 2-phase design the first DB write happened only after ALL files had
+    // finished Phase A. Now the first commit happens as soon as the first file
+    // completes Phase A, regardless of how many files remain.
+    //
+    // NDJSON output order follows completion order (not file-system sort order).
+    // Skip slots are emitted at the end, after all Process results are consumed.
+    // This trade-off is intentional: deterministic NDJSON ordering is a lesser
+    // requirement than ensuring data is persisted before the user's timeout fires.
+    let fail_fast = args.fail_fast;
+
+    // Emit pending Skip events first so agents see them early.
+    for meta in &slots_meta {
+        if let SlotMeta::Skip {
+            file_str,
+            derived_base,
+            name_truncated,
+            original_name,
+            reason,
+        } = meta
+        {
+            output::emit_json_compact(&IngestFileEvent {
+                file: file_str,
+                name: derived_base,
+                status: "skipped",
+                truncated: *name_truncated,
+                original_name: original_name.clone(),
+                error: Some(reason.clone()),
+                memory_id: None,
+                action: None,
+            })?;
+            skipped += 1;
+        }
+    }
+
+    // Build a quick index from slot index → SlotMeta reference for O(1) lookups
+    // as channel messages arrive in completion order.
+    let meta_index: std::collections::HashMap<usize, &SlotMeta> = slots_meta
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| matches!(m, SlotMeta::Process { .. }))
+        .collect();
 
     tracing::info!(
         target = "ingest",
         phase = "persist_start",
         files = total_to_process,
-        "phase B (persist) starting: sequential writes to SQLite + NDJSON emit",
+        "phase B starting: persisting files incrementally as Phase A completes each one",
     );
 
-    // Phase B: sequential persist on main thread (Connection is !Sync).
-    let fail_fast = args.fail_fast;
-    for (idx, slot) in slots.iter().enumerate() {
-        match slot {
-            Slot::Skip {
+    // Drain channel and persist each file immediately — no accumulation into a
+    // HashMap. The bounded channel ensures Phase A cannot run too far ahead of
+    // Phase B without applying backpressure.
+    for (idx, stage_result) in rx {
+        let meta = meta_index
+            .get(&idx)
+            .expect("channel idx must correspond to a Process slot");
+        let (file_str, derived_name, name_truncated, original_name) = match meta {
+            SlotMeta::Process {
                 file_str,
-                derived_base,
+                derived_name,
                 name_truncated,
                 original_name,
-                reason,
-            } => {
+            } => (file_str, derived_name, name_truncated, original_name),
+            SlotMeta::Skip { .. } => unreachable!("channel only carries Process results"),
+        };
+
+        // If storage init failed, every file fails with the same error.
+        let conn = match conn_or_err.as_mut() {
+            Ok(c) => c,
+            Err(err_msg) => {
+                let err_clone = err_msg.clone();
                 output::emit_json_compact(&IngestFileEvent {
                     file: file_str,
-                    name: derived_base,
-                    status: "skipped",
+                    name: derived_name,
+                    status: "failed",
                     truncated: *name_truncated,
                     original_name: original_name.clone(),
-                    error: Some(reason.clone()),
+                    error: Some(err_clone.clone()),
                     memory_id: None,
                     action: None,
                 })?;
-                skipped += 1;
+                failed += 1;
+                if fail_fast {
+                    output::emit_json_compact(&IngestSummary {
+                        summary: true,
+                        dir: args.dir.display().to_string(),
+                        pattern: args.pattern.clone(),
+                        recursive: args.recursive,
+                        files_total: total,
+                        files_succeeded: succeeded,
+                        files_failed: failed,
+                        files_skipped: skipped,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                    })?;
+                    return Err(AppError::Validation(format!(
+                        "ingest aborted on first failure: {err_clone}"
+                    )));
+                }
+                continue;
             }
-            Slot::Process(fs) => {
-                // If storage init failed, every file fails with the same error.
-                let conn = match conn_or_err.as_mut() {
-                    Ok(c) => c,
-                    Err(err_msg) => {
-                        let err_clone = err_msg.clone();
-                        output::emit_json_compact(&IngestFileEvent {
-                            file: &fs.file_str,
-                            name: &fs.derived_name,
-                            status: "failed",
-                            truncated: fs.name_truncated,
-                            original_name: fs.original_name.clone(),
-                            error: Some(err_clone.clone()),
-                            memory_id: None,
-                            action: None,
-                        })?;
-                        failed += 1;
-                        if fail_fast {
-                            output::emit_json_compact(&IngestSummary {
-                                summary: true,
-                                dir: args.dir.display().to_string(),
-                                pattern: args.pattern.clone(),
-                                recursive: args.recursive,
-                                files_total: total,
-                                files_succeeded: succeeded,
-                                files_failed: failed,
-                                files_skipped: skipped,
-                                elapsed_ms: started.elapsed().as_millis() as u64,
-                            })?;
-                            return Err(AppError::Validation(format!(
-                                "ingest aborted on first failure: {err_clone}"
-                            )));
-                        }
-                        continue;
-                    }
-                };
+        };
 
-                // Take the Phase A result (always Some for Process slots).
-                let stage_result = staged[idx]
-                    .lock()
-                    .expect("staged slot poisoned")
-                    .take()
-                    .expect("staged slot empty for Process slot");
+        let outcome =
+            stage_result.and_then(|sf| persist_staged(conn, &namespace, &memory_type_str, sf));
 
-                let outcome = stage_result
-                    .and_then(|sf| persist_staged(conn, &namespace, &memory_type_str, sf));
-
-                match outcome {
-                    Ok(FileSuccess { memory_id, action }) => {
-                        output::emit_json_compact(&IngestFileEvent {
-                            file: &fs.file_str,
-                            name: &fs.derived_name,
-                            status: "indexed",
-                            truncated: fs.name_truncated,
-                            original_name: fs.original_name.clone(),
-                            error: None,
-                            memory_id: Some(memory_id),
-                            action: Some(action),
-                        })?;
-                        succeeded += 1;
-                    }
-                    Err(e) => {
-                        let err_msg = format!("{e}");
-                        output::emit_json_compact(&IngestFileEvent {
-                            file: &fs.file_str,
-                            name: &fs.derived_name,
-                            status: "failed",
-                            truncated: fs.name_truncated,
-                            original_name: fs.original_name.clone(),
-                            error: Some(err_msg.clone()),
-                            memory_id: None,
-                            action: None,
-                        })?;
-                        failed += 1;
-                        if fail_fast {
-                            output::emit_json_compact(&IngestSummary {
-                                summary: true,
-                                dir: args.dir.display().to_string(),
-                                pattern: args.pattern.clone(),
-                                recursive: args.recursive,
-                                files_total: total,
-                                files_succeeded: succeeded,
-                                files_failed: failed,
-                                files_skipped: skipped,
-                                elapsed_ms: started.elapsed().as_millis() as u64,
-                            })?;
-                            return Err(AppError::Validation(format!(
-                                "ingest aborted on first failure: {err_msg}"
-                            )));
-                        }
-                    }
+        match outcome {
+            Ok(FileSuccess { memory_id, action }) => {
+                output::emit_json_compact(&IngestFileEvent {
+                    file: file_str,
+                    name: derived_name,
+                    status: "indexed",
+                    truncated: *name_truncated,
+                    original_name: original_name.clone(),
+                    error: None,
+                    memory_id: Some(memory_id),
+                    action: Some(action),
+                })?;
+                succeeded += 1;
+            }
+            Err(e) => {
+                let err_msg = format!("{e}");
+                output::emit_json_compact(&IngestFileEvent {
+                    file: file_str,
+                    name: derived_name,
+                    status: "failed",
+                    truncated: *name_truncated,
+                    original_name: original_name.clone(),
+                    error: Some(err_msg.clone()),
+                    memory_id: None,
+                    action: None,
+                })?;
+                failed += 1;
+                if fail_fast {
+                    output::emit_json_compact(&IngestSummary {
+                        summary: true,
+                        dir: args.dir.display().to_string(),
+                        pattern: args.pattern.clone(),
+                        recursive: args.recursive,
+                        files_total: total,
+                        files_succeeded: succeeded,
+                        files_failed: failed,
+                        files_skipped: skipped,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                    })?;
+                    return Err(AppError::Validation(format!(
+                        "ingest aborted on first failure: {err_msg}"
+                    )));
                 }
             }
         }
     }
+
+    // Wait for the producer thread to finish cleanly.
+    producer_handle
+        .join()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("ingest producer thread panicked")))?;
 
     output::emit_json_compact(&IngestSummary {
         summary: true,
@@ -883,25 +965,6 @@ fn init_storage(paths: &AppPaths) -> Result<Connection, AppError> {
     ensure_db_ready(paths)?;
     let conn = open_rw(&paths.db)?;
     Ok(conn)
-}
-
-fn is_valid_entity_type(entity_type: &str) -> bool {
-    matches!(
-        entity_type,
-        "project"
-            | "tool"
-            | "person"
-            | "file"
-            | "concept"
-            | "incident"
-            | "decision"
-            | "memory"
-            | "dashboard"
-            | "issue_tracker"
-            | "organization"
-            | "location"
-            | "date"
-    )
 }
 
 fn is_valid_relation(relation: &str) -> bool {
@@ -1239,14 +1302,6 @@ mod tests {
     }
 
     // ── v1.0.32 Onda 4B: in-process pipeline validation ──
-
-    #[test]
-    fn is_valid_entity_type_accepts_v008_types() {
-        assert!(is_valid_entity_type("organization"));
-        assert!(is_valid_entity_type("location"));
-        assert!(is_valid_entity_type("date"));
-        assert!(!is_valid_entity_type("unknown"));
-    }
 
     #[test]
     fn is_valid_relation_accepts_canonical_relations() {

@@ -2,6 +2,7 @@
 
 use crate::chunking;
 use crate::cli::MemoryType;
+use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::i18n::errors_msg;
 use crate::output::{self, JsonOutputFormat, RememberResponse};
@@ -132,15 +133,6 @@ struct GraphInput {
 }
 
 fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppError> {
-    for entity in &graph.entities {
-        if !is_valid_entity_type(&entity.entity_type) {
-            return Err(AppError::Validation(format!(
-                "invalid entity_type '{}' for entity '{}'",
-                entity.entity_type, entity.name
-            )));
-        }
-    }
-
     for rel in &mut graph.relationships {
         rel.relation = rel.relation.replace('-', "_");
         if !is_valid_relation(&rel.relation) {
@@ -158,25 +150,6 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
     }
 
     Ok(())
-}
-
-fn is_valid_entity_type(entity_type: &str) -> bool {
-    matches!(
-        entity_type,
-        "project"
-            | "tool"
-            | "person"
-            | "file"
-            | "concept"
-            | "incident"
-            | "decision"
-            | "memory"
-            | "dashboard"
-            | "issue_tracker"
-            | "organization"
-            | "location"
-            | "date"
-    )
 }
 
 fn is_valid_relation(relation: &str) -> bool {
@@ -288,9 +261,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         raw_body = graph.body.take().unwrap_or_default();
     }
 
-    if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
+    if graph.entities.len() > max_entities_per_memory() {
         return Err(AppError::LimitExceeded(errors_msg::entity_limit_exceeded(
-            MAX_ENTITIES_PER_MEMORY,
+            max_entities_per_memory(),
         )));
     }
     if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
@@ -344,8 +317,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 graph.relationships = extracted.relationships;
                 relationships_truncated = extracted.relationships_truncated;
 
-                if graph.entities.len() > MAX_ENTITIES_PER_MEMORY {
-                    graph.entities.truncate(MAX_ENTITIES_PER_MEMORY);
+                if graph.entities.len() > max_entities_per_memory() {
+                    graph.entities.truncate(max_entities_per_memory());
                 }
                 if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
                     relationships_truncated = true;
@@ -607,7 +580,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 &tx,
                 entity_id,
                 &namespace,
-                &entity.entity_type,
+                entity.entity_type,
                 entity_embedding,
                 &entity.name,
             )?;
@@ -615,10 +588,10 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             entities::increment_degree(&tx, entity_id)?;
             entities_persisted += 1;
         }
-        let entity_types: std::collections::HashMap<&str, &str> = graph
+        let entity_types: std::collections::HashMap<&str, EntityType> = graph
             .entities
             .iter()
-            .map(|entity| (entity.name.as_str(), entity.entity_type.as_str()))
+            .map(|entity| (entity.name.as_str(), entity.entity_type))
             .collect();
 
         for rel in &graph.relationships {
@@ -627,8 +600,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 entity_type: entity_types
                     .get(rel.source.as_str())
                     .copied()
-                    .unwrap_or("concept")
-                    .to_string(),
+                    .unwrap_or(EntityType::Concept),
                 description: None,
             };
             let target_entity = NewEntity {
@@ -636,8 +608,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 entity_type: entity_types
                     .get(rel.target.as_str())
                     .copied()
-                    .unwrap_or("concept")
-                    .to_string(),
+                    .unwrap_or(EntityType::Concept),
                 description: None,
             };
             let source_id = entities::upsert_entity(&tx, &namespace, &source_entity)?;
@@ -999,14 +970,5 @@ mod tests {
         };
         let json_true = serde_json::to_value(&resp_true).expect("serialization failed");
         assert_eq!(json_true["relationships_truncated"], true);
-    }
-
-    #[test]
-    fn is_valid_entity_type_accepts_v008_types() {
-        // V008 added organization, location, date — ensure the validator accepts them.
-        assert!(super::is_valid_entity_type("organization"));
-        assert!(super::is_valid_entity_type("location"));
-        assert!(super::is_valid_entity_type("date"));
-        assert!(!super::is_valid_entity_type("unknown_type_xyz"));
     }
 }

@@ -510,6 +510,11 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
         .arg("--idle-shutdown-secs")
         .arg(DAEMON_IDLE_SHUTDOWN_SECS.to_string())
         .env("SQLITE_GRAPHRAG_DAEMON_CHILD", "1")
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_AUDIT")
+        .env_remove("DYLD_INSERT_LIBRARIES")
+        .env_remove("DYLD_LIBRARY_PATH")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -525,7 +530,8 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
             // `daemon stop`/SIGTERM). Keeping the handle here would block the parent
             // CLI in the foreground until the daemon exited, defeating the autostart
             // contract that callers expect.
-            // See also: docs_rules/rules_rust_processos_externos.md "Child detach justificado"
+            // See: docs_rules/rules_rust_processos_externos.md section "Child detach justificado"
+            //      AND docs/adr/0001-daemon-warmup-exception.md (authorized exception to no-daemon rule)
             let pid = child_handle.id();
             drop(child_handle);
             tracing::debug!(
@@ -625,16 +631,10 @@ fn record_spawn_failure(models_dir: &Path, message: String) -> Result<(), AppErr
     let exponent = state.consecutive_failures.saturating_sub(1).min(6);
     let base_ms =
         (DAEMON_SPAWN_BACKOFF_BASE_MS * (1_u64 << exponent)).min(DAEMON_AUTO_START_MAX_BACKOFF_MS);
-    // v1.0.36 (L2): half jitter to avoid retry herd when multiple CLI instances
-    // detect daemon failure simultaneously. Effective backoff range is
-    // `[base/2, base)`. Uses SystemTime nanoseconds as a dependency-free
-    // randomness source; daemon spawn frequency is low so quality is sufficient.
+    // v1.0.36 (L2) + v1.0.43 (H7): half-jitter via fastrand (replaces SystemTime nanoseconds
+    // which violated rules_rust_retry_com_backoff.md). Effective backoff range: [base/2, base).
     let half = base_ms / 2;
-    let jitter_seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    let jitter = if half == 0 { 0 } else { jitter_seed % half };
+    let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
     let backoff_ms = half + jitter;
     state.not_before_epoch_ms = now_epoch_ms() + backoff_ms;
     state.last_error = Some(message);

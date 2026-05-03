@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.43] - 2026-05-03
+
+### Fixed
+- **B1** Incremental persistence in `ingest` eliminates the 2-phase blocking architecture. Phase B now flushes each record immediately after Phase A stages it, preventing complete data loss on large corpora (≥500 files) that previously timed out at 30 min with zero rows persisted. Closes 6+ months of reported stress-test failures.
+- **B2** CHANGELOG retroactive label: `[Unreleased]` section in v1.0.42 release retroactively marked with correct label.
+- **B3** Created `docs/PRD.md` and `docs/PRD.pt-BR.md` documenting product requirements baseline.
+- **H1** TTY detection in `stdin_helper`: `is_terminal()` guard prevents blocking reads when stdin is a pipe or redirected file, fixing deadlock on non-interactive invocations.
+- **H2** Ported 4 missing Portuguese i18n variants covering v1.0.26–v1.0.29 releases.
+- **H3** `README.pt-BR.md` CHANGELOG links corrected; previously pointed to wrong anchor fragments.
+- **H4** Added `EXAMPLES` section to `after_long_help` for 4 graph subcommands (`graph`, `graph stats`, `graph path`, `graph neighbors`).
+- **H6** `SAFETY` comment in `src/daemon/` realigned to reference `docs/adr/0001-daemon-warmup-exception.md` instead of inline prose.
+- **H7** `fastrand` jitter replaces `SystemTime`-based jitter in busy-retry backoff, eliminating potential clock skew panics on systems with coarse-grained clocks.
+- **L1** `graph stats` `avg_degree` formula corrected: was dividing by node count, now correctly computes `2 * edge_count / node_count` (undirected graph convention).
+- **L3** Removed stale "agent" from `--entity-type` help text; the enum now uses typed `EntityType` variants.
+- **L4** Version references cleaned up across all `after_long_help` strings; removed stale `v1.0.x` pins.
+- **L5** "indefinido" standardized to "undefined" in all PT i18n strings.
+
+### Added
+- **B3** `docs/adr/0001-daemon-warmup-exception.md` — formal ADR documenting the authorized daemon exception to the `rules_rust_cli_stdin_stdout.md` no-persistent-daemon rule.
+- **H5** `EntityType` enum with 13 typed variants (`Person`, `Organization`, `Location`, `Technology`, `Concept`, `Event`, `Product`, `Document`, `Service`, `Dataset`, `Metric`, `CodeIdentifier`, `Other`) implementing `ToSql`/`FromSql` for rusqlite round-tripping.
+- **H8** Formal ADR documenting the authorized daemon exception for warmup latency.
+- **M6** `env_remove` for `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, and `DYLD_*` variants in subprocess spawns, preventing injected libraries from leaking into child processes.
+- **M7** Half-jitter added to `storage` busy-retry loop; previously used fixed 100 ms delay which caused thundering-herd under concurrent writes.
+- **M8** Two env vars (`SQLITE_GRAPHRAG_LOW_MEMORY`, `SQLITE_GRAPHRAG_INGEST_PARALLELISM`) documented in both README EN and PT-BR.
+- **M9** Two output schemas (`docs/schemas/ingest.schema.json`, `docs/schemas/ingest-progress.schema.json`) added to README schema reference list.
+- **L6** `MAX_ENTITIES_PER_MEMORY` is now configurable via `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` env var (integer, default 50). Allows power users to raise the cap for dense technical documents without recompiling.
+
+### Changed
+- **ort/fastembed bump** Coordinated bump ort `2.0.0-rc.11` → `2.0.0-rc.12` and fastembed `5` → `5.13.4`. Required `src/embedder.rs` migration for ort module reshuffle (`execution_providers::CPU` → `ep::CPU`). Closes the deferred upgrade noted in v1.0.42 release notes.
+- **M1+M2+M3** Eliminated unnecessary `.clone()` calls and added `Vec::with_capacity` pre-allocation in hot ingest and recall paths, reducing allocator pressure on large corpora.
+- **M5** NaN handling in score normalization replaced `.expect("NaN")` with `.unwrap_or(0.0)`, eliminating potential panics on degenerate distance values.
+- **L2** Alias normalization applied consistently across `link`, `unlink`, and `related` subcommands; hyphen and underscore forms now map to the same canonical relation key.
+
+### Deferred to v1.0.44
+- **M4** NDJSON streaming input for `ingest` — focus shifted to B1 architectural refactor during Wave 4; streaming input deferred to next cycle.
+
+## [1.0.42] - 2026-05-03
+
 ### Fixed
 - **HIGH 2** Migrated 14 Portuguese-language doc comments to English in `src/constants.rs` (5x), `src/commands/stats.rs` (3x), `src/commands/health.rs` (1x), `src/commands/read.rs` (2x), `src/commands/list.rs` (1x), `src/commands/hybrid_search.rs` (2x). Aligns with the inviolable language policy in `docs_rules/rules_rust.md`.
 - **HIGH 3** Extended `language-check` CI gate regex (`.github/workflows/ci.yml:251`) to detect Portuguese prepositions, adjectives, and nouns without diacritics (`alias de`, `contrato documentado`, `migrado de`, `paralelo a`, `quando omitido`, etc.). Previously only verbs with diacritics were caught; the new pattern catches the 14 doc comments fixed in HIGH 2 with zero false positives in the current codebase.

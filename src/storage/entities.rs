@@ -5,6 +5,7 @@
 //! `memory_relationships` connect each memory to the graph slice it emitted.
 
 use crate::embedder::f32_to_bytes;
+use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::storage::utils::with_busy_retry;
 use rusqlite::{params, Connection};
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct NewEntity {
     pub name: String,
     #[serde(alias = "type")]
-    pub entity_type: String,
+    pub entity_type: EntityType,
     pub description: Option<String>,
 }
 
@@ -80,7 +81,7 @@ pub fn upsert_entity_vec(
     conn: &Connection,
     entity_id: i64,
     namespace: &str,
-    entity_type: &str,
+    entity_type: EntityType,
     embedding: &[f32],
     name: &str,
 ) -> Result<(), AppError> {
@@ -457,6 +458,7 @@ pub fn knn_search(
 mod tests {
     use super::*;
     use crate::constants::EMBEDDING_DIM;
+    use crate::entity_type::EntityType;
     use crate::storage::connection::register_vec_extension;
     use rusqlite::Connection;
     use tempfile::TempDir;
@@ -484,7 +486,7 @@ mod tests {
     fn new_entity_helper(name: &str) -> NewEntity {
         NewEntity {
             name: name.to_string(),
-            entity_type: "project".to_string(),
+            entity_type: EntityType::Project,
             description: None,
         }
     }
@@ -524,7 +526,7 @@ mod tests {
 
         let e2 = NewEntity {
             name: "projeto-gamma".to_string(),
-            entity_type: "tool".to_string(),
+            entity_type: EntityType::Tool,
             description: Some("nova desc".to_string()),
         };
         let id2 = upsert_entity(&conn, "global", &e2)?;
@@ -560,7 +562,14 @@ mod tests {
         let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
 
-        let result = upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-nova");
+        let result = upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &emb,
+            "vec-nova",
+        );
         assert!(result.is_ok(), "first insertion must succeed");
 
         let count: i64 = conn.query_row(
@@ -580,10 +589,24 @@ mod tests {
         let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
 
-        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "vec-existente")?;
+        upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &emb,
+            "vec-existente",
+        )?;
 
         // Second call: DELETE returns 1 removed row, INSERT must succeed.
-        let result = upsert_entity_vec(&conn, entity_id, "global", "tool", &emb, "vec-existente");
+        let result = upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Tool,
+            &emb,
+            "vec-existente",
+        );
         assert!(
             result.is_ok(),
             "second insertion (replace) must succeed: {result:?}"
@@ -607,7 +630,7 @@ mod tests {
             let nome = format!("ent-{i}");
             let e = new_entity_helper(&nome);
             let entity_id = upsert_entity(&conn, "global", &e)?;
-            upsert_entity_vec(&conn, entity_id, "global", "project", &emb, &nome)?;
+            upsert_entity_vec(&conn, entity_id, "global", EntityType::Project, &emb, &nome)?;
         }
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))?;
@@ -694,7 +717,14 @@ mod tests {
         let e = new_entity_helper("del-com-vec");
         let entity_id = upsert_entity(&conn, "global", &e)?;
         let emb = embedding_zero();
-        upsert_entity_vec(&conn, entity_id, "global", "project", &emb, "del-com-vec")?;
+        upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &emb,
+            "del-com-vec",
+        )?;
 
         let count_antes: i64 = conn.query_row(
             "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
@@ -1042,7 +1072,7 @@ mod tests {
     fn accepts_type_field_as_alias() -> TestResult {
         let json = r#"{"name": "X", "type": "concept"}"#;
         let ent: NewEntity = serde_json::from_str(json)?;
-        assert_eq!(ent.entity_type, "concept");
+        assert_eq!(ent.entity_type, EntityType::Concept);
         Ok(())
     }
 
@@ -1050,15 +1080,14 @@ mod tests {
     fn accepts_canonical_entity_type_field() -> TestResult {
         let json = r#"{"name": "X", "entity_type": "concept"}"#;
         let ent: NewEntity = serde_json::from_str(json)?;
-        assert_eq!(ent.entity_type, "concept");
+        assert_eq!(ent.entity_type, EntityType::Concept);
         Ok(())
     }
 
     #[test]
     fn both_fields_present_yields_duplicate_error() {
-        // serde trata alias como nome alternativo do mesmo campo;
         // having both entity_type and type in the same JSON is a duplicate and must fail
-        let json = r#"{"name": "X", "entity_type": "A", "type": "B"}"#;
+        let json = r#"{"name": "X", "entity_type": "concept", "type": "person"}"#;
         let resultado: Result<NewEntity, _> = serde_json::from_str(json);
         assert!(
             resultado.is_err(),

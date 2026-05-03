@@ -311,3 +311,23 @@ jobs:
         with:
           name: bench-baseline
           path: target/criterion
+
+  changelog-version-check:
+    name: CHANGELOG version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify CHANGELOG matches Cargo.toml version
+        run: |
+          CARGO_VERSION=$(grep -m 1 '^version = ' Cargo.toml | cut -d '"' -f 2)
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if ! grep -q "^## \[$CARGO_VERSION\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md missing entry [## ${CARGO_VERSION}]"
+            echo "Did you forget to bump CHANGELOG.md before tagging?"
+            exit 1
+          fi
+          if ! grep -q "^## \[$CARGO_VERSION\]" CHANGELOG.pt-BR.md; then
+            echo "ERROR: CHANGELOG.pt-BR.md missing entry [## ${CARGO_VERSION}]"
+            exit 1
+          fi
+          echo "OK: both CHANGELOGs have [$CARGO_VERSION] entry"

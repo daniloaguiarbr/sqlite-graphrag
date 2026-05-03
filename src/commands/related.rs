@@ -33,8 +33,8 @@ pub struct RelatedArgs {
         help = "Memory name whose neighbours to traverse; alternative to --name"
     )]
     pub name_positional: Option<String>,
-    /// Memory name as a flag. Required when the positional form is absent.
-    #[arg(long)]
+    /// Memory name as a flag. Required when the positional form is absent. Also accepts the alias `--from`.
+    #[arg(long, alias = "from")]
     pub name: Option<String>,
     /// Maximum graph hop count. Also accepts the alias `--hops`.
     #[arg(long, alias = "hops", default_value_t = DEFAULT_MAX_HOPS)]

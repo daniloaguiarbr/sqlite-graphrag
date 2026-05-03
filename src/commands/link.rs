@@ -25,8 +25,8 @@ NOTE:\n  \
 pub struct LinkArgs {
     /// Source ENTITY name (graph node, not memory). Entities are extracted by BERT NER during
     /// `remember` or created implicitly by prior `link` calls. Use `graph --format json` to list
-    /// available entity names.
-    #[arg(long)]
+    /// available entity names. Also accepts the alias `--name`.
+    #[arg(long, alias = "name")]
     pub from: String,
     /// Target ENTITY name (graph node, not memory). See `--from` for sourcing entity names.
     #[arg(long)]

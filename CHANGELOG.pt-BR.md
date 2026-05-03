@@ -10,6 +10,44 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.43] - 2026-05-03
+
+### Corrigido
+- **B1** Persistência incremental no `ingest` elimina a arquitetura de bloqueio 2-fase. A Fase B agora persiste cada registro imediatamente após a Fase A fazer o stage, prevenindo perda total de dados em corpora grandes (≥500 arquivos) que antes atingiam timeout em 30 min com zero linhas persistidas. Fecha 6+ meses de falhas reportadas em stress tests.
+- **B2** Rótulo retroativo no CHANGELOG: seção `[Sem Versão]` na release v1.0.42 marcada retroativamente com o rótulo correto.
+- **B3** Criados `docs/PRD.md` e `docs/PRD.pt-BR.md` documentando a baseline de requisitos de produto.
+- **H1** Detecção de TTY no `stdin_helper`: guarda `is_terminal()` previne leituras bloqueantes quando stdin é pipe ou arquivo redirecionado, corrigindo deadlock em invocações não-interativas.
+- **H2** Portadas 4 variantes i18n em português ausentes cobrindo as releases v1.0.26–v1.0.29.
+- **H3** Links do CHANGELOG no `README.pt-BR.md` corrigidos; antes apontavam para fragmentos de âncora incorretos.
+- **H4** Seção `EXAMPLES` adicionada ao `after_long_help` de 4 subcomandos graph (`graph`, `graph stats`, `graph path`, `graph neighbors`).
+- **H6** Comentário `SAFETY` em `src/daemon/` realinhado para referenciar `docs/adr/0001-daemon-warmup-exception.md` em vez de prosa inline.
+- **H7** Jitter `fastrand` substitui jitter baseado em `SystemTime` no backoff de busy-retry, eliminando possíveis panics por clock skew em sistemas com relógios de baixa granularidade.
+- **L1** Fórmula `avg_degree` no `graph stats` corrigida: antes dividia pelo número de nós, agora computa corretamente `2 * edge_count / node_count` (convenção de grafo não-direcionado).
+- **L3** Removido "agent" obsoleto do texto de ajuda de `--entity-type`; o enum agora usa variantes tipadas `EntityType`.
+- **L4** Referências de versão limpas em todas as strings `after_long_help`; removidos pins obsoletos `v1.0.x`.
+- **L5** "indefinido" padronizado para "undefined" em todas as strings i18n PT.
+
+### Adicionado
+- **B3** `docs/adr/0001-daemon-warmup-exception.md` — ADR formal documentando a exceção autorizada do daemon à regra no-persistent-daemon de `rules_rust_cli_stdin_stdout.md`.
+- **H5** Enum `EntityType` com 13 variantes tipadas (`Person`, `Organization`, `Location`, `Technology`, `Concept`, `Event`, `Product`, `Document`, `Service`, `Dataset`, `Metric`, `CodeIdentifier`, `Other`) implementando `ToSql`/`FromSql` para round-tripping com rusqlite.
+- **H8** ADR formal documentando a exceção autorizada do daemon para latência de warmup.
+- **M6** `env_remove` para `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` e variantes `DYLD_*` nos spawns de subprocessos, prevenindo vazamento de bibliotecas injetadas para processos filhos.
+- **M7** Half-jitter adicionado ao loop de busy-retry do `storage`; antes usava delay fixo de 100 ms que causava thundering-herd sob escritas concorrentes.
+- **M8** Dois env vars (`SQLITE_GRAPHRAG_LOW_MEMORY`, `SQLITE_GRAPHRAG_INGEST_PARALLELISM`) documentados em ambos README EN e PT-BR.
+- **M9** Dois schemas de output (`docs/schemas/ingest.schema.json`, `docs/schemas/ingest-progress.schema.json`) adicionados à lista de referência de schemas no README.
+- **L6** `MAX_ENTITIES_PER_MEMORY` agora é configurável via env var `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` (inteiro, padrão 50). Permite que power users elevem o cap para documentos técnicos densos sem recompilar.
+
+### Alterado
+- **Bump ort/fastembed** Bump coordenado de ort `2.0.0-rc.11` → `2.0.0-rc.12` e fastembed `5` → `5.13.4`. Requerida migração em `src/embedder.rs` para reshuffle de módulo ort (`execution_providers::CPU` → `ep::CPU`). Fecha o upgrade adiado nas release notes de v1.0.42.
+- **M1+M2+M3** Eliminadas chamadas `.clone()` desnecessárias e adicionada pré-alocação `Vec::with_capacity` em hot paths de ingest e recall, reduzindo pressão no alocador em corpora grandes.
+- **M5** Tratamento de NaN na normalização de score substitui `.expect("NaN")` por `.unwrap_or(0.0)`, eliminando possíveis panics em valores de distância degenerados.
+- **L2** Normalização de alias aplicada consistentemente nos subcomandos `link`, `unlink` e `related`; formas com hífen e underscore agora mapeiam para a mesma chave de relação canônica.
+
+### Adiado para v1.0.44
+- **M4** Streaming de entrada NDJSON para `ingest` — foco deslocado para o refactor arquitetural B1 durante a Wave 4; streaming de entrada adiado para o próximo ciclo.
+
+## [1.0.42] - 2026-05-03
+
 ### Corrigido
 - **HIGH 2** Migrados 14 doc comments em português para inglês em `src/constants.rs` (5x), `src/commands/stats.rs` (3x), `src/commands/health.rs` (1x), `src/commands/read.rs` (2x), `src/commands/list.rs` (1x), `src/commands/hybrid_search.rs` (2x). Alinha com a política linguística inviolável em `docs_rules/rules_rust.md`.
 - **HIGH 3** Estendido o regex do gate `language-check` no CI (`.github/workflows/ci.yml:251`) para detectar preposições, adjetivos e substantivos PT sem diacríticos (`alias de`, `contrato documentado`, `migrado de`, `paralelo a`, `quando omitido`, etc.). Antes só verbos com acento eram pegos; o novo padrão captura os 14 doc comments corrigidos em HIGH 2 com zero falsos positivos no codebase atual.
@@ -323,6 +361,105 @@ A auditoria v1.0.28 usou regex de linha única e reportou zero violações; macr
 ### Notas
 - `errors::to_string_pt()` e `main::emit_progress_i18n(en, pt)` mantêm strings PT legítimas — são o branch i18n acionado quando `--lang pt` (ou locale detectado) está ativo. Não são violações.
 - Comportamento default `./graphrag.sqlite` em CWD (`paths.rs:35-41`) confirmado empiricamente contra o corpus de auditoria v1.0.29 (29 de 30 documentos Markdown flowaiper indexados end-to-end; recall p50 ~50ms, hybrid-search p50 ~52ms; uma falha do stress test foi timeout externo de 60s, não defeito da ferramenta).
+
+## [1.0.29] - 2026-04-29
+
+### Corrigido (Crítico — Violações de Política Linguística em Código de Produção)
+- `src/paths.rs:21` — mensagem de erro em português `"não foi possível determinar o diretório home"` em `AppError::Io` traduzida para `"could not determine home directory"`.
+- `src/paths.rs:85-89` — mensagem de erro em português `"caminho '{}' não possui componente pai válido"` em `AppError::Validation` traduzida para `"path '{}' has no valid parent component"`.
+- `src/main.rs:227` — `tracing::warn!` em português traduzido para `"shutdown signal received; waiting for current command to finish gracefully"`. Logs de tracing devem ser em inglês independente do locale.
+- `src/commands/purge.rs:21` — doc comment em português `"[DEPRECATED em v2.0.0]"` traduzido para `"[DEPRECATED in v2.0.0]"`.
+- `src/commands/purge.rs:70-71` — string de aviso em português `"--older-than-seconds está deprecado..."` (emitida no campo JSON `warnings`) traduzida para `"--older-than-seconds is deprecated; use --retention-days in v2.0.0+"`.
+- `src/commands/purge.rs:123` — `anyhow!` em português `"erro de relógio do sistema: {err}"` traduzido para `"system clock error: {err}"`.
+- `src/commands/purge.rs:192-193` — aviso em português `"falha ao limpar vec_chunks..."` traduzido para `"failed to clean vec_chunks for memory_id {memory_id}: {err}"`.
+- `src/commands/purge.rs:198-201` — aviso em português `"falha ao limpar vec_memories..."` traduzido para `"failed to clean vec_memories for memory_id {memory_id}: {err}"`.
+- `src/main.rs:265` — removido `tracing::error!(error = %e)` duplicado que vazava string de erro localizada em logs estruturados.
+
+### Corrigido (Segurança — Path Traversal e Auditoria Unsafe)
+- `src/paths.rs:60` — `validate_path` agora usa `Path::components().any(|c| c == Component::ParentDir)` em vez de substring `.contains("..")`, prevenindo falsos positivos e possíveis bypasses.
+- `src/extraction.rs:271` — adicionado comentário `SAFETY:` abrangente ao bloco `unsafe { VarBuilder::from_mmaped_safetensors(...) }` documentando os três invariantes de soundness.
+- `src/storage/connection.rs:14-21` — adicionado comentário `SAFETY:` ao bloco `unsafe { rusqlite::ffi::sqlite3_auto_extension(...) }` documentando compatibilidade de ABI FFI.
+- `src/paths.rs` (6 comentários SAFETY em testes) — traduzidos de PT para EN.
+
+### Adicionado (Melhorias de UX)
+- Flag `list --include-deleted` para exibir memórias soft-deletadas.
+- Flag `history --no-body` para omitir o conteúdo do body das versões na resposta JSON.
+- Variantes `MemoryType::Document` e `MemoryType::Note` adicionadas ao enum `--type` (`remember`, `list`, `recall`).
+- Texto de ajuda `help =` adicionado a ~10 flags previamente sem descrição (`--namespace`, `--limit`, `--offset`, `--format`, `--db`, `--include-deleted`, `--no-body`).
+- README Quick Start documenta explicitamente que `sqlite-graphrag init` é o primeiro comando recomendado e que `graphrag.sqlite` é criado no diretório de trabalho atual.
+
+### Alterado (Schema e UX)
+- Flag `--json` agora está oculta em 21 subcomandos via `#[arg(long, hide = true)]`. A flag continua aceita para backward compatibility.
+- Resposta JSON de `history`: campo `metadata` alterado de `String` para `serde_json::Value`.
+- Resposta JSON de `history`: campo `body` agora é `Option<String>` (omitido quando `--no-body` está ativo).
+- `Cargo.toml` `exclude`: caminhos reescritos sem `/` inicial para semântica relativa idiomática do cargo.
+
+### Notas
+- Release de patch focada em conformidade de política e correções de UX detectadas na auditoria v1.0.28.
+- Validado empiricamente contra corpus real de 495 arquivos Markdown durante a auditoria v1.0.28.
+
+## [1.0.28] - 2026-04-28
+
+### Alterado
+- Política de idioma inglês-apenas aplicada em todo o codebase. Todos os doc comments `///` e `//!`, todos os logs `tracing::*!`, e todos os identificadores (funções, statics, módulos, variantes de enum, nomes de teste) fora de `src/i18n.rs` estão agora em inglês. Strings PT-BR permanecem apenas nos branches `Language::Portuguese` dentro de `i18n::errors_msg`, `i18n::validation`, e `errors::to_string_pt()`.
+- Variante de enum `Language::Portugues` renomeada para `Language::Portuguese` (aliases `pt`, `pt-br`, `pt-BR`, `portugues`, `portuguese` preservados para backward compatibility).
+- Static `IDIOMA_GLOBAL` renomeado para `GLOBAL_LANGUAGE` (`src/i18n.rs`).
+- Static `FUSO_GLOBAL` renomeado para `GLOBAL_TZ` (`src/tz.rs`).
+- ~30 funções com nomes PT renomeadas para equivalentes em inglês em `src/i18n.rs` e `src/tz.rs` (ex.: `formatar_iso` → `format_iso`, `epoch_para_iso` → `epoch_to_iso`, `memoria_nao_encontrada` → `memory_not_found`, `nome_kebab` → `name_kebab`, módulo `validacao` → `validation`, módulo `erros` → `errors_msg`).
+- 32 módulos internos de teste `mod testes` renomeados para `mod tests` seguindo convenção Rust.
+- Todos os call-sites em `src/commands/*.rs` e testes propagados para usar os identificadores renomeados.
+
+### Adicionado
+- Documentação `//!` crate-level em 37 módulos que anteriormente não tinham: `src/cli.rs`, `src/main.rs`, `src/extraction.rs`, `src/embedder.rs`, `src/daemon.rs`, `src/output.rs`, `src/paths.rs`, `src/chunking.rs`, `src/graph.rs`, `src/namespace.rs`, `src/parsers/mod.rs`, `src/tokenizer.rs`, `src/storage/{connection,urls,chunks,versions,mod}.rs`, `src/pragmas.rs`, e 22 handlers em `src/commands/`.
+- Job `language-check` no CI (`.github/workflows/ci.yml`) que falha o build quando diacríticos PT são detectados em `///`, `//!`, chamadas `tracing::*!`, ou atributos `#[error(...)]`.
+
+### Documentação
+- Dois intra-doc links quebrados (`[Cli]`, `[TextEmbedding]`) corrigidos em `src/lib.rs` e `src/embedder.rs`.
+
+### Notas
+- Mudança não-quebrante para contratos CLI e JSON: nomes de subcomandos, flags, env vars, exit codes e nomes de campos JSON permanecem inalterados.
+- 65 arquivos alterados, +872/-715 linhas. Todos os 9 gates cargo passam (fmt, clippy, test, doc, audit, deny, publish dry-run, package list, llvm-cov).
+
+## [1.0.27] - 2026-04-28
+
+### Adicionado
+- Constante `CURRENT_SCHEMA_VERSION: u32 = 8` em `src/constants.rs` com teste unitário que verifica igualdade com a contagem de arquivos de migration `V*.sql`.
+- Funções `output::emit_error` e `output::emit_error_i18n` centralizando saída de erros em stderr (Padrão 5: ÚNICO ponto de I/O em `output.rs`).
+- Configuração de test-groups `nextest` em `.config/nextest.toml` para serializar testes cross-binary que compartilham socket do daemon e cache de modelos. Elimina flake `contract_15_link` observado desde v1.0.24.
+
+### Alterado
+- README EN+PT (seção `Graph Schema`) agora lista `entity_type` com exatamente 13 valores (antes 10) — adiciona `organization`, `location`, `date` introduzidos na migration V008 de schema em v1.0.25.
+- Docstring de `init --help` documenta precedência de resolução de caminho (`--db` > `SQLITE_GRAPHRAG_DB_PATH` > `SQLITE_GRAPHRAG_HOME` > cwd).
+- Comentário de distância de grafo em `src/commands/recall.rs` esclarecido: permanece proxy de contagem de hops (`1.0 - 1.0/(hop+1)`), distância cosseno real reservada para v1.0.28.
+- Todas as 6 chamadas `eprintln!` em `src/main.rs` migradas para `output::emit_error*` para enforçar o Padrão 5.
+
+### Documentação
+- `SQLITE_GRAPHRAG_LOG_FORMAT` agora documentado na tabela de env vars do README EN+PT (implementado desde v1.0.x mas não documentado).
+- Linha de `unlink` no README corrigida da flag inexistente `--relationship-id` para as flags reais `--from --to --relation`.
+- `docs/MIGRATION.md` e `docs/MIGRATION.pt-BR.md` referência de versão atualizada de v1.0.17 para v1.0.27 (3 ocorrências cada).
+- `docs/HOW_TO_USE.md` e `docs/HOW_TO_USE.pt-BR.md` exemplos de receita `link` corrigidos para usar `--from`/`--to` em vez das flags inexistentes `--source`/`--target`.
+
+### Corrigido
+- Drift de formatação em `tests/doc_contract_integration.rs:669` resolvido via `cargo fmt --all`.
+
+### Notas
+- Investigação do achado P1 de auditoria `tokenizer.rs:101-103 std::fs::read em caminho async` concluída como **falso positivo**: `get_tokenizer` e `get_model_max_length` são chamados apenas de `src/commands/remember.rs:389-391` dentro de `pub fn run()` que é síncrono.
+- Dois warnings `advisory-not-detected` do `cargo deny` para advisories ignorados `RUSTSEC-2024-0436` (paste) e `RUSTSEC-2025-0119` (number_prefix) observados mas mantidos em `deny.toml`.
+
+## [1.0.26] - 2026-04-28
+
+### Adicionado
+- Env var `SQLITE_GRAPHRAG_HOME` para definir o diretório base para `graphrag.sqlite` (precedência: `--db` > `SQLITE_GRAPHRAG_DB_PATH` > `SQLITE_GRAPHRAG_HOME` > cwd).
+- README com exemplo de saída JSON de `remember` mostrando campos `extracted_entities`, `extracted_relationships` e `urls_persisted`.
+- Tabela de exit codes expandida com sub-causas para exit 1 (erro de validação ou falha em runtime).
+
+### Alterado
+- README esclarece que a extração de entidades GraphRAG roda por padrão em `remember` (use `--skip-extraction` para desabilitar por chamada).
+- Referência a "ingestão automática" no README renomeada para desambiguar "autostart do daemon" de "extração automática de entidades".
+
+### Corrigido
+- Contador `handled_embed_requests` do daemon agora reporta corretamente a contagem acumulada após autospawn do `init` (retornava 0 desde v1.0.24 por um contador local por conexão que sombreava o acumulador compartilhado).
+- Teste `contract_15_link` alinhado com as chaves reais de saída de `link --json` (`action`, `from`, `to`, `relation`, `weight`, `namespace`); as expectativas obsoletas de `source`/`target` com IDs numéricos estavam desatualizadas desde v1.0.24.
 
 ## [1.0.25] - 2026-04-28
 

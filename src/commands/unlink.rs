@@ -18,9 +18,9 @@ NOTE:\n  \
     --from and --to expect ENTITY names (graph nodes), not memory names.\n  \
     To inspect current entities and relationships, run: sqlite-graphrag graph --format json")]
 pub struct UnlinkArgs {
-    /// Source ENTITY name (graph node, not memory). Also accepts the alias `--source`.
+    /// Source ENTITY name (graph node, not memory). Also accepts the aliases `--source` and `--name`.
     /// To list current entities run `graph --format json | jaq '.nodes[].name'`.
-    #[arg(long, alias = "source")]
+    #[arg(long, alias = "source", alias = "name")]
     pub from: String,
     /// Target ENTITY name (graph node, not memory). Also accepts the alias `--target`.
     #[arg(long, alias = "target")]

@@ -1,6 +1,7 @@
 //! Handler for the `graph-export` CLI subcommand.
 
 use crate::cli::GraphExportFormat;
+use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::output;
 use crate::paths::AppPaths;
@@ -36,6 +37,20 @@ pub enum GraphStatsFormat {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Export full entity snapshot as JSON (default)\n  \
+    sqlite-graphrag graph\n\n  \
+    # Traverse relationships from a starting entity\n  \
+    sqlite-graphrag graph traverse --from acme-corp --depth 2\n\n  \
+    # Show graph statistics as structured JSON\n  \
+    sqlite-graphrag graph stats --format json\n\n  \
+    # List entities filtered by type\n  \
+    sqlite-graphrag graph entities --entity-type person\n\n  \
+    # Export full snapshot in DOT format for Graphviz\n  \
+    sqlite-graphrag graph --format dot --output graph.dot\n\n  \
+NOTES:\n  \
+    Without a subcommand, exports the full entity+edge snapshot.\n  \
+    Use `traverse`, `stats`, or `entities` for targeted queries.")]
 pub struct GraphArgs {
     /// Optional subcommand; without one, export the full entity snapshot.
     #[command(subcommand)]
@@ -56,6 +71,16 @@ pub struct GraphArgs {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Traverse relationships from an entity with default depth (2)\n  \
+    sqlite-graphrag graph traverse --from acme-corp\n\n  \
+    # Increase traversal depth to 3 hops\n  \
+    sqlite-graphrag graph traverse --from acme-corp --depth 3\n\n  \
+    # Traverse within a specific namespace\n  \
+    sqlite-graphrag graph traverse --from acme-corp --namespace project-x\n\n  \
+NOTES:\n  \
+    Output is always JSON. The `hops` array contains each reachable entity\n  \
+    with its relation, direction (inbound/outbound), weight, and depth level.")]
 pub struct GraphTraverseArgs {
     /// Root entity name for the traversal.
     #[arg(long)]
@@ -74,6 +99,16 @@ pub struct GraphTraverseArgs {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Show stats for all namespaces (human-readable text)\n  \
+    sqlite-graphrag graph stats --format text\n\n  \
+    # Show stats as structured JSON\n  \
+    sqlite-graphrag graph stats --format json\n\n  \
+    # Show stats for a specific namespace\n  \
+    sqlite-graphrag graph stats --namespace project-x --format text\n\n  \
+NOTES:\n  \
+    Reports node_count, edge_count, avg_degree, and max_degree.\n  \
+    Default format is JSON. Use `--format text` for a compact single-line summary.")]
 pub struct GraphStatsArgs {
     #[arg(long)]
     pub namespace: Option<String>,
@@ -87,12 +122,24 @@ pub struct GraphStatsArgs {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # List all entities (default limit applies)\n  \
+    sqlite-graphrag graph entities\n\n  \
+    # Filter by entity type\n  \
+    sqlite-graphrag graph entities --entity-type person\n\n  \
+    # Filter by namespace and type\n  \
+    sqlite-graphrag graph entities --namespace project-x --entity-type concept\n\n  \
+    # Paginate results (skip first 20, return next 10)\n  \
+    sqlite-graphrag graph entities --offset 20 --limit 10\n\n  \
+NOTES:\n  \
+    Output is always JSON with `items`, `total_count`, `limit`, and `offset` fields.\n  \
+    Entity types are strings extracted by BERT NER (e.g. `person`, `organization`, `location`).")]
 pub struct GraphEntitiesArgs {
     #[arg(long)]
     pub namespace: Option<String>,
-    /// Filter by entity type, for example `person`, `concept`, or `agent`.
-    #[arg(long)]
-    pub entity_type: Option<String>,
+    /// Filter by entity type (one of the 13 canonical types).
+    #[arg(long, value_enum)]
+    pub entity_type: Option<EntityType>,
     /// Maximum number of results to return.
     #[arg(long, default_value_t = crate::constants::K_GRAPH_ENTITIES_DEFAULT_LIMIT)]
     pub limit: usize,
@@ -370,18 +417,23 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?
     };
 
-    let (avg_degree, max_degree): (f64, i64) = if let Some(n) = ns {
+    let max_degree: i64 = if let Some(n) = ns {
         conn.query_row(
-            "SELECT COALESCE(AVG(degree), 0.0), COALESCE(MAX(degree), 0) FROM entities WHERE namespace = ?1",
+            "SELECT COALESCE(MAX(degree), 0) FROM entities WHERE namespace = ?1",
             rusqlite::params![n],
-            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?)),
+            |r| r.get(0),
         )?
     } else {
-        conn.query_row(
-            "SELECT COALESCE(AVG(degree), 0.0), COALESCE(MAX(degree), 0) FROM entities",
-            [],
-            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?)),
-        )?
+        conn.query_row("SELECT COALESCE(MAX(degree), 0) FROM entities", [], |r| {
+            r.get(0)
+        })?
+    };
+
+    // avg_degree = 2 * edge_count / node_count (each edge contributes 2 to total degree sum).
+    let avg_degree = if node_count > 0 {
+        2.0 * (edge_count as f64) / (node_count as f64)
+    } else {
+        0.0
     };
 
     let resp = GraphStatsResponse {
@@ -442,7 +494,10 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
     let limit_i = args.limit as i64;
     let offset_i = args.offset as i64;
 
-    let (total_count, items) = match (args.namespace.as_deref(), args.entity_type.as_deref()) {
+    let (total_count, items) = match (
+        args.namespace.as_deref(),
+        args.entity_type.map(|et| et.as_str()),
+    ) {
         (Some(ns), Some(et)) => {
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM entities WHERE namespace = ?1 AND type = ?2",
@@ -665,6 +720,31 @@ mod tests {
         assert_eq!(json["edge_count"], 15);
         assert_eq!(json["avg_degree"], 3.0);
         assert_eq!(json["max_degree"], 7);
+    }
+
+    fn compute_avg_degree(node_count: i64, edge_count: i64) -> f64 {
+        if node_count > 0 {
+            2.0 * (edge_count as f64) / (node_count as f64)
+        } else {
+            0.0
+        }
+    }
+
+    #[test]
+    fn avg_degree_is_zero_when_no_nodes() {
+        assert_eq!(compute_avg_degree(0, 0), 0.0);
+    }
+
+    #[test]
+    fn avg_degree_is_zero_when_nodes_but_no_edges() {
+        // Reproduces L1 bug: previously returned 1.0 instead of 0.0.
+        assert_eq!(compute_avg_degree(2, 0), 0.0);
+    }
+
+    #[test]
+    fn avg_degree_is_two_when_triangle() {
+        // 3 nodes, 3 edges: 2 * 3 / 3 = 2.0
+        assert_eq!(compute_avg_degree(3, 3), 2.0);
     }
 
     #[test]

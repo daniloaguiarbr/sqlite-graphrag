@@ -13,7 +13,7 @@
 - Instale a última release publicada com `cargo install sqlite-graphrag --locked`
 - Atualize uma instalação existente com `cargo install sqlite-graphrag --locked --force`
 - Verifique o binário ativo com `sqlite-graphrag --version`
-- Veja o histórico completo de releases em [CHANGELOG.md](CHANGELOG.md)
+- Veja o histórico completo de releases em [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md)
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
 
@@ -442,6 +442,9 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Força o autostart do daemon mesmo quando os guards o pulariam | indefinido | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Desabilita completamente o autostart do daemon (útil em testes/CI) | indefinido | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | Flag INTERNA setada automaticamente ao spawnar o filho do daemon; não setar manualmente | indefinido | `1` |
+| `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Budget de tokens para extração de entidades/relações por memória; valores fora de [512, 100.000] utilizam o padrão | `5000` | `8000` |
+| `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão | `50` | `100` |
+| `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
 | `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 
@@ -718,14 +721,15 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Contratos canônicos para cada resposta de subcomando
 - JSON Schemas autoritativos para cada resposta `--json` ficam em [`docs/schemas/`](docs/schemas/) e são versionados junto com a crate
-- 30 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`
+- 30 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`
 - Trate estes schemas como o contrato de agente; SKILL.md documenta as mesmas formas em formato humano
 - Valide consumidores downstream com qualquer validador JSON Schema padrão (e.g. `ajv`, `jsonschema`)
 
 
 ## Histórico de Mudanças
 ### Histórico de releases mantido em arquivo separado
-- Leia o histórico completo de releases em [CHANGELOG.md](CHANGELOG.md)
+- [PRD](docs/PRD.pt-BR.md) — Documento de Requisitos de Produto (fonte de verdade dos 31 contratos comportamentais)
+- Leia o histórico completo de releases em [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md)
 
 
 ## Agradecimentos

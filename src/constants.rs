@@ -87,8 +87,24 @@ pub const K_MEMORIES_DEFAULT: usize = 10;
 /// Default `k` for entity KNN searches during graph expansion.
 pub const K_ENTITIES_SEARCH: usize = 5;
 
-/// Upper bound on distinct entities persisted per memory.
-pub const MAX_ENTITIES_PER_MEMORY: usize = 30;
+/// Default upper bound on distinct entities persisted per memory.
+///
+/// Bumped from 30 → 50 in v1.0.43 to reduce semantic loss on rich documents.
+/// Configurable at runtime via `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY`.
+pub const MAX_ENTITIES_PER_MEMORY: usize = 50;
+
+/// Resolves the per-memory entity cap, honouring the env-var override.
+///
+/// v1.0.43: makes the cap (default 50) configurable via `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY`.
+/// Stress tests showed inputs with 33-46 candidates being truncated at the old cap of 30.
+/// Values outside [1, 1000] fall back to the default.
+pub fn max_entities_per_memory() -> usize {
+    std::env::var("SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (1..=1_000).contains(&n))
+        .unwrap_or(MAX_ENTITIES_PER_MEMORY)
+}
 
 /// Upper bound on distinct relationships persisted per memory.
 pub const MAX_RELATIONSHIPS_PER_MEMORY: usize = 50;

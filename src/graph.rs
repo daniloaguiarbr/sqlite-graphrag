@@ -72,8 +72,8 @@ pub fn traverse_from_memories(
 
     // Step 2: BFS over relationships
     use std::collections::HashSet;
-    let mut visited: HashSet<i64> = seed_entities.iter().cloned().collect();
-    let mut frontier = seed_entities.clone();
+    let mut visited: HashSet<i64> = seed_entities.iter().copied().collect();
+    let mut frontier: Vec<i64> = seed_entities.to_vec();
 
     for _ in 0..max_hops {
         if frontier.is_empty() {
@@ -169,7 +169,7 @@ pub fn traverse_from_memories_with_hops(
     // BFS over relationships, tracking depth per entity
     use std::collections::HashMap;
     let mut entity_depth: HashMap<i64, u32> = seed_entities.iter().map(|&id| (id, 0)).collect();
-    let mut frontier = seed_entities.clone();
+    let mut frontier: Vec<i64> = seed_entities.to_vec();
 
     for hop in 1..=max_hops {
         if frontier.is_empty() {
