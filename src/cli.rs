@@ -290,7 +290,10 @@ pub enum Commands {
         # Initialize at a specific path\n  \
         sqlite-graphrag init --db /path/to/graphrag.sqlite\n\n  \
         # Initialize using SQLITE_GRAPHRAG_HOME env var\n  \
-        SQLITE_GRAPHRAG_HOME=/data sqlite-graphrag init")]
+        SQLITE_GRAPHRAG_HOME=/data sqlite-graphrag init\n\n\
+        NOTES:\n  \
+        - `init` is OPTIONAL: any subsequent CRUD command auto-initializes graphrag.sqlite if missing.\n  \
+        - As a side effect, `init` warms a smoke-test embedding which auto-spawns the persistent daemon (~600s idle timeout).")]
     Init(init::InitArgs),
     /// Run or control the persistent embedding daemon
     Daemon(daemon::DaemonArgs),

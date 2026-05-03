@@ -29,6 +29,13 @@ pub const FASTEMBED_BATCH_SIZE: usize = 32;
 /// Maximum byte length for a memory `name` field in kebab-case.
 pub const MAX_MEMORY_NAME_LEN: usize = 80;
 
+/// Maximum byte length for an `ingest`-derived kebab-case name.
+///
+/// Stricter than `MAX_MEMORY_NAME_LEN` (80) to leave headroom for collision
+/// suffixes (`-2`, `-10`, ...) when multiple files derive to the same base.
+/// Used exclusively by `src/commands/ingest.rs`.
+pub const DERIVED_NAME_MAX_LEN: usize = 60;
+
 /// Maximum character length for a memory `description` field.
 pub const MAX_MEMORY_DESCRIPTION_LEN: usize = 500;
 

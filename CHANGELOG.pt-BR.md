@@ -10,6 +10,27 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.41] - 2026-05-02
+
+### Corrigido
+- **AUDIT-D1** README EN+PT Quick Start (linha 110) corrigido: substituído o enganoso "Execute `sqlite-graphrag init` primeiro antes de qualquer outro comando" por afirmação explícita de que GraphRAG está habilitado por padrão e roda automaticamente (auto-init via `ensure_db_ready()` em `src/storage/connection.rs:71-121`). `init` agora é descrito corretamente como OPCIONAL mas recomendado no primeiro uso para pré-baixar o modelo de embedding.
+- **AUDIT-D2** README EN+PT Quick Start adiciona callout explícito "GraphRAG está habilitado por padrão" documentando auto-extração (BERT NER em cada `remember`/`ingest`) e auto-spawn do daemon (em `recall`/`hybrid-search`).
+- **AUDIT-D11** `docs/schemas/vacuum.schema.json` adiciona `reclaimed_bytes` em `properties` e `required` (handler em `src/commands/vacuum.rs` já emitia esse campo, schema estava desatualizado).
+- **AUDIT-D5** `after_long_help` do subcomando `Init` agora documenta que `init` é OPCIONAL (auto-init é transparente) e que ele aquece um embedding de smoke-test que auto-inicia o daemon persistente (~600s idle timeout). Fecha o gap onde o efeito colateral era não documentado.
+- **AUDIT-C3** `DERIVED_NAME_MAX_LEN = 60` movido de `src/commands/ingest.rs:48` para `src/constants.rs` ao lado de `MAX_MEMORY_NAME_LEN = 80`. Single-source-of-truth restaurado, com doc comment explicando por que o cap do ingest é mais estrito (margem para sufixos de colisão).
+- **AUDIT-AUDIT-04** `ingest` agora emite três markers INFO de progresso via `tracing::info!`: início da phase A (`stage_start` com contagem de arquivos e parallelism), progresso da phase A a cada 10 arquivos staged (`stage_progress` com done/total), e início da phase B (`persist_start`). Fecha o gap de visibilidade onde usuários não tinham sinal de progresso durante ingests longos.
+
+### Notas de Auditoria (adiadas para v1.0.42)
+- **AUDIT-B1-BLOCKER** `ingest --low-memory` com 495 arquivos atinge timeout em 30 min (`exit 124`) com **zero linhas persistidas** por causa da arquitetura 2-phase (Phase A faz stage de todos os arquivos em memória antes de Phase B persistir+emitir). Para corpora ≥500 arquivos em modo single-thread o run inteiro é perdido. Refactor para persistência incremental do Phase B é necessário.
+- **AUDIT-D8-HIGH** Help promete streaming NDJSON "um objeto JSON por arquivo" mas stdout fica vazio durante toda a Phase A (fase inteira de stage). Será resolvido junto com AUDIT-B1-BLOCKER.
+- **AUDIT-AUDIT-06-HIGH** Sem markers INFO de progresso durante ingests longos (apenas linhas WARN de truncation). Gap de visibilidade para usuários.
+- **AUDIT-C3-MEDIUM** Constantes `MAX_MEMORY_NAME_LEN = 80` (em `src/constants.rs:30`, usado por `remember`) versus `DERIVED_NAME_MAX_LEN = 60` (hardcoded em `src/commands/ingest.rs:48`, usado na derivação de nomes de arquivo). Violação de single-source-of-truth.
+- **AUDIT-C4-MEDIUM** NER produziu edge `DuckDuckGo --mentions--> DuckD`. Truncamento por sub-token boundary cria nomes parciais de entidades que poluem o grafo silenciosamente.
+- **AUDIT-D9-MEDIUM** Drift terminológico: `graph --format json` retorna `nodes/edges`; `stats` retorna `entities/relationships`. Mesmo conceito, dois contratos.
+
+### Documentação
+- Todas as adições do README EN espelhadas em `README.pt-BR.md` (contagem de seções H2 preservada).
+
 ## [1.0.40] - 2026-05-02
 
 ### Corrigido

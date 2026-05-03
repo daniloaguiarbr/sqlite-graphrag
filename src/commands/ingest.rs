@@ -43,9 +43,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use unicode_normalization::UnicodeNormalization;
 
-/// Maximum length of a derived kebab-case name. Longer basenames are truncated
-/// (with a `tracing::warn!`) to keep the `memories.name` column bounded.
-const DERIVED_NAME_MAX_LEN: usize = 60;
+use crate::constants::DERIVED_NAME_MAX_LEN;
 
 /// Hard cap on the numeric suffix appended for collision resolution. If 1000
 /// candidates collide we surface an error rather than loop forever.
@@ -701,6 +699,19 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     let skip_extraction = args.skip_extraction;
     let paths_ref = &paths;
 
+    let total_to_process = slots
+        .iter()
+        .filter(|s| matches!(s, Slot::Process(_)))
+        .count();
+    tracing::info!(
+        target = "ingest",
+        phase = "stage_start",
+        files = total_to_process,
+        ingest_parallelism = parallelism,
+        "phase A (stage) starting: chunk + embed + NER on rayon pool",
+    );
+    let staged_done = std::sync::atomic::AtomicUsize::new(0);
+
     pool.install(|| {
         slots.par_iter().enumerate().for_each(|(idx, slot)| {
             if let Slot::Process(fs) = slot {
@@ -708,9 +719,26 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     stage_file(idx, &fs.path, &fs.derived_name, paths_ref, skip_extraction);
                 // SAFETY: staged[idx] is only written once by this worker.
                 *staged[idx].lock().expect("staged slot poisoned") = Some(result);
+                let done = staged_done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if done % 10 == 0 || done == total_to_process {
+                    tracing::info!(
+                        target = "ingest",
+                        phase = "stage_progress",
+                        done = done,
+                        total = total_to_process,
+                        "phase A progress",
+                    );
+                }
             }
         });
     });
+
+    tracing::info!(
+        target = "ingest",
+        phase = "persist_start",
+        files = total_to_process,
+        "phase B (persist) starting: sequential writes to SQLite + NDJSON emit",
+    );
 
     // Phase B: sequential persist on main thread (Connection is !Sync).
     let fail_fast = args.fail_fast;

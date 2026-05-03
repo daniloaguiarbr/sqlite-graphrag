@@ -107,7 +107,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 > **Required flags for `remember`:** `--name`, `--type`, `--description`. Body via `--body "text"`, `--body-file <path>`, or `--body-stdin` (pipe from stdin).
 > **Body limit: 500 KB (512000 bytes).** Larger inputs are rejected with exit code 6 (`limit exceeded`); split into multiple memories or trim before sending.
-- **Run `sqlite-graphrag init` first** before any other command (creates the SQLite file and downloads the embedding model on first run)
+- **GraphRAG is enabled by default and runs automatically.** Every subcommand auto-initializes `graphrag.sqlite` in the current working directory if it does not exist. `remember` and `ingest` extract entities and relationships via local BERT NER on every call (disable per-call with `--skip-extraction`). `recall` and `hybrid-search` auto-spawn the embedding daemon on demand.
+- **`sqlite-graphrag init` is OPTIONAL** but recommended on first use because it pre-downloads the embedding model and warms a smoke-test embedding (subsequent commands are faster). Without `init`, the first command pays the model-download cost.
 - **`graphrag.sqlite` is created in the current working directory by default** (override with `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`)
 - For the local checkout, `cargo install --path .` is enough
 - Re-run `sqlite-graphrag --version` after any upgrade to confirm the active binary

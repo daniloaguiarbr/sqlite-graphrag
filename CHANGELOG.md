@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.41] - 2026-05-02
+
+### Fixed
+- **AUDIT-D1** README EN+PT Quick Start (line 110) corrected: replaced misleading "Run `sqlite-graphrag init` first before any other command" with explicit statement that GraphRAG is enabled by default and runs automatically (auto-init via `ensure_db_ready()` in `src/storage/connection.rs:71-121`). `init` is now correctly described as OPTIONAL but recommended for first-use to pre-download the embedding model.
+- **AUDIT-D2** README EN+PT Quick Start adds explicit "GraphRAG is enabled by default" callout, documenting auto-extraction (BERT NER on every `remember`/`ingest`) and daemon auto-spawn (on `recall`/`hybrid-search`).
+- **AUDIT-D11** `docs/schemas/vacuum.schema.json` adds `reclaimed_bytes` to `properties` and `required` (handler in `src/commands/vacuum.rs` was already emitting this field, schema was out-of-sync).
+- **AUDIT-D5** `Init` subcommand `after_long_help` now documents that `init` is OPTIONAL (auto-init is transparent) and that it warms a smoke-test embedding which auto-spawns the persistent daemon (~600s idle timeout). Closes the gap where the side effect was undocumented.
+- **AUDIT-C3** `DERIVED_NAME_MAX_LEN = 60` moved from `src/commands/ingest.rs:48` to `src/constants.rs` next to `MAX_MEMORY_NAME_LEN = 80`. Single-source-of-truth restored, with a doc comment explaining why the ingest cap is stricter (collision suffix headroom).
+- **AUDIT-AUDIT-04** `ingest` now emits three INFO-level progress markers via `tracing::info!`: phase A start (`stage_start` with file count and parallelism), phase A progress every 10 staged files (`stage_progress` with done/total), and phase B start (`persist_start`). Closes the visibility gap where users had no progress signal during long ingests.
+
+### Audit Notes (deferred to v1.0.42)
+- **AUDIT-B1-BLOCKER** `ingest --low-memory` with 495 files times out at 30 min (`exit 124`) with **zero rows persisted** because of 2-phase architecture (Phase A stages all files in memory before Phase B persists+emits). For corpora ≥500 files in single-thread mode the entire run is lost. Refactor to incremental Phase B persistence required.
+- **AUDIT-D8-HIGH** Help promises NDJSON streaming "one JSON object per file" but stdout stays empty during all of Phase A (entire stage phase). Will be resolved together with AUDIT-B1-BLOCKER.
+- **AUDIT-AUDIT-06-HIGH** No INFO progress markers during long ingests (only WARN truncation lines emitted). Visibility gap for users.
+- **AUDIT-C3-MEDIUM** Constants `MAX_MEMORY_NAME_LEN = 80` (in `src/constants.rs:30`, used by `remember`) versus `DERIVED_NAME_MAX_LEN = 60` (hardcoded in `src/commands/ingest.rs:48`, used during file-name derivation). Single-source-of-truth violation.
+- **AUDIT-C4-MEDIUM** NER produced edge `DuckDuckGo --mentions--> DuckD`. Sub-token boundary truncation creates partial entity names that pollute the graph silently.
+- **AUDIT-D9-MEDIUM** Terminology drift: `graph --format json` returns `nodes/edges`; `stats` returns `entities/relationships`. Same concept, two contracts.
+
+### Documentation
+- All EN README additions mirrored in `README.pt-BR.md` (H2 section count preserved).
+
 ## [1.0.40] - 2026-05-02
 
 ### Fixed
