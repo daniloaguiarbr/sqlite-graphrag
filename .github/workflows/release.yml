@@ -29,13 +29,15 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             use-cross: false
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            use-cross: false
-            musl: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             use-cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            use-cross: false
+            # macos-latest is now Apple Silicon (aarch64); we cross-compile to
+            # x86_64 via `rustup target add x86_64-apple-darwin`. The macos-13
+            # Intel runner was retired by GitHub in December 2025.
           - target: aarch64-apple-darwin
             os: macos-latest
             use-cross: false
@@ -46,14 +48,18 @@ jobs:
             os: windows-11-arm
             use-cross: false
           # ARM64 Windows release builds require the native `windows-11-arm` runner.
-          # musl target supports Alpine Linux and distroless containers (B6 v1.0.37).
+          # v1.0.42 (HIGH 1): dropped `x86_64-unknown-linux-musl` because `ort` (the
+          # ONNX runtime backend used by `fastembed`) does not ship a prebuilt for
+          # the musl target on either rc.11 or rc.12. Five consecutive releases
+          # (v1.0.37-v1.0.41) failed on this job, blocking the GitHub Releases
+          # publish step. Alpine users should install via
+          # `cargo install sqlite-graphrag --locked` or use a glibc-based
+          # container (debian-slim, distroless/cc-debian12).
+          # v1.0.42 (MEDIUM 1): added `x86_64-apple-darwin` for Intel Mac users.
+          # macos-13 is the Intel runner; macos-latest is now Apple Silicon.
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install musl tools
-        if: matrix.musl == true
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - uses: dtolnay/rust-toolchain@stable
         with:

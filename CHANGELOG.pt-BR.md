@@ -10,6 +10,28 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+### Corrigido
+- **HIGH 2** Migrados 14 doc comments em português para inglês em `src/constants.rs` (5x), `src/commands/stats.rs` (3x), `src/commands/health.rs` (1x), `src/commands/read.rs` (2x), `src/commands/list.rs` (1x), `src/commands/hybrid_search.rs` (2x). Alinha com a política linguística inviolável em `docs_rules/rules_rust.md`.
+- **HIGH 3** Estendido o regex do gate `language-check` no CI (`.github/workflows/ci.yml:251`) para detectar preposições, adjetivos e substantivos PT sem diacríticos (`alias de`, `contrato documentado`, `migrado de`, `paralelo a`, `quando omitido`, etc.). Antes só verbos com acento eram pegos; o novo padrão captura os 14 doc comments corrigidos em HIGH 2 com zero falsos positivos no codebase atual.
+- **LOW 3** Precedência POSIX do i18n: `LC_ALL=""` (string vazia setada) agora cai corretamente para `LC_MESSAGES`/`LANG` via guarda explícita `is_empty()` no loop locale (`src/i18n.rs:60-78`). Antes o valor vazio era tratado como locale reconhecido mas não parseado, quebrando a semântica POSIX em shells que exportam `LC_ALL=""`.
+
+### Adicionado
+- **MEDIUM 1** GitHub Releases agora incluem binário pré-compilado para `x86_64-apple-darwin` (Mac Intel) via runner `macos-13`, ao lado do build `aarch64-apple-darwin` existente. Fecha o gap onde usuários Mac Intel não tinham binário publicado.
+- **LOW 1** Comando `restore` aceita o nome da memória como argumento posicional (`restore foo`); a flag `--name` é preservada como forma alternativa via `conflicts_with`. Espelha a UX de `forget`/`related`.
+- **LOW 2** `sync-safe-copy` aceita o caminho de destino como argumento posicional (`sync-safe-copy /caminho/snapshot.sqlite`); flags `--dest`/`--to`/`--output` preservadas.
+- **MEDIUM 4** `ingest --type` agora tem default `document` quando omitido; `MemoryType` deriva `Default` com `Document` como variante padrão.
+- **MEDIUM 5** `apply_secure_permissions` e `sync-safe-copy` agora emitem um log `tracing::debug!` em Windows explicando que o DACL default do NTFS já provê acesso per-usuário; fecha o skip silencioso de releases anteriores.
+
+### Alterado
+- **HIGH 1** Removido o target `x86_64-unknown-linux-musl` da matrix de release. `ort` (o backend ONNX runtime usado pelo `fastembed`) não fornece prebuilt para o target musl em rc.11 nem rc.12 (verificado upstream via [ort-sys/build/download/dist.txt](https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt)). Cinco releases consecutivos (v1.0.37 a v1.0.41) falharam neste job, bloqueando o passo de Publish GitHub Release. Usuários Alpine devem instalar via `cargo install sqlite-graphrag --locked` ou usar um container baseado em glibc (debian-slim, distroless/cc-debian12).
+- **LOW 4** Bump `clap` 4.5 → 4.6 (sem breaks de API observados). `rusqlite` (0.37) mantido pois refinery 0.9.x faz hard-pin em rusqlite ≤0.38; `rayon` (1.10) mantido para evitar risco de bump de MSRV; bump coordenado de `ort`/`fastembed` adiado para v1.0.43 (requer migração de `src/embedder.rs` para reshuffles de módulos do rc.12: `ort::tensor`→`ort::value`, `execution_providers`→`ep`).
+
+### Notas de Auditoria (adiadas para v1.0.43)
+- **AUDIT-B1-BLOCKER**, **AUDIT-D8-HIGH**, **AUDIT-AUDIT-06-HIGH** — refactor da arquitetura 2-fase do `ingest --low-memory` (Phase A → Phase B com persistência incremental e streaming NDJSON) requer mais iteração de design; adiado para o próximo ciclo.
+- **AUDIT-MEDIUM 2** Deduplicação de hash de conteúdo no `ingest` requer migração schema v10 (nova coluna `content_sha256` + índice). Adiada para evitar agrupar migrações de schema com patches.
+- **AUDIT-MEDIUM 3 / C4 viés NER** BERT NER classifica identificadores de código (`TypeScript`, `AdapterExecutionResult`) como `organization`. Requer decisão arquitetural (substituir modelo, fine-tune, ou pós-processar). Adiada.
+- **AUDIT-D9-MEDIUM** Drift de terminologia `nodes/edges` (graph) vs `entities/relationships` (stats) persiste; decisão de design necessária antes da unificação.
+
 ## [1.0.41] - 2026-05-02
 
 ### Corrigido

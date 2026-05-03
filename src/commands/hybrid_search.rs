@@ -65,9 +65,9 @@ pub struct HybridSearchItem {
     pub description: String,
     pub body: String,
     pub combined_score: f64,
-    /// Alias de `combined_score` para contrato documentado em SKILL.md.
+    /// Alias of `combined_score` for the documented contract in SKILL.md.
     pub score: f64,
-    /// Fonte do match: sempre "hybrid" (RRF de vec + fts). Adicionado em v2.0.1.
+    /// Source of the match: always "hybrid" (RRF of vec + fts). Added in v2.0.1.
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vec_rank: Option<usize>,

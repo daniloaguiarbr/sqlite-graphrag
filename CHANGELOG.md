@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **HIGH 2** Migrated 14 Portuguese-language doc comments to English in `src/constants.rs` (5x), `src/commands/stats.rs` (3x), `src/commands/health.rs` (1x), `src/commands/read.rs` (2x), `src/commands/list.rs` (1x), `src/commands/hybrid_search.rs` (2x). Aligns with the inviolable language policy in `docs_rules/rules_rust.md`.
+- **HIGH 3** Extended `language-check` CI gate regex (`.github/workflows/ci.yml:251`) to detect Portuguese prepositions, adjectives, and nouns without diacritics (`alias de`, `contrato documentado`, `migrado de`, `paralelo a`, `quando omitido`, etc.). Previously only verbs with diacritics were caught; the new pattern catches the 14 doc comments fixed in HIGH 2 with zero false positives in the current codebase.
+- **LOW 3** `i18n` POSIX precedence: `LC_ALL=""` (empty string set) now falls through to `LC_MESSAGES`/`LANG` correctly via an explicit `is_empty()` guard inside the locale loop (`src/i18n.rs:60-78`). Previously the empty value was treated as a recognized-but-unparsed locale, breaking POSIX semantics in shells that export `LC_ALL=""`.
+
+### Added
+- **MEDIUM 1** GitHub Releases now include a prebuilt binary for `x86_64-apple-darwin` (Intel Mac) via the `macos-13` runner, alongside the existing `aarch64-apple-darwin` build. Closes the gap where Intel Mac users had no published binary.
+- **LOW 1** `restore` command accepts the memory name as a positional argument (`restore foo`); the `--name` flag is preserved as an alternative form via `conflicts_with`. Mirrors the UX of `forget`/`related`.
+- **LOW 2** `sync-safe-copy` accepts the destination path as a positional argument (`sync-safe-copy /path/snapshot.sqlite`); `--dest`/`--to`/`--output` flags preserved.
+- **MEDIUM 4** `ingest --type` now defaults to `document` when omitted; `MemoryType` derives `Default` with `Document` as the default variant.
+- **MEDIUM 5** `apply_secure_permissions` and `sync-safe-copy` now emit a `tracing::debug!` log on Windows explaining that NTFS DACL default already provides per-user access; closes the silent skip from previous releases.
+
+### Changed
+- **HIGH 1** Dropped `x86_64-unknown-linux-musl` target from the release matrix. `ort` (the ONNX runtime backend used by `fastembed`) does not ship a prebuilt for the musl target on either rc.11 or rc.12 (verified upstream via [ort-sys/build/download/dist.txt](https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt)). Five consecutive releases (v1.0.37 to v1.0.41) failed on this job, blocking the GitHub Releases publish step. Alpine users should install via `cargo install sqlite-graphrag --locked` or use a glibc-based container (debian-slim, distroless/cc-debian12).
+- **LOW 4** Bumped `clap` 4.5 → 4.6 (no API breaks observed). `rusqlite` (0.37) kept due to refinery 0.9.x hard-pinning rusqlite ≤0.38; `rayon` (1.10) kept to avoid MSRV bump risk; `ort`/`fastembed` coordinated bump deferred to v1.0.43 (requires `src/embedder.rs` migration for rc.12 module reshuffles `ort::tensor`→`ort::value`, `execution_providers`→`ep`).
+
+### Audit Notes (deferred to v1.0.43)
+- **AUDIT-B1-BLOCKER**, **AUDIT-D8-HIGH**, **AUDIT-AUDIT-06-HIGH** — `ingest --low-memory` 2-phase architecture refactor (Phase A → Phase B incremental persistence with NDJSON streaming) requires more design iteration; defer to next cycle.
+- **AUDIT-MEDIUM 2** `ingest` content-hash deduplication requires schema migration v10 (new `content_sha256` column + index). Deferred to avoid bundling schema migrations with patch fixes.
+- **AUDIT-MEDIUM 3 / C4 NER bias** BERT NER mis-classifies code identifiers (`TypeScript`, `AdapterExecutionResult`) as `organization`. Requires architectural decision (replace model, fine-tune, or post-process). Deferred.
+- **AUDIT-D9-MEDIUM** Terminology drift `nodes/edges` (graph) vs `entities/relationships` (stats) persists; design decision needed before unification.
+
 ## [1.0.41] - 2026-05-02
 
 ### Fixed

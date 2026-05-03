@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.41"
+version = "1.0.42"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -64,7 +64,7 @@ path = "tests/loom_lock_slots.rs"
 rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
 sqlite-vec = "0.1.9"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -95,18 +95,19 @@ candle-nn = { version = "0.10.2", default-features = false }
 candle-transformers = { version = "0.10.2", default-features = false }
 unicode-normalization = "0.1.25"
 
-# ort pinned at =2.0.0-rc.11; upgrade to rc.12 deferred — fastembed 5.13.2
-# (currently resolved) hard-pins `ort = "=2.0.0-rc.11"` and Cargo cannot satisfy
-# both pins simultaneously. fastembed 5.13.4 ships rc.12 support but bumping
-# fastembed is out of scope for this task. rc.12 also brings module reshuffles
-# (`ort::tensor` -> `ort::value`, `execution_providers` -> `ep`, IoBinding moved)
-# that require touching `src/embedder.rs`. Reassess as part of a coordinated
-# fastembed + ort bump; tracked for v1.0.41.
+# ort pinned at =2.0.0-rc.11; upgrade to rc.12 deferred to v1.0.43 because rc.12
+# brings module reshuffles (`ort::tensor` -> `ort::value`, `execution_providers`
+# -> `ep`, IoBinding moved) that require coordinated changes to `src/embedder.rs`.
+# fastembed 5.13.4 already pins ort=2.0.0-rc.12 upstream, so a coordinated
+# fastembed + ort + embedder.rs bump is required (out of scope for v1.0.42).
+# Note: rc.12 also lacks a musl prebuilt (verified 2026-05-03 via
+# https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt),
+# so the musl release target was dropped in v1.0.42 (HIGH 1).
 [target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
 
-# Same defer rationale as above (ort rc.11 -> rc.12 blocked by fastembed pin).
+# Same defer rationale as above (ort rc.11 -> rc.12 deferred to v1.0.43).
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }

@@ -149,14 +149,16 @@ sqlite-graphrag purge --retention-days 0 --yes
 ### Binários pré-compilados (GitHub Releases)
 - `x86_64-unknown-linux-gnu` Linux Intel/AMD 64-bit
 - `aarch64-unknown-linux-gnu` Linux ARM 64-bit (Raspberry Pi 4+, AWS Graviton)
+- `x86_64-apple-darwin` macOS Intel (cross-compilado a partir do runner Apple Silicon; v1.0.42+)
 - `aarch64-apple-darwin` macOS Apple Silicon (M1/M2/M3/M4)
 - `x86_64-pc-windows-msvc` Windows Intel/AMD 64-bit
 - `aarch64-pc-windows-msvc` Windows ARM 64-bit
-### Usuários de Mac Intel (x86_64-apple-darwin)
-- Não há binário pré-compilado para Macs Intel
-- O GitHub aposentou o runner macos-13 em dezembro de 2025 e a Apple descontinuou suporte ao x86_64
-- Compile localmente com `cargo install sqlite-graphrag --locked` (requer Rust 1.88+)
-- Caminho de migração recomendado é para Apple Silicon quando viável
+### Usuários de Alpine Linux / musl
+- Nenhum binário pré-compilado `x86_64-unknown-linux-musl` é publicado desde v1.0.42
+- Motivo: `ort` (o backend ONNX runtime usado pelo `fastembed` para embeddings + BERT NER) não fornece prebuilt para musl em rc.11 nem rc.12
+- Workaround 1 — instalar via Cargo: `cargo install sqlite-graphrag --locked` (requer Rust 1.88+, compila contra a glibc do host)
+- Workaround 2 — usar imagem container baseada em glibc: `debian-slim`, `distroless/cc-debian12`, ou qualquer derivado de Ubuntu
+- Issue de tracking: https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt
 
 
 ## Uso

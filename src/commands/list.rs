@@ -70,7 +70,7 @@ struct ListItem {
     description: String,
     snippet: String,
     updated_at: i64,
-    /// Timestamp RFC 3339 UTC paralelo a `updated_at`.
+    /// RFC 3339 UTC timestamp parallel to `updated_at`.
     updated_at_iso: String,
     /// Unix epoch when the memory was soft-deleted, or omitted for active memories.
     /// Surfaced only in `list --include-deleted --json` so LLM consumers can

@@ -374,7 +374,7 @@ pub enum Commands {
     DebugSchema(debug_schema::DebugSchemaArgs),
 }
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+#[derive(Copy, Clone, Debug, Default, clap::ValueEnum)]
 pub enum MemoryType {
     User,
     Feedback,
@@ -383,6 +383,7 @@ pub enum MemoryType {
     Decision,
     Incident,
     Skill,
+    #[default]
     Document,
     Note,
 }

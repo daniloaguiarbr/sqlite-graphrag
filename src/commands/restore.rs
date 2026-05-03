@@ -21,9 +21,16 @@ use serde::Serialize;
     # Restore within a specific namespace\n  \
     sqlite-graphrag restore --name onboarding --namespace my-project")]
 pub struct RestoreArgs {
+    /// Memory name as a positional argument. Alternative to `--name`.
+    #[arg(
+        value_name = "NAME",
+        conflicts_with = "name",
+        help = "Memory name to restore; alternative to --name"
+    )]
+    pub name_positional: Option<String>,
     /// Memory name to restore (must exist, including soft-deleted/forgotten).
     #[arg(long)]
-    pub name: String,
+    pub name: Option<String>,
     /// Version to restore. When omitted, defaults to the latest non-`restore` version
     /// from `memory_versions`. This makes the forget+restore workflow work without
     /// requiring the user to discover the version first.
@@ -62,6 +69,16 @@ struct RestoreResponse {
 pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
+    let name = args
+        .name_positional
+        .as_deref()
+        .or(args.name.as_deref())
+        .ok_or_else(|| {
+            AppError::Validation(
+                "name required: pass as positional argument or via --name".to_string(),
+            )
+        })?
+        .to_string();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     let mut conn = open_rw(&paths.db)?;
@@ -70,12 +87,12 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     let result: Option<(i64, i64)> = conn
         .query_row(
             "SELECT id, updated_at FROM memories WHERE namespace = ?1 AND name = ?2",
-            params![namespace, args.name],
+            params![namespace, name],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
     let (memory_id, current_updated_at) = result
-        .ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&args.name, &namespace)))?;
+        .ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&name, &namespace)))?;
 
     if let Some(expected) = args.expected_updated_at {
         if expected != current_updated_at {
@@ -102,7 +119,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
                 .optional()?
                 .flatten();
             let v = last.ok_or_else(|| {
-                AppError::NotFound(errors_msg::memory_not_found(&args.name, &namespace))
+                AppError::NotFound(errors_msg::memory_not_found(&name, &namespace))
             })?;
             tracing::info!(
                 "restore --version omitted; using latest non-restore version: {}",
@@ -122,9 +139,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         stmt.query_row(params![memory_id, target_version], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })
-        .map_err(|_| {
-            AppError::NotFound(errors_msg::version_not_found(target_version, &args.name))
-        })?
+        .map_err(|_| AppError::NotFound(errors_msg::version_not_found(target_version, &name)))?
     };
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;

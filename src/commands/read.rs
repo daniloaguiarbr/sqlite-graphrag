@@ -56,10 +56,10 @@ struct ReadResponse {
     /// Most recent memory version, useful for optimistic control via `--expected-updated-at`.
     version: i64,
     created_at: i64,
-    /// Timestamp RFC 3339 UTC paralelo a `created_at` para parsers ISO 8601.
+    /// RFC 3339 UTC timestamp parallel to `created_at` for ISO 8601 parsers.
     created_at_iso: String,
     updated_at: i64,
-    /// Timestamp RFC 3339 UTC paralelo a `updated_at` para parsers ISO 8601.
+    /// RFC 3339 UTC timestamp parallel to `updated_at` for ISO 8601 parsers.
     updated_at_iso: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,

@@ -238,16 +238,16 @@ pub const EMBEDDING_MAX_TOKENS: usize = 512;
 /// Maximum result count from the recursive graph CTE in `recall`.
 pub const K_GRAPH_MATCHES_LIMIT: usize = 20;
 
-/// Default `--limit` para `list` quando omitido.
+/// Default `--limit` for `list` when omitted.
 pub const K_LIST_DEFAULT_LIMIT: usize = 100;
 
-/// Default `--limit` para `graph entities` quando omitido.
+/// Default `--limit` for `graph entities` when omitted.
 pub const K_GRAPH_ENTITIES_DEFAULT_LIMIT: usize = 50;
 
-/// Default `--limit` para `related` quando omitido.
+/// Default `--limit` for `related` when omitted.
 pub const K_RELATED_DEFAULT_LIMIT: usize = 10;
 
-/// Default `--limit` para `history` quando omitido.
+/// Default `--limit` for `history` when omitted.
 pub const K_HISTORY_DEFAULT_LIMIT: usize = 20;
 
 /// Default weight for the vector contribution in the `hybrid-search` RRF formula.
@@ -272,7 +272,7 @@ pub const OMP_NUM_THREADS_DEFAULT: &str = "1";
 /// in v2.0.0 DbBusy migrates to 15 and this code takes 13 per PRD.
 pub const BATCH_PARTIAL_FAILURE_EXIT_CODE: i32 = 13;
 
-/// Exit code para DbBusy em v2.0.0 (migrado de 13 para liberar 13 para batch failure).
+/// Exit code for DbBusy in v2.0.0 (migrated from 13 to free 13 for batch failure).
 pub const DB_BUSY_EXIT_CODE: i32 = 15;
 
 /// Filename used for the advisory exclusive lock that prevents parallel invocations.

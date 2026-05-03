@@ -16,9 +16,16 @@ use serde::Serialize;
     # Snapshot a custom source database\n  \
     sqlite-graphrag sync-safe-copy --db /data/graphrag.sqlite --dest /backup/snapshot.sqlite")]
 pub struct SyncSafeCopyArgs {
+    /// Snapshot destination path as a positional argument. Alternative to `--dest`.
+    #[arg(
+        value_name = "DEST",
+        conflicts_with = "dest",
+        help = "Snapshot destination path; alternative to --dest"
+    )]
+    pub dest_positional: Option<std::path::PathBuf>,
     /// Snapshot destination path. Also accepts the aliases `--to` and `--output`.
     #[arg(long, alias = "to", alias = "output")]
-    pub dest: std::path::PathBuf,
+    pub dest: Option<std::path::PathBuf>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     /// Output format: `json` or `text`. JSON is always emitted on stdout regardless of the value.
@@ -41,17 +48,27 @@ struct SyncSafeCopyResponse {
 pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format; // --format is a no-op; JSON is always emitted on stdout
+    let dest = args
+        .dest_positional
+        .clone()
+        .or_else(|| args.dest.clone())
+        .ok_or_else(|| {
+            AppError::Validation(
+                "destination required: pass as positional argument or via --dest/--to/--output"
+                    .to_string(),
+            )
+        })?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    if args.dest == paths.db {
+    if dest == paths.db {
         return Err(AppError::Validation(
             validation::sync_destination_equals_source(),
         ));
     }
 
-    if let Some(parent) = args.dest.parent() {
+    if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
@@ -59,20 +76,28 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     drop(conn);
 
-    let bytes_copied = std::fs::copy(&paths.db, &args.dest)?;
+    let bytes_copied = std::fs::copy(&paths.db, &dest)?;
 
     // Applies 0600 permissions on the snapshot on Unix to avoid leakage on Dropbox/shared NFS.
+    // On Windows, NTFS DACL default is private-to-user; no explicit permission setter required.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&args.dest)?.permissions();
+        let mut perms = std::fs::metadata(&dest)?.permissions();
         perms.set_mode(0o600);
-        std::fs::set_permissions(&args.dest, perms)?;
+        std::fs::set_permissions(&dest, perms)?;
+    }
+    #[cfg(windows)]
+    {
+        tracing::debug!(
+            path = %dest.display(),
+            "skipping Unix mode 0o600 on Windows; NTFS DACL default is private-to-user"
+        );
     }
 
     output::emit_json(&SyncSafeCopyResponse {
         source_db_path: paths.db.display().to_string(),
-        dest_path: args.dest.display().to_string(),
+        dest_path: dest.display().to_string(),
         bytes_copied,
         status: "ok".to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
@@ -109,13 +134,20 @@ mod tests {
     fn sync_safe_copy_rejects_dest_equal_to_source() {
         let db_path = std::path::PathBuf::from("/tmp/same.sqlite");
         let args = SyncSafeCopyArgs {
-            dest: db_path.clone(),
+            dest_positional: None,
+            dest: Some(db_path.clone()),
             json: false,
             format: None,
             db: Some("/tmp/same.sqlite".to_string()),
         };
         // Simulates manual path resolution — validates rejection logic
-        let result = if args.dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or("")) {
+        let resolved_dest = args
+            .dest_positional
+            .clone()
+            .or_else(|| args.dest.clone())
+            .expect("test must pass dest");
+        let result = if resolved_dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or(""))
+        {
             Err(AppError::Validation(
                 "destination path must differ from the source database path".to_string(),
             ))

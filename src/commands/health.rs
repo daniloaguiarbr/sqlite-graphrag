@@ -30,7 +30,7 @@ pub struct HealthArgs {
 #[derive(Serialize)]
 struct HealthCounts {
     memories: i64,
-    /// Alias de `memories` para contrato documentado em AGENT_PROTOCOL.md.
+    /// Alias of `memories` for the documented contract in AGENT_PROTOCOL.md.
     memories_total: i64,
     entities: i64,
     relationships: i64,

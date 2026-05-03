@@ -59,6 +59,11 @@ impl Language {
         // through to English default only when no locale var is set.
         for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(v) = std::env::var(var) {
+                if v.is_empty() {
+                    // POSIX: empty-string env var is equivalent to unset; fall
+                    // through to the next variable in the precedence chain.
+                    continue;
+                }
                 let lower = v.to_lowercase();
                 if lower.starts_with("pt") {
                     return Language::Portuguese;
@@ -66,8 +71,9 @@ impl Language {
                 if lower.starts_with("en") {
                     return Language::English;
                 }
-                // Found var but unrecognized prefix: respect POSIX precedence by
-                // stopping iteration here. Do NOT fall through to the next var.
+                // Found non-empty var with unrecognized prefix: respect POSIX
+                // precedence by stopping iteration here. Do NOT fall through
+                // to the next var.
                 break;
             }
         }

@@ -147,8 +147,10 @@ fn insert_default_schema_meta(conn: &Connection) -> Result<(), AppError> {
 
 /// Applies 600 permissions (owner read/write only) to the SQLite file and its WAL/SHM
 /// companion files on Unix to prevent leaking private memories in shared directories
-/// (e.g. multi-user /tmp, Dropbox, NFS). No-op on Windows. Failures are silent to avoid
-/// blocking the operation when the process does not own the file (e.g. read-only mount).
+/// (e.g. multi-user /tmp, Dropbox, NFS). On Windows, NTFS DACL default is private-to-user
+/// so explicit permission setting is unnecessary; a debug log records the skip. Failures
+/// are silent to avoid blocking the operation when the process does not own the file
+/// (e.g. read-only mount).
 #[allow(unused_variables)]
 fn apply_secure_permissions(path: &Path) {
     #[cfg(unix)]
@@ -178,6 +180,13 @@ fn apply_secure_permissions(path: &Path) {
                 }
             }
         }
+    }
+    #[cfg(windows)]
+    {
+        tracing::debug!(
+            path = %path.display(),
+            "skipping Unix mode 0o600 on Windows; NTFS DACL default is private-to-user"
+        );
     }
 }
 

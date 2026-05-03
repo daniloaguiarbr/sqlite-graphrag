@@ -70,8 +70,8 @@ pub struct IngestArgs {
     )]
     pub dir: PathBuf,
 
-    /// Memory type stored in `memories.type` for every ingested file.
-    #[arg(long, value_enum)]
+    /// Memory type stored in `memories.type` for every ingested file. Defaults to `document`.
+    #[arg(long, value_enum, default_value_t = MemoryType::Document)]
     pub r#type: MemoryType,
 
     /// Glob pattern matched against file basenames (default: `*.md`). Supports
