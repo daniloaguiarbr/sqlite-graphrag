@@ -664,10 +664,17 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
 
     let mut slots_meta: Vec<SlotMeta> = Vec::with_capacity(files.len());
     let mut process_items: Vec<ProcessItem> = Vec::new();
+    let mut truncations: Vec<(String, String)> = Vec::new();
 
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();
         let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
+
+        if name_truncated {
+            if let Some(ref orig) = original_name {
+                truncations.push((orig.clone(), derived_base.clone()));
+            }
+        }
 
         if derived_base.is_empty() {
             slots_meta.push(SlotMeta::Skip {
@@ -707,6 +714,15 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                 });
             }
         }
+    }
+
+    if !truncations.is_empty() {
+        tracing::info!(
+            target: "ingest",
+            count = truncations.len(),
+            max_len = DERIVED_NAME_MAX_LEN,
+            "derived names truncated; pass -vv (debug) for per-file detail"
+        );
     }
 
     // Determine rayon thread pool size, honoring --low-memory and the
@@ -837,9 +853,11 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     // HashMap. The bounded channel ensures Phase A cannot run too far ahead of
     // Phase B without applying backpressure.
     for (idx, stage_result) in rx {
-        let meta = meta_index
-            .get(&idx)
-            .expect("channel idx must correspond to a Process slot");
+        let meta = meta_index.get(&idx).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "channel idx {idx} has no corresponding Process slot"
+            ))
+        })?;
         let (file_str, derived_name, name_truncated, original_name) = match meta {
             SlotMeta::Process {
                 file_str,
@@ -1050,9 +1068,7 @@ fn derive_kebab_name(path: &Path) -> (String, bool, Option<String>) {
         let truncated = trimmed[..DERIVED_NAME_MAX_LEN]
             .trim_matches('-')
             .to_string();
-        // v1.0.31 A10: surface the truncation so users can fix overly long file
-        // basenames before they collide with siblings sharing the same prefix.
-        tracing::warn!(
+        tracing::debug!(
             target: "ingest",
             original = %trimmed,
             truncated_to = %truncated,

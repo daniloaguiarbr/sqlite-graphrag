@@ -10,6 +10,43 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.44] - 2026-05-13
+
+### Corrigido
+- **B1** `README.md` e `README.pt-BR.md`: comentários `#` inline removidos dos blocos de código shell usados como exemplos de parada do daemon; quebravam 2 casos do nextest.
+- **C1** `hybrid-search --with-graph` era no-op: as flags `--with-graph`, `--max-hops` e `--min-weight` eram aceitas mas nunca conectadas ao handler; `graph_matches` era hardcoded como `[]`. Agora executa graph traversal via `traverse_from_memories_with_hops`, igualando o comportamento do `recall`.
+- **C2** Docstring falsa no `link`: `after_long_help` e doc comment do `--from` alegavam que entidades eram "criadas implicitamente por chamadas anteriores de `link`" — era falso; o comando retornava exit 4 para entidades inexistentes. Documentação corrigida; flag `--create-missing` adicionada (ver Adicionado).
+- **C3** `link.schema.json` estava obsoleto: listava campos removidos `source`/`target`, enum `action` errado (`"updated"` em vez de `"already_exists"`), e `elapsed_ms` ausente do `required`. Schema reescrito.
+- **H1-old** Lista de stopwords expandida com 12 entradas adicionais que vazavam para resultados de extração de entidades.
+- **H2-old** Entrada `H5` do CHANGELOG corrigida com as 13 variantes canônicas de `EntityType`.
+- **H3-old** Subcomando `related`: fallback bidirecional agora retorna relações na direção reversa (`B→A`).
+- **H4-old** Subcomando `rename`: nome aceito como argumento posicional (`rename old new`).
+- **H1** JSON de `graph entities`: chave do array renomeada de `items` para `entities` (BREAKING). O comando se chama `graph entities` então `.entities[]` é o acessor natural. Schema atualizado.
+- **H2** Exemplo jaq no `after_long_help` do `link` corrigido: era `graph --format json | jaq '.nodes[].name'`, agora `graph entities | jaq '.entities[].name'`.
+- **M1-old** Truncamento de agregados agora emite `tracing::warn!` quando excede `MAX_ENTITIES_PER_MEMORY`.
+- **M1** `expect()` em produção no `ingest.rs` substituído por `AppError::Internal`: o panic por violação de invariante agora propaga erro adequado.
+- **M2** Profile de release endurecido: adicionado `panic = "abort"` e alterado `lto = true` para `lto = "fat"`.
+- **M3-old** Invalidação de cache do `list` corrigida para `--include-deleted`.
+- **M3** Comentário português no `Cargo.toml` traduzido para inglês (conformidade com política linguística).
+- **M6-old** Output de `list --include-deleted` agora inclui campo `deleted_at`.
+
+### Adicionado
+- **C2** Flag `link --create-missing`: cria automaticamente entidades inexistentes, tipo padrão `concept`. Flag opcional `--entity-type` especifica o tipo. Resposta inclui array `created_entities` (omitido quando vazio).
+- **M2-old** Env var `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` documentada em ambos README.
+- **M5-old** `vacuum --help` com nota sobre `reclaimed_bytes` possivelmente reportando `0`.
+
+### Removido
+- Deletados `docs/CLAUDE.md`, `docs/CLAUDE.pt-BR.md`, `docs/PRD.md`, `docs/PRD.pt-BR.md`, `docs/AGENT_PROTOCOL.md`, `docs/AGENT_PROTOCOL.pt-BR.md` e `docs/adr/0001-daemon-warmup-exception.md` (consolidados no CLAUDE.md na raiz e em docs_rules/ externo).
+
+### Breaking Changes
+- JSON de `graph entities`: chave renomeada de `items` para `entities`. Atualize queries jaq/jq: `.items[]` vira `.entities[]`.
+
+### Adiado
+- **M4** Streaming de entrada NDJSON para `ingest` — oficialmente adiado; ver seção Adiado de v1.0.43.
+
+### Notas de Auditoria
+- Release do `rusqlite` 0.39 monitorada via newreleases.io trustScore 9.1; `refinery` 0.9.1 ainda pina `rusqlite <=0.38`; upgrade adiado para v1.0.45+.
+
 ## [1.0.43] - 2026-05-03
 
 ### Corrigido
@@ -29,7 +66,7 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ### Adicionado
 - **B3** `docs/adr/0001-daemon-warmup-exception.md` — ADR formal documentando a exceção autorizada do daemon à regra no-persistent-daemon de `rules_rust_cli_stdin_stdout.md`.
-- **H5** Enum `EntityType` com 13 variantes tipadas (`Person`, `Organization`, `Location`, `Technology`, `Concept`, `Event`, `Product`, `Document`, `Service`, `Dataset`, `Metric`, `CodeIdentifier`, `Other`) implementando `ToSql`/`FromSql` para round-tripping com rusqlite.
+- **H5** Enum `EntityType` com 13 variantes tipadas (`Concept`, `Date`, `Dashboard`, `Decision`, `File`, `Incident`, `IssueTracker`, `Location`, `Memory`, `Organization`, `Person`, `Project`, `Tool`) implementando `ToSql`/`FromSql` para round-tripping com rusqlite.
 - **H8** ADR formal documentando a exceção autorizada do daemon para latência de warmup.
 - **M6** `env_remove` para `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` e variantes `DYLD_*` nos spawns de subprocessos, prevenindo vazamento de bibliotecas injetadas para processos filhos.
 - **M7** Half-jitter adicionado ao loop de busy-retry do `storage`; antes usava delay fixo de 100 ms que causava thundering-herd sob escritas concorrentes.

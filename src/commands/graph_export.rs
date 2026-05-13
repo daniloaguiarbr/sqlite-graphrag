@@ -132,7 +132,7 @@ pub struct GraphStatsArgs {
     # Paginate results (skip first 20, return next 10)\n  \
     sqlite-graphrag graph entities --offset 20 --limit 10\n\n  \
 NOTES:\n  \
-    Output is always JSON with `items`, `total_count`, `limit`, and `offset` fields.\n  \
+    Output is always JSON with `entities`, `total_count`, `limit`, and `offset` fields.\n  \
     Entity types are strings extracted by BERT NER (e.g. `person`, `organization`, `location`).")]
 pub struct GraphEntitiesArgs {
     #[arg(long)]
@@ -220,7 +220,7 @@ struct EntityItem {
 
 #[derive(Serialize)]
 struct GraphEntitiesResponse {
-    items: Vec<EntityItem>,
+    entities: Vec<EntityItem>,
     total_count: i64,
     limit: usize,
     offset: usize,
@@ -560,7 +560,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
     };
 
     output::emit_json(&GraphEntitiesResponse {
-        items,
+        entities: items,
         total_count,
         limit: args.limit,
         offset: args.offset,
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn graph_entities_response_serializes_required_fields() {
         let resp = GraphEntitiesResponse {
-            items: vec![EntityItem {
+            entities: vec![EntityItem {
                 id: 1,
                 name: "claude-code".to_string(),
                 entity_type: "agent".to_string(),
@@ -764,9 +764,9 @@ mod tests {
             elapsed_ms: 3,
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert!(json["items"].is_array());
-        assert_eq!(json["items"][0]["name"], "claude-code");
-        assert_eq!(json["items"][0]["entity_type"], "agent");
+        assert!(json["entities"].is_array());
+        assert_eq!(json["entities"][0]["name"], "claude-code");
+        assert_eq!(json["entities"][0]["entity_type"], "agent");
         assert_eq!(json["total_count"], 1);
         assert_eq!(json["limit"], 50);
         assert_eq!(json["offset"], 0);
@@ -843,5 +843,26 @@ mod tests {
         let parsed =
             Cli::try_parse_from(["sqlite-graphrag", "graph", "stats", "--format", "mermaid"]);
         assert!(parsed.is_err(), "graph stats must reject format=mermaid");
+    }
+
+    #[test]
+    fn graph_entities_response_has_no_items_key() {
+        let resp = GraphEntitiesResponse {
+            entities: vec![],
+            total_count: 0,
+            limit: 50,
+            offset: 0,
+            namespace: None,
+            elapsed_ms: 0,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json.get("items").is_none(),
+            "legacy 'items' key must not appear"
+        );
+        assert!(
+            json.get("entities").is_some(),
+            "'entities' key must be present"
+        );
     }
 }

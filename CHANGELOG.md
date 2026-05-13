@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.44] - 2026-05-13
+
+### Fixed
+- **B1** `README.md` and `README.pt-BR.md`: removed inline `#` comments from shell code blocks used as daemon-stop examples; these caused `# comment` to be parsed as a command argument in `tests/readme_examples_executable.rs:130-131`, breaking 2 nextest cases.
+- **C1** `hybrid-search --with-graph` was a no-op: the flags `--with-graph`, `--max-hops`, and `--min-weight` were accepted but never wired into the handler; `graph_matches` was hardcoded to `[]`. Now performs graph traversal using `traverse_from_memories_with_hops`, matching the `recall` command behaviour.
+- **C2** `link` command false documentation: `after_long_help` and `--from` doc comment claimed entities were "created implicitly by prior `link` calls" — this was false; the command returned exit 4 for missing entities. Documentation corrected; `--create-missing` flag added (see Added).
+- **C3** `link.schema.json` was stale: listed removed `source`/`target` fields, wrong `action` enum (`"updated"` instead of `"already_exists"`), and `elapsed_ms` missing from `required`. Schema rewritten to match the actual Rust struct.
+- **H1-old** Stopword list expanded with 12 additional entries (`OBSERVEI`, `PREFERIR`, `REMOVIDAS`, `EOF`, `GNU`, `MCP`, `TUI`, `NDJSON`, `PID`, `PGID`, and 2 others) that leaked into entity extraction results; previous list covered only the most common Portuguese stop tokens.
+- **H2-old** CHANGELOG `H5` entry corrected: wrong variant list (`Person, Organization, Location, Technology, …`) replaced with the 13 canonical `EntityType` variants as declared in `src/entity_type.rs:19-33`.
+- **H3-old** `related` subcommand: bidirectional fallback now surfaces reverse-direction relations (`B→A`) when no `A→B` edge exists, preventing silent empty results on asymmetric graphs.
+- **H4-old** `rename` subcommand: memory name now accepted as a positional argument (`rename old-name new-name`) in addition to the existing `--name`/`--new-name` flags; mirrors UX of `forget`/`restore`.
+- **H1** `graph entities` JSON response: renamed top-level array key from `items` to `entities` (BREAKING). The command is called `graph entities` so `.entities[]` is the natural jaq accessor. Schema updated accordingly.
+- **H2** `link` `after_long_help` jaq example corrected: was `graph --format json | jaq '.nodes[].name'` (snapshot format), now `graph entities | jaq '.entities[].name'` (dedicated subcommand).
+- **M1-old** Aggregate truncation now emits `tracing::warn!` when the entity or relationship list exceeds `MAX_ENTITIES_PER_MEMORY`, making silent data loss visible in debug logs.
+- **M1** `ingest.rs` production `expect()` replaced with `AppError::Internal`: the panic-on-invariant-violation at line 858 now propagates a proper error instead of crashing.
+- **M2** Release profile hardened: added `panic = "abort"` and changed `lto = true` to `lto = "fat"` in `[profile.release]`.
+- **M3-old** `list` cache invalidation: `--include-deleted` flag now correctly busts the page cache when toggled mid-session.
+- **M3** Portuguese comment in `Cargo.toml` translated to English (language policy compliance).
+- **M6-old** `list --include-deleted` output now includes `deleted_at` field in JSON schema and struct.
+
+### Added
+- **C2** `link --create-missing` flag: auto-creates entities that do not exist, defaulting to type `concept`. Optional `--entity-type` flag specifies the type for created entities. Response includes `created_entities` array (omitted when empty).
+- **M2-old** `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` env var documented in both README EN and PT-BR.
+- **M5-old** `vacuum --help` now shows a `NOTE` section explaining that `reclaimed_bytes` may report `0`.
+
+### Removed
+- Deleted `docs/CLAUDE.md`, `docs/CLAUDE.pt-BR.md`, `docs/PRD.md`, `docs/PRD.pt-BR.md`, `docs/AGENT_PROTOCOL.md`, `docs/AGENT_PROTOCOL.pt-BR.md`, and `docs/adr/0001-daemon-warmup-exception.md` (consolidated into CLAUDE.md at project root and external docs_rules/).
+
+### Breaking Changes
+- `graph entities` JSON: top-level key renamed from `items` to `entities`. Update jaq/jq queries accordingly: `.items[]` becomes `.entities[]`.
+
+### Deferred
+- **M4** NDJSON streaming input for `ingest` — officially deferred; see v1.0.43 Deferred section for context.
+
+### Audit Notes
+- `rusqlite` 0.39 release tracked via newreleases.io trustScore 9.1; `refinery` 0.9.1 still pins `rusqlite <=0.38`; upgrade deferred to v1.0.45+.
+
 ## [1.0.43] - 2026-05-03
 
 ### Fixed
@@ -26,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **B3** `docs/adr/0001-daemon-warmup-exception.md` — formal ADR documenting the authorized daemon exception to the `rules_rust_cli_stdin_stdout.md` no-persistent-daemon rule.
-- **H5** `EntityType` enum with 13 typed variants (`Person`, `Organization`, `Location`, `Technology`, `Concept`, `Event`, `Product`, `Document`, `Service`, `Dataset`, `Metric`, `CodeIdentifier`, `Other`) implementing `ToSql`/`FromSql` for rusqlite round-tripping.
+- **H5** `EntityType` enum with 13 typed variants (`Concept`, `Date`, `Dashboard`, `Decision`, `File`, `Incident`, `IssueTracker`, `Location`, `Memory`, `Organization`, `Person`, `Project`, `Tool`) implementing `ToSql`/`FromSql` for rusqlite round-tripping.
 - **H8** Formal ADR documenting the authorized daemon exception for warmup latency.
 - **M6** `env_remove` for `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, and `DYLD_*` variants in subprocess spawns, preventing injected libraries from leaking into child processes.
 - **M7** Half-jitter added to `storage` busy-retry loop; previously used fixed 100 ms delay which caused thundering-herd under concurrent writes.

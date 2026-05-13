@@ -142,6 +142,17 @@ pub mod errors_msg {
         }
     }
 
+    pub fn memory_or_entity_not_found(name: &str, namespace: &str) -> String {
+        match current() {
+            Language::English => {
+                format!("memory or entity '{name}' not found in namespace '{namespace}'")
+            }
+            Language::Portuguese => {
+                format!("memória ou entidade '{name}' não encontrada no namespace '{namespace}'")
+            }
+        }
+    }
+
     pub fn database_not_found(path: &str) -> String {
         match current() {
             Language::English => {

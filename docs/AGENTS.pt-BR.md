@@ -559,6 +559,8 @@ let output = Command::new("sqlite-graphrag")
 - Payloads de arquivo PODEM usar nomes canônicos persistidos com underscore como `applies_to`, `depends_on` e `tracked_in`; aliases com hífen são normalizados antes da gravação
 - Flags CLI de `link` e `unlink` usam rótulos com hífen como `applies-to`, `depends-on` e `tracked-in`
 - `--graph-stdin` aceita um único objeto com `body` opcional e os mesmos arrays `entities` e `relationships`
+- `link --create-missing` cria automaticamente entidades inexistentes durante a linkagem, com tipo padrão `concept`; use `--entity-type` para sobrescrever (adicionado em v1.0.44)
+- `hybrid-search --with-graph` habilita graph traversal a partir dos top resultados RRF; matches do grafo aparecem no array `graph_matches` junto ao array `results` (corrigido em v1.0.44 — era um no-op antes)
 
 
 ## Schemas Legíveis por Máquina

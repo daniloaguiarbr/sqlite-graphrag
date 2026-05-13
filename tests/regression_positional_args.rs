@@ -193,8 +193,9 @@ fn regression_rename_args_accepts_name_positional() {
         );
         assert!(args.name.is_none());
         assert_eq!(
-            args.new_name, "nome-novo",
-            "RenameArgs.new_name deve permanecer como flag obrigatória"
+            args.new_name.as_deref(),
+            Some("nome-novo"),
+            "RenameArgs.new_name deve capturar --new-name como Option"
         );
     } else {
         panic!("esperava comando Rename");

@@ -4,9 +4,9 @@
   "title": "GraphEntitiesResponse",
   "description": "Response emitted by `sqlite-graphrag graph entities`. Lists entities stored in the graph with optional filters by namespace and entity_type. Supports pagination via --limit and --offset. The --json flag is a no-op kept for backward compatibility; JSON is always emitted on stdout.",
   "type": "object",
-  "required": ["items", "total_count", "limit", "offset", "elapsed_ms"],
+  "required": ["entities", "total_count", "limit", "offset", "elapsed_ms"],
   "properties": {
-    "items": {
+    "entities": {
       "type": "array",
       "description": "Page of entity records matching the applied filters.",
       "items": {

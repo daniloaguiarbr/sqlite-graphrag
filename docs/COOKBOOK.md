@@ -157,6 +157,45 @@ sqlite-graphrag related authentication-flow --hops 2 --json
 - Recipe "How to orchestrate parallel recall across namespaces"
 
 
+## How To Chain Three-Layer Deep Retrieval
+### Problem
+- Your agent sends one recall query and misses both the full body and the transitive graph neighbors
+- Dumping all memories as markdown burns 72x more context tokens than a focused retrieval chain
+
+
+### Solution
+```bash
+# Layer 1: hybrid-search finds seed memories via FTS5 + vector RRF
+SEED=$(sqlite-graphrag hybrid-search "authentication architecture" --k 3 --json \
+  | jaq -r '.results[0].name')
+
+# Layer 2: read expands the full body of the top seed
+sqlite-graphrag read "$SEED" --json | jaq -r '.body'
+
+# Layer 3: related discovers transitive knowledge via the entity graph
+sqlite-graphrag related "$SEED" --hops 2 --json \
+  | jaq -r '.results[].name'
+```
+
+
+### Explanation
+- Layer 1 (hybrid-search) finds the best-matching memories using combined text and vector ranking
+- Layer 2 (read) retrieves the complete body of the top match (hybrid-search returns truncated snippets)
+- Layer 3 (related) traverses the entity graph to discover connected memories invisible to vector search
+- This pattern reduces context tokens by up to 72x versus dumping all memories as markdown
+- Chain into an LLM prompt by collecting Layer 2 body plus Layer 3 names for a focused context window
+
+
+### Variants
+- Replace `--k 3` with `--k 1` when your queries are highly specific and you trust the top hit
+- Increase `--hops` to 3 when your entity graph has sparse connectivity between topics
+
+
+### See Also
+- Recipe "How to combine vector and FTS search with tunable weights"
+- Recipe "How to traverse entity graph for multi-hop recall"
+
+
 ## How To Integrate sqlite-graphrag With Claude Code Subprocess Loop
 ### Problem
 - Claude Code restarts every session and forgets the decisions made five minutes ago

@@ -2,9 +2,11 @@
 
 use crate::cli::MemoryType;
 use crate::errors::AppError;
+use crate::graph::traverse_from_memories_with_hops;
 use crate::output::{self, JsonOutputFormat, RecallItem};
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
+use crate::storage::entities;
 use crate::storage::memories;
 
 use std::collections::HashMap;
@@ -16,6 +18,19 @@ use std::collections::HashMap;
 /// is provided. Pass an explicit `--namespace` value to search a different
 /// isolated namespace.
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Basic hybrid search combining FTS5 + vector via RRF\n  \
+    sqlite-graphrag hybrid-search \"postgres migration deadlock\" --k 10\n\n  \
+    # Tune RRF weights to favor keyword matches over semantic similarity\n  \
+    sqlite-graphrag hybrid-search \"jwt auth\" --weight-fts 1.5 --weight-vec 0.5 --k 5\n\n  \
+    # Add graph traversal matches (entities connected to top results)\n  \
+    sqlite-graphrag hybrid-search \"frontend architecture\" --with-graph --k 10\n\n  \
+    # Graph traversal with custom depth and minimum edge weight\n  \
+    sqlite-graphrag hybrid-search \"auth design\" --with-graph --max-hops 3 --min-weight 0.5 --k 10\n\n  \
+NOTES:\n  \
+    --with-graph enables entity graph traversal seeded by the top RRF results.\n  \
+    Graph matches appear in the `graph_matches` array (separate from `results`).\n  \
+    Without --with-graph, `graph_matches` is always empty.")]
 pub struct HybridSearchArgs {
     #[arg(help = "Hybrid search query (vector KNN + FTS5 BM25 fused via RRF)")]
     pub query: String,
@@ -198,6 +213,57 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         })
         .collect();
 
+    // --- Graph traversal (activated by --with-graph) ---
+    let mut graph_matches: Vec<RecallItem> = Vec::new();
+    if args.with_graph && !results.is_empty() {
+        let namespace_for_graph = namespace.clone();
+        let memory_ids: Vec<i64> = results.iter().map(|r| r.memory_id).collect();
+
+        let entity_knn = entities::knn_search(&conn, &embedding, &namespace_for_graph, 5)?;
+        let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
+
+        let all_seed_ids: Vec<i64> = memory_ids
+            .iter()
+            .chain(entity_ids.iter())
+            .copied()
+            .collect();
+
+        if !all_seed_ids.is_empty() {
+            let graph_memory_ids = traverse_from_memories_with_hops(
+                &conn,
+                &all_seed_ids,
+                &namespace_for_graph,
+                args.min_weight,
+                args.max_hops,
+            )?;
+
+            let already_in_results: std::collections::HashSet<i64> =
+                results.iter().map(|r| r.memory_id).collect();
+
+            for (graph_mem_id, hop) in graph_memory_ids {
+                if already_in_results.contains(&graph_mem_id) {
+                    continue;
+                }
+                if let Some(row) = memories::read_full(&conn, graph_mem_id)? {
+                    let snippet: String = row.body.chars().take(300).collect();
+                    let graph_distance = 1.0 - 1.0 / (hop as f32 + 1.0);
+                    graph_matches.push(RecallItem {
+                        memory_id: row.id,
+                        name: row.name,
+                        namespace: row.namespace,
+                        memory_type: row.memory_type,
+                        description: row.description,
+                        snippet,
+                        distance: graph_distance,
+                        score: RecallItem::score_from_distance(graph_distance),
+                        source: "graph".to_string(),
+                        graph_depth: Some(hop),
+                    });
+                }
+            }
+        }
+    }
+
     output::emit_json(&HybridSearchResponse {
         query: args.query,
         k: args.k,
@@ -207,7 +273,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
             fts: args.weight_fts,
         },
         results,
-        graph_matches: vec![],
+        graph_matches,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
@@ -375,5 +441,34 @@ mod tests {
         let resp = empty_response(5, 60, 1.0, 1.0);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"k\":5"), "deve serializar k=5");
+    }
+
+    #[test]
+    fn hybrid_search_response_with_graph_matches() {
+        use crate::output::RecallItem;
+        let resp = HybridSearchResponse {
+            query: "test".to_string(),
+            k: 5,
+            rrf_k: 60,
+            weights: Weights { vec: 1.0, fts: 1.0 },
+            results: vec![],
+            graph_matches: vec![RecallItem {
+                memory_id: 1,
+                name: "graph-hit".to_string(),
+                namespace: "global".to_string(),
+                memory_type: "document".to_string(),
+                description: "found via graph".to_string(),
+                snippet: "graph content".to_string(),
+                distance: 0.1,
+                score: 0.9,
+                source: "graph".to_string(),
+                graph_depth: Some(1),
+            }],
+            elapsed_ms: 42,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["graph_matches"].as_array().unwrap().len(), 1);
+        assert_eq!(json["graph_matches"][0]["source"], "graph");
+        assert_eq!(json["graph_matches"][0]["graph_depth"], 1);
     }
 }

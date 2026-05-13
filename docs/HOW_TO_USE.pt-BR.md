@@ -65,6 +65,9 @@ sqlite-graphrag purge --retention-days 90 --yes
 - `remember` armazena conteúdo e gera embeddings atomicamente; nós e arestas do grafo são persistidos quando fornecidos explicitamente
 - `recall` executa KNN vetorial sobre `vec_memories` e expande matches de grafo por padrão, exceto com `--no-graph`
 - `hybrid-search` funde FTS5 textual e KNN vetorial via Reciprocal Rank Fusion
+- `--with-graph` enriquece resultados com matches de travessia de grafo semeados pelos top hits RRF
+- `--max-hops` (padrão 2) e `--min-weight` (padrão 0.3) ajustam a expansão do grafo
+- Matches de grafo aparecem no array `graph_matches`, separados de `results`
 - `read` recupera memória pelo nome kebab-case exato em uma única query SQL
 - `forget` faz remoção lógica preservando integralmente o histórico de versões
 - `purge` apaga permanentemente memórias removidas há mais de N dias de retenção
@@ -366,12 +369,12 @@ sqlite-graphrag graph entities --entity-type concept --limit 20
 sqlite-graphrag graph entities --entity-type person --namespace meu-projeto --json
 sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```
-- Pré-requisitos: ao menos uma entidade deve existir — criada via `remember` ou `link` explícito
+- Pré-requisitos: ao menos uma entidade deve existir — criada via `remember`, `link` explícito ou `link --create-missing`
 - `--entity-type <TIPO>` filtra resultados por um único tipo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--limit <N>` limita a contagem de resultados (padrão: 50); `--offset <N>` habilita paginação por cursor
-- Schema de saída: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
+- Schema de saída: `{"entities": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
 - Cada item contém `id`, `name`, `entity_type`, `namespace` e `created_at`
-- Exit code 0: lista retornada (array `items` vazio quando nenhuma entidade corresponde ao filtro)
+- Exit code 0: lista retornada (array `entities` vazio quando nenhuma entidade corresponde ao filtro)
 - Exit code 4: namespace não encontrado
 
 ### Usando health

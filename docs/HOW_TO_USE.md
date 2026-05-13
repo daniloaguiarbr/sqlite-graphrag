@@ -66,6 +66,9 @@ sqlite-graphrag purge --retention-days 90 --yes
 - Add `--skip-extraction` to remember without entity/relationship extraction (faster, no graph nodes added)
 - `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
 - `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
+- `--with-graph` augments results with graph traversal matches seeded from top RRF hits
+- `--max-hops` (default 2) and `--min-weight` (default 0.3) tune the graph expansion
+- Graph matches appear in the `graph_matches` array, separate from `results`
 - `read` fetches a memory by its exact kebab-case name in a single SQL query
 - `forget` performs a soft delete preserving the full version history
 - `purge` permanently removes memories soft-deleted more than the retention threshold
@@ -363,12 +366,12 @@ sqlite-graphrag graph entities --entity-type concept --limit 20
 sqlite-graphrag graph entities --entity-type person --namespace my-project --json
 sqlite-graphrag graph entities --limit 50 --offset 100 --json
 ```
-- Prerequisites: at least one entity must exist — created via `remember` or explicit `link`
+- Prerequisites: at least one entity must exist — created via `remember`, explicit `link`, or `link --create-missing`
 - `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--limit <N>` caps the result count (default: 50); `--offset <N>` enables cursor-style pagination
-- Output schema: `{"items": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
+- Output schema: `{"entities": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
 - Each item carries `id`, `name`, `entity_type`, `namespace`, and `created_at`
-- Exit code 0: list returned (empty `items` array when no entities match the filter)
+- Exit code 0: list returned (empty `entities` array when no entities match the filter)
 - Exit code 4: namespace not found
 
 ### Using health

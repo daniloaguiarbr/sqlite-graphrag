@@ -266,10 +266,11 @@ export SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1
 
 A flag `--autostart-daemon` tem precedência sobre a variável de ambiente.
 
-**Controle explícito do ciclo de vida**:
+**Controle explícito do ciclo de vida** (foreground, timeout padrão de 600s):
 
+<!-- skip-test: `daemon` roda em foreground e bloqueia; `--ping`/`--stop` requerem daemon em execução. -->
 ```bash
-sqlite-graphrag daemon                   # foreground, timeout padrão de 600s
+sqlite-graphrag daemon
 sqlite-graphrag daemon --idle-shutdown-secs 3600
 sqlite-graphrag daemon --ping            # verificação de saúde
 sqlite-graphrag daemon --stop            # desligamento gracioso
@@ -401,12 +402,16 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Recuperação e grafo
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `hybrid-search` | `<query>`, `--k`, `--rrf-k` | FTS5 combinado com vetor via Reciprocal Rank Fusion |
+| `hybrid-search` | `<query>`, `--k`, `--rrf-k`, `--with-graph`, `--max-hops`, `--min-weight` | FTS5 combinado com vetor via Reciprocal Rank Fusion; `--with-graph` adiciona matches por graph traversal |
 | `namespace-detect` | `--namespace <nome>` | Resolve precedência de namespace para invocação |
-| `link` | `--from`, `--to`, `--relation`, `--weight` | Cria relacionamento explícito entre duas entidades |
+| `link` | `--from`, `--to`, `--relation`, `--weight`, `--create-missing`, `--entity-type` | Cria relacionamento explícito entre duas entidades; `--create-missing` cria automaticamente entidades inexistentes (tipo padrão: `concept`) |
 | `unlink` | `--from`, `--to`, `--relation` | Remove um relacionamento específico entre duas entidades |
 | `related` | `--name`, `--limit`, `--hops` | Percorre memórias conectadas pelo grafo a partir de uma memória base |
 | `graph` | `--format`, `--output` | Exporta snapshot do grafo em `json`, `dot` ou `mermaid` |
+
+> **Breaking change em v1.0.44.** O JSON de `graph entities` renomeou o array de nível superior
+> de `items` para `entities`. Atualize filtros jaq/jq: `.items[]` vira `.entities[]`.
+> O comando `list` continua usando `items`.
 
 ### Subcomandos do graph
 | Subcomando | Descrição | Flags principais |
@@ -443,7 +448,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Desabilita completamente o autostart do daemon (útil em testes/CI) | indefinido | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | Flag INTERNA setada automaticamente ao spawnar o filho do daemon; não setar manualmente | indefinido | `1` |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Budget de tokens para extração de entidades/relações por memória; valores fora de [512, 100.000] utilizam o padrão | `5000` | `8000` |
-| `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão | `50` | `100` |
+| `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão. Nota: o pipeline de extração limita internamente os candidatos a 30 antes da deduplicação, portanto o cap de persistência (padrão 50) funciona como teto de segurança e só é atingido se o extrator for estendido ou substituído. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
 | `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 

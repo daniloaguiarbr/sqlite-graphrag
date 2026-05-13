@@ -563,6 +563,8 @@ let output = Command::new("sqlite-graphrag")
 - File payloads MAY use canonical stored relation names with underscores such as `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - CLI flags for `link` and `unlink` use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 - `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
+- `link --create-missing` auto-creates entities that do not exist during linking, defaulting to type `concept`; use `--entity-type` to override (added in v1.0.44)
+- `hybrid-search --with-graph` enables graph traversal seeded from top RRF results; graph matches appear in the `graph_matches` array alongside the `results` array (fixed in v1.0.44 — was previously a no-op)
 
 
 ## Machine-Readable Schemas

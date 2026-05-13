@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.43"
+version = "1.0.44"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -130,13 +130,14 @@ jsonschema = "0.29"
 loom = "0.7"
 
 [profile.release]
-lto = true
+lto = "fat"
 codegen-units = 1
 strip = true
 opt-level = 3
+panic = "abort"
 
 [features]
-# Opt-in para testes pesados futuros (stress/property exaustivo).
+# Opt-in for future heavy tests (stress/exhaustive property tests).
 slow-tests = []
 
 [profile.dev]

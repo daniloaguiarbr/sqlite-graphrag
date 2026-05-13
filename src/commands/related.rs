@@ -13,6 +13,12 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+/// Identifies whether the seed resolved to a memory or a bare entity.
+enum SeedKind {
+    Memory(i64),
+    Entity(i64),
+}
+
 /// Tuple returned by the adjacency fetch: (neighbour_entity_id, source_name,
 /// target_name, relation, weight).
 type Neighbour = (i64, String, String, String, f64);
@@ -105,36 +111,48 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
 
     let conn = open_ro(&paths.db)?;
 
-    // Locate the seed memory.
-    let seed_id: i64 = match conn.query_row(
-        "SELECT id FROM memories
-         WHERE namespace = ?1 AND name = ?2 AND deleted_at IS NULL",
+    // Locate the seed: try memory first, fall back to bare entity.
+    let seed = match conn.query_row(
+        "SELECT id FROM memories WHERE namespace = ?1 AND name = ?2 AND deleted_at IS NULL",
         params![namespace, name],
-        |r| r.get(0),
+        |r| r.get::<_, i64>(0),
     ) {
-        Ok(id) => id,
+        Ok(id) => SeedKind::Memory(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            return Err(AppError::NotFound(errors_msg::memory_not_found(
-                &name, &namespace,
-            )));
+            match crate::storage::entities::find_entity_id(&conn, &namespace, &name)? {
+                Some(id) => SeedKind::Entity(id),
+                None => {
+                    return Err(AppError::NotFound(errors_msg::memory_or_entity_not_found(
+                        &name, &namespace,
+                    )))
+                }
+            }
         }
         Err(e) => return Err(AppError::Database(e)),
     };
 
-    // Collect seed entity IDs from seed memory.
-    let seed_entity_ids: Vec<i64> = {
-        let mut stmt =
-            conn.prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
-        let rows: Vec<i64> = stmt
-            .query_map(params![seed_id], |r| r.get(0))?
-            .collect::<Result<Vec<i64>, _>>()?;
-        rows
+    // Collect seed entity IDs depending on seed kind.
+    let (seed_memory_id, seed_entity_ids): (i64, Vec<i64>) = match &seed {
+        SeedKind::Memory(id) => {
+            let mem_id = *id;
+            let mut stmt =
+                conn.prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
+            let rows: Vec<i64> = stmt
+                .query_map(params![mem_id], |r| r.get(0))?
+                .collect::<Result<Vec<i64>, _>>()?;
+            (mem_id, rows)
+        }
+        SeedKind::Entity(entity_id) => {
+            // For a bare entity seed there is no corresponding memory to skip.
+            // Use a sentinel -1 so dedup never matches a real memory_id.
+            (-1, vec![*entity_id])
+        }
     };
 
     let relation_filter = args.relation.map(|r| r.as_str().to_string());
     let results = traverse_related(
         &conn,
-        seed_id,
+        seed_memory_id,
         &seed_entity_ids,
         &namespace,
         args.max_hops,

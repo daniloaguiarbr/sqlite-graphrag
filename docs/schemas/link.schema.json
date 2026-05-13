@@ -2,19 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/link.schema.json",
   "title": "LinkResponse",
-  "description": "Response emitted by `sqlite-graphrag link` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag link` on stdout as JSON.",
   "type": "object",
-  "required": ["action", "from", "source", "to", "target", "relation", "weight", "namespace"],
+  "required": ["action", "from", "to", "relation", "weight", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "action":     { "type": "string", "enum": ["created", "updated"] },
+    "action":     { "type": "string", "enum": ["created", "already_exists"] },
     "from":       { "type": "string", "description": "Source entity name." },
-    "source":     { "type": "string", "description": "Alias of from." },
     "to":         { "type": "string", "description": "Target entity name." },
-    "target":     { "type": "string", "description": "Alias of to." },
     "relation":   { "type": "string" },
     "weight":     { "type": "number", "minimum": 0.0, "maximum": 1.0 },
     "namespace":  { "type": "string" },
-    "elapsed_ms": { "type": "integer", "minimum": 0 }
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "created_entities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Entity names auto-created by --create-missing. Omitted when empty."
+    }
   }
 }

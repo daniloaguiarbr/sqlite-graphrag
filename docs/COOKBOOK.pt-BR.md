@@ -155,6 +155,45 @@ sqlite-graphrag related authentication-flow --hops 2 --json
 - Receita "Como Orquestrar Recall Paralelo Entre Namespaces"
 
 
+## Como Encadear Recuperação Profunda Em 3 Camadas
+### Problema
+- Seu agente dispara um único recall e perde tanto o body completo quanto os vizinhos transitivos do grafo
+- Despejar todas as memórias em markdown queima 72x mais tokens de contexto do que uma cadeia de recuperação focada
+
+
+### Solução
+```bash
+# Camada 1: hybrid-search encontra memórias seed via FTS5 + vetor RRF
+SEED=$(sqlite-graphrag hybrid-search "arquitetura de autenticação" --k 3 --json \
+  | jaq -r '.results[0].name')
+
+# Camada 2: read expande o corpo completo do top seed
+sqlite-graphrag read "$SEED" --json | jaq -r '.body'
+
+# Camada 3: related descobre conhecimento transitivo via o grafo de entidades
+sqlite-graphrag related "$SEED" --hops 2 --json \
+  | jaq -r '.results[].name'
+```
+
+
+### Explicação
+- Camada 1 (hybrid-search) encontra as memórias mais relevantes usando ranking combinado de texto e vetor
+- Camada 2 (read) recupera o corpo completo do melhor resultado (hybrid-search retorna snippets truncados)
+- Camada 3 (related) percorre o grafo de entidades para descobrir memórias conectadas invisíveis à busca vetorial
+- Este padrão reduz tokens de contexto em até 72x versus dump de todas memórias em markdown
+- Encadeie no prompt do LLM coletando o body da Camada 2 mais os nomes da Camada 3 para uma janela de contexto focada
+
+
+### Variantes
+- Troque `--k 3` por `--k 1` quando suas queries forem altamente específicas e você confiar no top hit
+- Aumente `--hops` para 3 quando o grafo de entidades tiver conectividade esparsa entre tópicos
+
+
+### Veja Também
+- Receita "Como Combinar Busca Vetorial E FTS Com Pesos Ajustáveis"
+- Receita "Como Percorrer O Grafo De Entidades Para Recall Multi-Hop"
+
+
 ## Como Integrar sqlite-graphrag Com Loop Subprocess Do Claude Code
 ### Problem
 - Claude Code reinicia a cada sessão e esquece decisões feitas cinco minutos atrás

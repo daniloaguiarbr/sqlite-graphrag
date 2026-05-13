@@ -11,12 +11,14 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
-    # Rename a memory using the positional form\n  \
+    # Rename using two positional arguments (NAME NEW)\n  \
+    sqlite-graphrag rename onboarding welcome-guide\n\n  \
+    # Rename using the positional NAME + --new-name flag\n  \
     sqlite-graphrag rename onboarding --new-name welcome-guide\n\n  \
     # Rename using the named flag form\n  \
     sqlite-graphrag rename --name onboarding --new-name welcome-guide\n\n  \
     # Rename within a specific namespace\n  \
-    sqlite-graphrag rename onboarding --new-name welcome-guide --namespace my-project")]
+    sqlite-graphrag rename onboarding welcome-guide --namespace my-project")]
 pub struct RenameArgs {
     /// Current memory name as a positional argument. Alternative to `--name` / `--old`.
     #[arg(
@@ -28,9 +30,16 @@ pub struct RenameArgs {
     /// Current memory name. Also accepts the aliases `--old` and `--from` (since v1.0.35).
     #[arg(long, alias = "old", alias = "from")]
     pub name: Option<String>,
+    /// New memory name as a positional argument. Alternative to `--new-name`.
+    #[arg(
+        value_name = "NEW",
+        conflicts_with = "new_name",
+        help = "New memory name; alternative to --new-name/--new/--to"
+    )]
+    pub new_name_positional: Option<String>,
     /// New memory name. Also accepts the aliases `--new` and `--to` (since v1.0.35).
     #[arg(long, alias = "new", alias = "to")]
-    pub new_name: String,
+    pub new_name: Option<String>,
     #[arg(long, default_value = "global")]
     pub namespace: Option<String>,
     /// Optimistic locking: reject if the current updated_at does not match (exit 3).
@@ -75,13 +84,19 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
+    let raw_new_name = args.new_name.or(args.new_name_positional).ok_or_else(|| {
+        AppError::Validation(
+            "new name required: pass as positional <NEW> or via --new-name/--new/--to".to_string(),
+        )
+    })?;
+
     // v1.0.20: trim_matches('-') also removes trailing/leading hyphens.
     let normalized_new_name = {
-        let lower = args.new_name.to_lowercase().replace(['_', ' '], "-");
+        let lower = raw_new_name.to_lowercase().replace(['_', ' '], "-");
         let trimmed = lower.trim_matches('-').to_string();
-        if trimmed != args.new_name {
+        if trimmed != raw_new_name {
             tracing::warn!(
-                original = %args.new_name,
+                original = %raw_new_name,
                 normalized = %trimmed,
                 "new_name auto-normalized to kebab-case"
             );
