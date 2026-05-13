@@ -171,8 +171,8 @@ sqlite-graphrag init --namespace project-foo
 ```
 - Without `--db` or `SQLITE_GRAPHRAG_DB_PATH`, every CRUD command in that directory uses `./graphrag.sqlite`
 ### Remember a memory with an optional explicit entity graph
-- By default, `remember` automatically extracts entities and relationships from the body via local BERT NER and stores them in the entity graph
-- Pass `--skip-extraction` to disable extraction for that single call
+- By default, `remember` does NOT run automatic entity extraction (BERT NER is disabled by default)
+- Pass `--enable-ner` to activate BERT NER extraction for that call, or set `SQLITE_GRAPHRAG_ENABLE_NER=1`
 ```bash
 sqlite-graphrag remember \
   --name integration-tests-postgres \
@@ -197,16 +197,16 @@ sqlite-graphrag remember \
   "relationships_truncated": false
 }
 ```
-### Skip BERT NER auto-extraction for faster ingestion
-- `--skip-extraction` disables `extract_graph_auto` for the current call only
-- Use it when the body is short, when you supply `--entities-file` upstream, or when CI memory is tight
-- The `extraction_method` field is omitted from the JSON response when active
+### Enable BERT NER auto-extraction for entity enrichment
+- BERT NER is disabled by default; pass `--enable-ner` to activate automatic entity/relationship extraction
+- Use it when you want automatic graph enrichment and accept the ~150 ms/file overhead
+- The `extraction_method` field is populated in the JSON response when NER runs
 ```bash
 sqlite-graphrag remember \
   --name release-notes-v1 \
   --type document \
   --description "release notes for v1.0.0" \
-  --skip-extraction \
+  --enable-ner \
   --body-stdin < notes.md
 ```
 ### Read, forget, edit and rename using positional name argument
@@ -385,7 +385,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--skip-extraction` | Save a memory with optional entity graph |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner` | Save a memory with optional entity graph |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit`), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Search memories semantically via KNN + graph traversal |
 | `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at` |
@@ -394,7 +394,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--skip-extraction`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
 | `cache clear-models` | `--yes` | Remove cached embedding/NER models from the XDG cache directory |
 
 > **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
@@ -448,6 +448,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Force daemon autostart even when guards would skip it | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Disable daemon autostart entirely (useful in tests/CI) | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | INTERNAL flag set automatically when spawning the daemon child; do not set manually | unset | `1` |
+| `SQLITE_GRAPHRAG_ENABLE_NER` | Enable BERT NER auto-extraction globally (equivalent to `--enable-ner` on every call) | unset (NER off) | `1` |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Token budget for entity/relationship extraction per memory; values outside [512, 100 000] fall back to default | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Maximum distinct entities persisted per memory; values outside [1, 1 000] fall back to default. Note: the extraction pipeline internally caps candidates at 30 before deduplication, so the persistence cap (default 50) acts as a safety ceiling and is only reached when the extractor is extended or replaced. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Maximum distinct relationships persisted per memory; values outside [1, 10 000] fall back to default | `50` | `200` |

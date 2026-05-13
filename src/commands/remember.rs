@@ -107,8 +107,11 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     pub expected_updated_at: Option<i64>,
     #[arg(
         long,
-        help = "Disable automatic entity/relationship extraction from body"
+        env = "SQLITE_GRAPHRAG_ENABLE_NER",
+        help = "Enable automatic BERT NER entity/relationship extraction from body"
     )]
+    pub enable_ner: bool,
+    #[arg(long, hide = true)]
     pub skip_extraction: bool,
     /// Optional opaque session identifier for tracing memory provenance across multi-agent runs.
     #[arg(long)]
@@ -304,7 +307,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut extraction_method: Option<String> = None;
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
     let mut relationships_truncated = false;
-    if !args.skip_extraction
+    if args.enable_ner
         && !entities_provided_externally
         && graph.entities.is_empty()
         && !raw_body.trim().is_empty()

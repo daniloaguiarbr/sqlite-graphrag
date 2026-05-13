@@ -63,7 +63,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
 - `remember` stores content and generates embeddings atomically; graph nodes and edges are persisted when supplied explicitly
-- Add `--skip-extraction` to remember without entity/relationship extraction (faster, no graph nodes added)
+- BERT NER is disabled by default; add `--enable-ner` to activate automatic entity/relationship extraction
 - `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
 - `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
 - `--with-graph` augments results with graph traversal matches seeded from top RRF hits

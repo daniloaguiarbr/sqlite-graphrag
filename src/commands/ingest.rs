@@ -63,8 +63,8 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./docs --type document\n\n  \
     # Ingest .txt files recursively under ./notes\n  \
     sqlite-graphrag ingest ./notes --type note --pattern '*.txt' --recursive\n\n  \
-    # Skip BERT NER auto-extraction for faster bulk import\n  \
-    sqlite-graphrag ingest ./big-corpus --type reference --skip-extraction\n\n  \
+    # Enable BERT NER extraction (disabled by default, slower)\n  \
+    sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
 NOTES:\n  \
     Each file becomes a separate memory. Names derive from file basenames\n  \
     (kebab-case, lowercase, ASCII). Output is NDJSON: one JSON object per file,\n  \
@@ -91,8 +91,12 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = false)]
     pub recursive: bool,
 
-    /// Disable automatic BERT NER entity/relationship extraction (faster bulk import).
-    #[arg(long, default_value_t = false)]
+    /// Enable automatic BERT NER entity/relationship extraction (disabled by default).
+    #[arg(long, env = "SQLITE_GRAPHRAG_ENABLE_NER", default_value_t = false)]
+    pub enable_ner: bool,
+
+    /// Deprecated: NER is now disabled by default. Kept for backwards compatibility.
+    #[arg(long, default_value_t = false, hide = true)]
     pub skip_extraction: bool,
 
     /// Stop on first per-file error instead of continuing with the next file.
@@ -289,7 +293,7 @@ fn stage_file(
     path: &Path,
     name: &str,
     paths: &AppPaths,
-    skip_extraction: bool,
+    enable_ner: bool,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -333,7 +337,7 @@ fn stage_file(
     let mut extracted_entities: Vec<NewEntity> = Vec::new();
     let mut extracted_relationships: Vec<NewRelationship> = Vec::new();
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
-    if !skip_extraction {
+    if enable_ner {
         match crate::extraction::extract_graph_auto(&raw_body, paths) {
             Ok(extracted) => {
                 extracted_urls = extracted.urls;
@@ -734,7 +738,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("rayon pool: {e}")))?;
 
-    let skip_extraction = args.skip_extraction;
+    let enable_ner = args.enable_ner;
 
     let total_to_process = process_items.len();
     tracing::info!(
@@ -765,7 +769,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     &item.path,
                     &item.derived_name,
                     &paths_owned,
-                    skip_extraction,
+                    enable_ner,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

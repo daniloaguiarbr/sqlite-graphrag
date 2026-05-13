@@ -1,7 +1,7 @@
 # sqlite-graphrag Cookbook
 
 
-> 23 production-grade recipes that save your team hours every single week
+> 34 production-grade recipes that save your team hours every single week
 
 - Read the Portuguese version at [COOKBOOK.pt-BR.md](COOKBOOK.pt-BR.md)
 
@@ -10,6 +10,11 @@
 - `recall` and `hybrid-search` accept `--limit` as an alias of `-k`/`--k`. Recipes below use `--k`; either works.
 - `rename` accepts `--from`/`--to` as aliases of `--name`/`--new-name`.
 - `schema_version` JSON fields (`init`, `stats`, `migrate`, `health`) are emitted as JSON numbers since v1.0.35.
+- `rename` accepts positional arguments: `rename <old> <new>` (since v1.0.44)
+- `related` accepts a positional name argument: `related <name>` (since v1.0.44)
+- `graph entities` JSON response uses `entities` as the top-level array key (renamed from `items` in v1.0.44)
+- `link --create-missing` auto-creates nonexistent entities during link (since v1.0.44)
+- `hybrid-search --with-graph` enables graph traversal seeded from top RRF results (since v1.0.44)
 
 
 ## Latency Note
@@ -17,6 +22,8 @@
 - For production workflows requiring lower latency, start `sqlite-graphrag daemon` once and let `init`, `remember`, `recall`, and `hybrid-search` reuse it automatically
 - Current single-shot `recall` takes approximately 1 second on modern hardware
 - Batch pipelines amortize this cost by invoking the binary once per document in parallel
+- `daemon --ping --json` checks whether the daemon is alive; `daemon --stop` shuts it down gracefully
+- See Recipe "How to start and monitor the daemon for lower latency" for setup details
 
 
 ## Default Values Reference
@@ -24,6 +31,12 @@
 - `list --limit` default is 50 — use `--limit 10000` for full exports before backup
 - `hybrid-search --weight-vec` and `--weight-fts` both default to 1.0
 - `purge --retention-days` default is 90 — lower for aggressive cleanup policies
+- `ingest --max-files` default is 10000 — all-or-nothing safety cap, not a sliding window
+- `ingest --ingest-parallelism` default is `min(4, max(1, cpus/2))`
+- `ingest --type` default is `document` when omitted
+- `link --weight` default is 0.5
+- `graph traverse --depth` default is 2
+- `hybrid-search --min-weight` default is 0.3 when `--with-graph` is active
 
 
 ## How To Bootstrap Memory Database In 60 Seconds
@@ -58,7 +71,40 @@ sqlite-graphrag health --json
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
-## How To Bulk-Import Knowledge Base Via Stdin Pipeline
+## How To Start And Monitor The Daemon For Lower Latency
+### Problem
+- Every `recall` and `remember` call pays a 1-second cold start to load the ONNX embedding model
+- Your interactive agent session feels sluggish because the model loads and unloads on every invocation
+
+
+### Solution
+```bash
+sqlite-graphrag daemon
+sqlite-graphrag daemon --ping --json
+# At session end:
+sqlite-graphrag daemon --stop
+```
+
+
+### Explanation
+- Daemon keeps the embedding model resident in memory with auto-shutdown after 600 seconds of idle
+- Commands `init`, `remember`, `ingest`, `recall`, and `hybrid-search` reuse the daemon automatically
+- `--ping` returns a JSON health check including the embedding request counter since startup
+- `--stop` requests graceful shutdown; the daemon exits after flushing in-progress embeddings
+- Treat the daemon as optional for single-shot invocations; it is a performance optimization not a requirement
+
+
+### Variants
+- Adjust idle timeout via `--idle-shutdown-secs 1800` for long coding sessions with idle gaps
+- Disable auto-spawn in CI with `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1` to avoid background processes
+
+
+### See Also
+- Recipe "How to bootstrap memory database in 60 seconds"
+- Recipe "How to benchmark hybrid-search against pure vec search"
+
+
+## How To Bulk-Import A Knowledge Base Directory
 ### Problem
 - Your 2000 Markdown files sit idle because no loader speaks the sqlite-graphrag schema
 - Manual entry burns one entire afternoon per hundred files on simple onboarding
@@ -66,32 +112,65 @@ sqlite-graphrag health --json
 
 ### Solution
 ```bash
-fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
-  sqlite-graphrag remember \
-    --name "$(basename {} .md)" \
-    --type user \
-    --description "imported from {}" \
-    --body-stdin < {}
-'
+sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
+  | jaq -c 'select(.status == "indexed") | .name'
 ```
 
 
 ### Explanation
-- `fd -e md -0` emits null-delimited Markdown paths safe against spaces and quotes
-- `xargs -0 -n 1` invokes `sqlite-graphrag remember` once per file without concurrency hazards
-- `--body-stdin` pipes the Markdown body without quoting or shell escape accidents
-- Exit code `2` flags duplicates for you to skip cleanly inside the outer shell
-- Saves 4 hours per thousand files versus hand-crafted CSV loaders
+- `ingest` replaces the `fd | xargs remember` loop with a single atomic command handling recursion and naming
+- `--recursive` descends into subdirectories; without it only top-level files are processed
+- `--pattern "*.md"` filters by extension; default is `*.md` so this flag is shown for clarity
+- Output is NDJSON: one JSON line per file with `status` field, plus a final summary line with `summary: true`
+- Names derive from file basenames in kebab-case; names over 60 chars are truncated with `truncated: true` in the NDJSON
+- Saves 4 hours per thousand files versus hand-crafted import scripts or `fd | xargs` loops
 
 
 ### Variants
-- Keep `remember` imports serial with `--max-concurrency 1`; each subprocess may load roughly 1.1 GB of ONNX RSS in v1.0.3
-- Extend the one-liner to extract `--description` from the first Markdown heading of each file
+- BERT NER is disabled by default; use `--enable-ner` to activate automatic entity extraction
+- Use `--fail-fast` to abort on the first per-file error instead of continuing with inline error reporting
 
 
 ### See Also
+- Recipe "How to ingest large corpora on memory-constrained hosts"
 - Recipe "How to export memories to NDJSON for backup"
-- Recipe "How to orchestrate parallel recall across namespaces"
+
+
+## How To Ingest A Typed Directory With Streaming Progress
+### Problem
+- Your CI pipeline ingests 2000 decision documents but has no progress visibility during the run
+- The summary-only approach hides per-file failures until the entire batch completes
+
+
+### Solution
+```bash
+sqlite-graphrag ingest ./decisions --type decision --recursive --json \
+  | while IFS= read -r line; do
+      status=$(echo "$line" | jaq -r '.status // empty')
+      if [ "$status" = "failed" ]; then
+        echo "FAIL: $(echo "$line" | jaq -r '.file')" >&2
+      fi
+    done
+```
+
+
+### Explanation
+- `--type decision` tags every ingested file as a `decision` memory; default type is `document`
+- NDJSON output streams one line per file followed by a summary line with `summary: true`
+- The `while read` loop processes each line as it arrives instead of waiting for the full batch
+- Filter by `select(.status)` to skip the summary line which has no `status` field
+- Valid `--type` values: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
+- Invoke `ingest` separately per type when a directory contains mixed content
+
+
+### Variants
+- Aggregate final stats: `| jaq -sc '[.[] | select(.status)] | group_by(.status) | map({status: .[0].status, count: length})'`
+- Use `--pattern "memo-*"` to filter by basename prefix instead of extension
+
+
+### See Also
+- Recipe "How to bulk-import a knowledge base directory"
+- Recipe "How to export memories to NDJSON for backup"
 
 
 ## How To Combine Vector And FTS Search With Tunable Weights
@@ -118,11 +197,45 @@ sqlite-graphrag hybrid-search "postgres migration deadlock" \
 ### Variants
 - Pass `--weight-vec 1.0 --weight-fts 0.0` to reproduce a pure `recall` baseline for A/B tests
 - Raise `--k` to 50 before a re-ranker agent prunes down to the final 5 hits
+- Pass `--with-graph --max-hops 2` to seed graph traversal from the top RRF results; read both `results[]` and `graph_matches[]` in the output (since v1.0.44)
 
 
 ### See Also
 - Recipe "How to debug slow queries with health and stats"
-- Recipe "How to benchmark hybrid-search against pure vec search"
+- Recipe "How to expand hybrid search with graph context"
+
+
+## How To Expand Hybrid Search With Graph Context
+### Problem
+- Your hybrid search finds the right seed memories but misses related concepts connected through the entity graph
+- Running a separate `related` command after every hybrid search adds pipeline complexity and latency
+
+
+### Solution
+```bash
+sqlite-graphrag hybrid-search "authentication architecture" \
+  --k 10 --with-graph --max-hops 2 --min-weight 0.3 --json \
+  | jaq -r '(.results[], .graph_matches[]) | .name' | sort -u
+```
+
+
+### Explanation
+- `--with-graph` enables entity graph traversal seeded from the top RRF results (fixed in v1.0.44)
+- Graph matches appear in `graph_matches[]`, a SEPARATE array from `results[]`; read BOTH arrays
+- `graph_matches[]` uses RecallItem schema: `name`, `distance`, `source` ("graph"), `graph_depth`
+- `--min-weight 0.3` filters weak graph edges to reduce noise from low-confidence relationships
+- `--max-hops 2` controls traversal depth; increase only after checking density via `graph stats`
+- Eliminates the need for a separate `related` call, reducing pipeline steps from three to two
+
+
+### Variants
+- Set `--min-weight 0.0` to include all edges regardless of weight for maximum recall at higher noise
+- Extract names from both arrays: `jaq -r '(.results[], .graph_matches[]) | .name' | sort -u > seeds.txt`
+
+
+### See Also
+- Recipe "How to combine vector and FTS search with tunable weights"
+- Recipe "How to explore the entity graph with stats, entities, and traverse"
 
 
 ## How To Traverse Entity Graph For Multi-Hop Recall
@@ -143,6 +256,7 @@ sqlite-graphrag related authentication-flow --hops 2 --json
 - `related` walks typed graph relationships between entities with user-controlled hop count
 - `--hops 2` includes friends-of-friends memories linked through shared entities
 - JSON output reports the traversal path so the LLM can reason about relation chains
+- Positional name argument supported since v1.0.44: `related <name>` is equivalent to `related --name <name>`
 - Saves re-embedding cost since graph expansion runs as SQLite graph walk not KNN
 - Surfaces context that vector-only RAG misses by design with 80 percent fewer tokens
 
@@ -194,6 +308,135 @@ sqlite-graphrag related "$SEED" --hops 2 --json \
 ### See Also
 - Recipe "How to combine vector and FTS search with tunable weights"
 - Recipe "How to traverse entity graph for multi-hop recall"
+
+
+## How To Link Entities With Auto-Creation
+### Problem
+- Creating graph edges requires entities to exist first, forcing a tedious two-step entity-creation workflow
+- Your automation script fails with exit code 4 every time it tries to link entities it has not pre-registered
+
+
+### Solution
+```bash
+sqlite-graphrag link \
+  --from auth-service --to postgres-db \
+  --relation depends-on --weight 0.8 \
+  --create-missing --entity-type tool
+```
+
+
+### Explanation
+- `--create-missing` auto-creates nonexistent entities defaulting to type `concept` (since v1.0.44)
+- `--entity-type tool` overrides the default type for all auto-created entities in this invocation
+- JSON response includes `created_entities: ["auth-service", "postgres-db"]` when entities were created
+- `--weight` is optional with default 0.5; values must fall within the range `[0.0, 1.0]`
+- Canonical relation vocabulary: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Valid entity types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
+
+
+### Variants
+- Omit `--create-missing` when entities must pre-exist; exit code 4 signals a missing entity
+- Accept `--source`/`--target` as aliases of `--from`/`--to` for scripts that use source/target terminology
+
+
+### See Also
+- Recipe "How to remove a graph edge with unlink"
+- Recipe "How to explore the entity graph with stats, entities, and traverse"
+
+
+## How To Remove A Graph Edge With Unlink
+### Problem
+- An incorrect `depends-on` edge between two entities pollutes graph traversals with irrelevant paths
+- The only removal option your team knows is deleting the entire memory, which destroys the body and version history
+
+
+### Solution
+```bash
+sqlite-graphrag unlink --from auth-service --to legacy-db --relation depends-on
+```
+
+
+### Explanation
+- All three arguments `--from`, `--to`, and `--relation` are mandatory without exception
+- `--source`/`--target` are accepted as aliases of `--from`/`--to` for consistency with `link`
+- The operation removes only the relationship edge; entities and memories remain untouched
+- Exit code 4 signals that the specified edge does not exist in the current namespace
+- Run `cleanup-orphans` afterward if the unlinked entities have no remaining connections
+
+
+### Variants
+- Chain `graph entities --json | jaq '.entities[].name'` to discover entity names before unlinking
+- Use `graph stats` before and after to verify the edge count decreased as expected
+
+
+### See Also
+- Recipe "How to link entities with auto-creation"
+- Recipe "How to clean orphan entities after bulk deletion"
+
+
+## How To Clean Orphan Entities After Bulk Deletion
+### Problem
+- After forgetting 500 memories, the entity graph still contains hundreds of orphan nodes with no edges
+- Graph traversal wastes cycles visiting dead-end entities that reference nothing
+
+
+### Solution
+```bash
+sqlite-graphrag cleanup-orphans --dry-run --json
+sqlite-graphrag cleanup-orphans --yes --json
+```
+
+
+### Explanation
+- `--dry-run` audits orphan count without modifying the database; always run this first
+- `--yes` bypasses the interactive confirmation prompt for use in automated pipelines
+- Removes entities that have zero linked memories AND zero edges in the graph
+- Schedule periodically after bulk `forget` operations or mass `unlink` runs
+- Does not touch memories or version history; only graph entities are affected
+
+
+### Variants
+- Chain with `purge --retention-days 30 --yes` and `vacuum` in a weekly cron for full hygiene
+- Inspect candidates first with `graph entities --json | jaq '.entities[] | select(.degree == 0)'` if available
+
+
+### See Also
+- Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
+- Recipe "How to remove a graph edge with unlink"
+
+
+## How To Explore The Entity Graph With Stats, Entities, And Traverse
+### Problem
+- Your graph has grown to thousands of entities and you have no visibility into its density or connectivity
+- Planning traversal depth without knowing `avg_degree` wastes time on empty subgraphs or overloaded fan-outs
+
+
+### Solution
+```bash
+sqlite-graphrag graph stats --json | jaq '{node_count, edge_count, avg_degree}'
+sqlite-graphrag graph entities --entity-type person --json | jaq '.entities[].name'
+sqlite-graphrag graph traverse --from acme-corp --depth 3 --json
+sqlite-graphrag graph --format mermaid --output graph.md
+```
+
+
+### Explanation
+- `graph stats` reports `node_count`, `edge_count`, `avg_degree`, and `max_degree` to inform traversal planning
+- `graph entities` lists all entities; field is `.entities[]` NOT `.items[]` since v1.0.44
+- `graph traverse` starts from a typed entity (not a memory name) and walks up to `--depth` hops
+- Hops return `entity`, `relation`, `direction`, `weight`, and `depth` per visited edge
+- Export formats include `json`, `dot` (Graphviz), and `mermaid`; write to file via `--output <PATH>`
+- Exit code 4 from `graph traverse` signals a nonexistent root entity
+
+
+### Variants
+- Filter entities by type: `--entity-type tool` shows only tool nodes
+- Paginate large entity lists: `--limit 100 --offset 200` for datasets with thousands of entities
+
+
+### See Also
+- Recipe "How to expand hybrid search with graph context"
+- Recipe "How to debug slow queries with health and stats"
 
 
 ## How To Integrate sqlite-graphrag With Claude Code Subprocess Loop
@@ -505,6 +748,49 @@ done
 - Recipe "How to benchmark hybrid-search against pure vec search"
 
 
+## How To Handle Exit Codes In Automated Pipelines
+### Problem
+- Your CI pipeline treats every non-zero exit as fatal, killing retryable operations like exit 75 (slot exhaustion)
+- Debugging pipeline failures takes 30 minutes because your wrapper does not distinguish validation from locking conflicts
+
+
+### Solution
+```bash
+sqlite-graphrag remember --name "$NAME" --type project \
+  --description "$DESC" --body-stdin < "$FILE"
+rc=$?
+case $rc in
+  0)  echo "Success" ;;
+  2)  echo "Duplicate: use --force-merge" ;;
+  3)  echo "Conflict: re-read and retry" ;;
+  6)  echo "Payload too large: split body" ;;
+  15) echo "Busy: widen --wait-lock" ;;
+  75) echo "Slots full: wait, do NOT raise concurrency" ;;
+  77) echo "RAM pressure: free memory first" ;;
+  *)  echo "Fatal: rc=$rc" >&2; exit 1 ;;
+esac
+```
+
+
+### Explanation
+- 16 exit codes from 0 to 77 following sysexits.h conventions for machine-parseable error routing
+- Exit 3 means optimistic locking conflict: reload the memory with `read --json` and retry
+- Exit 13 means partial batch failure: reprocess only the failed items, NOT the entire batch
+- Exit 75 and 77 signal resource pressure: NEVER increase concurrency after receiving these codes
+- Exit 15 means database busy: widen `--wait-lock <ms>` to wait longer before failing
+- Full code table: 0=success, 1=validation, 2=duplicate, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
+
+
+### Variants
+- Wrap the case statement in a retry loop with exponential backoff for codes 3, 15, 75, and 77
+- Log `stderr` separately: `2>error.log` captures human-readable messages while `stdout` captures JSON
+
+
+### See Also
+- Recipe "How to orchestrate namespace recall safely"
+- Recipe "How to edit a memory with optimistic locking"
+
+
 ## How To Debug Slow Queries With Health And Stats
 ### Problem
 - Your recall used to return in 8 ms and now takes 400 ms after months of writes
@@ -516,6 +802,8 @@ done
 sqlite-graphrag health --json | jaq '{integrity, wal_size_mb, journal_mode}'
 sqlite-graphrag stats --json | jaq '{memories, memories_total, entities, entities_total, relationships, relationships_total, edges, chunks_total, avg_body_len, db_size_bytes, db_bytes}'
 SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
+sqlite-graphrag optimize --json
+sqlite-graphrag __debug_schema --json | jaq '{schema_version, objects: (.objects | length)}'
 ```
 
 
@@ -524,6 +812,8 @@ SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
 - `stats` counts rows to reveal which table grew disproportionately since last audit
 - `SQLITE_GRAPHRAG_LOG_LEVEL=debug` emits timings per SQLite stage to stderr for tracing
 - Comparing current `avg_body_len` to baseline shows if bodies have grown past defaults
+- `optimize` refreshes query planner statistics so the next recall or hybrid-search uses updated indexes
+- `__debug_schema` is a hidden command that dumps schema version, object count, and migration history for troubleshooting drift
 - Saves hours of blind tuning by exposing the exact slow path in three commands total
 
 
@@ -535,6 +825,37 @@ SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
 ### See Also
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 - Recipe "How to benchmark hybrid-search against pure vec search"
+
+
+## How To Manage The Embedding Model Cache
+### Problem
+- Your CI environment runs out of disk space because cached ONNX models accumulate across binary upgrades
+- You cannot diagnose why the first recall takes 30 seconds without knowing which models are cached locally
+
+
+### Solution
+```bash
+sqlite-graphrag cache list --json
+sqlite-graphrag cache clear-models --yes
+```
+
+
+### Explanation
+- `cache list` shows cached models with size in bytes and total disk usage for capacity planning
+- `clear-models` forces re-download of the embedding model on the next embedding operation
+- Useful after binary upgrades when the model format may have changed between versions
+- `--yes` bypasses the interactive confirmation prompt for use in automated cleanup scripts
+- Clearing the cache does not affect existing embeddings stored in the database; only future operations re-download
+
+
+### Variants
+- Schedule `cache clear-models --yes` after every `cargo install` upgrade in CI to avoid stale model artifacts
+- Combine with `health --json | jaq '.model_ok'` to verify model integrity before clearing
+
+
+### See Also
+- Recipe "How to debug slow queries with health and stats"
+- Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
 ## How To Benchmark hybrid-search Against Pure vec search
@@ -966,6 +1287,7 @@ sqlite-graphrag read --name deploy-plan --tz Europe/Berlin --json \
 - Use `Asia/Tokyo` for Japan Standard Time (UTC+9, no DST)
 - Use `Europe/Berlin` for Central European Time (UTC+1/UTC+2 depending on DST)
 - Use `UTC` to reset to the default explicitly in environments with a conflicting env var
+- Use `--lang pt` to force human-readable stderr messages in Portuguese; stdout JSON remains language-independent
 
 ### See Also
 - Recipe "How to bootstrap memory database in 60 seconds"
@@ -1007,40 +1329,99 @@ sqlite-graphrag recall "decision" --json
 - Recipe "How to export memories to NDJSON for backup"
 
 
-## How To Bulk-Ingest Without BERT Auto-Extraction
+## How To Edit A Memory With Optimistic Locking
+### Problem
+- Two agents editing the same memory simultaneously causes silent last-write-wins corruption
+- Without conflict detection, your pipeline overwrites a colleague's changes without notice
+
+
+### Solution
+```bash
+UPDATED=$(sqlite-graphrag read --name design-auth --json | jaq -r '.updated_at')
+sqlite-graphrag edit --name design-auth \
+  --body-file ./revised.md \
+  --expected-updated-at "$UPDATED"
+```
+
+
+### Explanation
+- Each `edit` creates a new immutable version preserving the full history of prior edits
+- `--expected-updated-at` enables optimistic locking; exit code 3 signals a concurrent modification
+- On exit code 3, re-read the memory with `read --json` to get the new `updated_at`, then retry
+- `--body-file` reads the new body from a file; alternatives are `--body` (inline) and `--body-stdin` (pipe)
+- Change only the description without touching the body: `edit --name <name> --description "new desc"`
+- JSON response includes `memory_id`, `name`, `action` ("updated"), `version`, and `elapsed_ms`
+
+
+### Variants
+- Use `--body-stdin` to pipe the body from another command: `cat revised.md | sqlite-graphrag edit --name design-auth --body-stdin`
+- Omit `--expected-updated-at` when concurrent writes are impossible (single-agent pipelines)
+
+
+### See Also
+- Recipe "How to round-trip forget and restore a memory"
+- Recipe "How to rename a memory preserving full history"
+
+
+## How To Rename A Memory Preserving Full History
+### Problem
+- Your team renamed the project from `auth-v1` to `authentication-flow` but all graph links still point to the old name
+- Manual delete-and-recreate loses version history and breaks compliance audits
+
+
+### Solution
+```bash
+sqlite-graphrag rename auth-v1 authentication-flow
+sqlite-graphrag history --name authentication-flow --json | jaq '.versions | length'
+```
+
+
+### Explanation
+- Positional arguments `rename <old> <new>` are supported since v1.0.44
+- All versions and graph connections transfer to the new name automatically
+- `--from`/`--to` and `--name`/`--new-name` are accepted as flag aliases since v1.0.35
+- Exit code 4 signals that the source memory does not exist in the current namespace
+- JSON response includes `memory_id`, `name` (new), `action` ("renamed"), `version`, and `elapsed_ms`
+
+
+### Variants
+- Apply optimistic locking: `--expected-updated-at` prevents renaming a memory that changed since your last read
+- Verify history preservation: `history --name <new> --json | jaq '.versions[].created_at_iso'`
+
+
+### See Also
+- Recipe "How to edit a memory with optimistic locking"
+- Recipe "How to round-trip forget and restore a memory"
+
+
+## How To Ingest Large Corpora On Memory-Constrained Hosts
 ### Problem
 - Your 5000-file ingestion pipeline takes hours because BERT NER runs on every body
-- You already have entities extracted by an upstream LLM and want to skip auto-extraction
 - Loading the 676 MB BERT model on first run exceeds your CI memory budget
 
 
 ### Solution
 ```bash
-fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
-  sqlite-graphrag remember \
-    --name "$(basename {} .md)" \
-    --type document \
-    --description "imported from {}" \
-    --skip-extraction \
-    --body-stdin < {}
-'
+sqlite-graphrag ingest ./big-corpus --recursive \
+  --low-memory --max-files 50000 --json \
+  | jaq -c 'select(.summary) | {files_total, files_succeeded, elapsed_ms}'
 ```
 
 
 ### Explanation
-- `--skip-extraction` disables `extract_graph_auto` for the current call only
-- `extraction_method` is omitted from the JSON response when the flag is active
-- Bypasses BERT model download, classifier head load, and IOB merge entirely
-- Saves ~150 ms per call on warm cache, ~30 seconds on first run with cold cache
-- Use this when you already supply `--entities-file` or `--graph-stdin` from upstream
+- BERT NER is disabled by default; pass `--enable-ner` to activate it (adds approximately 150 ms per file on warm cache)
+- `--low-memory` forces `--ingest-parallelism 1`, reducing RSS by approximately 40 percent for constrained hosts
+- `--max-files 50000` raises the safety cap from the default 10000; the operation is rejected entirely if file count exceeds the cap
+- Two parallelism axes exist: `--max-concurrency` controls CLI invocations, `--ingest-parallelism` controls extract+embed threads
+- Trade-off is 3 to 4 times more wall-clock time for significantly lower memory footprint
+- NDJSON summary line reports `files_total`, `files_succeeded`, `files_failed`, and `elapsed_ms` for pipeline auditing
 
 
 ### Variants
-- Combine `--skip-extraction` with `--entities-file entities.json` to persist a curated graph without NER noise
-- Set `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY=200` when your upstream graph is larger than the default cap
-- Use `--graph-stdin` to receive a single JSON document with both `entities` and `relationships` arrays
+- Set `SQLITE_GRAPHRAG_LOW_MEMORY=1` as a persistent env var instead of passing `--low-memory` per invocation
+- Combine with separate `remember --entities-file` calls for curated graphs on critical documents
 
 
 ### See Also
-- Recipe "How to bulk-import knowledge base via stdin pipeline"
-- Recipe "How to traverse entity graph for multi-hop recall"
+- Recipe "How to bulk-import a knowledge base directory"
+- Recipe "How to handle exit codes in automated pipelines"

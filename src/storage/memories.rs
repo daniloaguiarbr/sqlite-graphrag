@@ -608,10 +608,44 @@ pub fn list_deleted_before(
     Ok(ids)
 }
 
-/// Executes a prefix-matching FTS5 search against `fts_memories`.
+/// Preprocesses a raw user query for FTS5 `MATCH`.
 ///
-/// The supplied `query` is suffixed with `*` to enable prefix matching, then
-/// joined back to `memories` to materialize full rows filtered by namespace.
+/// Technical separators (`-`, `.`, `_`, `/`) are treated as word boundaries by
+/// the `unicode61` tokenizer.  When the query contains any of these characters
+/// the function builds a compound FTS5 expression:
+///   1. A phrase query with the separated tokens (exact compound matching).
+///   2. Individual prefix terms joined with OR (broader recall).
+///
+/// Queries without separators keep the original `term*` prefix behaviour.
+fn preprocess_fts_query(raw: &str) -> String {
+    const SEPARATORS: &[char] = &['-', '.', '_', '/'];
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if !trimmed.chars().any(|c| SEPARATORS.contains(&c)) {
+        return trimmed
+            .split_whitespace()
+            .map(|t| format!("{t}*"))
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    let tokens: Vec<&str> = trimmed
+        .split(|c: char| SEPARATORS.contains(&c) || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return String::new();
+    }
+    let phrase = format!("\"{}\"", tokens.join(" "));
+    let prefix_terms: Vec<String> = tokens.iter().map(|t| format!("{t}*")).collect();
+    format!("{phrase} OR {}", prefix_terms.join(" OR "))
+}
+
+/// Executes an FTS5 search against `fts_memories` with query preprocessing.
+///
+/// Technical separators in the query are converted to phrase + prefix OR
+/// expressions so compound terms like `graphrag-precompact.sh` match correctly.
 ///
 /// # Errors
 ///
@@ -623,7 +657,7 @@ pub fn fts_search(
     memory_type: Option<&str>,
     limit: usize,
 ) -> Result<Vec<MemoryRow>, AppError> {
-    let fts_query = format!("{query}*");
+    let fts_query = preprocess_fts_query(query);
     if let Some(mt) = memory_type {
         let mut stmt = conn.prepare(
             "SELECT m.id, m.namespace, m.name, m.type, m.description, m.body, m.body_hash,
@@ -1214,6 +1248,56 @@ mod tests {
         let conn = setup_conn()?;
         let result = delete_vec(&conn, 99999);
         assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn preprocess_fts_query_no_separators() {
+        assert_eq!(preprocess_fts_query("hello"), "hello*");
+        assert_eq!(preprocess_fts_query("hello world"), "hello* world*");
+    }
+
+    #[test]
+    fn preprocess_fts_query_with_hyphens() {
+        let result = preprocess_fts_query("graphrag-precompact");
+        assert!(result.contains("\"graphrag precompact\""));
+        assert!(result.contains("graphrag*"));
+        assert!(result.contains("precompact*"));
+    }
+
+    #[test]
+    fn preprocess_fts_query_with_dots() {
+        let result = preprocess_fts_query("v1.0.44");
+        assert!(result.contains("\"v1 0 44\""));
+        assert!(result.contains("v1*"));
+        assert!(result.contains("44*"));
+    }
+
+    #[test]
+    fn preprocess_fts_query_with_mixed_separators() {
+        let result = preprocess_fts_query("graphrag-precompact.sh");
+        assert!(result.contains("\"graphrag precompact sh\""));
+        assert!(result.contains("graphrag*"));
+    }
+
+    #[test]
+    fn preprocess_fts_query_empty_and_whitespace() {
+        assert_eq!(preprocess_fts_query(""), "");
+        assert_eq!(preprocess_fts_query("  "), "");
+    }
+
+    #[test]
+    fn fts_search_finds_compound_term_with_hyphen() -> TestResult {
+        let conn = setup_conn()?;
+        let mut m = new_memory("mem-compound");
+        m.body = "the graphrag-precompact script runs daily".to_string();
+        insert(&conn, &m)?;
+        conn.execute_batch(
+            "INSERT INTO fts_memories(rowid, name, description, body)
+             SELECT id, name, description, body FROM memories WHERE deleted_at IS NULL",
+        )?;
+        let rows = fts_search(&conn, "graphrag-precompact", "global", None, 10)?;
+        assert!(!rows.is_empty(), "should find compound hyphenated term");
         Ok(())
     }
 }

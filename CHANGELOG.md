@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.45] - 2026-05-13
+
+### Changed
+- **S5** BERT NER extraction is now disabled by default. Pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate. The `--skip-extraction` flag is kept as a hidden no-op for backwards compatibility.
+
+### Added
+- **A1** FTS5 query-time preprocessing: compound terms containing `-`, `.`, `_`, `/` (e.g. `graphrag-precompact.sh`, `v1.0.44`) are now converted to phrase + prefix OR expressions before MATCH, fixing zero-result searches on technical identifiers. Zero schema migration required.
+- `--enable-ner` flag on `remember` and `ingest` commands to opt into BERT NER entity/relationship extraction.
+- `SQLITE_GRAPHRAG_ENABLE_NER` environment variable as persistent override for `--enable-ner`.
+- 6 new unit tests for `preprocess_fts_query()` and FTS5 compound term search.
+
+### Documentation
+- All 10 documentation files updated to reflect `--enable-ner` replacing `--skip-extraction` as the active flag.
+- Environment variable table in README/README.pt-BR now includes `SQLITE_GRAPHRAG_ENABLE_NER`.
+- SKILL.md (EN/PT), AGENTS.md (EN/PT), COOKBOOK.md (EN/PT), HOW_TO_USE.md updated.
+
 ## [1.0.44] - 2026-05-13
 
 ### Fixed
