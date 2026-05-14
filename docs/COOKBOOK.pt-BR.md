@@ -127,7 +127,7 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 
 ### Variants
-- BERT NER desabilitado por padrão; use `--enable-ner` ou `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática de entidades
+- GLiNER NER desabilitado por padrão; use `--enable-ner` ou `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática de entidades
 - Use `--fail-fast` para abortar no primeiro erro por arquivo em vez de continuar com report inline
 
 
@@ -1394,8 +1394,8 @@ sqlite-graphrag history --name authentication-flow --json | jaq '.versions | len
 
 ## Como Importar Corpora Grandes Em Hosts Com Memória Limitada
 ### Problem
-- Seu pipeline de ingestão de 5000 arquivos leva horas porque BERT NER roda em cada corpo
-- Carregar o modelo BERT de 676 MB na primeira execução excede o orçamento de memória do CI
+- Seu pipeline de ingestão de 5000 arquivos leva horas porque GLiNER NER roda em cada corpo
+- Carregar o modelo GLiNER (1,1 GB fp32 padrão, 349 MB com `--gliner-variant int8`) na primeira execução excede o orçamento de memória do CI
 
 
 ### Solution
@@ -1407,7 +1407,8 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 
 
 ### Explanation
-- BERT NER desabilitado por padrão; passe `--enable-ner` para ativar (adiciona aproximadamente 150 ms por arquivo em cache quente)
+- GLiNER NER desabilitado por padrão; passe `--enable-ner` para ativar (adiciona aproximadamente 100-200 ms por arquivo em cache quente)
+- Use `--gliner-variant int8` com `--enable-ner` para reduzir download do modelo de 1,1 GB para 349 MB com perda mínima de acurácia
 - `--low-memory` força `--ingest-parallelism 1`, reduzindo RSS em aproximadamente 40 por cento para hosts restritos
 - `--max-files 50000` eleva o cap de segurança do padrão 10000; a operação é rejeitada inteiramente se contagem de arquivos exceder o cap
 - Dois eixos de paralelismo existem: `--max-concurrency` controla invocações CLI, `--ingest-parallelism` controla threads de extract+embed

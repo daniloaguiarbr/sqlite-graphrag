@@ -305,7 +305,7 @@ pub enum Commands {
         sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-file ./README.md\n\n  \
         # Body from stdin (pipe)\n  \
         cat README.md | sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-stdin\n\n  \
-        # Enable BERT entity extraction (disabled by default)\n  \
+        # Enable GLiNER entity extraction (disabled by default)\n  \
         sqlite-graphrag remember --name rich --type note --description \"...\" --body \"...\" --enable-ner")]
     Remember(remember::RememberArgs),
     /// Bulk-ingest every file under a directory as separate memories (NDJSON output)

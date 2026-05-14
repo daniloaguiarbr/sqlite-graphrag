@@ -10,6 +10,19 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.47] - 2026-05-14
+
+### Alterado
+- Substituído BERT NER (Davlan/bert-base-multilingual-cased-ner-hrl) por GLiNER zero-shot NER (onnx-community/gliner_multi-v2.1 via ONNX); remove dependências candle-core, candle-nn, candle-transformers e adiciona ndarray.
+- `extraction.rs` reduzido de 2.314 para ~900 linhas após remoção do pipeline BERT e lógica de tokenizer.
+- NER agora resolve 13 tipos de entidade específicos do domínio (`person`, `organization`, `location`, `date`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`) em vez dos 4 tipos fixos do BERT (PER/ORG/LOC/DATE).
+
+### Adicionado
+- Flag `--gliner-variant` em `remember` e `ingest` seleciona a variante de pesos ONNX: `fp32` (padrão, 1,1 GB, melhor qualidade), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB).
+- Variável de ambiente `SQLITE_GRAPHRAG_GLINER_VARIANT` como override persistente para `--gliner-variant`.
+- Variável de ambiente `SQLITE_GRAPHRAG_GLINER_THRESHOLD` para ajustar o limiar de confiança de entidades (float, padrão `0.5`).
+- Variável de ambiente `SQLITE_GRAPHRAG_GLINER_MODEL` para sobrescrever o identificador do repositório do modelo.
+
 ## [1.0.46] - 2026-05-14
 
 ### Corrigido

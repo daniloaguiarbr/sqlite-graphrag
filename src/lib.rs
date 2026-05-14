@@ -75,7 +75,7 @@ pub fn shutdown_requested() -> bool {
 /// Token-aware chunking utilities for bodies that exceed the embedding window.
 pub mod chunking;
 
-/// Hybrid entity extraction: regex pre-filter + candle BERT NER (graceful degradation).
+/// Hybrid entity extraction: regex pre-filter + GLiNER zero-shot NER (graceful degradation).
 pub mod extraction;
 
 /// `clap` definitions for the top-level `sqlite-graphrag` binary.

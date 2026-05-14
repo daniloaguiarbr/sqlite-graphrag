@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.47] - 2026-05-14
+
+### Changed
+- Replace BERT NER (Davlan/bert-base-multilingual-cased-ner-hrl) with GLiNER zero-shot NER (onnx-community/gliner_multi-v2.1 via ONNX); removes candle-core, candle-nn, candle-transformers dependencies and adds ndarray.
+- `extraction.rs` reduced from 2,314 to ~900 lines after removing the BERT pipeline and tokenizer logic.
+- NER now resolves 13 domain-specific entity types (`person`, `organization`, `location`, `date`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`) instead of the 4 fixed BERT types (PER/ORG/LOC/DATE).
+
+### Added
+- `--gliner-variant` flag on `remember` and `ingest` selects the ONNX weight variant: `fp32` (default, 1.1 GB, best quality), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB).
+- `SQLITE_GRAPHRAG_GLINER_VARIANT` env var as persistent override for `--gliner-variant`.
+- `SQLITE_GRAPHRAG_GLINER_THRESHOLD` env var to tune the entity confidence threshold (float, default `0.5`).
+- `SQLITE_GRAPHRAG_GLINER_MODEL` env var to override the default model repository identifier.
+
 ## [1.0.46] - 2026-05-14
 
 ### Fixed

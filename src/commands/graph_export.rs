@@ -133,7 +133,7 @@ pub struct GraphStatsArgs {
     sqlite-graphrag graph entities --offset 20 --limit 10\n\n  \
 NOTES:\n  \
     Output is always JSON with `entities`, `total_count`, `limit`, and `offset` fields.\n  \
-    Entity types are strings extracted by BERT NER (e.g. `person`, `organization`, `location`).")]
+    Entity types are strings extracted by GLiNER NER (e.g. `person`, `organization`, `location`).")]
 pub struct GraphEntitiesArgs {
     #[arg(long)]
     pub namespace: Option<String>,

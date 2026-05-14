@@ -63,6 +63,8 @@ sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` inicializa o banco, baixa o modelo e valida a extensão `sqlite-vec`
 - `remember` armazena conteúdo e gera embeddings atomicamente; nós e arestas do grafo são persistidos quando fornecidos explicitamente
+- GLiNER NER desabilitado por padrão; adicione `--enable-ner` para ativar extração automática de entidades/relacionamentos
+- Use `--gliner-variant` para selecionar tamanho do modelo: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB)
 - `recall` executa KNN vetorial sobre `vec_memories` e expande matches de grafo por padrão, exceto com `--no-graph`
 - `hybrid-search` funde FTS5 textual e KNN vetorial via Reciprocal Rank Fusion
 - `--with-graph` enriquece resultados com matches de travessia de grafo semeados pelos top hits RRF

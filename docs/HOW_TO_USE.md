@@ -63,7 +63,8 @@ sqlite-graphrag purge --retention-days 90 --yes
 ```
 - `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
 - `remember` stores content and generates embeddings atomically; graph nodes and edges are persisted when supplied explicitly
-- BERT NER is disabled by default; add `--enable-ner` to activate automatic entity/relationship extraction
+- GLiNER NER is disabled by default; add `--enable-ner` to activate automatic entity/relationship extraction
+- Use `--gliner-variant` to select model size: `fp32` (default, 1.1 GB), `fp16` (580 MB), `int8` (349 MB)
 - `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
 - `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
 - `--with-graph` augments results with graph traversal matches seeded from top RRF hits

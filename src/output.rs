@@ -181,7 +181,7 @@ pub struct RememberResponse {
     /// Added in v1.0.24 — split URLs out of the entity graph (P0-2 fix).
     #[serde(default)]
     pub urls_persisted: usize,
-    /// Extraction method used: "bert+regex" or "regex-only". None when NER is not enabled.
+    /// Extraction method used: "gliner-{variant}+regex" or "regex-only". None when NER is not enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction_method: Option<String>,
     pub merged_into_memory_id: Option<i64>,

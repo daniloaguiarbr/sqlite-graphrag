@@ -93,7 +93,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
 - PASS `--force-merge` in idempotent loops
-- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate BERT extraction
+- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array
@@ -108,7 +108,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER use `strength` outside the range `[0.0, 1.0]`
 - NEVER duplicate a name without explicit `--force-merge`
 - NEVER mix `--body`, `--body-file`, `--body-stdin`, `--graph-stdin`
-- NEVER rely on BERT auto-extraction in RAM-sensitive CI
+- NEVER rely on GLiNER auto-extraction in RAM-sensitive CI
 - NEVER exceed the relations cap per memory without adjusting env
 - NEVER use `remember` in a loop when `ingest` covers the case
 ### Correct Pattern — remember Examples
@@ -166,10 +166,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - DISTINGUISH the two axes clearly before adjusting
 - WIDEN `--wait-lock <SECONDS>` to wait for a slot before exit 75
 ### REQUIRED — Performance and Extraction
-- NER is disabled by default; pass `--enable-ner` to activate BERT extraction
-- BERT NER adds approximately 150 ms per file with daemon active on modern hardware
-- BERT NER adds 2 to 30 seconds per file in `--low-memory` or without daemon
-- BERT NER adds approximately 30 seconds on the first run to load the model
+- NER is disabled by default; pass `--enable-ner` to activate GLiNER extraction
+- GLiNER NER adds approximately 100-200 ms per file with model loaded on modern hardware
+- GLiNER NER adds 2 to 30 seconds per file in `--low-memory` or on first load
+- GLiNER NER downloads the ONNX model on first run (fp32: 1.1 GB, int8: 349 MB via `--gliner-variant`)
+- USE `--gliner-variant int8` for CI/containers to reduce model size from 1.1 GB to 349 MB
 - USE `--enable-ner` only when automated entity enrichment is valuable
 - PREFER `--graph-stdin --skip-extraction` with LLM-curated entities for best quality
 ### FORBIDDEN — ingest Anti-patterns

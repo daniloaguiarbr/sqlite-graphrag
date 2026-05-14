@@ -1,7 +1,7 @@
 //! Handler for the `cache` CLI subcommand and its nested operations.
 //!
 //! Manages cached resources such as the multilingual-e5-small ONNX model and
-//! the BERT NER classifier downloaded into the XDG cache directory on first
+//! the GLiNER NER classifier downloaded into the XDG cache directory on first
 //! `init`. Used to reclaim disk space or recover from corrupted cache state.
 
 use crate::errors::AppError;

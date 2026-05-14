@@ -14,7 +14,7 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
-    # Link two existing graph entities (extracted by BERT NER during `remember`)\n  \
+    # Link two existing graph entities (extracted by GLiNER NER during `remember`)\n  \
     sqlite-graphrag link --from oauth-flow --to refresh-tokens --relation related\n\n  \
     # Auto-create entities that don't exist yet\n  \
     sqlite-graphrag link --from concept-a --to concept-b --relation depends-on --create-missing\n\n  \
@@ -26,9 +26,9 @@ use serde::Serialize;
 NOTE:\n  \
     --from and --to expect ENTITY names (graph nodes), not memory names.\n  \
     Memory names are managed via remember/read/edit/forget; entities are auto-extracted\n  \
-    by BERT NER from memory bodies or auto-created via --create-missing.")]
+    by GLiNER NER from memory bodies or auto-created via --create-missing.")]
 pub struct LinkArgs {
-    /// Source ENTITY name (graph node, not memory). Entities are extracted by BERT NER during
+    /// Source ENTITY name (graph node, not memory). Entities are extracted by GLiNER NER during
     /// `remember` or auto-created via `--create-missing`. Use `graph entities` to list
     /// available entity names. Also accepts the alias `--name`.
     #[arg(long, alias = "name")]

@@ -63,7 +63,7 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./docs --type document\n\n  \
     # Ingest .txt files recursively under ./notes\n  \
     sqlite-graphrag ingest ./notes --type note --pattern '*.txt' --recursive\n\n  \
-    # Enable BERT NER extraction (disabled by default, slower)\n  \
+    # Enable GLiNER NER extraction (disabled by default, slower)\n  \
     sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
 NOTES:\n  \
     Each file becomes a separate memory. Names derive from file basenames\n  \
@@ -99,9 +99,16 @@ pub struct IngestArgs {
         num_args = 0..=1,
         default_missing_value = "true",
         default_value = "false",
-        help = "Enable automatic BERT NER entity/relationship extraction (disabled by default)"
+        help = "Enable automatic GLiNER NER entity/relationship extraction (disabled by default)"
     )]
     pub enable_ner: bool,
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
+        default_value = "fp32",
+        help = "GLiNER model variant: fp32 (best quality, 1.1GB), fp16 (580MB), int8 (349MB, fastest)"
+    )]
+    pub gliner_variant: String,
 
     /// Deprecated: NER is now disabled by default. Kept for backwards compatibility.
     #[arg(long, default_value_t = false, hide = true)]
@@ -302,6 +309,7 @@ fn stage_file(
     name: &str,
     paths: &AppPaths,
     enable_ner: bool,
+    gliner_variant: crate::extraction::GlinerVariant,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -346,7 +354,7 @@ fn stage_file(
     let mut extracted_relationships: Vec<NewRelationship> = Vec::new();
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
     if enable_ner {
-        match crate::extraction::extract_graph_auto(&raw_body, paths) {
+        match crate::extraction::extract_graph_auto(&raw_body, paths, gliner_variant) {
             Ok(extracted) => {
                 extracted_urls = extracted.urls;
                 extracted_entities = extracted.entities;
@@ -752,6 +760,11 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         );
     }
     let enable_ner = args.enable_ner;
+    let gliner_variant: crate::extraction::GlinerVariant =
+        args.gliner_variant.parse().unwrap_or_else(|e| {
+            tracing::warn!("invalid --gliner-variant: {e}; using fp32");
+            crate::extraction::GlinerVariant::Fp32
+        });
 
     let total_to_process = process_items.len();
     tracing::info!(
@@ -783,6 +796,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     &item.derived_name,
                     &paths_owned,
                     enable_ner,
+                    gliner_variant,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

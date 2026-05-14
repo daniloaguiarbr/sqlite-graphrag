@@ -107,7 +107,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 > **Flags obrigatórias para `remember`:** `--name`, `--type`, `--description`. Body via `--body "texto"`, `--body-file <caminho>`, ou `--body-stdin` (pipe do stdin).
 > **Limite do body: 500 KB (512000 bytes).** Entradas maiores são rejeitadas com código de saída 6 (`limit exceeded`); divida em múltiplas memórias ou reduza antes de enviar.
-- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` extraem entidades e relacionamentos via BERT NER local em cada chamada (desabilite por chamada com `--skip-extraction`). `recall` e `hybrid-search` auto-iniciam o daemon de embedding sob demanda.
+- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` podem extrair entidades e relacionamentos via GLiNER zero-shot NER local quando `--enable-ner` é passado. `recall` e `hybrid-search` auto-iniciam o daemon de embedding sob demanda.
 - **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque pré-baixa o modelo de embedding e aquece um embedding de teste (comandos subsequentes são mais rápidos). Sem `init`, o primeiro comando paga o custo de download do modelo.
 - **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
@@ -155,7 +155,7 @@ sqlite-graphrag purge --retention-days 0 --yes
 - `aarch64-pc-windows-msvc` Windows ARM 64-bit
 ### Usuários de Alpine Linux / musl
 - Nenhum binário pré-compilado `x86_64-unknown-linux-musl` é publicado desde v1.0.42
-- Motivo: `ort` (o backend ONNX runtime usado pelo `fastembed` para embeddings + BERT NER) não fornece prebuilt para musl em rc.11 nem rc.12
+- Motivo: `ort` (o backend ONNX runtime usado pelo `fastembed` para embeddings + GLiNER NER) não fornece prebuilt para musl em rc.11 nem rc.12
 - Workaround 1 — instalar via Cargo: `cargo install sqlite-graphrag --locked` (requer Rust 1.88+, compila contra a glibc do host)
 - Workaround 2 — usar imagem container baseada em glibc: `debian-slim`, `distroless/cc-debian12`, ou qualquer derivado de Ubuntu
 - Issue de tracking: https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt
@@ -169,8 +169,8 @@ sqlite-graphrag init --namespace projeto-foo
 ```
 - Sem `--db` ou `SQLITE_GRAPHRAG_DB_PATH`, todo comando CRUD nessa pasta usa `./graphrag.sqlite`
 ### Grave uma memória com grafo de entidades explícito opcional
-- Por padrão, `remember` NÃO executa extração automática de entidades (BERT NER desabilitado por padrão)
-- Passe `--enable-ner` para ativar a extração BERT NER nessa chamada, ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1`
+- Por padrão, `remember` NÃO executa extração automática de entidades (GLiNER NER desabilitado por padrão)
+- Passe `--enable-ner` para ativar a extração GLiNER zero-shot nessa chamada, ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1`
 ```bash
 sqlite-graphrag remember \
   --name testes-integracao-postgres \
@@ -195,16 +195,27 @@ sqlite-graphrag remember \
   "relationships_truncated": false
 }
 ```
-### Ative auto-extração BERT NER para enriquecimento de entidades
-- BERT NER é desabilitado por padrão; passe `--enable-ner` para ativar extração automática de entidades/relacionamentos
-- Use quando quiser enriquecimento automático do grafo e aceitar o overhead de ~150 ms/arquivo
+### Ative auto-extração GLiNER NER para enriquecimento de entidades
+- GLiNER zero-shot NER é desabilitado por padrão; passe `--enable-ner` para ativar extração automática de entidades/relacionamentos
+- GLiNER substitui o modelo BERT NER anterior e resolve 13 tipos de entidade específicos do domínio vs. 4 tipos fixos do BERT
+- Use `--gliner-variant` para equilibrar qualidade e tamanho de download: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB)
 - O campo `extraction_method` é populado na resposta JSON quando NER roda
+
+| Variante | Tamanho | Notas |
+|----------|---------|-------|
+| `fp32` | 1,1 GB | Padrão; melhor acurácia |
+| `fp16` | 580 MB | Boa acurácia, metade do tamanho |
+| `int8` | 349 MB | Menor; leve redução de acurácia |
+| `q4` | 894 MB | Pesos quantizados em 4 bits |
+| `q4f16` | 472 MB | Pesos 4 bits, ativações fp16 |
+
 ```bash
 sqlite-graphrag remember \
   --name notas-de-release-v1 \
   --type document \
   --description "notas de release para v1.0.0" \
   --enable-ner \
+  --gliner-variant fp16 \
   --body-stdin < notas.md
 ```
 ### Leia, esqueça, edite e renomeie usando argumento posicional
@@ -384,7 +395,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Ciclo de vida do conteúdo de memória
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner` | Salva memória com grafo de entidades opcional |
+| `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant` | Salva memória com grafo de entidades opcional |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit` desde v1.0.35), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Busca memórias semanticamente via KNN + travessia do grafo |
 | `read` | `[nome]` ou `--name <nome>` | Recupera memória por nome kebab-case exato |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Pagina memórias ordenadas por `updated_at` |
@@ -393,8 +404,8 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
 | `history` | `[nome]` ou `--name <nome>` | Lista todas as versões da memória |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--fail-fast` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON) |
-| `cache clear-models` | `--yes` | Remove modelos de embedding/NER cacheados do diretório XDG cache |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON) |
+| `cache clear-models` | `--yes` | Remove arquivos de modelo de embedding/GLiNER do diretório XDG cache |
 
 > **Validação de nomes de memória.** Nomes devem corresponder a `[a-z0-9-]+` (kebab-case, somente ASCII).
 > Unicode e maiúsculas são rejeitados com exit code 1. Nomes maiores que 60 caracteres
@@ -447,7 +458,10 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Força o autostart do daemon mesmo quando os guards o pulariam | indefinido | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Desabilita completamente o autostart do daemon (útil em testes/CI) | indefinido | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | Flag INTERNA setada automaticamente ao spawnar o filho do daemon; não setar manualmente | indefinido | `1` |
-| `SQLITE_GRAPHRAG_ENABLE_NER` | Habilita extração BERT NER automaticamente (equivalente a `--enable-ner` em toda chamada). Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (NER desligado) | `1` |
+| `SQLITE_GRAPHRAG_ENABLE_NER` | Habilita extração GLiNER NER automaticamente (equivalente a `--enable-ner` em toda chamada). Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (NER desligado) | `1` |
+| `SQLITE_GRAPHRAG_GLINER_VARIANT` | Variante de pesos ONNX do GLiNER: `fp32`, `fp16`, `int8`, `q4`, `q4f16` | `fp32` | `fp16` |
+| `SQLITE_GRAPHRAG_GLINER_THRESHOLD` | Limiar de confiança para predições GLiNER (float em [0.0, 1.0]) | `0.5` | `0.3` |
+| `SQLITE_GRAPHRAG_GLINER_MODEL` | Sobrescreve o identificador do repositório do modelo GLiNER | `onnx-community/gliner_multi-v2.1` | caminho personalizado |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Budget de tokens para extração de entidades/relações por memória; valores fora de [512, 100.000] utilizam o padrão | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão. Nota: o pipeline de extração limita internamente os candidatos a 30 antes da deduplicação, portanto o cap de persistência (padrão 50) funciona como teto de segurança e só é atingido se o extrator for estendido ou substituído. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
@@ -519,7 +533,7 @@ RUN cargo install --path .
 
 ## Requisitos de Memória
 ### Dimensionando RAM para cargas de ingest e recall
-- Mínimo de 3 GB de RAM recomendado (4 GB+ para corpora grandes). O piso fica em torno de 2 GB apenas para carregar ONNX runtime + BERT NER + fastembed multilingual-e5-small.
+- Mínimo de 3 GB de RAM recomendado (4 GB+ para corpora grandes). O piso fica em torno de 2 GB apenas para carregar ONNX runtime + GLiNER NER + fastembed multilingual-e5-small.
 - Paralelismo padrão (`--ingest-parallelism = min(4, cpus/2)`) aumenta o RSS de forma quase linear por worker. Com 4 workers, o ingest de 30 arquivos pico em torno de 4,4 GB.
 - Modo de baixa memória: passe `--low-memory` (ou defina `SQLITE_GRAPHRAG_LOW_MEMORY=1`) para forçar ingest single-threaded. Equivale a `--ingest-parallelism 1` e sobrescreve qualquer valor explícito. Reduz o pico de RSS para cerca de 2,6 GB ao custo de 3-4x mais tempo de relógio.
 - Usuários de container/cgroup: limite abaixo de 3 GB causa OOM-kill durante o load do modelo. Use cgroup `MemoryMax=4G` ou superior em produção.

@@ -127,7 +127,7 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 
 ### Variants
-- BERT NER is disabled by default; use `--enable-ner` or `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic entity extraction
+- GLiNER NER is disabled by default; use `--enable-ner` or `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic entity extraction
 - Use `--fail-fast` to abort on the first per-file error instead of continuing with inline error reporting
 
 
@@ -1396,8 +1396,8 @@ sqlite-graphrag history --name authentication-flow --json | jaq '.versions | len
 
 ## How To Ingest Large Corpora On Memory-Constrained Hosts
 ### Problem
-- Your 5000-file ingestion pipeline takes hours because BERT NER runs on every body
-- Loading the 676 MB BERT model on first run exceeds your CI memory budget
+- Your 5000-file ingestion pipeline takes hours because GLiNER NER runs on every body
+- Loading the GLiNER model (1.1 GB fp32 default, 349 MB with `--gliner-variant int8`) on first run exceeds your CI memory budget
 
 
 ### Solution
@@ -1409,7 +1409,8 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 
 
 ### Explanation
-- BERT NER is disabled by default; pass `--enable-ner` to activate it (adds approximately 150 ms per file on warm cache)
+- GLiNER NER is disabled by default; pass `--enable-ner` to activate it (adds approximately 100-200 ms per file on warm cache)
+- Use `--gliner-variant int8` with `--enable-ner` to reduce model download from 1.1 GB to 349 MB with minimal accuracy loss
 - `--low-memory` forces `--ingest-parallelism 1`, reducing RSS by approximately 40 percent for constrained hosts
 - `--max-files 50000` raises the safety cap from the default 10000; the operation is rejected entirely if file count exceeds the cap
 - Two parallelism axes exist: `--max-concurrency` controls CLI invocations, `--ingest-parallelism` controls extract+embed threads

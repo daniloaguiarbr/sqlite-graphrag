@@ -93,7 +93,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - PREFERIR `--body-stdin` para corpos longos
 - USAR `--body-file <PATH>` para evitar escape shell em Markdown
 - PASSAR `--force-merge` em loops idempotentes
-- NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração BERT
+- NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração GLiNER
 - RESPEITAR limite de 512000 bytes e 512 chunks por body
 ### OBRIGATÓRIO — Anexar Grafo no remember
 - USAR `--entities-file` com array JSON tipado
@@ -108,7 +108,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - NUNCA usar `strength` fora do intervalo `[0.0, 1.0]`
 - NUNCA duplicar nome sem `--force-merge` explícito
 - NUNCA misturar `--body`, `--body-file`, `--body-stdin`, `--graph-stdin`
-- NUNCA depender de auto-extração BERT em CI sensível a RAM
+- NUNCA depender de auto-extração GLiNER em CI sensível a RAM
 - NUNCA exceder o cap de relações por memória sem ajustar env
 - NUNCA usar `remember` em loop quando `ingest` cobre o caso
 ### Padrão Correto — Exemplos de remember
@@ -166,10 +166,11 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - DISTINGUIR claramente os dois eixos antes de ajustar
 - AMPLIAR `--wait-lock <SECONDS>` para esperar slot antes de exit 75
 ### OBRIGATÓRIO — Performance e Extração
-- NER desabilitado por padrão; passar `--enable-ner` para ativar extração BERT
-- BERT NER adiciona aproximadamente 150 ms por arquivo com daemon ativo em hardware moderno
-- BERT NER adiciona 2 a 30 segundos por arquivo em `--low-memory` ou sem daemon
-- BERT NER adiciona aproximadamente 30 segundos no primeiro run para carregar modelo
+- NER desabilitado por padrão; passar `--enable-ner` para ativar extração GLiNER
+- GLiNER NER adiciona aproximadamente 100-200 ms por arquivo com modelo carregado em hardware moderno
+- GLiNER NER adiciona 2 a 30 segundos por arquivo em `--low-memory` ou no primeiro carregamento
+- GLiNER NER baixa o modelo ONNX no primeiro run (fp32: 1,1 GB, int8: 349 MB via `--gliner-variant`)
+- USAR `--gliner-variant int8` para CI/containers para reduzir modelo de 1,1 GB para 349 MB
 - USAR `--enable-ner` apenas quando enriquecimento automático de entidades for valioso
 - PREFERIR `--graph-stdin --skip-extraction` com entidades curadas por LLM para melhor qualidade
 ### PROIBIDO — Anti-padrões de ingest

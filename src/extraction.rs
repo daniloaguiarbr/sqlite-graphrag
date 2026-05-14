@@ -3,25 +3,19 @@
 //! Runs named-entity recognition and regex heuristics to extract structured
 //! entities and hyperlinks from raw memory bodies before embedding.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
-use candle_core::{DType, Device, Tensor};
-use candle_nn::{Linear, Module, VarBuilder};
-use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use ort::session::{builder::GraphOptimizationLevel, Session};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::entity_type::EntityType;
 use crate::paths::AppPaths;
 use crate::storage::entities::{NewEntity, NewRelationship};
 
-const MODEL_ID: &str = "Davlan/bert-base-multilingual-cased-ner-hrl";
-const MAX_SEQ_LEN: usize = 512;
-const STRIDE: usize = 256;
 const MAX_ENTS: usize = 30;
 // v1.0.31 A9: only consumed by the legacy `build_relationships`, which is
 // kept for unit tests pinning the cap behaviour.
@@ -36,7 +30,7 @@ static REGEX_UUID: OnceLock<Regex> = OnceLock::new();
 static REGEX_ALL_CAPS: OnceLock<Regex> = OnceLock::new();
 // v1.0.25 P0-4: filters section-structure markers like "Etapa 3", "Fase 1", "Passo 2".
 static REGEX_SECTION_MARKER: OnceLock<Regex> = OnceLock::new();
-// v1.0.25 P0-2: captures CamelCase brand names that BERT NER often misses (e.g. "OpenAI", "PostgreSQL").
+// v1.0.25 P0-2: captures CamelCase brand names that NER model often misses (e.g. "OpenAI", "PostgreSQL").
 static REGEX_BRAND_CAMEL: OnceLock<Regex> = OnceLock::new();
 
 // v1.0.20: stopwords to filter common PT-BR/EN rule words captured as ALL_CAPS.
@@ -209,7 +203,7 @@ const ALL_CAPS_STOPWORDS: &[&str] = &[
 ];
 
 // v1.0.22: HTTP methods are protocol verbs, not semantically useful entities.
-// Filtered in apply_regex_prefilter (regex_all_caps) and iob_to_entities (single-token).
+// Filtered in apply_regex_prefilter (regex_all_caps path).
 const HTTP_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
 ];
@@ -297,7 +291,7 @@ pub struct ExtractionResult {
     /// True when build_relationships hit the cap before covering all entity pairs.
     /// Exposed in RememberResponse so callers can detect when relationships were cut.
     pub relationships_truncated: bool,
-    /// Extraction method used: "bert+regex" or "regex-only".
+    /// Extraction method used: `"gliner-<variant>+regex"` or `"regex-only"`.
     /// Useful for auditing, metrics and user reports.
     pub extraction_method: String,
     /// URLs extracted from the body — stored separately from graph entities.
@@ -308,290 +302,392 @@ pub trait Extractor: Send + Sync {
     fn extract(&self, body: &str) -> Result<ExtractionResult>;
 }
 
-#[derive(Deserialize)]
-struct ModelConfig {
-    #[serde(default)]
-    id2label: HashMap<String, String>,
-    hidden_size: usize,
+/// GLiNER ONNX model quantization variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GlinerVariant {
+    Fp32,
+    Fp16,
+    Int8,
+    Q4,
+    Q4f16,
 }
 
-struct BertNerModel {
-    bert: BertModel,
-    classifier: Linear,
-    device: Device,
-    id2label: HashMap<usize, String>,
+impl GlinerVariant {
+    /// ONNX filename for this variant in the HuggingFace repository.
+    pub fn as_filename(self) -> &'static str {
+        match self {
+            Self::Fp32 => "model.onnx",
+            Self::Fp16 => "model_fp16.onnx",
+            Self::Int8 => "model_quantized.onnx",
+            Self::Q4 => "model_q4.onnx",
+            Self::Q4f16 => "model_q4f16.onnx",
+        }
+    }
+
+    /// Approximate model size for user-facing messages.
+    pub fn display_size(self) -> &'static str {
+        match self {
+            Self::Fp32 => "1.1 GB",
+            Self::Fp16 => "580 MB",
+            Self::Int8 => "349 MB",
+            Self::Q4 => "894 MB",
+            Self::Q4f16 => "472 MB",
+        }
+    }
 }
 
-impl BertNerModel {
-    fn load(model_dir: &Path) -> Result<Self> {
-        let config_path = model_dir.join("config.json");
-        let weights_path = model_dir.join("model.safetensors");
+impl std::fmt::Display for GlinerVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fp32 => f.write_str("fp32"),
+            Self::Fp16 => f.write_str("fp16"),
+            Self::Int8 => f.write_str("int8"),
+            Self::Q4 => f.write_str("q4"),
+            Self::Q4f16 => f.write_str("q4f16"),
+        }
+    }
+}
 
-        let config_str = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("lendo config.json em {config_path:?}"))?;
-        let model_cfg: ModelConfig =
-            serde_json::from_str(&config_str).context("parseando config.json do modelo NER")?;
+impl std::str::FromStr for GlinerVariant {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "fp32" => Ok(Self::Fp32),
+            "fp16" => Ok(Self::Fp16),
+            "int8" => Ok(Self::Int8),
+            "q4" => Ok(Self::Q4),
+            "q4f16" => Ok(Self::Q4f16),
+            other => {
+                anyhow::bail!("unknown GLiNER variant: {other}. Valid: fp32, fp16, int8, q4, q4f16")
+            }
+        }
+    }
+}
 
-        let id2label: HashMap<usize, String> = model_cfg
-            .id2label
-            .into_iter()
-            .filter_map(|(k, v)| k.parse::<usize>().ok().map(|n| (n, v)))
-            .collect();
+const GLINER_MAX_WIDTH: usize = 12;
+const GLINER_MAX_SEQ_LEN: usize = 384;
+const GLINER_ENT_TOKEN: &str = "<<ENT>>";
+const GLINER_SEP_TOKEN: &str = "<<SEP>>";
 
-        let num_labels = id2label.len().max(9);
-        let hidden_size = model_cfg.hidden_size;
+const GLINER_ENTITY_LABELS: &[(&str, EntityType)] = &[
+    ("person", EntityType::Person),
+    ("organization", EntityType::Organization),
+    ("location", EntityType::Location),
+    ("date", EntityType::Date),
+    ("project", EntityType::Project),
+    ("tool", EntityType::Tool),
+    ("file", EntityType::File),
+    ("concept", EntityType::Concept),
+    ("decision", EntityType::Decision),
+    ("incident", EntityType::Incident),
+    ("dashboard", EntityType::Dashboard),
+    ("issue tracker", EntityType::IssueTracker),
+    ("memory", EntityType::Memory),
+];
 
-        let bert_config_str = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("relendo config.json para bert em {config_path:?}"))?;
-        let bert_cfg: BertConfig =
-            serde_json::from_str(&bert_config_str).context("parseando BertConfig")?;
+struct GlinerModel {
+    session: std::sync::Mutex<Session>,
+    tokenizer: tokenizers::Tokenizer,
+    #[allow(dead_code)]
+    variant: GlinerVariant,
+}
 
-        let device = Device::Cpu;
+impl GlinerModel {
+    fn load(model_dir: &Path, variant: GlinerVariant) -> Result<Self> {
+        let model_path = model_dir.join(variant.as_filename());
+        let tokenizer_path = model_dir.join("tokenizer.json");
 
-        // SAFETY: VarBuilder::from_mmaped_safetensors requires unsafe because it relies on
-        // memory-mapping the weights file. Soundness assumptions:
-        // 1. The file at `weights_path` is not concurrently modified during model lifetime
-        //    (we only read; the cache directory is owned by the current process via 0600 perms).
-        // 2. The mmaped region remains valid for the lifetime of the `VarBuilder` and any
-        //    derived tensors (enforced by candle's internal lifetime tracking).
-        // 3. The safetensors format is well-formed (verified by candle's parser before mmap).
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
-                .with_context(|| format!("mapping {weights_path:?}"))?
-        };
-        let bert = BertModel::load(vb.pp("bert"), &bert_cfg).context("loading BertModel")?;
+        let session = Session::builder()
+            .map_err(|e| anyhow::anyhow!("creating GLiNER session builder: {e}"))?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::anyhow!("setting optimization level: {e}"))?
+            .commit_from_file(&model_path)
+            .map_err(|e| anyhow::anyhow!("loading GLiNER ONNX model from {model_path:?}: {e}"))?;
 
-        // v1.0.20 secondary P0 fix: load classifier head from safetensors instead of zeros.
-        // In v1.0.19 we used Tensor::zeros, which produced constant argmax and degenerate inference.
-        let cls_vb = vb.pp("classifier");
-        let weight = cls_vb
-            .get((num_labels, hidden_size), "weight")
-            .context("carregando classifier.weight do safetensors")?;
-        let bias = cls_vb
-            .get(num_labels, "bias")
-            .context("carregando classifier.bias do safetensors")?;
-        let classifier = Linear::new(weight, Some(bias));
+        let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| anyhow::anyhow!("loading GLiNER tokenizer: {e}"))?;
 
         Ok(Self {
-            bert,
-            classifier,
-            device,
-            id2label,
+            session: std::sync::Mutex::new(session),
+            tokenizer,
+            variant,
         })
     }
 
-    fn predict(&self, token_ids: &[u32], attention_mask: &[u32]) -> Result<Vec<String>> {
-        let len = token_ids.len();
-        let ids_i64: Vec<i64> = token_ids.iter().map(|&x| x as i64).collect();
-        let mask_i64: Vec<i64> = attention_mask.iter().map(|&x| x as i64).collect();
-
-        let input_ids = Tensor::from_vec(ids_i64, (1, len), &self.device)
-            .context("creating tensor input_ids")?;
-        let token_type_ids = Tensor::zeros((1, len), DType::I64, &self.device)
-            .context("creating tensor token_type_ids")?;
-        let attn_mask = Tensor::from_vec(mask_i64, (1, len), &self.device)
-            .context("creating tensor attention_mask")?;
-
-        let sequence_output = self
-            .bert
-            .forward(&input_ids, &token_type_ids, Some(&attn_mask))
-            .context("BertModel forward pass")?;
-
-        let logits = self
-            .classifier
-            .forward(&sequence_output)
-            .context("classifier forward pass")?;
-
-        let logits_2d = logits.squeeze(0).context("removing batch dimension")?;
-
-        let num_tokens = logits_2d.dim(0).context("dim(0)")?;
-
-        let mut labels = Vec::with_capacity(num_tokens);
-        for i in 0..num_tokens {
-            let token_logits = logits_2d.get(i).context("get token logits")?;
-            let vec: Vec<f32> = token_logits.to_vec1().context("to_vec1 logits")?;
-            let argmax = vec
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-            let label = self
-                .id2label
-                .get(&argmax)
-                .cloned()
-                .unwrap_or_else(|| "O".to_string());
-            labels.push(label);
+    fn predict(
+        &self,
+        body: &str,
+        entity_labels: &[(&str, EntityType)],
+        threshold: f32,
+    ) -> Result<Vec<ExtractedEntity>> {
+        let label_names: Vec<&str> = entity_labels.iter().map(|(name, _)| *name).collect();
+        let words: Vec<&str> = body.split_whitespace().collect();
+        if words.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(labels)
-    }
+        // Cap words to fit within model sequence length (accounting for label tokens)
+        let label_token_count = label_names.len() * 2 + 1;
+        let max_words = GLINER_MAX_SEQ_LEN.saturating_sub(label_token_count + 2);
+        let words = if words.len() > max_words {
+            tracing::warn!(
+                original_words = words.len(),
+                capped_words = max_words,
+                "GLiNER input truncated to fit model sequence length"
+            );
+            &words[..max_words]
+        } else {
+            &words[..]
+        };
+        let num_words = words.len();
 
-    /// Run a batched forward pass over multiple tokenised windows at once.
-    ///
-    /// Windows are padded on the right with token_id=0 and attention_mask=0 to
-    /// the length of the longest window in the batch.  The attention mask ensures
-    /// BERT ignores padded positions (bert.rs:515-528 adds -3.4e38 before softmax).
-    ///
-    /// Returns one label vector per window, each of length equal to that window's
-    /// original (pre-padding) token count.
-    fn predict_batch(&self, windows: &[(Vec<u32>, Vec<String>)]) -> Result<Vec<Vec<String>>> {
-        let batch_size = windows.len();
-        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap_or(0);
-        if max_len == 0 {
-            return Ok(vec![vec![]; batch_size]);
+        // Build prompt: [<<ENT>>, label1, <<ENT>>, label2, ..., <<SEP>>, word1, word2, ...]
+        let mut prompt_tokens: Vec<String> =
+            Vec::with_capacity(label_names.len() * 2 + 1 + num_words);
+        for label in &label_names {
+            prompt_tokens.push(GLINER_ENT_TOKEN.to_string());
+            prompt_tokens.push((*label).to_string());
+        }
+        prompt_tokens.push(GLINER_SEP_TOKEN.to_string());
+        for word in words {
+            prompt_tokens.push((*word).to_string());
         }
 
-        let mut padded_ids: Vec<Tensor> = Vec::with_capacity(batch_size);
-        let mut padded_masks: Vec<Tensor> = Vec::with_capacity(batch_size);
+        // Encode each token individually (word-by-word encoding per GLiNER protocol)
+        let mut all_ids: Vec<i64> = Vec::new();
+        let mut all_attention: Vec<i64> = Vec::new();
+        let mut all_word_mask: Vec<i64> = Vec::new();
 
-        for (ids, _) in windows {
-            let len = ids.len();
-            let pad_right = max_len - len;
+        // BOS token
+        all_ids.push(1);
+        all_attention.push(1);
+        all_word_mask.push(0);
 
-            let ids_i64: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
-            // Build 1-D token tensor then pad to max_len
-            let t = Tensor::from_vec(ids_i64, len, &self.device)
-                .context("creating id tensor for batch")?;
-            let t = t
-                .pad_with_zeros(0, 0, pad_right)
-                .context("padding id tensor")?;
-            padded_ids.push(t);
+        let text_offset = label_names.len() * 2 + 1;
+        let mut word_id: i64 = 0;
 
-            // Attention mask: 1 for real tokens, 0 for padding
-            let mut mask_i64 = vec![1i64; len];
-            mask_i64.extend(vec![0i64; pad_right]);
-            let m = Tensor::from_vec(mask_i64, max_len, &self.device)
-                .context("creating mask tensor for batch")?;
-            padded_masks.push(m);
-        }
+        for (pos, token_str) in prompt_tokens.iter().enumerate() {
+            let encoding = self
+                .tokenizer
+                .encode(token_str.as_str(), false)
+                .map_err(|e| anyhow::anyhow!("GLiNER tokenizer encode error: {e}"))?;
+            let ids = encoding.get_ids();
+            let is_text_token = pos >= text_offset;
 
-        // Stack 1-D tensors into (batch_size, max_len)
-        let input_ids = Tensor::stack(&padded_ids, 0).context("stack input_ids")?;
-        let attn_mask = Tensor::stack(&padded_masks, 0).context("stack attn_mask")?;
-        let token_type_ids = Tensor::zeros((batch_size, max_len), DType::I64, &self.device)
-            .context("creating token_type_ids tensor for batch")?;
-
-        // Single forward pass for the entire batch
-        let sequence_output = self
-            .bert
-            .forward(&input_ids, &token_type_ids, Some(&attn_mask))
-            .context("BertModel batch forward pass")?;
-        // sequence_output: (batch_size, max_len, hidden_size)
-
-        let logits = self
-            .classifier
-            .forward(&sequence_output)
-            .context("forward pass batch classificador")?;
-        // logits: (batch_size, max_len, num_labels)
-
-        let mut results = Vec::with_capacity(batch_size);
-        for (i, (window_ids, _)) in windows.iter().enumerate() {
-            let example_logits = logits.get(i).context("get logits exemplo")?;
-            // (max_len, num_labels) — slice only real tokens, discard padding
-            let real_len = window_ids.len();
-            let example_slice = example_logits
-                .narrow(0, 0, real_len)
-                .context("narrow para tokens reais")?;
-            let logits_2d: Vec<Vec<f32>> = example_slice.to_vec2().context("to_vec2 logits")?;
-
-            let labels: Vec<String> = logits_2d
-                .iter()
-                .map(|token_logits| {
-                    let argmax = token_logits
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx)
-                        .unwrap_or(0);
-                    self.id2label
-                        .get(&argmax)
-                        .cloned()
-                        .unwrap_or_else(|| "O".to_string())
-                })
-                .collect();
-
-            results.push(labels);
-        }
-
-        Ok(results)
-    }
-}
-
-static NER_MODEL: OnceLock<Option<BertNerModel>> = OnceLock::new();
-
-fn get_or_init_model(paths: &AppPaths) -> Option<&'static BertNerModel> {
-    NER_MODEL
-        .get_or_init(|| match load_model(paths) {
-            Ok(m) => Some(m),
-            Err(e) => {
-                tracing::warn!("NER model unavailable (graceful degradation): {e:#}");
-                None
+            for (sub_idx, &id) in ids.iter().enumerate() {
+                all_ids.push(id as i64);
+                all_attention.push(1);
+                if is_text_token && sub_idx == 0 {
+                    word_id += 1;
+                    all_word_mask.push(word_id);
+                } else {
+                    all_word_mask.push(0);
+                }
             }
-        })
-        .as_ref()
+        }
+
+        // EOS token
+        all_ids.push(2);
+        all_attention.push(1);
+        all_word_mask.push(0);
+
+        let seq_len = all_ids.len();
+
+        // Build ORT tensors using Tensor::from_array((shape, data)) API
+        let t_input_ids = ort::value::Tensor::<i64>::from_array(([1usize, seq_len], all_ids))
+            .map_err(|e| anyhow::anyhow!("building input_ids tensor: {e}"))?;
+        let t_attention = ort::value::Tensor::<i64>::from_array(([1usize, seq_len], all_attention))
+            .map_err(|e| anyhow::anyhow!("building attention_mask tensor: {e}"))?;
+        let t_words_mask =
+            ort::value::Tensor::<i64>::from_array(([1usize, seq_len], all_word_mask))
+                .map_err(|e| anyhow::anyhow!("building words_mask tensor: {e}"))?;
+        let t_text_lengths =
+            ort::value::Tensor::<i64>::from_array(([1usize, 1usize], vec![num_words as i64]))
+                .map_err(|e| anyhow::anyhow!("building text_lengths tensor: {e}"))?;
+
+        // Build span tensors
+        let num_spans = num_words * GLINER_MAX_WIDTH;
+        let mut span_idx_data = vec![0i64; num_spans * 2];
+        let mut span_mask_data = vec![false; num_spans];
+
+        for start in 0..num_words {
+            let remaining = num_words - start;
+            let actual_max_width = GLINER_MAX_WIDTH.min(remaining);
+            for width in 0..actual_max_width {
+                let dim = start * GLINER_MAX_WIDTH + width;
+                span_idx_data[dim * 2] = start as i64;
+                span_idx_data[dim * 2 + 1] = (start + width) as i64;
+                span_mask_data[dim] = true;
+            }
+        }
+
+        // span_mask uses bool; ORT bool tensor
+        let span_mask_i64: Vec<i64> = span_mask_data.iter().map(|&b| b as i64).collect();
+        let t_span_idx =
+            ort::value::Tensor::<i64>::from_array(([1usize, num_spans, 2usize], span_idx_data))
+                .map_err(|e| anyhow::anyhow!("building span_idx tensor: {e}"))?;
+        let t_span_mask =
+            ort::value::Tensor::<i64>::from_array(([1usize, num_spans], span_mask_i64))
+                .map_err(|e| anyhow::anyhow!("building span_mask tensor: {e}"))?;
+
+        // Run inference — Session::run requires &mut Session; bind guard first.
+        let mut session_guard = self
+            .session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GLiNER session mutex poisoned"))?;
+        let outputs = session_guard
+            .run(ort::inputs![
+                "input_ids" => t_input_ids,
+                "attention_mask" => t_attention,
+                "words_mask" => t_words_mask,
+                "text_lengths" => t_text_lengths,
+                "span_idx" => t_span_idx,
+                "span_mask" => t_span_mask
+            ])
+            .map_err(|e| anyhow::anyhow!("GLiNER inference forward pass: {e}"))?;
+
+        // Extract logits: [1, num_words, max_width, num_classes]
+        // try_extract_tensor returns (&Shape, &[f32]); index manually.
+        let (logits_shape, logits_data) = outputs["logits"]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| anyhow::anyhow!("extracting logits tensor: {e}"))?;
+
+        let num_classes = label_names.len();
+        // Expected shape: [1, num_words, GLINER_MAX_WIDTH, num_classes]
+        // Shape derefs to &[i64] so we can index directly.
+        let max_width = logits_shape
+            .get(2)
+            .copied()
+            .unwrap_or(GLINER_MAX_WIDTH as i64) as usize;
+        let nc = logits_shape.get(3).copied().unwrap_or(num_classes as i64) as usize;
+
+        let mut candidates: Vec<(usize, usize, usize, f32)> = Vec::new();
+
+        for start in 0..num_words {
+            for width in 0..max_width {
+                let end = start + width;
+                if end >= num_words {
+                    break;
+                }
+                for class_idx in 0..nc.min(num_classes) {
+                    // flat index: batch=0 * (num_words*max_width*nc) + start*(max_width*nc) + width*nc + class_idx
+                    let flat = start * (max_width * nc) + width * nc + class_idx;
+                    if flat >= logits_data.len() {
+                        break;
+                    }
+                    let raw = logits_data[flat];
+                    let score = 1.0 / (1.0 + (-raw).exp());
+                    if score >= threshold {
+                        candidates.push((start, end, class_idx, score));
+                    }
+                }
+            }
+        }
+
+        // Sort by score descending for greedy NMS
+        candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Greedy non-maximum suppression
+        let mut used = vec![false; num_words];
+        let mut entities: Vec<ExtractedEntity> = Vec::new();
+
+        for (start, end, class_idx, _score) in &candidates {
+            let overlap = (*start..=*end).any(|i| used[i]);
+            if overlap {
+                continue;
+            }
+            for flag in used.iter_mut().take(*end + 1).skip(*start) {
+                *flag = true;
+            }
+            let text = words[*start..=*end].join(" ");
+            if text.len() < MIN_ENTITY_CHARS {
+                continue;
+            }
+            let entity_type = entity_labels[*class_idx].1;
+            entities.push(ExtractedEntity {
+                name: text,
+                entity_type,
+            });
+            if entities.len() >= MAX_ENTS {
+                break;
+            }
+        }
+
+        Ok(entities)
+    }
 }
 
-fn model_dir(paths: &AppPaths) -> PathBuf {
-    paths.models.join("bert-multilingual-ner")
+static GLINER_MODEL: OnceLock<Option<GlinerModel>> = OnceLock::new();
+
+fn gliner_model_dir(paths: &AppPaths, variant: GlinerVariant) -> PathBuf {
+    paths.models.join(format!("gliner-multi-v2.1/{variant}"))
 }
 
-fn ensure_model_files(paths: &AppPaths) -> Result<PathBuf> {
-    let dir = model_dir(paths);
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating model directory: {dir:?}"))?;
+fn ensure_gliner_model_files(paths: &AppPaths, variant: GlinerVariant) -> Result<PathBuf> {
+    let dir = gliner_model_dir(paths, variant);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating GLiNER model directory: {dir:?}"))?;
 
-    let weights = dir.join("model.safetensors");
-    let config = dir.join("config.json");
-    let tokenizer = dir.join("tokenizer.json");
+    let model_file = dir.join(variant.as_filename());
+    let tokenizer_file = dir.join("tokenizer.json");
 
-    if weights.exists() && config.exists() && tokenizer.exists() {
+    if model_file.exists() && tokenizer_file.exists() {
         return Ok(dir);
     }
 
-    tracing::info!("Downloading NER model (first run, ~676 MB)...");
+    let repo = crate::constants::gliner_model_repo();
+    tracing::info!(
+        "Downloading GLiNER model ({variant}, ~{})...",
+        variant.display_size()
+    );
     crate::output::emit_progress_i18n(
-        "Downloading NER model (first run, ~676 MB)...",
-        crate::i18n::validation::runtime_pt::downloading_ner_model(),
+        &format!(
+            "Downloading GLiNER model ({variant}, ~{})...",
+            variant.display_size()
+        ),
+        &format!(
+            "Baixando modelo GLiNER ({variant}, ~{})...",
+            variant.display_size()
+        ),
     );
 
     let api = huggingface_hub::api::sync::Api::new().context("creating HF Hub client")?;
-    let repo = api.model(MODEL_ID.to_string());
+    let hf_repo = api.model(repo);
 
-    // v1.0.20 primary P0 fix: tokenizer.json in the Davlan repo is only at onnx/tokenizer.json.
-    // In v1.0.19 we fetched it from the root and got 404, falling into graceful degradation 100% of the time.
-    // We map (remote_path, local_filename) to download from the subfolder while keeping a flat local name.
-    for (remote, local) in &[
-        ("model.safetensors", "model.safetensors"),
-        ("config.json", "config.json"),
-        ("onnx/tokenizer.json", "tokenizer.json"),
-        ("tokenizer_config.json", "tokenizer_config.json"),
-    ] {
-        let dest = dir.join(local);
-        if !dest.exists() {
-            let src = repo
-                .get(remote)
-                .with_context(|| format!("baixando {remote} do HF Hub"))?;
-            std::fs::copy(&src, &dest).with_context(|| format!("copiando {local} para cache"))?;
-        }
+    let remote_model = format!("onnx/{}", variant.as_filename());
+    if !model_file.exists() {
+        let src = hf_repo
+            .get(&remote_model)
+            .with_context(|| format!("downloading {remote_model} from HF Hub"))?;
+        std::fs::copy(&src, &model_file)
+            .with_context(|| format!("copying {} to cache", variant.as_filename()))?;
+    }
+
+    if !tokenizer_file.exists() {
+        let src = hf_repo
+            .get("tokenizer.json")
+            .context("downloading tokenizer.json from HF Hub")?;
+        std::fs::copy(&src, &tokenizer_file).context("copying tokenizer.json to cache")?;
     }
 
     Ok(dir)
 }
 
-fn load_model(paths: &AppPaths) -> Result<BertNerModel> {
-    let dir = ensure_model_files(paths)?;
-    BertNerModel::load(&dir)
+fn load_gliner_model(paths: &AppPaths, variant: GlinerVariant) -> Result<GlinerModel> {
+    let dir = ensure_gliner_model_files(paths, variant)?;
+    GlinerModel::load(&dir, variant)
 }
 
-/// Hashes a string to u64 using DefaultHasher to avoid cloning in seen-sets.
-#[inline]
-fn hash_str(s: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
+fn get_or_init_gliner(paths: &AppPaths, variant: GlinerVariant) -> Option<&'static GlinerModel> {
+    GLINER_MODEL
+        .get_or_init(|| match load_gliner_model(paths, variant) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!("GLiNER model unavailable (graceful degradation): {e:#}");
+                None
+            }
+        })
+        .as_ref()
 }
 
 fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
@@ -627,7 +723,7 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
             add(&mut entities, &mut seen, candidate, EntityType::Concept);
         }
     }
-    // v1.0.25 P0-2: capture CamelCase brand names that BERT NER often misses.
+    // v1.0.25 P0-2: capture CamelCase brand names that NER model often misses.
     // Maps to "organization" (V008 schema) because brand names are typically organisations.
     for m in regex_brand_camel().find_iter(cleaned) {
         let name = m.as_str();
@@ -664,132 +760,6 @@ pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
         }
     }
     result
-}
-
-fn iob_to_entities(tokens: &[String], labels: &[String]) -> Vec<ExtractedEntity> {
-    let mut entities: Vec<ExtractedEntity> = Vec::with_capacity(tokens.len() / 4);
-    let mut current_parts: Vec<String> = Vec::new();
-    let mut current_type: Option<EntityType> = None;
-
-    let flush = |parts: &mut Vec<String>,
-                 typ: &mut Option<EntityType>,
-                 entities: &mut Vec<ExtractedEntity>| {
-        if let Some(t) = typ.take() {
-            let name = parts.join(" ").trim().to_string();
-            // v1.0.22: filters single-token entities that are ALL CAPS stopwords or HTTP methods.
-            // BERT NER classifies some of these as B-MISC/B-ORG; post-filtering here avoids
-            // polluting the graph with generic verbs/protocols.
-            let is_single_caps = !name.contains(' ')
-                && name == name.to_uppercase()
-                && name.len() >= MIN_ENTITY_CHARS;
-            let should_skip = is_single_caps && is_filtered_all_caps(&name);
-            // v1.0.25 P0-4: BERT may independently label section-structure tokens (e.g.
-            // "Etapa 3", "Fase 1") even though apply_regex_prefilter strips them from the
-            // input text before regex extraction. Apply the same guard here to avoid the
-            // BERT path re-introducing these markers as graph entities.
-            let is_section_marker = regex_section_marker().is_match(&name);
-            if name.len() >= MIN_ENTITY_CHARS && !should_skip && !is_section_marker {
-                entities.push(ExtractedEntity {
-                    name,
-                    entity_type: t,
-                });
-            }
-            parts.clear();
-        }
-    };
-
-    for (token, label) in tokens.iter().zip(labels.iter()) {
-        if label == "O" {
-            flush(&mut current_parts, &mut current_type, &mut entities);
-            continue;
-        }
-
-        let (prefix, bio_type) = if let Some(rest) = label.strip_prefix("B-") {
-            ("B", rest)
-        } else if let Some(rest) = label.strip_prefix("I-") {
-            ("I", rest)
-        } else {
-            flush(&mut current_parts, &mut current_type, &mut entities);
-            continue;
-        };
-
-        // v1.0.25 P0-2: Portuguese monosyllabic verbs that BERT often misclassifies as person names.
-        // Only filtered when confidence is unavailable (no logit gate here); these tokens are
-        // structurally unlikely to be real proper names in a technical corpus.
-        // Accented PT-BR characters expressed as Unicode escapes so this source
-        // file remains ASCII-only per the project language policy. Equivalent
-        // tokens: L\u{00ea}, V\u{00ea}, C\u{00e1}, P\u{00f4}r.
-        const PT_VERB_FALSE_POSITIVES: &[&str] = &[
-            "L\u{00ea}",
-            "V\u{00ea}",
-            "C\u{00e1}",
-            "P\u{00f4}r",
-            "Ser",
-            "Vir",
-            "Ver",
-            "Dar",
-            "Ler",
-            "Ter",
-        ];
-
-        let entity_type: EntityType = match bio_type {
-            // v1.0.25 V008: DATE is now a first-class entity type instead of being discarded.
-            "DATE" => EntityType::Date,
-            "PER" => {
-                // Filter well-known PT monosyllabic verbs misclassified as persons.
-                if PT_VERB_FALSE_POSITIVES.contains(&token.as_str()) {
-                    flush(&mut current_parts, &mut current_type, &mut entities);
-                    continue;
-                }
-                EntityType::Person
-            }
-            "ORG" => {
-                let t = token.to_lowercase();
-                if t.contains("lib")
-                    || t.contains("sdk")
-                    || t.contains("cli")
-                    || t.contains("crate")
-                    || t.contains("npm")
-                {
-                    EntityType::Tool
-                } else {
-                    // v1.0.25 V008: "organization" replaces the v1.0.24 default "project".
-                    EntityType::Organization
-                }
-            }
-            // v1.0.25 V008: "location" replaces "concept" for geographic tokens.
-            "LOC" => EntityType::Location,
-            // Unknown BERT label: fall back to concept; unknown labels cannot map to a canonical type.
-            _ => EntityType::Concept,
-        };
-
-        if prefix == "B" {
-            if token.starts_with("##") {
-                // BERT confused: subword with B-prefix indicates continuation of previous entity.
-                // Append to the last part of the current entity; otherwise discard.
-                let clean = token.strip_prefix("##").unwrap_or(token.as_str());
-                if let Some(last) = current_parts.last_mut() {
-                    last.push_str(clean);
-                }
-                continue;
-            }
-            flush(&mut current_parts, &mut current_type, &mut entities);
-            current_parts.push(token.clone());
-            current_type = Some(entity_type);
-        } else if prefix == "I" && current_type.is_some() {
-            let clean = token.strip_prefix("##").unwrap_or(token.as_str());
-            if token.starts_with("##") {
-                if let Some(last) = current_parts.last_mut() {
-                    last.push_str(clean);
-                }
-            } else {
-                current_parts.push(clean.to_string());
-            }
-        }
-    }
-
-    flush(&mut current_parts, &mut current_type, &mut entities);
-    entities
 }
 
 /// Returns (relationships, truncated) where truncated is true when the cap was hit
@@ -932,111 +902,6 @@ fn build_relationships_by_sentence_cooccurrence(
     (rels, hit_cap)
 }
 
-fn run_ner_sliding_window(
-    model: &BertNerModel,
-    body: &str,
-    paths: &AppPaths,
-) -> Result<Vec<ExtractedEntity>> {
-    let tokenizer_path = model_dir(paths).join("tokenizer.json");
-    let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-        .map_err(|e| anyhow::anyhow!("loading NER tokenizer: {e}"))?;
-
-    let encoding = tokenizer
-        .encode(body, false)
-        .map_err(|e| anyhow::anyhow!("encoding NER input: {e}"))?;
-
-    let mut all_ids: Vec<u32> = encoding.get_ids().to_vec();
-    let mut all_tokens: Vec<String> = encoding
-        .get_tokens()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    if all_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // v1.0.31 A1: cap the token stream fed to BERT NER. A 68 KB markdown body
-    // tokenises to ~17 000 tokens, producing ~65 sliding windows whose CPU
-    // forward passes can take 5+ minutes. The regex prefilter already covers
-    // structural entities (URLs, emails, all-caps identifiers, CamelCase
-    // brands) on the full body, so truncation only affects names that BERT
-    // would have detected past the leading region. The cap is configurable
-    // via `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS`.
-    let max_tokens = crate::constants::extraction_max_tokens();
-    if all_ids.len() > max_tokens {
-        tracing::warn!(
-            target: "extraction",
-            original_tokens = all_ids.len(),
-            capped_tokens = max_tokens,
-            "NER input truncated to cap; later body region will be skipped by NER (regex prefilter still covers full body)"
-        );
-        all_ids.truncate(max_tokens);
-        all_tokens.truncate(max_tokens);
-    }
-
-    // Phase 1: collect all sliding windows before any inference
-    let mut windows: Vec<(Vec<u32>, Vec<String>)> = Vec::new();
-    let mut start = 0usize;
-    loop {
-        let end = (start + MAX_SEQ_LEN).min(all_ids.len());
-        windows.push((
-            all_ids[start..end].to_vec(),
-            all_tokens[start..end].to_vec(),
-        ));
-        if end >= all_ids.len() {
-            break;
-        }
-        start += STRIDE;
-    }
-
-    // Phase 2: sort by window length ascending to minimise intra-batch padding waste
-    windows.sort_by_key(|(ids, _)| ids.len());
-
-    // Phase 3: batched inference with fallback to single-window predict on error
-    let batch_size = crate::constants::ner_batch_size();
-    let mut entities: Vec<ExtractedEntity> = Vec::new();
-    let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
-    for chunk in windows.chunks(batch_size) {
-        match model.predict_batch(chunk) {
-            Ok(batch_labels) => {
-                for (labels, (_, tokens)) in batch_labels.iter().zip(chunk.iter()) {
-                    for ent in iob_to_entities(tokens, labels) {
-                        if seen.insert(hash_str(&ent.name)) {
-                            entities.push(ent);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "batch NER failed (chunk of {} windows): {e:#} — falling back to single-window",
-                    chunk.len()
-                );
-                // Fallback: process each window individually to preserve entities
-                for (ids, tokens) in chunk {
-                    let mask = vec![1u32; ids.len()];
-                    match model.predict(ids, &mask) {
-                        Ok(labels) => {
-                            for ent in iob_to_entities(tokens, &labels) {
-                                if seen.insert(hash_str(&ent.name)) {
-                                    entities.push(ent);
-                                }
-                            }
-                        }
-                        Err(e2) => {
-                            tracing::warn!("NER window fallback also failed: {e2:#}");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(entities)
-}
-
 /// v1.0.22 P1: extends entities with hyphenated or space-separated numeric suffixes.
 /// Cases: GPT extracted but body contains "GPT-5" → rewrites to "GPT-5".
 /// Cases: Claude extracted but body contains "Claude 4" → rewrites to "Claude 4".
@@ -1081,9 +946,9 @@ fn extend_with_numeric_suffix(entities: Vec<ExtractedEntity>, body: &str) -> Vec
         .collect()
 }
 
-/// Captures versioned model names that BERT NER consistently misses.
+/// Captures versioned model names that NER model consistently misses.
 ///
-/// BERT NER often classifies tokens like "Claude" or "Llama" as common nouns,
+/// NER model often classifies tokens like "Claude" or "Llama" as common nouns,
 /// failing to emit a B-PER/B-ORG tag. As a result, `extend_with_numeric_suffix`
 /// never sees these candidates and the version suffix gets lost.
 ///
@@ -1262,18 +1127,23 @@ fn to_new_entities(extracted: Vec<ExtractedEntity>) -> Vec<NewEntity> {
         .collect()
 }
 
-pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResult> {
+pub fn extract_graph_auto(
+    body: &str,
+    paths: &AppPaths,
+    variant: GlinerVariant,
+) -> Result<ExtractionResult> {
     let regex_entities = apply_regex_prefilter(body);
+    let threshold = crate::constants::gliner_confidence_threshold();
 
-    let mut bert_used = false;
-    let ner_entities = match get_or_init_model(paths) {
-        Some(model) => match run_ner_sliding_window(model, body, paths) {
+    let mut gliner_used = false;
+    let ner_entities = match get_or_init_gliner(paths, variant) {
+        Some(model) => match model.predict(body, GLINER_ENTITY_LABELS, threshold) {
             Ok(ents) => {
-                bert_used = true;
+                gliner_used = true;
                 ents
             }
             Err(e) => {
-                tracing::warn!("NER failed, falling back to regex-only extraction: {e:#}");
+                tracing::warn!("GLiNER NER failed, falling back to regex-only extraction: {e:#}");
                 Vec::new()
             }
         },
@@ -1281,15 +1151,8 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     };
 
     let merged = merge_and_deduplicate(regex_entities, ner_entities);
-    // v1.0.22: extend NER entities with numeric suffixes from the body (GPT-5, Claude 4, Python 3).
     let extended = extend_with_numeric_suffix(merged, body);
-    // v1.0.23: capture versioned model names that BERT NER does not detect on its own
-    // (e.g. "Claude 4", "Llama 3"). Hyphenated variants like "GPT-5" are already covered
-    // by the NER+suffix pipeline above, but space-separated names need a dedicated pass.
     let with_models = augment_versioned_model_names(extended, body);
-    // v1.0.25 P0-4: augment_versioned_model_names matches any capitalised word followed by a
-    // digit, which inadvertently captures PT-BR section markers ("Etapa 3", "Fase 1"). Strip
-    // them here as a final guard after the full augmentation pipeline.
     let with_models: Vec<ExtractedEntity> = with_models
         .into_iter()
         .filter(|e| !regex_section_marker().is_match(&e.name))
@@ -1298,8 +1161,8 @@ pub fn extract_graph_auto(body: &str, paths: &AppPaths) -> Result<ExtractionResu
     let (relationships, relationships_truncated) =
         build_relationships_by_sentence_cooccurrence(body, &entities);
 
-    let extraction_method = if bert_used {
-        "bert+regex-batch".to_string()
+    let extraction_method = if gliner_used {
+        format!("gliner-{variant}+regex")
     } else {
         "regex-only".to_string()
     };
@@ -1448,85 +1311,6 @@ mod tests {
     }
 
     #[test]
-    fn iob_decodes_per_to_person() {
-        let tokens = vec![
-            "John".to_string(),
-            "Doe".to_string(),
-            "trabalhou".to_string(),
-        ];
-        let labels = vec!["B-PER".to_string(), "I-PER".to_string(), "O".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents.len(), 1);
-        assert_eq!(ents[0].entity_type, EntityType::Person);
-        assert!(ents[0].name.contains("John"));
-    }
-
-    #[test]
-    fn iob_strip_subword_b_prefix() {
-        // v1.0.21 P0: BERT às vezes emite ##AI com B-prefix (subword confuso).
-        // Deve mergear na entidade ativa em vez de criar entidade fantasma "##AI".
-        let tokens = vec!["Open".to_string(), "##AI".to_string()];
-        let labels = vec!["B-ORG".to_string(), "B-ORG".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            ents.iter().any(|e| e.name == "OpenAI" || e.name == "Open"),
-            "should merge ##AI or discard"
-        );
-    }
-
-    #[test]
-    fn iob_subword_orphan_discards() {
-        // v1.0.21 P0: an orphan subword with no active entity must not become an entity.
-        let tokens = vec!["##AI".to_string()];
-        let labels = vec!["B-ORG".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            ents.is_empty(),
-            "orphan subword without an active entity must be discarded"
-        );
-    }
-
-    #[test]
-    fn iob_maps_date_to_date_v1025() {
-        // v1.0.25 V008: DATE is now emitted instead of discarded.
-        let tokens = vec!["January".to_string(), "2024".to_string()];
-        let labels = vec!["B-DATE".to_string(), "I-DATE".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(
-            ents.len(),
-            1,
-            "DATE must be emitted as an entity in v1.0.25"
-        );
-        assert_eq!(ents[0].entity_type, EntityType::Date);
-    }
-
-    #[test]
-    fn iob_maps_org_to_organization_v1025() {
-        // v1.0.25 V008: B-ORG without tool keywords maps to "organization" not "project".
-        let tokens = vec!["Empresa".to_string()];
-        let labels = vec!["B-ORG".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, EntityType::Organization);
-    }
-
-    #[test]
-    fn iob_maps_org_sdk_to_tool() {
-        let tokens = vec!["tokio-sdk".to_string()];
-        let labels = vec!["B-ORG".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, EntityType::Tool);
-    }
-
-    #[test]
-    fn iob_maps_loc_to_location_v1025() {
-        // v1.0.25 V008: B-LOC maps to "location" not "concept".
-        let tokens = vec!["Brasil".to_string()];
-        let labels = vec!["B-LOC".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(ents[0].entity_type, EntityType::Location);
-    }
-
-    #[test]
     fn build_relationships_respeitam_max_rels() {
         let entities: Vec<NewEntity> = (0..20)
             .map(|i| NewEntity {
@@ -1592,10 +1376,10 @@ mod tests {
 
     #[test]
     fn extract_returns_ok_without_model() {
-        // Sem modelo baixado, deve retornar Ok com apenas entidades regex
+        // Without a downloaded model, must return Ok with regex-only entities.
         let paths = make_paths();
         let body = "contato: teste@exemplo.com com MAX_RETRY=3";
-        let result = extract_graph_auto(body, &paths).unwrap();
+        let result = extract_graph_auto(body, &paths, GlinerVariant::Int8).unwrap();
         assert!(result
             .entities
             .iter()
@@ -1659,120 +1443,9 @@ mod tests {
         );
     }
 
-    // ── predict_batch regression tests ──────────────────────────────────────
-
-    #[test]
-    fn predict_batch_output_count_matches_input() {
-        // Verify that predict_batch returns exactly one Vec<String> per window
-        // without requiring a real model.  We test the shape contract by
-        // constructing the padding logic manually and asserting counts.
-        //
-        // Two windows of different lengths: 3 tokens and 5 tokens.
-        let w1_ids: Vec<u32> = vec![101, 100, 102];
-        let w1_tok: Vec<String> = vec!["[CLS]".into(), "hello".into(), "[SEP]".into()];
-        let w2_ids: Vec<u32> = vec![101, 100, 200, 300, 102];
-        let w2_tok: Vec<String> = vec![
-            "[CLS]".into(),
-            "world".into(),
-            "foo".into(),
-            "bar".into(),
-            "[SEP]".into(),
-        ];
-        let windows: Vec<(Vec<u32>, Vec<String>)> =
-            vec![(w1_ids.clone(), w1_tok), (w2_ids.clone(), w2_tok)];
-
-        // Verify padding logic and output length contracts using tensor operations
-        // that do NOT require BertModel::forward.
-        let device = Device::Cpu;
-        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap();
-        assert_eq!(max_len, 5, "max_len deve ser 5");
-
-        let mut padded_ids: Vec<Tensor> = Vec::new();
-        for (ids, _) in &windows {
-            let len = ids.len();
-            let pad_right = max_len - len;
-            let ids_i64: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
-            let t = Tensor::from_vec(ids_i64, len, &device).unwrap();
-            let t = t.pad_with_zeros(0, 0, pad_right).unwrap();
-            assert_eq!(
-                t.dims(),
-                &[max_len],
-                "each window must have shape (max_len,) after padding"
-            );
-            padded_ids.push(t);
-        }
-
-        let stacked = Tensor::stack(&padded_ids, 0).unwrap();
-        assert_eq!(
-            stacked.dims(),
-            &[2, max_len],
-            "stack deve produzir (batch_size=2, max_len=5)"
-        );
-
-        // Verify narrow preserves only real tokens for each window
-        // (simulates what predict_batch does after classifier.forward)
-        let fake_logits_data: Vec<f32> = vec![0.0f32; 2 * max_len * 9]; // batch×seq×num_labels=9
-        let fake_logits =
-            Tensor::from_vec(fake_logits_data, (2usize, max_len, 9usize), &device).unwrap();
-        for (i, (ids, _)) in windows.iter().enumerate() {
-            let real_len = ids.len();
-            let example = fake_logits.get(i).unwrap();
-            let sliced = example.narrow(0, 0, real_len).unwrap();
-            assert_eq!(
-                sliced.dims(),
-                &[real_len, 9],
-                "narrow deve preservar apenas {real_len} tokens reais"
-            );
-        }
-    }
-
-    #[test]
-    fn predict_batch_empty_windows_returns_empty() {
-        // predict_batch with no windows must return an empty Vec, not panic.
-        // We test the guard logic directly on the batch size/max_len path.
-        let windows: Vec<(Vec<u32>, Vec<String>)> = vec![];
-        let max_len = windows.iter().map(|(ids, _)| ids.len()).max().unwrap_or(0);
-        assert_eq!(max_len, 0, "zero windows → max_len 0");
-        // The real predict_batch returns Ok(vec![]) when max_len == 0.
-        // We assert the expected output shape by reproducing the guard here.
-        let result: Vec<Vec<String>> = if max_len == 0 {
-            Vec::new()
-        } else {
-            unreachable!()
-        };
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn ner_batch_size_default_is_8() {
-        // Verify that ner_batch_size() returns the documented default when the
-        // env var is absent.  We clear the var to avoid cross-test contamination.
-        std::env::remove_var("GRAPHRAG_NER_BATCH_SIZE");
-        assert_eq!(crate::constants::ner_batch_size(), 8);
-    }
-
-    #[test]
-    fn ner_batch_size_env_override_clamped() {
-        // Override via env var; values outside [1, 32] must be clamped.
-        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "64");
-        assert_eq!(crate::constants::ner_batch_size(), 32, "deve clampar em 32");
-
-        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "0");
-        assert_eq!(crate::constants::ner_batch_size(), 1, "deve clampar em 1");
-
-        std::env::set_var("GRAPHRAG_NER_BATCH_SIZE", "4");
-        assert_eq!(
-            crate::constants::ner_batch_size(),
-            4,
-            "valid value preserved"
-        );
-
-        std::env::remove_var("GRAPHRAG_NER_BATCH_SIZE");
-    }
-
     #[test]
     fn extraction_method_regex_only_unchanged() {
-        // RegexExtractor always returns "regex-only" regardless of NER_MODEL OnceLock state.
+        // RegexExtractor always returns "regex-only" regardless of GLINER_MODEL state.
         // This guards against accidentally changing the regex-only fallback string.
         let result = RegexExtractor.extract("contact: dev@acme.io").unwrap();
         assert_eq!(
@@ -1946,7 +1619,7 @@ mod tests {
 
     #[test]
     fn brand_camelcase_extracted_as_organization_v1025() {
-        // "OpenAI" is a CamelCase brand that BERT NER often misses.
+        // "OpenAI" is a CamelCase brand that NER model often misses.
         let body = "OpenAI launched GPT-4 and PostgreSQL added pgvector.";
         let ents = apply_regex_prefilter(body);
         let openai = ents.iter().find(|e| e.name == "OpenAI");
@@ -1973,84 +1646,6 @@ mod tests {
             ents.iter()
                 .map(|e| (&e.name, &e.entity_type))
                 .collect::<Vec<_>>()
-        );
-    }
-
-    // ── v1.0.25 V008 alignment ──
-
-    #[test]
-    fn iob_org_maps_to_organization_not_project_v1025() {
-        // B-ORG without tool keywords must emit "organization" (V008), not "project".
-        let tokens = vec!["Microsoft".to_string()];
-        let labels = vec!["B-ORG".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(
-            ents[0].entity_type,
-            EntityType::Organization,
-            "B-ORG must map to organization (V008); got {}",
-            ents[0].entity_type
-        );
-    }
-
-    #[test]
-    fn iob_loc_maps_to_location_not_concept_v1025() {
-        // B-LOC must emit "location" (V008), not "concept".
-        // Token is the PT-BR locality "S\u{e3}o Paulo"; ASCII-escaped per language policy.
-        let tokens = vec!["S\u{e3}o".to_string(), "Paulo".to_string()];
-        let labels = vec!["B-LOC".to_string(), "I-LOC".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(
-            ents[0].entity_type,
-            EntityType::Location,
-            "B-LOC must map to location (V008); got {}",
-            ents[0].entity_type
-        );
-    }
-
-    #[test]
-    fn iob_date_maps_to_date_not_discarded_v1025() {
-        // B-DATE must emit "date" (V008) instead of being discarded.
-        let tokens = vec!["2025".to_string(), "-".to_string(), "12".to_string()];
-        let labels = vec![
-            "B-DATE".to_string(),
-            "I-DATE".to_string(),
-            "I-DATE".to_string(),
-        ];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert_eq!(
-            ents.len(),
-            1,
-            "DATE entity must be emitted (V008); entities: {ents:?}"
-        );
-        assert_eq!(ents[0].entity_type, EntityType::Date);
-    }
-
-    // ── v1.0.25 P0-2: PT verb false-positive filter ──
-
-    #[test]
-    fn pt_verb_le_filtered_as_per_v1025() {
-        // "L\u{ea}" is a PT monosyllabic verb; when tagged B-PER it must be dropped.
-        // ASCII-escaped per language policy.
-        let tokens = vec!["L\u{ea}".to_string(), "o".to_string(), "livro".to_string()];
-        let labels = vec!["B-PER".to_string(), "O".to_string(), "O".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            !ents
-                .iter()
-                .any(|e| e.name == "L\u{ea}" && e.entity_type == EntityType::Person),
-            "PT verb 'L\\u{{ea}}' tagged B-PER must be filtered; entities: {ents:?}"
-        );
-    }
-
-    #[test]
-    fn pt_verb_ver_filtered_as_per_v1025() {
-        // "Ver" is a PT verb that BERT sometimes tags B-PER; must be filtered.
-        let tokens = vec!["Ver".to_string()];
-        let labels = vec!["B-PER".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            ents.is_empty(),
-            "PT verb 'Ver' tagged B-PER must be filtered; entities: {ents:?}"
         );
     }
 
@@ -2126,32 +1721,6 @@ mod tests {
         );
     }
 
-    // ── v1.0.25 P0-4: section markers must be filtered in iob_to_entities too ──
-
-    #[test]
-    fn iob_section_marker_etapa_filtered_v1025() {
-        // BERT may tag "Etapa" (B-MISC) + "3" (I-MISC) as a span; flush must drop it.
-        let tokens = vec!["Etapa".to_string(), "3".to_string()];
-        let labels = vec!["B-MISC".to_string(), "I-MISC".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            !ents.iter().any(|e| e.name.contains("Etapa")),
-            "section marker 'Etapa 3' from BERT must be filtered; entities: {ents:?}"
-        );
-    }
-
-    #[test]
-    fn iob_section_marker_fase_filtered_v1025() {
-        // BERT may tag "Fase" (B-MISC) + "1" (I-MISC) as a span; flush must drop it.
-        let tokens = vec!["Fase".to_string(), "1".to_string()];
-        let labels = vec!["B-MISC".to_string(), "I-MISC".to_string()];
-        let ents = iob_to_entities(&tokens, &labels);
-        assert!(
-            !ents.iter().any(|e| e.name.contains("Fase")),
-            "section marker 'Fase 1' from BERT must be filtered; entities: {ents:?}"
-        );
-    }
-
     // ── v1.0.31 A1: NER cap protects against pathological body sizes ──
 
     #[test]
@@ -2161,7 +1730,8 @@ mod tests {
         let body = "x ".repeat(40_000);
         let paths = make_paths();
         let start = std::time::Instant::now();
-        let result = extract_graph_auto(&body, &paths).expect("extraction must not error");
+        let result = extract_graph_auto(&body, &paths, GlinerVariant::Int8)
+            .expect("extraction must not error");
         let elapsed = start.elapsed();
         assert!(
             elapsed.as_secs() < 30,
@@ -2310,5 +1880,123 @@ mod tests {
         );
 
         std::env::remove_var("SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS");
+    }
+
+    #[test]
+    fn gliner_variant_from_str_valid() {
+        assert_eq!(
+            "fp32".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Fp32
+        );
+        assert_eq!(
+            "fp16".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Fp16
+        );
+        assert_eq!(
+            "int8".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Int8
+        );
+        assert_eq!("q4".parse::<GlinerVariant>().unwrap(), GlinerVariant::Q4);
+        assert_eq!(
+            "q4f16".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Q4f16
+        );
+        // Case-insensitive
+        assert_eq!(
+            "FP32".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Fp32
+        );
+        assert_eq!(
+            "INT8".parse::<GlinerVariant>().unwrap(),
+            GlinerVariant::Int8
+        );
+    }
+
+    #[test]
+    fn gliner_variant_from_str_invalid() {
+        assert!("invalid".parse::<GlinerVariant>().is_err());
+        assert!("fp64".parse::<GlinerVariant>().is_err());
+        assert!("".parse::<GlinerVariant>().is_err());
+    }
+
+    #[test]
+    fn gliner_variant_filename_mapping() {
+        assert_eq!(GlinerVariant::Fp32.as_filename(), "model.onnx");
+        assert_eq!(GlinerVariant::Fp16.as_filename(), "model_fp16.onnx");
+        assert_eq!(GlinerVariant::Int8.as_filename(), "model_quantized.onnx");
+        assert_eq!(GlinerVariant::Q4.as_filename(), "model_q4.onnx");
+        assert_eq!(GlinerVariant::Q4f16.as_filename(), "model_q4f16.onnx");
+    }
+
+    #[test]
+    fn gliner_variant_display() {
+        assert_eq!(format!("{}", GlinerVariant::Fp32), "fp32");
+        assert_eq!(format!("{}", GlinerVariant::Fp16), "fp16");
+        assert_eq!(format!("{}", GlinerVariant::Int8), "int8");
+        assert_eq!(format!("{}", GlinerVariant::Q4), "q4");
+        assert_eq!(format!("{}", GlinerVariant::Q4f16), "q4f16");
+    }
+
+    #[test]
+    fn gliner_variant_display_size() {
+        assert_eq!(GlinerVariant::Fp32.display_size(), "1.1 GB");
+        assert_eq!(GlinerVariant::Int8.display_size(), "349 MB");
+    }
+
+    #[test]
+    fn gliner_entity_labels_covers_all_types() {
+        let label_types: Vec<EntityType> = GLINER_ENTITY_LABELS.iter().map(|(_, t)| *t).collect();
+        assert!(label_types.contains(&EntityType::Person));
+        assert!(label_types.contains(&EntityType::Organization));
+        assert!(label_types.contains(&EntityType::Location));
+        assert!(label_types.contains(&EntityType::Date));
+        assert!(label_types.contains(&EntityType::Project));
+        assert!(label_types.contains(&EntityType::Tool));
+        assert!(label_types.contains(&EntityType::File));
+        assert!(label_types.contains(&EntityType::Concept));
+        assert!(label_types.contains(&EntityType::Decision));
+        assert!(label_types.contains(&EntityType::Incident));
+        assert!(label_types.contains(&EntityType::Dashboard));
+        assert!(label_types.contains(&EntityType::IssueTracker));
+        assert!(label_types.contains(&EntityType::Memory));
+        assert_eq!(GLINER_ENTITY_LABELS.len(), 13);
+    }
+
+    #[test]
+    fn gliner_entity_labels_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for (label, _) in GLINER_ENTITY_LABELS {
+            assert!(seen.insert(*label), "duplicate label: {label}");
+        }
+    }
+
+    #[test]
+    fn extract_graph_auto_regex_only_fallback() {
+        // When model is unavailable (non-existent paths), should fall back to regex-only
+        let result = extract_graph_auto(
+            "Contact someone@test.com about OPENAI project",
+            &make_paths(),
+            GlinerVariant::Fp32,
+        );
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert_eq!(res.extraction_method, "regex-only");
+        // Regex prefilter should still capture email and OPENAI
+        assert!(res.entities.iter().any(|e| e.name == "someone@test.com"));
+    }
+
+    #[test]
+    fn gliner_variant_roundtrip() {
+        for variant in &[
+            GlinerVariant::Fp32,
+            GlinerVariant::Fp16,
+            GlinerVariant::Int8,
+            GlinerVariant::Q4,
+            GlinerVariant::Q4f16,
+        ] {
+            let s = format!("{variant}");
+            let parsed: GlinerVariant = s.parse().unwrap();
+            assert_eq!(*variant, parsed);
+        }
     }
 }

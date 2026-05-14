@@ -535,10 +535,6 @@ pub mod validation {
             )
         }
 
-        pub fn downloading_ner_model() -> &'static str {
-            "Baixando modelo NER (primeira execução, ~676 MB)..."
-        }
-
         pub fn initializing_embedding_model() -> &'static str {
             "Inicializando modelo de embedding (pode baixar na primeira execução)..."
         }

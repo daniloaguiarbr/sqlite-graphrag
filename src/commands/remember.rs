@@ -113,9 +113,16 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
         num_args = 0..=1,
         default_missing_value = "true",
         default_value = "false",
-        help = "Enable automatic BERT NER entity/relationship extraction from body"
+        help = "Enable automatic GLiNER NER entity/relationship extraction from body"
     )]
     pub enable_ner: bool,
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
+        default_value = "fp32",
+        help = "GLiNER model variant: fp32 (best quality, 1.1GB), fp16 (580MB), int8 (349MB, fastest)"
+    )]
+    pub gliner_variant: String,
     #[arg(long, hide = true)]
     pub skip_extraction: bool,
     /// Optional opaque session identifier for tracing memory provenance across multi-agent runs.
@@ -317,12 +324,17 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
         );
     }
+    let gliner_variant: crate::extraction::GlinerVariant =
+        args.gliner_variant.parse().unwrap_or_else(|e| {
+            tracing::warn!("invalid --gliner-variant: {e}; using fp32");
+            crate::extraction::GlinerVariant::Fp32
+        });
     if args.enable_ner
         && !entities_provided_externally
         && graph.entities.is_empty()
         && !raw_body.trim().is_empty()
     {
-        match crate::extraction::extract_graph_auto(&raw_body, &paths) {
+        match crate::extraction::extract_graph_auto(&raw_body, &paths, gliner_variant) {
             Ok(extracted) => {
                 extraction_method = Some(extracted.extraction_method.clone());
                 extracted_urls = extracted.urls;

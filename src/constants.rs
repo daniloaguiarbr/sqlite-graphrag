@@ -194,7 +194,7 @@ pub const QUERY_PREFIX: &str = "query: ";
 /// Crate version string sourced from `CARGO_PKG_VERSION` at build time.
 pub const SQLITE_GRAPHRAG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Batch size for BERT NER forward passes.
+/// Batch size for GLiNER NER forward passes.
 ///
 /// Larger values amortise fixed forward-pass overhead but increase peak RAM.
 /// Memory guide (CPU only, max 512-token windows):
@@ -213,7 +213,7 @@ pub fn ner_batch_size() -> usize {
         .clamp(1, 32)
 }
 
-/// Default cap on tokens fed to BERT NER per memory body.
+/// Default cap on tokens fed to GLiNER NER per memory body.
 ///
 /// v1.0.31: large markdown documents (>50 KB) tokenise into thousands of
 /// 512-token windows, each requiring a CPU forward pass that takes hundreds
@@ -235,6 +235,26 @@ pub fn extraction_max_tokens() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| (512..=100_000).contains(&n))
         .unwrap_or(EXTRACTION_MAX_TOKENS_DEFAULT)
+}
+
+/// GLiNER confidence threshold for span scoring.
+///
+/// Override via `SQLITE_GRAPHRAG_GLINER_THRESHOLD` env var. Values outside
+/// `[0.0, 1.0]` are ignored and the default `0.5` is used.
+pub fn gliner_confidence_threshold() -> f32 {
+    std::env::var("SQLITE_GRAPHRAG_GLINER_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|&v| (0.0..=1.0).contains(&v))
+        .unwrap_or(0.5)
+}
+
+/// HuggingFace repository for the GLiNER ONNX model.
+///
+/// Override via `SQLITE_GRAPHRAG_GLINER_MODEL` env var.
+pub fn gliner_model_repo() -> String {
+    std::env::var("SQLITE_GRAPHRAG_GLINER_MODEL")
+        .unwrap_or_else(|_| "onnx-community/gliner_multi-v2.1".to_string())
 }
 
 /// PRD-canonical regex that validates names and namespaces. Allows 1 char `[a-z0-9]`

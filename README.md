@@ -107,7 +107,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 > **Required flags for `remember`:** `--name`, `--type`, `--description`. Body via `--body "text"`, `--body-file <path>`, or `--body-stdin` (pipe from stdin).
 > **Body limit: 500 KB (512000 bytes).** Larger inputs are rejected with exit code 6 (`limit exceeded`); split into multiple memories or trim before sending.
-- **GraphRAG is enabled by default and runs automatically.** Every subcommand auto-initializes `graphrag.sqlite` in the current working directory if it does not exist. `remember` and `ingest` extract entities and relationships via local BERT NER on every call (disable per-call with `--skip-extraction`). `recall` and `hybrid-search` auto-spawn the embedding daemon on demand.
+- **GraphRAG is enabled by default and runs automatically.** Every subcommand auto-initializes `graphrag.sqlite` in the current working directory if it does not exist. `remember` and `ingest` can extract entities and relationships via local GLiNER zero-shot NER when `--enable-ner` is passed. `recall` and `hybrid-search` auto-spawn the embedding daemon on demand.
 - **`sqlite-graphrag init` is OPTIONAL** but recommended on first use because it pre-downloads the embedding model and warms a smoke-test embedding (subsequent commands are faster). Without `init`, the first command pays the model-download cost.
 - **`graphrag.sqlite` is created in the current working directory by default** (override with `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`)
 - For the local checkout, `cargo install --path .` is enough
@@ -157,7 +157,7 @@ sqlite-graphrag purge --retention-days 0 --yes
 - `aarch64-pc-windows-msvc` Windows ARM 64-bit
 ### Alpine Linux / musl users
 - No pre-built `x86_64-unknown-linux-musl` binary is published since v1.0.42
-- Reason: `ort` (the ONNX runtime backend used by `fastembed` for embeddings + BERT NER) does not ship a musl prebuilt on rc.11 or rc.12
+- Reason: `ort` (the ONNX runtime backend used by `fastembed` for embeddings + GLiNER NER) does not ship a musl prebuilt on rc.11 or rc.12
 - Workaround 1 — install via Cargo: `cargo install sqlite-graphrag --locked` (Rust 1.88+ required, builds against host glibc)
 - Workaround 2 — use a glibc-based container image: `debian-slim`, `distroless/cc-debian12`, or any Ubuntu derivative
 - Tracking issue: https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt
@@ -171,8 +171,8 @@ sqlite-graphrag init --namespace project-foo
 ```
 - Without `--db` or `SQLITE_GRAPHRAG_DB_PATH`, every CRUD command in that directory uses `./graphrag.sqlite`
 ### Remember a memory with an optional explicit entity graph
-- By default, `remember` does NOT run automatic entity extraction (BERT NER is disabled by default)
-- Pass `--enable-ner` to activate BERT NER extraction for that call, or set `SQLITE_GRAPHRAG_ENABLE_NER=1`
+- By default, `remember` does NOT run automatic entity extraction (GLiNER NER is disabled by default)
+- Pass `--enable-ner` to activate GLiNER zero-shot extraction for that call, or set `SQLITE_GRAPHRAG_ENABLE_NER=1`
 ```bash
 sqlite-graphrag remember \
   --name integration-tests-postgres \
@@ -197,16 +197,27 @@ sqlite-graphrag remember \
   "relationships_truncated": false
 }
 ```
-### Enable BERT NER auto-extraction for entity enrichment
-- BERT NER is disabled by default; pass `--enable-ner` to activate automatic entity/relationship extraction
-- Use it when you want automatic graph enrichment and accept the ~150 ms/file overhead
+### Enable GLiNER NER auto-extraction for entity enrichment
+- GLiNER zero-shot NER is disabled by default; pass `--enable-ner` to activate automatic entity/relationship extraction
+- GLiNER replaces the former BERT NER model and resolves 13 domain-specific entity types vs. 4 fixed BERT types
+- Use `--gliner-variant` to trade quality for download size: `fp32` (default, 1.1 GB), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB)
 - The `extraction_method` field is populated in the JSON response when NER runs
+
+| Variant | Size | Notes |
+|---------|------|-------|
+| `fp32` | 1.1 GB | Default; best accuracy |
+| `fp16` | 580 MB | Good accuracy, half the size |
+| `int8` | 349 MB | Smallest; slight accuracy drop |
+| `q4` | 894 MB | 4-bit quantized weights |
+| `q4f16` | 472 MB | 4-bit weights, fp16 activations |
+
 ```bash
 sqlite-graphrag remember \
   --name release-notes-v1 \
   --type document \
   --description "release notes for v1.0.0" \
   --enable-ner \
+  --gliner-variant fp16 \
   --body-stdin < notes.md
 ```
 ### Read, forget, edit and rename using positional name argument
@@ -385,7 +396,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner` | Save a memory with optional entity graph |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant` | Save a memory with optional entity graph |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit`), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Search memories semantically via KNN + graph traversal |
 | `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at` |
@@ -394,8 +405,8 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
-| `cache clear-models` | `--yes` | Remove cached embedding/NER models from the XDG cache directory |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
+| `cache clear-models` | `--yes` | Remove cached embedding/GLiNER model files from the XDG cache directory |
 
 > **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
 > Unicode and uppercase are rejected with exit code 1. Names longer than 60 chars
@@ -448,7 +459,10 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Force daemon autostart even when guards would skip it | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Disable daemon autostart entirely (useful in tests/CI) | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | INTERNAL flag set automatically when spawning the daemon child; do not set manually | unset | `1` |
-| `SQLITE_GRAPHRAG_ENABLE_NER` | Enable BERT NER auto-extraction globally (equivalent to `--enable-ner` on every call). Accepts `1`/`true`/`yes`/`on` (case-insensitive) | unset (NER off) | `1` |
+| `SQLITE_GRAPHRAG_ENABLE_NER` | Enable GLiNER NER auto-extraction globally (equivalent to `--enable-ner` on every call). Accepts `1`/`true`/`yes`/`on` (case-insensitive) | unset (NER off) | `1` |
+| `SQLITE_GRAPHRAG_GLINER_VARIANT` | GLiNER ONNX weight variant: `fp32`, `fp16`, `int8`, `q4`, `q4f16` | `fp32` | `fp16` |
+| `SQLITE_GRAPHRAG_GLINER_THRESHOLD` | Entity confidence threshold for GLiNER predictions (float in [0.0, 1.0]) | `0.5` | `0.3` |
+| `SQLITE_GRAPHRAG_GLINER_MODEL` | Override the GLiNER model repository identifier | `onnx-community/gliner_multi-v2.1` | custom path |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Token budget for entity/relationship extraction per memory; values outside [512, 100 000] fall back to default | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Maximum distinct entities persisted per memory; values outside [1, 1 000] fall back to default. Note: the extraction pipeline internally caps candidates at 30 before deduplication, so the persistence cap (default 50) acts as a safety ceiling and is only reached when the extractor is extended or replaced. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Maximum distinct relationships persisted per memory; values outside [1, 10 000] fall back to default | `50` | `200` |
@@ -520,7 +534,7 @@ RUN cargo install --path .
 
 ## Memory Requirements
 ### Sizing RAM for ingest and recall workloads
-- Minimum 3 GB RAM recommended (4 GB+ for large corpora). Floor sits around 2 GB just to load ONNX runtime + BERT NER + fastembed multilingual-e5-small models.
+- Minimum 3 GB RAM recommended (4 GB+ for large corpora). Floor sits around 2 GB just to load ONNX runtime + GLiNER NER + fastembed multilingual-e5-small models.
 - Default parallelism (`--ingest-parallelism = min(4, cpus/2)`) increases RSS roughly linearly per worker. With 4 workers, ingest of 30 files peaks around 4.4 GB.
 - Low-memory mode: pass `--low-memory` (or set `SQLITE_GRAPHRAG_LOW_MEMORY=1`) to force single-threaded ingest. Equivalent to `--ingest-parallelism 1` and overrides any explicit value. Reduces peak RSS to about 2.6 GB at the cost of 3-4x wall time.
 - Container/cgroup users: a cap below 3 GB causes OOM-kill during model load. Use cgroup `MemoryMax=4G` or higher in production.
