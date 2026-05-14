@@ -1,7 +1,6 @@
 #![cfg(feature = "slow-tests")]
 
 use assert_cmd::Command;
-use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn cmd(tmp: &TempDir) -> Command {
@@ -17,13 +16,9 @@ fn init_db(tmp: &TempDir) {
 }
 
 #[test]
-fn test_vacuum_fails_without_init() {
+fn test_vacuum_auto_inits_when_missing() {
     let tmp = TempDir::new().unwrap();
-    cmd(&tmp)
-        .arg("vacuum")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("sqlite-graphrag init"));
+    cmd(&tmp).arg("vacuum").assert().success();
 }
 
 #[test]

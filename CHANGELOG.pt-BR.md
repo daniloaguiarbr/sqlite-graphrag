@@ -10,6 +10,20 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.46] - 2026-05-14
+
+### Corrigido
+- `SQLITE_GRAPHRAG_ENABLE_NER=1` agora funciona corretamente; anteriormente apenas `true`/`false` eram aceitos pelo parser bool do Clap, causando exit 2 para `1`/`yes`/`on`. Novo `parse_bool_flexible` aceita `1`/`true`/`yes`/`on` (verdadeiro) e `0`/`false`/`no`/`off` (falso), case-insensitive.
+- Preprocessamento de queries FTS5 agora sanitiza caracteres especiais (`"`, `*`, `(`, `)`, `^`, `:`) e filtra keywords FTS5 (`OR`, `AND`, `NOT`, `NEAR`) das queries do usuário, prevenindo erros de sintaxe em input malformado.
+- `--enable-ner` combinado com `--skip-extraction` agora emite `tracing::warn!` ao invés de ignorar silenciosamente a contradição; `--enable-ner` prevalece.
+- 9 falhas de testes de integração pré-existentes corrigidas: 4 testes de auto-init atualizados (health, stats, recall, vacuum), 1 asserção de help do daemon atualizada (flag `--json` oculto), 1 teste de normalização de rename atualizado, 3 testes de contrato de schema corrigidos.
+- 7 JSON schemas atualizados para refletir output atual da CLI: `remember.schema.json` (+3 campos), `read.schema.json` (tipo metadata), `history.schema.json` (tipo metadata + campo deleted), `purge.schema.json` (tipo oldest_deleted_at + campo message), `hybrid-search.schema.json` (+rrf_score), `related.schema.json` (+name, +max_hops), `health.schema.json` (+memories_total em counts).
+
+### Adicionado
+- `parse_bool_flexible` em `src/parsers/mod.rs` para parsing flexível de booleanos reutilizável na integração Clap com variáveis de ambiente.
+- 4 novos testes E2E de integração em `tests/v1045_features.rs`: busca de termos compostos FTS5 (hifenizados, com pontos) e aceitação de env var NER (`=1`, `=true`).
+- 9 novos testes unitários: 3 para `parse_bool_flexible`, 6 para sanitização de caracteres especiais/keywords FTS5.
+
 ## [1.0.45] - 2026-05-13
 
 ### Alterado

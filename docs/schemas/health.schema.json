@@ -19,10 +19,11 @@
       "required": ["memories", "entities", "relationships", "vec_memories"],
       "additionalProperties": false,
       "properties": {
-        "memories":      { "type": "integer", "minimum": 0 },
-        "entities":      { "type": "integer", "minimum": 0 },
-        "relationships": { "type": "integer", "minimum": 0 },
-        "vec_memories":  { "type": "integer", "minimum": 0 }
+        "memories":       { "type": "integer", "minimum": 0 },
+        "memories_total": { "type": "integer", "minimum": 0, "description": "Including soft-deleted memories." },
+        "entities":       { "type": "integer", "minimum": 0 },
+        "relationships":  { "type": "integer", "minimum": 0 },
+        "vec_memories":   { "type": "integer", "minimum": 0 }
       }
     }
   },

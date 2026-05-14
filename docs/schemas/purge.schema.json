@@ -9,11 +9,12 @@
   "properties": {
     "purged_count":         { "type": "integer", "minimum": 0 },
     "bytes_freed":          { "type": "integer", "minimum": 0 },
-    "oldest_deleted_at":    { "type": ["string", "null"], "format": "date-time" },
+    "oldest_deleted_at":    { "type": ["integer", "null"], "description": "Unix epoch seconds of the oldest soft-deleted memory that was purged." },
     "retention_days_used":  { "type": ["integer", "null"], "minimum": 0 },
     "dry_run":              { "type": "boolean" },
     "namespace":            { "type": "string" },
     "cutoff_epoch":         { "type": ["integer", "null"] },
+    "message":              { "type": "string", "description": "Human-readable message when no memories match the retention window." },
     "warnings":             { "type": "array", "items": { "type": "string" } },
     "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }

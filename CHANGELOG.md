@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.46] - 2026-05-14
+
+### Fixed
+- `SQLITE_GRAPHRAG_ENABLE_NER=1` now works correctly; previously only `true`/`false` were accepted by the Clap bool parser, causing exit 2 for `1`/`yes`/`on`. New `parse_bool_flexible` value parser accepts `1`/`true`/`yes`/`on` (truthy) and `0`/`false`/`no`/`off` (falsy), case-insensitive.
+- FTS5 query preprocessing now sanitizes special characters (`"`, `*`, `(`, `)`, `^`, `:`) and filters FTS5 keywords (`OR`, `AND`, `NOT`, `NEAR`) from user queries, preventing syntax errors on malformed input.
+- `--enable-ner` combined with `--skip-extraction` now emits a `tracing::warn!` instead of silently ignoring the contradiction; `--enable-ner` takes precedence.
+- 9 pre-existing integration test failures fixed: 4 auto-init tests updated (health, stats, recall, vacuum), 1 daemon help assertion updated (hidden `--json` flag), 1 rename normalization test updated, 3 schema contract tests fixed.
+- 7 JSON schemas updated to match current CLI output: `remember.schema.json` (+3 fields), `read.schema.json` (metadata type), `history.schema.json` (metadata type + deleted field), `purge.schema.json` (oldest_deleted_at type + message field), `hybrid-search.schema.json` (+rrf_score), `related.schema.json` (+name, +max_hops), `health.schema.json` (+memories_total in counts).
+
+### Added
+- `parse_bool_flexible` in `src/parsers/mod.rs` for reusable flexible boolean parsing in Clap env var integration.
+- 4 new E2E integration tests in `tests/v1045_features.rs`: FTS5 compound term search (hyphenated, dotted) and env var NER acceptance (`=1`, `=true`).
+- 9 new unit tests: 3 for `parse_bool_flexible`, 6 for FTS5 special char/keyword sanitization.
+
 ## [1.0.45] - 2026-05-13
 
 ### Changed

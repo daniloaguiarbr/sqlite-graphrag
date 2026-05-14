@@ -315,9 +315,9 @@ fn test_init_returns_json_with_status_ok() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_health_fails_without_init() {
+fn test_health_auto_inits_when_missing() {
     let tmp = TempDir::new().unwrap();
-    cmd(&tmp).arg("health").assert().failure();
+    cmd(&tmp).arg("health").assert().success();
 }
 
 #[test]
@@ -343,7 +343,7 @@ fn test_health_ok_after_init() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_daemon_help_lists_db_and_json() {
+fn test_daemon_help_lists_db_flag() {
     let tmp = TempDir::new().unwrap();
 
     let output = Command::cargo_bin("sqlite-graphrag")
@@ -359,7 +359,6 @@ fn test_daemon_help_lists_db_and_json() {
 
     let help = String::from_utf8(output).unwrap();
     assert!(help.contains("--db"));
-    assert!(help.contains("--json"));
 }
 
 #[test]
@@ -916,9 +915,9 @@ fn test_stats_returns_counts() {
 }
 
 #[test]
-fn test_stats_fails_without_init() {
+fn test_stats_auto_inits_when_missing() {
     let tmp = TempDir::new().unwrap();
-    cmd(&tmp).arg("stats").assert().failure();
+    cmd(&tmp).arg("stats").assert().success();
 }
 
 // ---------------------------------------------------------------------------
@@ -977,7 +976,7 @@ fn test_rename_nonexistent_returns_exit_4() {
 }
 
 #[test]
-fn test_rename_new_name_invalid_returns_exit_1() {
+fn test_rename_normalizes_new_name() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -996,7 +995,7 @@ fn test_rename_new_name_invalid_returns_exit_1() {
         .assert()
         .success();
 
-    cmd(&tmp)
+    let output = cmd(&tmp)
         .args([
             "rename",
             "--name",
@@ -1005,8 +1004,14 @@ fn test_rename_new_name_invalid_returns_exit_1() {
             "Nome Com Espaco",
         ])
         .assert()
-        .failure()
-        .code(1);
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["name"], "nome-com-espaco");
+    assert_eq!(json["action"], "renamed");
 }
 
 // ---------------------------------------------------------------------------

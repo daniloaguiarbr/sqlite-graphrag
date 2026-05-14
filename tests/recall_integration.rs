@@ -39,12 +39,12 @@ fn remember(tmp: &TempDir, name: &str, memory_type: &str, description: &str, bod
 
 #[test]
 #[serial]
-fn test_recall_fails_without_init() {
+fn test_recall_auto_inits_when_missing() {
     let tmp = TempDir::new().unwrap();
     cmd(&tmp)
         .args(["recall", "qualquer-query"])
         .assert()
-        .failure();
+        .success();
 }
 
 // ---------------------------------------------------------------------------

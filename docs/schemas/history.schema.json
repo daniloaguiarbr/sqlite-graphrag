@@ -14,7 +14,7 @@
         "type":          { "type": "string" },
         "description":   { "type": "string" },
         "body":          { "type": "string", "description": "Memory body at this version. Omitted from the response when --no-body is passed." },
-        "metadata":      { "type": "string" },
+        "metadata":      { "type": "object", "description": "Arbitrary metadata object." },
         "action":        { "type": "string", "description": "Past-tense label derived from change_reason (created, edited, renamed, restored, merged, forgotten). Always populated." },
         "change_reason": { "type": ["string", "null"], "description": "Raw verb stored in memory_versions; preserved for backwards compatibility." },
         "changed_by":    { "type": ["string", "null"] },
@@ -29,6 +29,7 @@
   "properties": {
     "name":       { "type": "string" },
     "namespace":  { "type": "string" },
+    "deleted":    { "type": "boolean", "description": "True when memory is currently soft-deleted." },
     "versions":   { "type": "array", "items": { "$ref": "#/$defs/HistoryVersion" } },
     "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }

@@ -35,6 +35,21 @@ pub fn parse_k_range(s: &str) -> Result<usize, String> {
     Ok(value)
 }
 
+/// Flexible boolean parser for Clap env var integration.
+///
+/// Accepts common truthy/falsy conventions used in shell environments:
+/// truthy: `1`, `true`, `yes`, `on` (case-insensitive)
+/// falsy: `0`, `false`, `no`, `off`, empty string (case-insensitive)
+pub fn parse_bool_flexible(s: &str) -> Result<bool, String> {
+    match s.to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" | "" => Ok(false),
+        _ => Err(format!(
+            "invalid boolean value '{s}': expected true/false/1/0/yes/no/on/off"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +123,26 @@ mod tests {
     fn k_rejects_negative() {
         // usize parser fails on negatives before range check
         assert!(parse_k_range("-5").is_err());
+    }
+
+    #[test]
+    fn bool_flexible_truthy() {
+        for v in &["1", "true", "True", "TRUE", "yes", "Yes", "on", "ON"] {
+            assert!(parse_bool_flexible(v).unwrap(), "should be true: {v}");
+        }
+    }
+
+    #[test]
+    fn bool_flexible_falsy() {
+        for v in &["0", "false", "False", "FALSE", "no", "No", "off", "OFF", ""] {
+            assert!(!parse_bool_flexible(v).unwrap(), "should be false: {v}");
+        }
+    }
+
+    #[test]
+    fn bool_flexible_rejects_invalid() {
+        assert!(parse_bool_flexible("banana").is_err());
+        assert!(parse_bool_flexible("2").is_err());
+        assert!(parse_bool_flexible("nope").is_err());
     }
 }

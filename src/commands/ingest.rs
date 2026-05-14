@@ -91,8 +91,16 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = false)]
     pub recursive: bool,
 
-    /// Enable automatic BERT NER entity/relationship extraction (disabled by default).
-    #[arg(long, env = "SQLITE_GRAPHRAG_ENABLE_NER", default_value_t = false)]
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_ENABLE_NER",
+        value_parser = crate::parsers::parse_bool_flexible,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        default_value = "false",
+        help = "Enable automatic BERT NER entity/relationship extraction (disabled by default)"
+    )]
     pub enable_ner: bool,
 
     /// Deprecated: NER is now disabled by default. Kept for backwards compatibility.
@@ -738,6 +746,11 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("rayon pool: {e}")))?;
 
+    if args.enable_ner && args.skip_extraction {
+        tracing::warn!(
+            "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
+        );
+    }
     let enable_ner = args.enable_ner;
 
     let total_to_process = process_items.len();

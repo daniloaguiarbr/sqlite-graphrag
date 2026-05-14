@@ -17,6 +17,7 @@
         "body":          { "type": "string" },
         "combined_score":{ "type": "number",  "description": "RRF combined score." },
         "score":         { "type": "number",  "description": "Alias of combined_score." },
+        "rrf_score":     { "type": "number",  "description": "Raw RRF score before normalization." },
         "source":        { "type": "string",  "enum": ["hybrid"] },
         "vec_rank":      { "type": "integer", "minimum": 1, "description": "Present when result appeared in vector search." },
         "fts_rank":      { "type": "integer", "minimum": 1, "description": "Present when result appeared in full-text search." }

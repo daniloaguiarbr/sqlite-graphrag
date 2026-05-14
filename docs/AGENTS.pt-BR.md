@@ -508,7 +508,7 @@ let output = Command::new("sqlite-graphrag")
 - PREFERIR `--body-stdin` para corpos longos
 - USAR `--body-file <PATH>` para evitar escape shell em Markdown
 - PASSAR `--force-merge` em loops idempotentes
-- NER desabilitado por padrão; passar `--enable-ner` para ativar extração BERT
+- NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração BERT
 - RESPEITAR limite de 512000 bytes e 512 chunks por body
 ### OBRIGATÓRIO — Anexar Grafo no remember
 - USAR `--entities-file` com array JSON tipado

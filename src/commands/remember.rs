@@ -108,6 +108,11 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     #[arg(
         long,
         env = "SQLITE_GRAPHRAG_ENABLE_NER",
+        value_parser = crate::parsers::parse_bool_flexible,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        default_value = "false",
         help = "Enable automatic BERT NER entity/relationship extraction from body"
     )]
     pub enable_ner: bool,
@@ -307,6 +312,11 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut extraction_method: Option<String> = None;
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
     let mut relationships_truncated = false;
+    if args.enable_ner && args.skip_extraction {
+        tracing::warn!(
+            "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
+        );
+    }
     if args.enable_ner
         && !entities_provided_externally
         && graph.entities.is_empty()

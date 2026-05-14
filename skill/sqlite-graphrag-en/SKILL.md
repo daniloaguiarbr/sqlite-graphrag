@@ -93,7 +93,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
 - PASS `--force-merge` in idempotent loops
-- NER is disabled by default; pass `--enable-ner` to activate BERT extraction
+- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate BERT extraction
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array

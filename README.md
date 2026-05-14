@@ -448,7 +448,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Force daemon autostart even when guards would skip it | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Disable daemon autostart entirely (useful in tests/CI) | unset | `1` |
 | `SQLITE_GRAPHRAG_DAEMON_CHILD` | INTERNAL flag set automatically when spawning the daemon child; do not set manually | unset | `1` |
-| `SQLITE_GRAPHRAG_ENABLE_NER` | Enable BERT NER auto-extraction globally (equivalent to `--enable-ner` on every call) | unset (NER off) | `1` |
+| `SQLITE_GRAPHRAG_ENABLE_NER` | Enable BERT NER auto-extraction globally (equivalent to `--enable-ner` on every call). Accepts `1`/`true`/`yes`/`on` (case-insensitive) | unset (NER off) | `1` |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Token budget for entity/relationship extraction per memory; values outside [512, 100 000] fall back to default | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Maximum distinct entities persisted per memory; values outside [1, 1 000] fall back to default. Note: the extraction pipeline internally caps candidates at 30 before deduplication, so the persistence cap (default 50) acts as a safety ceiling and is only reached when the extractor is extended or replaced. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Maximum distinct relationships persisted per memory; values outside [1, 10 000] fall back to default | `50` | `200` |

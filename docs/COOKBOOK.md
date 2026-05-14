@@ -127,7 +127,7 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 
 ### Variants
-- BERT NER is disabled by default; use `--enable-ner` to activate automatic entity extraction
+- BERT NER is disabled by default; use `--enable-ner` or `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic entity extraction
 - Use `--fail-fast` to abort on the first per-file error instead of continuing with inline error reporting
 
 

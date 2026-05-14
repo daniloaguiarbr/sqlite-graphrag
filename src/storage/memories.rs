@@ -619,20 +619,28 @@ pub fn list_deleted_before(
 /// Queries without separators keep the original `term*` prefix behaviour.
 fn preprocess_fts_query(raw: &str) -> String {
     const SEPARATORS: &[char] = &['-', '.', '_', '/'];
-    let trimmed = raw.trim();
+    const FTS5_SYNTAX: &[char] = &['"', '*', '(', ')', '^', ':'];
+    const FTS5_KEYWORDS: &[&str] = &["OR", "AND", "NOT", "NEAR"];
+
+    let sanitized: String = raw.chars().filter(|c| !FTS5_SYNTAX.contains(c)).collect();
+    let trimmed = sanitized.trim();
     if trimmed.is_empty() {
         return String::new();
     }
+
+    let is_fts_keyword = |t: &str| FTS5_KEYWORDS.iter().any(|kw| kw.eq_ignore_ascii_case(t));
+
     if !trimmed.chars().any(|c| SEPARATORS.contains(&c)) {
         return trimmed
             .split_whitespace()
+            .filter(|t| !is_fts_keyword(t))
             .map(|t| format!("{t}*"))
             .collect::<Vec<_>>()
             .join(" ");
     }
     let tokens: Vec<&str> = trimmed
         .split(|c: char| SEPARATORS.contains(&c) || c.is_whitespace())
-        .filter(|t| !t.is_empty())
+        .filter(|t| !t.is_empty() && !is_fts_keyword(t))
         .collect();
     if tokens.is_empty() {
         return String::new();
@@ -1284,6 +1292,46 @@ mod tests {
     fn preprocess_fts_query_empty_and_whitespace() {
         assert_eq!(preprocess_fts_query(""), "");
         assert_eq!(preprocess_fts_query("  "), "");
+    }
+
+    #[test]
+    fn preprocess_fts_query_strips_quotes() {
+        let result = preprocess_fts_query(r#"hello "world"#);
+        assert!(result.contains("hello*"));
+        assert!(result.contains("world*"));
+    }
+
+    #[test]
+    fn preprocess_fts_query_strips_asterisks() {
+        assert_eq!(preprocess_fts_query("test*"), "test*");
+    }
+
+    #[test]
+    fn preprocess_fts_query_strips_parens() {
+        let result = preprocess_fts_query("(hello)");
+        assert!(result.contains("hello*"));
+        assert!(!result.contains('('));
+    }
+
+    #[test]
+    fn preprocess_fts_query_filters_fts_keywords() {
+        let result = preprocess_fts_query("foo OR bar");
+        assert!(result.contains("foo*"));
+        assert!(result.contains("bar*"));
+        assert!(!result.contains("OR*"));
+    }
+
+    #[test]
+    fn preprocess_fts_query_only_fts_keywords() {
+        assert_eq!(preprocess_fts_query("OR AND NOT"), "");
+    }
+
+    #[test]
+    fn preprocess_fts_query_keywords_with_separators() {
+        let result = preprocess_fts_query("hello-OR-world");
+        assert!(result.contains("hello*"));
+        assert!(result.contains("world*"));
+        assert!(!result.contains("OR*"));
     }
 
     #[test]

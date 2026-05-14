@@ -23,7 +23,7 @@
     "body_hash":      { "type": "string", "description": "BLAKE3 hex digest of the body." },
     "session_id":     { "type": ["string", "null"] },
     "source":         { "type": "string" },
-    "metadata":       { "type": "string", "description": "JSON string of arbitrary metadata." },
+    "metadata":       { "type": "object", "description": "Arbitrary metadata object." },
     "version":        { "type": "integer", "minimum": 1 },
     "created_at":     { "type": "integer", "description": "Unix epoch seconds." },
     "created_at_iso": { "type": "string",  "format": "date-time" },

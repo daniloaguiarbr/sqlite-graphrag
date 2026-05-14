@@ -26,6 +26,8 @@
   "required": ["results", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
+    "name":       { "type": "string", "description": "Name of the seed memory." },
+    "max_hops":   { "type": "integer", "minimum": 1, "description": "Maximum traversal depth requested." },
     "results":    { "type": "array", "items": { "$ref": "#/$defs/RelatedMemory" } },
     "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Wall-clock time in milliseconds." }
   }
