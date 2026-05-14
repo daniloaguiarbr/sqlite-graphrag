@@ -128,6 +128,9 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 ### Variants
 - GLiNER NER desabilitado por padrão; use `--enable-ner` ou `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática de entidades
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
+- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
+- Arquivos duplicados retornam `status: "skipped"` com `action: "duplicate"` em vez de `status: "failed"`
 - Use `--fail-fast` para abortar no primeiro erro por arquivo em vez de continuar com report inline
 
 
@@ -149,6 +152,8 @@ sqlite-graphrag ingest ./decisions --type decision --recursive --json \
       status=$(echo "$line" | jaq -r '.status // empty')
       if [ "$status" = "failed" ]; then
         echo "FAIL: $(echo "$line" | jaq -r '.file')" >&2
+      elif [ "$status" = "skipped" ]; then
+        echo "SKIP: $(echo "$line" | jaq -r '.file') (duplicate or invalid name)"
       fi
     done
 ```

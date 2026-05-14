@@ -612,9 +612,9 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     let started = std::time::Instant::now();
 
     if !args.dir.exists() {
-        return Err(AppError::NotFound(format!(
-            "directory not found: {}",
-            args.dir.display()
+        return Err(AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("directory not found: {}", args.dir.display()),
         )));
     }
     if !args.dir.is_dir() {
@@ -758,6 +758,9 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         tracing::warn!(
             "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
         );
+    }
+    if args.skip_extraction && !args.enable_ner {
+        tracing::warn!("--skip-extraction is deprecated and has no effect (NER is disabled by default since v1.0.45); remove this flag");
     }
     let enable_ner = args.enable_ner;
     let gliner_variant: crate::extraction::GlinerVariant =
@@ -951,6 +954,19 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     action: Some(action),
                 })?;
                 succeeded += 1;
+            }
+            Err(ref e) if matches!(e, AppError::Duplicate(_)) => {
+                output::emit_json_compact(&IngestFileEvent {
+                    file: file_str,
+                    name: derived_name,
+                    status: "skipped",
+                    truncated: *name_truncated,
+                    original_name: original_name.clone(),
+                    error: Some(format!("{e}")),
+                    memory_id: None,
+                    action: Some("duplicate".to_string()),
+                })?;
+                skipped += 1;
             }
             Err(e) => {
                 let err_msg = format!("{e}");

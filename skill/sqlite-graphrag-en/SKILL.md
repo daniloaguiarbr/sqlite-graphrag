@@ -94,6 +94,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
 - PASS `--force-merge` in idempotent loops
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
+- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; use `--enable-ner` to activate NER
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array
@@ -172,7 +174,9 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - GLiNER NER downloads the ONNX model on first run (fp32: 1.1 GB, int8: 349 MB via `--gliner-variant`)
 - USE `--gliner-variant int8` for CI/containers to reduce model size from 1.1 GB to 349 MB
 - USE `--enable-ner` only when automated entity enrichment is valuable
-- PREFER `--graph-stdin --skip-extraction` with LLM-curated entities for best quality
+- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
+- Ingest duplicates emit `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
+- PREFER `--graph-stdin` with LLM-curated entities for best quality (NER is off by default; `--skip-extraction` is deprecated since v1.0.45)
 ### FORBIDDEN — ingest Anti-patterns
 - NEVER use `fd | xargs sqlite-graphrag remember` when `ingest` exists
 - NEVER omit `--recursive` expecting automatic descent
@@ -434,6 +438,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - LET `init`, `remember`, `ingest`, `recall`, `hybrid-search` reuse automatically
 - TREAT daemon as optional for single-shot invocations
 - INSPECT the embedding request counter in `--ping`
+- `daemon --ping` warns when daemon version differs from CLI version; restart with `daemon --stop` followed by `daemon` after upgrades
 
 
 ## Cache — Model Management

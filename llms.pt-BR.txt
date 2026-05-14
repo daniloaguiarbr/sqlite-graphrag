@@ -45,12 +45,22 @@
 ### Contrato mínimo de payload para `remember`
 - `--entities-file` espera um array JSON de objetos de entidade
 - Cada entidade deve incluir `name` mais `entity_type` ou alias `type`
-- Valores válidos de `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valores válidos de `entity_type`: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--relationships-file` espera um array JSON de objetos de relacionamento
 - Cada relacionamento deve incluir `source`/`from`, `target`/`to`, `relation` e `strength`
 - `strength` deve ser float em `[0.0, 1.0]` e é mapeado para `weight` nas saídas do grafo
 - Payloads de arquivo usam relações com underscore como `applies_to`, `depends_on` e `tracked_in`; aliases com hífen são normalizados antes da gravação
 - As flags CLI de `link` e `unlink` usam relações com hífen como `applies-to`, `depends-on` e `tracked-in`
+
+
+## Extração NER
+### Extração de entidades zero-shot com GLiNER
+- Passe `--enable-ner` ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar no `remember` e no `ingest`
+- Funciona com `--graph-stdin`: passe `"entities": []` no JSON e o GLiNER extrai automaticamente
+- Variantes do modelo via `--gliner-variant`: `fp32` (1,1 GB), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB)
+- Sobrescreva o modelo com `SQLITE_GRAPHRAG_GLINER_MODEL`; ajuste o limiar com `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (padrão `0.5`)
+- Campo de resposta `extraction_method`: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
+- `--skip-extraction` está depreciado desde v1.0.45; use `--enable-ner` em vez disso
 
 
 ## Exit Codes
@@ -66,7 +76,7 @@
 - `11` geração de embedding falhou: verifique os arquivos do modelo e tente novamente
 - `12` extensão sqlite-vec falhou ao carregar: reinstale com a extensão bundled
 - `13` falha parcial em batch: respeite o backoff e tente novamente
-- `14` erro de I/O no sistema de arquivos
+- `14` erro de I/O no sistema de arquivos: diretório de cache não gravável, diretório de ingestão inexistente
 - `15` banco de dados ocupado após tentativas: aguarde e tente novamente
 - `20` erro interno ou de serialização JSON
 - `73` guarda de memória rejeitou condição de pouca RAM
@@ -85,7 +95,7 @@
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.24 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.48 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5

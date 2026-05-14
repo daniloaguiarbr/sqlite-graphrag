@@ -509,6 +509,8 @@ let output = Command::new("sqlite-graphrag")
 - USAR `--body-file <PATH>` para evitar escape shell em Markdown
 - PASSAR `--force-merge` em loops idempotentes
 - NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração GLiNER
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
+- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
 - RESPEITAR limite de 512000 bytes e 512 chunks por body
 ### OBRIGATÓRIO — Anexar Grafo no remember
 - USAR `--entities-file` com array JSON tipado
@@ -582,6 +584,8 @@ let output = Command::new("sqlite-graphrag")
 - AMPLIAR `--wait-lock <SECONDS>` para esperar slot antes de exit 75
 ### OBRIGATÓRIO — Performance e Extração
 - NER desabilitado por padrão; passar `--enable-ner` para ativar extração GLiNER
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
+- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
 - GLiNER NER adiciona aproximadamente 100-200 ms por arquivo com modelo carregado em hardware moderno
 - GLiNER NER adiciona 2 a 30 segundos por arquivo em `--low-memory` ou no primeiro carregamento
 - GLiNER NER baixa o modelo ONNX no primeiro run (fp32: 1,1 GB, int8: 349 MB via `--gliner-variant`)
@@ -848,6 +852,7 @@ let output = Command::new("sqlite-graphrag")
 - DEIXAR `init`, `remember`, `ingest`, `recall`, `hybrid-search` reusarem automaticamente
 - TRATAR daemon como opcional para invocações single-shot
 - INSPECIONAR contador de embedding requests no `--ping`
+- `daemon --ping` emite um aviso quando a versão do daemon em execução difere da versão do binário CLI; reinicie o daemon após upgrades com `daemon --stop` seguido de `daemon`
 
 
 ## Cache — Gestão de Modelos

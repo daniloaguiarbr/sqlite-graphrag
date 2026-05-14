@@ -17,6 +17,17 @@ use crate::storage::memories;
 /// is provided. Pass an explicit `--namespace` value to search a different
 /// isolated namespace.
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Semantic search for top 5 matches\n  \
+    sqlite-graphrag recall \"authentication design\" --k 5\n\n  \
+    # Disable automatic graph expansion\n  \
+    sqlite-graphrag recall \"JWT tokens\" --k 3 --no-graph\n\n  \
+    # Limit graph traversal depth and minimum edge weight\n  \
+    sqlite-graphrag recall \"auth\" --k 5 --max-hops 2 --min-weight 0.3\n\n  \
+    # Filter by memory type\n  \
+    sqlite-graphrag recall \"deployment\" --type decision --k 10\n\n  \
+    # Cap results by distance threshold\n  \
+    sqlite-graphrag recall \"API design\" --k 5 --max-distance 0.8")]
 pub struct RecallArgs {
     #[arg(help = "Search query string (semantic vector search via sqlite-vec)")]
     pub query: String,

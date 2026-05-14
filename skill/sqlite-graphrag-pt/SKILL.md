@@ -94,6 +94,8 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - USAR `--body-file <PATH>` para evitar escape shell em Markdown
 - PASSAR `--force-merge` em loops idempotentes
 - NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração GLiNER
+- Campo `extraction_method` na resposta reporta: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; usar `--enable-ner` para ativar NER
 - RESPEITAR limite de 512000 bytes e 512 chunks por body
 ### OBRIGATÓRIO — Anexar Grafo no remember
 - USAR `--entities-file` com array JSON tipado
@@ -172,7 +174,9 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - GLiNER NER baixa o modelo ONNX no primeiro run (fp32: 1,1 GB, int8: 349 MB via `--gliner-variant`)
 - USAR `--gliner-variant int8` para CI/containers para reduzir modelo de 1,1 GB para 349 MB
 - USAR `--enable-ner` apenas quando enriquecimento automático de entidades for valioso
-- PREFERIR `--graph-stdin --skip-extraction` com entidades curadas por LLM para melhor qualidade
+- Campo `extraction_method` na resposta reporta: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
+- Duplicatas no ingest emitem `status: "skipped"` com `action: "duplicate"` em vez de `status: "failed"`
+- PREFERIR `--graph-stdin` com entidades curadas por LLM para melhor qualidade (NER está desligado por padrão; `--skip-extraction` está obsoleto desde v1.0.45)
 ### PROIBIDO — Anti-padrões de ingest
 - NUNCA usar `fd | xargs sqlite-graphrag remember` quando `ingest` existe
 - NUNCA omitir `--recursive` esperando descida automática
@@ -434,6 +438,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - DEIXAR `init`, `remember`, `ingest`, `recall`, `hybrid-search` reusarem automaticamente
 - TRATAR daemon como opcional para invocações single-shot
 - INSPECIONAR contador de embedding requests no `--ping`
+- `daemon --ping` avisa quando versão do daemon difere do binário CLI; reiniciar com `daemon --stop` seguido de `daemon` após upgrades
 
 
 ## Cache — Gestão de Modelos

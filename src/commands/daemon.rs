@@ -44,6 +44,15 @@ pub fn run(args: DaemonArgs) -> Result<(), AppError> {
     if args.ping {
         let response = crate::daemon::try_ping(&paths.models)?
             .ok_or_else(|| AppError::NotFound("daemon not running".to_string()))?;
+        if let crate::daemon::DaemonResponse::Ok { ref version, .. } = response {
+            if version != crate::constants::SQLITE_GRAPHRAG_VERSION {
+                tracing::warn!(
+                    daemon_version = %version,
+                    cli_version = crate::constants::SQLITE_GRAPHRAG_VERSION,
+                    "daemon version mismatch; consider: sqlite-graphrag daemon --stop && sqlite-graphrag daemon"
+                );
+            }
+        }
         output::emit_json(&response)?;
         return Ok(());
     }

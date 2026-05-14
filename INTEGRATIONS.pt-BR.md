@@ -13,6 +13,17 @@
 - Todos os campos JSON `schema_version` (`init`, `stats`, `migrate`, `health`) são emitidos como números JSON (eram string em `init`/`stats`/`migrate` antes da v1.0.35).
 - Auto-init via `remember`/`ingest`/etc. agora ativa `journal_mode = wal` corretamente (correção de regressão).
 
+## Novas Flags (desde v1.0.45)
+- A extração NER de entidades está **desativada por padrão**. Passe `--enable-ner` em `remember` ou `ingest` para ativar; defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para override persistente de sessão.
+- `--skip-extraction` está obsoleto e não tem efeito desde v1.0.45 (NER está desativado por padrão); a flag é mantida como no-op oculto para compatibilidade — remova-a dos scripts.
+- `--graph-stdin` em `remember` lê um único objeto JSON do stdin contendo `body`, `entities` e `relationships`, sendo a forma preferida de fornecer grafos curados por um LLM.
+
+## Novas Flags (desde v1.0.47)
+- A extração NER agora usa **GLiNER** zero-shot (substitui BERT); resolve 13 tipos de entidade específicos do domínio em vez dos 4 tipos fixos do BERT.
+- `--gliner-variant` em `remember` e `ingest` seleciona o peso ONNX: `fp32` (padrão, melhor qualidade), `fp16`, `int8`, `q4`, `q4f16`. Defina `SQLITE_GRAPHRAG_GLINER_VARIANT` para override persistente.
+- `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
+- Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
+
 
 ## Tabela Resumo
 ### Catálogo — Toda Integração Suportada

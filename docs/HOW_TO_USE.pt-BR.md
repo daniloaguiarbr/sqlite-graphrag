@@ -64,6 +64,8 @@ sqlite-graphrag purge --retention-days 90 --yes
 - `init` inicializa o banco, baixa o modelo e valida a extensão `sqlite-vec`
 - `remember` armazena conteúdo e gera embeddings atomicamente; nós e arestas do grafo são persistidos quando fornecidos explicitamente
 - GLiNER NER desabilitado por padrão; adicione `--enable-ner` para ativar extração automática de entidades/relacionamentos
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
+- Campo de resposta `extraction_method` informa: `gliner-<variant>+regex`, `regex-only`, ou `none:extraction-failed`
 - Use `--gliner-variant` para selecionar tamanho do modelo: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB)
 - `recall` executa KNN vetorial sobre `vec_memories` e expande matches de grafo por padrão, exceto com `--no-graph`
 - `hybrid-search` funde FTS5 textual e KNN vetorial via Reciprocal Rank Fusion
@@ -87,6 +89,7 @@ sqlite-graphrag daemon --db ./graphrag.sqlite --ping --json
 - Se o daemon não estiver disponível, esses comandos sobem o processo sob demanda antes de cair para o caminho local
 - Subir `sqlite-graphrag daemon` manualmente agora é opcional e útil principalmente para supervisão explícita ou debug
 - Use `--ping` para confirmar que o daemon está vivo e inspecionar o contador de requests de embedding atendidos
+- `daemon --ping` emite um aviso quando a versão do daemon em execução difere da versão do binário CLI; reinicie o daemon após upgrades com `daemon --stop` seguido de `daemon`
 - Use `--stop` para shutdown gracioso após sessões longas de agentes ou ingestão em lote
 - `--db` e `--json` são aceitos para manter o mesmo contrato global da CLI usado por pipelines de agentes
 

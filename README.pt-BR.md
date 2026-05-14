@@ -108,6 +108,15 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 > **Flags obrigatórias para `remember`:** `--name`, `--type`, `--description`. Body via `--body "texto"`, `--body-file <caminho>`, ou `--body-stdin` (pipe do stdin).
 > **Limite do body: 500 KB (512000 bytes).** Entradas maiores são rejeitadas com código de saída 6 (`limit exceeded`); divida em múltiplas memórias ou reduza antes de enviar.
 - **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` podem extrair entidades e relacionamentos via GLiNER zero-shot NER local quando `--enable-ner` é passado. `recall` e `hybrid-search` auto-iniciam o daemon de embedding sob demanda.
+
+### GLiNER zero-shot NER
+- Passe `--enable-ner` ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração de entidades em `remember` e `ingest`
+- Funciona com `--graph-stdin`: passe `"entities": []` no payload JSON e o GLiNER extrai entidades automaticamente
+- Selecione variante do modelo com `--gliner-variant`: `fp32` (1,1 GB, melhor qualidade), `fp16` (580 MB), `int8` (349 MB, mais rápido), `q4` (894 MB), `q4f16` (472 MB)
+- Sobrescreva modelo padrão via `SQLITE_GRAPHRAG_GLINER_MODEL`; ajuste confiança com `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (padrão `0.5`)
+- Campo `extraction_method` na resposta reporta: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
+- `--skip-extraction` está obsoleto desde v1.0.45; NER está desligado por padrão, use `--enable-ner` para ativar
+
 - **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque pré-baixa o modelo de embedding e aquece um embedding de teste (comandos subsequentes são mais rápidos). Sem `init`, o primeiro comando paga o custo de download do modelo.
 - **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
@@ -304,6 +313,11 @@ sqlite-graphrag ingest ./docs --type document --pattern '*.md' --low-memory
 # Ou via variável de ambiente (a flag CLI tem precedência):
 SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
 ```
+> `ingest` emite NDJSON no stdout: uma linha JSON por arquivo, seguida de uma linha de resumo.
+> Valores de `status` por arquivo: `indexed` (criado), `skipped` (duplicata ou nome inválido), `failed` (erro).
+> Duplicatas emitem `status: "skipped"` com `action: "duplicate"` e não contam como falhas.
+> Schema: `docs/schemas/ingest-file-event.schema.json`, `docs/schemas/ingest-summary.schema.json`.
+
 ### Renomeie uma memória mantendo o histórico de versões
 <!-- skip-test: nomes ilustrativos (`nome-antigo`, `nome-novo`) — a memória de origem não existe no banco isolado de teste. -->
 ```bash
@@ -514,7 +528,7 @@ RUN cargo install --path .
 | `11` | Geração de embedding falhou | Erro ao carregar modelo ou falha de RPC do daemon de embedding |
 | `12` | Extensão `sqlite-vec` falhou ao carregar | Extensão nativa ausente ou build do SQLite incompatível |
 | `13` | Falha parcial em lote | `import`, `reindex` ou stdin batch com pelo menos um registro com falha |
-| `14` | Erro de I/O do sistema de arquivos | Diretório de cache ou de banco sem permissão de escrita |
+| `14` | Erro de I/O do sistema de arquivos | Diretório de cache ou de banco sem permissão de escrita, diretório de destino `ingest` inexistente |
 | `15` | Banco ocupado após tentativas | Contenção do WAL excedeu o orçamento de `with_busy_retry` |
 | `20` | Erro interno ou de serialização JSON | Falha inesperada do serde ou violação de invariante |
 | `73` | `EX_NOPERM` guarda de memória rejeitou pouca RAM | RAM disponível abaixo do limite de segurança ao adquirir slot |

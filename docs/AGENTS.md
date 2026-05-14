@@ -509,6 +509,8 @@ let output = Command::new("sqlite-graphrag")
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
 - PASS `--force-merge` in idempotent loops
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
+- Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array
@@ -582,6 +584,8 @@ let output = Command::new("sqlite-graphrag")
 - WIDEN `--wait-lock <SECONDS>` to wait for a slot before exit 75
 ### REQUIRED — Performance and Extraction
 - NER is disabled by default; pass `--enable-ner` to activate GLiNER extraction
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
+- Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
 - GLiNER NER adds approximately 100-200 ms per file with model loaded on modern hardware
 - GLiNER NER adds 2 to 30 seconds per file in `--low-memory` or on first load
 - GLiNER NER downloads the ONNX model on first run (fp32: 1.1 GB, int8: 349 MB via `--gliner-variant`)
@@ -848,6 +852,7 @@ let output = Command::new("sqlite-graphrag")
 - LET `init`, `remember`, `ingest`, `recall`, `hybrid-search` reuse automatically
 - TREAT daemon as optional for single-shot invocations
 - INSPECT the embedding request counter in `--ping`
+- `daemon --ping` emits a warning when the running daemon version differs from the CLI binary version; restart the daemon after upgrades with `daemon --stop` followed by `daemon`
 
 
 ## Cache — Model Management

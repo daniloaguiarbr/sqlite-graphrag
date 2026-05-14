@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/ingest-file-event.schema.json",
+  "title": "IngestFileEvent",
+  "description": "Per-file NDJSON line emitted by `sqlite-graphrag ingest` on stdout. One line per input file, followed by a single IngestSummary line.",
+  "type": "object",
+  "required": ["file", "name", "status", "truncated"],
+  "additionalProperties": false,
+  "properties": {
+    "file":          { "type": "string",  "description": "Filesystem path of the ingested file." },
+    "name":          { "type": "string",  "description": "Derived kebab-case memory name." },
+    "status":        { "type": "string",  "enum": ["indexed", "skipped", "failed"], "description": "Outcome: indexed (created successfully), skipped (duplicate name or invalid derivation), failed (processing or persistence error)." },
+    "truncated":     { "type": "boolean", "description": "True when the derived name was truncated to fit the 60-character limit." },
+    "original_name": { "type": ["string", "null"],  "description": "Original derived name before truncation. Present only when truncated is true." },
+    "error":         { "type": ["string", "null"],  "description": "Error or skip reason. Present when status is skipped or failed." },
+    "memory_id":     { "type": ["integer", "null"], "description": "Row ID of the created memory. Present only when status is indexed." },
+    "action":        { "type": ["string", "null"],  "description": "Action taken: created (new memory) or duplicate (skipped due to existing name). Null on failure." }
+  }
+}

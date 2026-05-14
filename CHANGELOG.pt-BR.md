@@ -10,6 +10,26 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.48] - 2026-05-14
+
+### Corrigido
+- `--graph-stdin` não mais desabilita silenciosamente extração NER quando combinado com `--enable-ner` e array `entities` vazio; o guard de NER agora verifica presença real de entidades em vez da fonte de input.
+- Inferência GLiNER ONNX: tensor `span_mask` agora usa corretamente `tensor(bool)` em vez de `tensor(i64)`, corrigindo o type mismatch que fazia todas as variantes do modelo GLiNER recaírem silenciosamente para extração regex-only.
+- `ingest` agora reporta `status: "skipped"` com `action: "duplicate"` (não `status: "failed"`) para memórias duplicadas, incrementando corretamente `files_skipped` em vez de `files_failed`.
+- `ingest` em diretório inexistente agora retorna exit code 14 (Io) em vez de exit code 4 (NotFound), seguindo a semântica documentada de exit codes para erros de filesystem.
+- `daemon --ping` agora emite `tracing::warn!` quando a versão do daemon difere da versão do binário CLI, orientando o usuário a reiniciar.
+- `--skip-extraction` agora emite aviso de depreciação quando usado sozinho (NER está desabilitado por padrão desde v1.0.45).
+- Campo `extraction_method` na resposta JSON do `remember` agora é definido como `"none:extraction-failed"` quando extração NER falha, em vez de ausente (`null`).
+
+### Adicionado
+- Schema `docs/schemas/ingest-file-event.schema.json` para evento NDJSON por arquivo do `ingest`.
+- Schema `docs/schemas/ingest-summary.schema.json` para linha resumo do `ingest`.
+- Campo `extraction_method` em `docs/schemas/remember.schema.json`.
+- Campo `original_name` em `docs/schemas/remember.schema.json`.
+- Seção GLiNER zero-shot NER no README e README.pt-BR com documentação de `--enable-ner`, `--gliner-variant` e `extraction_method`.
+- Documentação de status NDJSON do `ingest` (`indexed`/`skipped`/`failed`) no README e README.pt-BR.
+- Exemplos `after_long_help` para subcomandos `init`, `recall` e `remember`.
+
 ## [1.0.47] - 2026-05-14
 
 ### Alterado

@@ -45,12 +45,22 @@
 ### Minimal payload contract for `remember`
 - `--entities-file` expects a JSON array of entity objects
 - Each entity must include `name` plus `entity_type` or alias `type`
-- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--relationships-file` expects a JSON array of relationship objects
 - Each relationship must include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` must be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
 - File payload relations use underscore labels like `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - CLI flags on `link` and `unlink` use dashed labels like `applies-to`, `depends-on`, and `tracked-in`
+
+
+## NER Extraction
+### GLiNER zero-shot entity extraction
+- Pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate on `remember` and `ingest`
+- Works with `--graph-stdin`: pass `"entities": []` in JSON and GLiNER extracts automatically
+- Model variants via `--gliner-variant`: `fp32` (1.1 GB), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB)
+- Override model with `SQLITE_GRAPHRAG_GLINER_MODEL`; tune threshold with `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (default `0.5`)
+- Response field `extraction_method`: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
+- `--skip-extraction` is deprecated since v1.0.45; use `--enable-ner` instead
 
 
 ## Exit Codes
@@ -66,7 +76,7 @@
 - `11` embedding generation failed: check model files and retry
 - `12` sqlite-vec extension failed to load: reinstall with bundled extension
 - `13` batch partial failure: honor backoff and retry later
-- `14` filesystem I/O error
+- `14` filesystem I/O error: cache directory not writable, nonexistent ingest target directory
 - `15` database busy after retries: wait and retry
 - `20` internal or JSON serialization error
 - `73` memory guard rejected low RAM condition
@@ -85,7 +95,7 @@
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.24 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.48 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

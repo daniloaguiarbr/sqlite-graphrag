@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.48] - 2026-05-14
+
+### Fixed
+- `--graph-stdin` no longer silently disables NER extraction when combined with `--enable-ner` and an empty `entities` array; the NER guard now checks actual entity presence instead of input source.
+- GLiNER ONNX inference: `span_mask` tensor now correctly uses `tensor(bool)` instead of `tensor(i64)`, fixing the type mismatch that caused all GLiNER model variants to fall back to regex-only extraction silently.
+- `ingest` now reports `status: "skipped"` with `action: "duplicate"` (not `status: "failed"`) for duplicate memories, correctly incrementing `files_skipped` instead of `files_failed`.
+- `ingest` on a nonexistent directory now returns exit code 14 (Io) instead of exit code 4 (NotFound), matching the documented exit code semantics for filesystem errors.
+- `daemon --ping` now emits a `tracing::warn!` when the running daemon version differs from the CLI binary version, prompting the user to restart.
+- `--skip-extraction` now emits a deprecation warning when used alone (NER is disabled by default since v1.0.45).
+- `extraction_method` field in `remember` JSON response is now set to `"none:extraction-failed"` when NER extraction errors out, instead of being absent (`null`).
+
+### Added
+- Schema `docs/schemas/ingest-file-event.schema.json` for per-file NDJSON event emitted by `ingest`.
+- Schema `docs/schemas/ingest-summary.schema.json` for the final summary NDJSON line emitted by `ingest`.
+- `extraction_method` and `original_name` fields added to `docs/schemas/remember.schema.json`.
+- GLiNER zero-shot NER section in README, README.pt-BR, INTEGRATIONS, AGENTS, COOKBOOK, HOW_TO_USE (EN + PT).
+- Ingest NDJSON status documentation (`indexed`/`skipped`/`failed`) in README and README.pt-BR.
+- `after_long_help` examples for `init`, `recall`, and `remember` subcommands.
+- `extraction_method`, `--skip-extraction` deprecation, and daemon version mismatch documentation across all doc files and skills.
+
 ## [1.0.47] - 2026-05-14
 
 ### Changed

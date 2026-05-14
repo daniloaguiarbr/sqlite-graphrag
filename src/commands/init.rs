@@ -19,6 +19,13 @@ pub enum EmbeddingModelChoice {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Initialize a new database in the current directory\n  \
+    sqlite-graphrag init\n\n  \
+    # Initialize with a specific namespace\n  \
+    sqlite-graphrag init --namespace my-project\n\n  \
+    # Initialize at a custom database path\n  \
+    sqlite-graphrag init --db /path/to/graphrag.sqlite")]
 pub struct InitArgs {
     /// Path to graphrag.sqlite. Defaults to `./graphrag.sqlite` in the current directory.
     /// Resolution precedence (highest to lowest): `--db` flag > `SQLITE_GRAPHRAG_DB_PATH` env >

@@ -31,6 +31,20 @@ fn compute_chunks_persisted(chunks_created: usize) -> usize {
 }
 
 #[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Create a memory with inline body\n  \
+    sqlite-graphrag remember --name design-auth --type decision \\\n    \
+    --description \"auth design\" --body \"JWT for stateless auth\"\n\n  \
+    # Create with curated graph via --graph-stdin\n  \
+    echo '{\"body\":\"...\",\"entities\":[],\"relationships\":[]}' | \\\n    \
+    sqlite-graphrag remember --name my-mem --type note --description \"desc\" --graph-stdin\n\n  \
+    # Enable GLiNER NER extraction with --graph-stdin\n  \
+    echo '{\"body\":\"Alice from Microsoft...\",\"entities\":[],\"relationships\":[]}' | \\\n    \
+    sqlite-graphrag remember --name ner-test --type note --description \"test\" \\\n    \
+    --graph-stdin --enable-ner --gliner-variant int8\n\n  \
+    # Idempotent upsert with --force-merge\n  \
+    sqlite-graphrag remember --name my-mem --type note --description \"updated\" \\\n    \
+    --body \"new content\" --force-merge")]
 pub struct RememberArgs {
     /// Memory name in kebab-case (lowercase letters, digits, hyphens).
     /// Acts as unique key within the namespace; collisions trigger merge or rejection.
@@ -324,16 +338,15 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
         );
     }
+    if args.skip_extraction && !args.enable_ner {
+        tracing::warn!("--skip-extraction is deprecated and has no effect (NER is disabled by default since v1.0.45); remove this flag");
+    }
     let gliner_variant: crate::extraction::GlinerVariant =
         args.gliner_variant.parse().unwrap_or_else(|e| {
             tracing::warn!("invalid --gliner-variant: {e}; using fp32");
             crate::extraction::GlinerVariant::Fp32
         });
-    if args.enable_ner
-        && !entities_provided_externally
-        && graph.entities.is_empty()
-        && !raw_body.trim().is_empty()
-    {
+    if args.enable_ner && graph.entities.is_empty() && !raw_body.trim().is_empty() {
         match crate::extraction::extract_graph_auto(&raw_body, &paths, gliner_variant) {
             Ok(extracted) => {
                 extraction_method = Some(extracted.extraction_method.clone());
@@ -353,6 +366,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             }
             Err(e) => {
                 tracing::warn!("auto-extraction failed (graceful degradation): {e:#}");
+                extraction_method = Some("none:extraction-failed".to_string());
             }
         }
     }

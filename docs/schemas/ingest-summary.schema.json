@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/ingest-summary.schema.json",
+  "title": "IngestSummary",
+  "description": "Final summary NDJSON line emitted by `sqlite-graphrag ingest` after all per-file events. Always the last line on stdout.",
+  "type": "object",
+  "required": ["summary", "dir", "pattern", "recursive", "files_total", "files_succeeded", "files_failed", "files_skipped", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "summary":         { "const": true,    "description": "Sentinel field; always true. Distinguishes this line from per-file events." },
+    "dir":             { "type": "string",  "description": "Directory path passed to ingest." },
+    "pattern":         { "type": "string",  "description": "Glob pattern used to match files." },
+    "recursive":       { "type": "boolean", "description": "Whether subdirectories were traversed." },
+    "files_total":     { "type": "integer", "minimum": 0, "description": "Total files matched by the pattern." },
+    "files_succeeded": { "type": "integer", "minimum": 0, "description": "Files successfully indexed." },
+    "files_failed":    { "type": "integer", "minimum": 0, "description": "Files that failed processing or persistence." },
+    "files_skipped":   { "type": "integer", "minimum": 0, "description": "Files skipped (duplicates, invalid names, empty bodies)." },
+    "elapsed_ms":      { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+  }
+}

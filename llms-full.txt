@@ -129,13 +129,24 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - `--entities-file` expects a JSON array of entities
 - Each entity MUST include `name` and `entity_type`; alias `type` is accepted
 - Agents MUST NOT send both `entity_type` and `type` in the same object
-- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`
+- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - `--relationships-file` expects a JSON array of relationships
 - Each relationship MUST include `source`/`from`, `target`/`to`, `relation`, and `strength`
 - `strength` MUST be a float in `[0.0, 1.0]` and maps to `weight` in graph outputs
 - File payload relations use underscore labels such as `applies_to`, `depends_on`, and `tracked_in`; dashed aliases are normalized before storage
 - `link` and `unlink` flags use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 - `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
+
+### NER Extraction
+#### GLiNER zero-shot entity extraction
+- Pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate on `remember` and `ingest`
+- Works with `--graph-stdin`: pass `"entities": []` in JSON and GLiNER extracts entities automatically
+- Model variants via `--gliner-variant`: `fp32` (1.1 GB, best quality), `fp16` (580 MB), `int8` (349 MB, fastest), `q4` (894 MB), `q4f16` (472 MB)
+- Override model with `SQLITE_GRAPHRAG_GLINER_MODEL`; tune threshold with `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (default `0.5`)
+- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
+- `--skip-extraction` is deprecated since v1.0.45; NER is off by default, use `--enable-ner` to activate
+- Ingest NDJSON per-file status values: `indexed` (created), `skipped` (duplicate), `failed` (error)
+- Duplicate memories on re-ingest emit `status: "skipped"` with `action: "duplicate"` and do not count as failures
 
 ```json
 [
@@ -216,7 +227,7 @@ RUN cargo install --locked sqlite-graphrag
 | `11` | Embedding generation failed | Check model files and retry |
 | `12` | `sqlite-vec` extension failed | Reinstall binary with bundled extension |
 | `13` | Batch partial failure | Honor backoff and retry later |
-| `14` | Filesystem I/O error | Check permissions and disk space |
+| `14` | Filesystem I/O error: cache directory not writable, nonexistent ingest target directory | Check permissions and disk space |
 | `15` | Database busy after retries | Wait and retry the operation |
 | `20` | Internal or JSON serialization error | File a bug report |
 | `75` | `EX_TEMPFAIL` — all slots busy | Retry with backoff |
@@ -494,7 +505,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.24 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.48 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
