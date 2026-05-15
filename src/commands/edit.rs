@@ -170,6 +170,8 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 
     tx.commit()?;
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     output::emit_json(&EditResponse {
         memory_id,
         name,

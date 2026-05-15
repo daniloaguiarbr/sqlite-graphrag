@@ -36,6 +36,8 @@ pub struct ExportArgs {
     /// Offset for pagination.
     #[arg(long, default_value_t = 0)]
     pub offset: usize,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
     /// Path to graphrag.sqlite (overrides SQLITE_GRAPHRAG_DB_PATH and default CWD).
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,

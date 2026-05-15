@@ -217,6 +217,8 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
 
     tx.commit()?;
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     output::emit_json(&RestoreResponse {
         action: "restored".to_string(),
         memory_id,

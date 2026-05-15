@@ -619,10 +619,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - RUN `optimize` to refresh planner statistics
 - CLEAN orphans via `cleanup-orphans --yes` after bulk forget
 ### REQUIRED — Safe Backup
-- USE `sync-safe-copy --dest <path>` before syncing Dropbox or iCloud
+- SINCE v1.0.53, every write command runs `PRAGMA wal_checkpoint(TRUNCATE)` after committing, ensuring the `.sqlite` file is always self-contained when cloud sync tools (Dropbox, iCloud, OneDrive) read it
+- USE `sync-safe-copy --dest <path>` for atomic snapshots before critical operations
 - COMPRESS snapshots via `ouch compress` for remote upload
 - EXPORT memories via `sqlite-graphrag export` as NDJSON (one JSON line per memory + summary); supports `--namespace`, `--type`, `--include-deleted`, `--limit`
 - VERSION the database with Git LFS when feasible
+- IF corruption occurs despite checkpoint, recover with `sqlite3 broken.sqlite ".recover" | sqlite3 repaired.sqlite`
 ### REQUIRED — Schema Diagnostics
 - USE `__debug_schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`

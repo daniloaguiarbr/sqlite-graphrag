@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.53**: WAL checkpoint TRUNCATE after every write command for Dropbox/cloud-sync safety, `export --json` contract fix, `Vec::with_capacity` in 12 hot paths
+- **v1.0.52**: 12 gaps fixed, new `export` subcommand, exit code Duplicate 2→9 (breaking), `forget` not-found no JSON (breaking)
 - **v1.0.51**: Namespace env var fix (8 commands), remember on soft-deleted fix, per-chunk RSS watchdog (`--max-rss-mb`), daemon test coverage
 - **v1.0.50**: `prune-relations` subcommand, daemon auto-restart on version mismatch, V011 index, 37 doc gaps fixed
 - **v1.0.49**: Extensible relation vocabulary, V010 migration, 15 doc updates
@@ -422,7 +424,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
 | `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Bulk-ingest every matching file as a separate memory (NDJSON output); `--dry-run` previews name mapping without writing |
-| `export` | `--namespace`, `--type`, `--limit`, `--output <PATH>` | Export memories as NDJSON for backup or migration |
+| `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Export memories as NDJSON for backup or migration |
 | `cache clear-models` | `--yes` | Remove cached embedding/GLiNER model files from the XDG cache directory |
 
 > **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
@@ -579,6 +581,12 @@ RUN cargo install --path .
 
 
 ## Troubleshooting FAQ
+### Cloud sync safety (Dropbox, iCloud, OneDrive)
+- sqlite-graphrag uses WAL mode by default for high-concurrency writes
+- Since v1.0.53, every write command runs `PRAGMA wal_checkpoint(TRUNCATE)` after committing
+- This ensures the `.sqlite` file is always self-contained when cloud sync tools read it
+- If corruption occurs despite the checkpoint, recover with `sqlite3 broken.sqlite ".recover" | sqlite3 repaired.sqlite`
+
 ### Common issues and fixes
 - Default behavior always creates or opens `graphrag.sqlite` in the current working directory
 - Database locked after crash requires `sqlite-graphrag vacuum` to checkpoint the WAL

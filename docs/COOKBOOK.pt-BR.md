@@ -662,17 +662,16 @@ jobs:
 
 ### Solution
 ```bash
-sqlite-graphrag list --limit 10000 --json \
-  | jaq -c '.items[]' > memories-$(date +%Y%m%d).ndjson
+sqlite-graphrag export > memories-$(date +%Y%m%d).ndjson
 ```
 
 
 ### Explanation
-- `list --limit 10000` enumera memórias até o teto com ordenação determinística estável
-- `jaq -c '.items[]'` achata o array `items` em NDJSON legível por qualquer ferramenta instantaneamente
-- Arquivo resultante abre em `rg` `bat` ou planilhas sem conhecimento de SQLite algum
+- `export` transmite todas as memórias como NDJSON com uma linha JSON por memória mais um resumo
+- Filtre por tipo com `--type decision` ou por namespace com `--namespace my-project`
+- Inclua memórias soft-deletadas com `--include-deleted` para trilha de auditoria completa
 - Diff dois snapshots com `difft` para auditar o que mudou entre backups mensais limpo
-- Poupa tempo do auditor porque NDJSON é legível por humano ao contrário de binário opaco
+- A partir da v1.0.53 cada escrita faz checkpoint do WAL para que ferramentas de sincronização na nuvem sempre vejam um arquivo consistente
 
 
 ### Variants

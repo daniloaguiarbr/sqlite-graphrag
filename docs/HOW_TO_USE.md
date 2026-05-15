@@ -624,7 +624,8 @@ sqlite-graphrag remember --name config-notes --type project \
 - Error `exit 15` signals database busy after retries, lower write pressure or raise `--wait-lock`
 - Error `exit 75` signals slots exhausted, retry after a short backoff interval
 - Error `exit 77` signals low RAM, free memory before invoking the embedding model again
-- Error `exit 2` on `remember` may signal a soft-deleted memory; use `--force-merge` to restore and update, or `restore` to revive it first
+- Error `exit 9` on `remember` signals a duplicate or soft-deleted memory; use `--force-merge` to restore and update, or `restore` to revive it first
+- Error `exit 2` signals a Clap argument parsing error; check flags and required arguments
 - Use `--max-rss-mb <MiB>` on `remember` or `ingest` to set a per-chunk RSS abort threshold (default 8192 MiB) and prevent ONNX runtime from exhausting system memory
 
 

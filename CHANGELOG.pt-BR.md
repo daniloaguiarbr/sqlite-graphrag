@@ -10,6 +10,15 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.53] - 2026-05-15
+
+### Corrigido
+- WAL checkpoint TRUNCATE após cada comando de escrita previne corrupção de B-tree quando o banco é sincronizado pelo Dropbox ou ferramentas de cloud sync similares (C2). Comandos afetados: remember, edit, forget, ingest, link, unlink, rename, restore, cleanup-orphans, purge.
+- `export` agora aceita `--json` como flag oculta no-op, consistente com todos os outros subcomandos (H1).
+
+### Alterado
+- `Vec::with_capacity()` aplicado em 12 hot paths adicionais de produção: offsets de tokenizer, splitting de chunks, fronteiras BFS de grafo, alocação de tensores GLiNER, coleta de spans candidatos, buffers de extração do ingest, planejamento de batch do embedder, extração de URLs do remember (L1).
+
 ## [1.0.52] - 2026-05-15
 
 ### Breaking

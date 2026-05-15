@@ -627,7 +627,8 @@ sqlite-graphrag remember --name notas-config --type project \
 - Erro `exit 15` sinaliza banco ocupado após tentativas, reduza a pressão de escrita ou aumente `--wait-lock`
 - Erro `exit 75` sinaliza slots exauridos, repita após breve intervalo de backoff
 - Erro `exit 77` sinaliza RAM baixa, libere memória antes de invocar o modelo novamente
-- Erro `exit 9` no `remember` pode indicar memória soft-deleted; use `--force-merge` para restaurar e atualizar, ou `restore` para revivê-la primeiro
+- Erro `exit 9` no `remember` sinaliza duplicata ou memória soft-deleted; use `--force-merge` para restaurar e atualizar, ou `restore` para revivê-la primeiro
+- Erro `exit 2` sinaliza erro de parsing de argumentos Clap; verifique flags e argumentos obrigatórios
 - Use `--max-rss-mb <MiB>` no `remember` ou `ingest` para definir limite de RSS por chunk (padrão 8192 MiB) e prevenir que o ONNX runtime esgote a memória do sistema
 
 

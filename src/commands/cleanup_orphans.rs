@@ -62,6 +62,7 @@ pub fn run(args: CleanupOrphansArgs) -> Result<(), AppError> {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let removed = entities::delete_entities_by_ids(&tx, &orphan_ids)?;
         tx.commit()?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         removed
     };
 

@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.53**: WAL checkpoint TRUNCATE após cada escrita para segurança com Dropbox/cloud-sync, correção do contrato `export --json`, `Vec::with_capacity` em 12 hot paths
+- **v1.0.52**: 12 gaps corrigidos, novo subcomando `export`, exit code Duplicate 2→9 (breaking), `forget` not-found sem JSON (breaking)
 - **v1.0.51**: Correção da env var de namespace (8 comandos), correção do remember em memória soft-deletada, watchdog de RSS por chunk (`--max-rss-mb`), cobertura de testes do daemon
 - **v1.0.50**: Subcomando `prune-relations`, auto-restart do daemon em version mismatch, índice V011, 37 lacunas de docs corrigidas
 - **v1.0.49**: Vocabulário extensível de relações, migração V010, 15 atualizações de docs
@@ -421,7 +423,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `history` | `[nome]` ou `--name <nome>` | Lista todas as versões da memória |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
 | `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON); `--dry-run` pré-visualiza o mapeamento de nomes sem gravar |
-| `export` | `--namespace`, `--type`, `--limit`, `--output <CAMINHO>` | Exporta memórias como NDJSON para backup ou migração |
+| `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Exporta memórias como NDJSON para backup ou migração |
 | `cache clear-models` | `--yes` | Remove arquivos de modelo de embedding/GLiNER do diretório XDG cache |
 
 > **Validação de nomes de memória.** Nomes devem corresponder a `[a-z0-9-]+` (kebab-case, somente ASCII).
@@ -578,6 +580,12 @@ RUN cargo install --path .
 
 
 ## Solução de Problemas
+### Segurança com cloud sync (Dropbox, iCloud, OneDrive)
+- sqlite-graphrag usa modo WAL por padrão para escrita de alta concorrência
+- Desde v1.0.53, todo comando de escrita executa `PRAGMA wal_checkpoint(TRUNCATE)` após commit
+- Isso garante que o arquivo `.sqlite` esteja sempre autocontido quando ferramentas de cloud sync o leem
+- Se ocorrer corrupção apesar do checkpoint, recupere com `sqlite3 corrompido.sqlite ".recover" | sqlite3 reparado.sqlite`
+
 ### Problemas comuns e correções
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 - Banco travado após crash exige `sqlite-graphrag vacuum` para fazer checkpoint do WAL

@@ -155,6 +155,8 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     }
     tx.commit()?;
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     let action = if was_created {
         "created".to_string()
     } else {

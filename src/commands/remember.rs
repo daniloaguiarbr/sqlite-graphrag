@@ -321,7 +321,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     // v1.0.20: use .trim().is_empty() to reject bodies that are only whitespace.
     let mut extraction_method: Option<String> = None;
-    let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
+    let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::with_capacity(4);
     let mut relationships_truncated = false;
     if args.enable_ner && args.skip_extraction {
         tracing::warn!(
@@ -689,6 +689,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     } else {
         0
     };
+
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
     let created_at_epoch = chrono::Utc::now().timestamp();
     let created_at_iso = crate::tz::format_iso(chrono::Utc::now());

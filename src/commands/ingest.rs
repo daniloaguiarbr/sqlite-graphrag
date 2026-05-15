@@ -365,9 +365,9 @@ fn stage_file(
         ));
     }
 
-    let mut extracted_entities: Vec<NewEntity> = Vec::new();
-    let mut extracted_relationships: Vec<NewRelationship> = Vec::new();
-    let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::new();
+    let mut extracted_entities: Vec<NewEntity> = Vec::with_capacity(30);
+    let mut extracted_relationships: Vec<NewRelationship> = Vec::with_capacity(50);
+    let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::with_capacity(4);
     if enable_ner {
         match crate::extraction::extract_graph_auto(&raw_body, paths, gliner_variant) {
             Ok(extracted) => {
@@ -1133,6 +1133,12 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     producer_handle
         .join()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("ingest producer thread panicked")))?;
+
+    if let Ok(ref conn) = conn_or_err {
+        if succeeded > 0 {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    }
 
     output::emit_json_compact(&IngestSummary {
         summary: true,

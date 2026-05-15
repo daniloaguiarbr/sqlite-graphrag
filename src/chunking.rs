@@ -55,7 +55,7 @@ pub fn split_into_chunks(body: &str) -> Vec<Chunk> {
         }];
     }
 
-    let mut chunks = Vec::new();
+    let mut chunks = Vec::with_capacity(body.len() / CHUNK_SIZE_CHARS + 1);
     let mut start = 0usize;
 
     while start < body.len() {
@@ -113,7 +113,7 @@ pub fn split_into_chunks_by_token_offsets(
         }];
     }
 
-    let mut chunks = Vec::new();
+    let mut chunks = Vec::with_capacity(token_offsets.len() / CHUNK_SIZE_TOKENS + 1);
     let mut start_token = 0usize;
 
     while start_token < token_offsets.len() {

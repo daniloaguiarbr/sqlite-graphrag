@@ -190,6 +190,8 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
 
     tx.commit()?;
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     output::emit_json(&RenameResponse {
         memory_id,
         name: normalized_new_name,

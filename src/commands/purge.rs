@@ -125,6 +125,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
             &mut warnings,
         )?;
         tx.commit()?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     }
 
     let message = if candidates_count == 0 {

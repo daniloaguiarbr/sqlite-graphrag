@@ -919,7 +919,7 @@ let output = Command::new("sqlite-graphrag")
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
-- `export` per memory: one JSON line per memory (NDJSON); final summary line includes `memories_total`, `elapsed_ms`; supports `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
+- `export` per memory: one JSON line per memory (NDJSON); final summary line includes `exported`, `namespace`, `elapsed_ms`; supports `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
 - `restore` returns `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
 - `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
@@ -929,7 +929,8 @@ let output = Command::new("sqlite-graphrag")
 ### REQUIRED — Complete Exit Code Handling
 - `0` equals success; parse stdout
 - `1` equals validation (invalid weight, self-link, bad timezone, max-files exceeded)
-- `2` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
+- `2` equals Clap argument parsing error (invalid flags, missing required args)
+- `9` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
 - `3` equals optimistic locking conflict; reload and retry
 - `4` equals entity, memory, or version not found
 - `5` equals namespace error (invalid name or conflict)
@@ -1017,7 +1018,8 @@ let output = Command::new("sqlite-graphrag")
 | --- | --- | --- |
 | `0` | Success | Continue the agent loop |
 | `1` | Validation or runtime failure | Log and surface to operator |
-| `2` | CLI usage error or duplicate (includes soft-deleted) | Fix arguments then retry; for soft-deleted use `--force-merge` to restore |
+| `2` | CLI argument parsing error (Clap) | Fix arguments then retry |
+| `9` | Duplicate memory (includes soft-deleted) | Use `--force-merge` to restore and update |
 | `3` | Optimistic update conflict | Re-read `updated_at` and retry |
 | `4` | Memory or entity not found | Handle missing resource gracefully |
 | `5` | Namespace limit or unresolved | Pass `--namespace` explicitly |

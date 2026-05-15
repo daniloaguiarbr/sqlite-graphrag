@@ -63,7 +63,7 @@ pub fn passage_token_offsets(
         .encode(prefixed, true)
         .map_err(|e| AppError::Embedding(e.to_string()))?;
 
-    let mut offsets = Vec::new();
+    let mut offsets = Vec::with_capacity(encoding.get_offsets().len());
     for &(start, end) in encoding.get_offsets() {
         if end <= start || end <= prefix_len {
             continue;

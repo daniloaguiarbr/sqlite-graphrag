@@ -73,6 +73,20 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.53 — WAL checkpoint after writes, export --json
+
+#### WAL checkpoint TRUNCATE on every write command
+- All write commands (remember, edit, forget, ingest, link, unlink, rename, restore, cleanup-orphans, purge) now run `PRAGMA wal_checkpoint(TRUNCATE)` after committing
+- This ensures the database file is always self-contained when external tools (Dropbox, iCloud, OneDrive, rsync) read it
+- No action needed: the checkpoint is automatic and adds ~1-5ms per write
+- If a checkpoint fails due to contention (SQLITE_BUSY after 5s timeout), the command fails with an error exit code
+- Exception: `ingest` uses best-effort checkpoint (ignores failure) to avoid losing the NDJSON summary after a large batch
+
+#### export accepts --json flag
+- `export --json` is now accepted as a no-op hidden flag for contract uniformity
+- Previously returned Clap exit 2; now returns exit 0 with the same NDJSON output
+- No action needed unless you were explicitly handling exit 2 from `export --json`
+
 ### v1.0.52
 
 #### Breaking: Duplicate exit code changed from 2 to 9

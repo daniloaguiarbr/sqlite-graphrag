@@ -227,7 +227,8 @@ where
 }
 
 fn plan_controlled_batches(token_counts: &[usize]) -> Vec<(usize, usize)> {
-    let mut batches = Vec::new();
+    let mut batches =
+        Vec::with_capacity((token_counts.len() / REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS).max(1));
     let mut start = 0usize;
 
     while start < token_counts.len() {

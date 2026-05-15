@@ -454,9 +454,10 @@ impl GlinerModel {
         }
 
         // Encode each token individually (word-by-word encoding per GLiNER protocol)
-        let mut all_ids: Vec<i64> = Vec::new();
-        let mut all_attention: Vec<i64> = Vec::new();
-        let mut all_word_mask: Vec<i64> = Vec::new();
+        let seq_estimate = prompt_tokens.len() * 3;
+        let mut all_ids: Vec<i64> = Vec::with_capacity(seq_estimate);
+        let mut all_attention: Vec<i64> = Vec::with_capacity(seq_estimate);
+        let mut all_word_mask: Vec<i64> = Vec::with_capacity(seq_estimate);
 
         // BOS token
         all_ids.push(1);
@@ -559,7 +560,8 @@ impl GlinerModel {
             .unwrap_or(GLINER_MAX_WIDTH as i64) as usize;
         let nc = logits_shape.get(3).copied().unwrap_or(num_classes as i64) as usize;
 
-        let mut candidates: Vec<(usize, usize, usize, f32)> = Vec::new();
+        let mut candidates: Vec<(usize, usize, usize, f32)> =
+            Vec::with_capacity(num_words * max_width);
 
         for start in 0..num_words {
             for width in 0..max_width {

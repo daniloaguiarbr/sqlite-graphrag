@@ -79,7 +79,7 @@ pub fn traverse_from_memories(
         if frontier.is_empty() {
             break;
         }
-        let mut next_frontier = Vec::new();
+        let mut next_frontier = Vec::with_capacity(frontier.len() * 2);
 
         for &entity_id in &frontier {
             let mut stmt = conn.prepare_cached(
@@ -107,7 +107,7 @@ pub fn traverse_from_memories(
         .filter(|id| !seed_entities.contains(id))
         .collect();
 
-    let mut result_ids: Vec<i64> = Vec::new();
+    let mut result_ids: Vec<i64> = Vec::with_capacity(graph_only_entities.len());
     for &entity_id in &graph_only_entities {
         let mut stmt = conn.prepare_cached(
             "SELECT DISTINCT me.memory_id
@@ -175,7 +175,7 @@ pub fn traverse_from_memories_with_hops(
         if frontier.is_empty() {
             break;
         }
-        let mut next_frontier = Vec::new();
+        let mut next_frontier = Vec::with_capacity(frontier.len() * 2);
 
         for &entity_id in &frontier {
             let mut stmt = conn.prepare_cached(
@@ -200,7 +200,7 @@ pub fn traverse_from_memories_with_hops(
     let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().copied().collect();
     let seed_entity_set: std::collections::HashSet<i64> = seed_entities.iter().copied().collect();
 
-    let mut result: Vec<(i64, u32)> = Vec::new();
+    let mut result: Vec<(i64, u32)> = Vec::with_capacity(entity_depth.len());
     let mut seen_memories: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
     for (&entity_id, &hop) in &entity_depth {

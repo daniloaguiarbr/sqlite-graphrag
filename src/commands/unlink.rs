@@ -84,6 +84,8 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     entities::recalculate_degree(&tx, target_id)?;
     tx.commit()?;
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     let response = UnlinkResponse {
         action: "deleted".to_string(),
         relationship_id: rel.id,

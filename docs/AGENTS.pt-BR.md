@@ -919,7 +919,7 @@ let output = Command::new("sqlite-graphrag")
 - `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
 - `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
-- `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `memories_total`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
+- `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `exported`, `namespace`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
 - `restore` retorna `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
 - `prune-relations` retorna `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` retorna modelos com tamanho em bytes e total de disco
@@ -929,7 +929,8 @@ let output = Command::new("sqlite-graphrag")
 ### OBRIGATÓRIO — Tratamento Completo de Exit Codes
 - `0` igual sucesso, parsear stdout
 - `1` igual validação (peso inválido, self-link, timezone ruim, max-files excedido)
-- `2` igual duplicata (memória já existe sem `--force-merge`); desde v1.0.51 também retornado quando a memória é soft-deleted — use `--force-merge` para restaurar e atualizar, ou `restore` para reviver
+- `2` igual erro de parsing de argumentos Clap (flags inválidas, args obrigatórios ausentes)
+- `9` igual duplicata (memória já existe sem `--force-merge`); desde v1.0.51 também retornado quando a memória é soft-deleted — use `--force-merge` para restaurar e atualizar, ou `restore` para reviver
 - `3` igual conflito de locking otimista, recarregar e repetir
 - `4` igual entidade, memória ou versão não encontrada
 - `5` igual erro de namespace (nome inválido ou conflito)
@@ -1017,7 +1018,8 @@ let output = Command::new("sqlite-graphrag")
 | --- | --- | --- |
 | `0` | Sucesso | Continue o loop do agente |
 | `1` | Falha de validação ou runtime | Logue e exiba ao operador |
-| `2` | Erro de uso CLI ou duplicata (inclui soft-deleted) | Corrija argumentos e repita; para soft-deleted use `--force-merge` para restaurar |
+| `2` | Erro de parsing de argumentos (Clap) | Corrija argumentos e repita |
+| `9` | Memória duplicata (inclui soft-deleted) | Use `--force-merge` para restaurar e atualizar |
 | `3` | Conflito de optimistic update | Releia `updated_at` e repita |
 | `4` | Memória ou entidade não encontrada | Trate recurso ausente graciosamente |
 | `5` | Limite de namespace ou não resolvido | Passe `--namespace` explicitamente |

@@ -124,6 +124,8 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         }
     }
 
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     if action == "not_found" {
         return Err(AppError::NotFound(errors_msg::memory_not_found(
             &name, &namespace,

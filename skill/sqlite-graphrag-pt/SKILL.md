@@ -619,10 +619,12 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - RODAR `optimize` para refrescar estatísticas do planner
 - LIMPAR órfãos via `cleanup-orphans --yes` após forget em massa
 ### OBRIGATÓRIO — Backup Seguro
-- USAR `sync-safe-copy --dest <path>` antes de sincronizar Dropbox ou iCloud
+- DESDE v1.0.53, todo comando de escrita executa `PRAGMA wal_checkpoint(TRUNCATE)` após commit, garantindo que o arquivo `.sqlite` esteja sempre autocontido quando ferramentas de cloud sync (Dropbox, iCloud, OneDrive) o leem
+- USAR `sync-safe-copy --dest <path>` para snapshots atômicos antes de operações críticas
 - COMPRIMIR snapshots via `ouch compress` para upload remoto
 - EXPORTAR memórias via `sqlite-graphrag export` como NDJSON (uma linha JSON por memória + summary); suporta `--namespace`, `--type`, `--include-deleted`, `--limit`
 - VERSIONAR banco com Git LFS quando viável
+- SE ocorrer corrupção apesar do checkpoint, recuperar com `sqlite3 corrompido.sqlite ".recover" | sqlite3 reparado.sqlite`
 ### OBRIGATÓRIO — Diagnóstico de Schema
 - USAR `__debug_schema --json` para troubleshooting
 - INSPECIONAR `schema_version`, `objects`, `migrations`
