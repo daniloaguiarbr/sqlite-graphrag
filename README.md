@@ -165,22 +165,6 @@ sqlite-graphrag purge --retention-days 0 --yes
 - Pin to a specific version with `cargo install sqlite-graphrag --version <X.Y.Z> --locked`
 - Install from the local checkout with `cargo install --path .`
 - Build from the local checkout with `cargo build --release`
-- Homebrew formula is planned under `brew install sqlite-graphrag`
-- Scoop bucket is planned under `scoop install sqlite-graphrag`
-- Docker image planned as `ghcr.io/daniloaguiarbr/sqlite-graphrag:<version>`
-### Pre-built binaries (GitHub Releases)
-- `x86_64-unknown-linux-gnu` Linux Intel/AMD 64-bit
-- `aarch64-unknown-linux-gnu` Linux ARM 64-bit (Raspberry Pi 4+, AWS Graviton)
-- `x86_64-apple-darwin` macOS Intel (cross-compiled from Apple Silicon runner; v1.0.42+)
-- `aarch64-apple-darwin` macOS Apple Silicon (M1/M2/M3/M4)
-- `x86_64-pc-windows-msvc` Windows Intel/AMD 64-bit
-- `aarch64-pc-windows-msvc` Windows ARM 64-bit
-### Alpine Linux / musl users
-- No pre-built `x86_64-unknown-linux-musl` binary is published since v1.0.42
-- Reason: `ort` (the ONNX runtime backend used by `fastembed` for embeddings + GLiNER NER) does not ship a musl prebuilt on rc.11 or rc.12
-- Workaround 1 — install via Cargo: `cargo install sqlite-graphrag --locked` (Rust 1.88+ required, builds against host glibc)
-- Workaround 2 — use a glibc-based container image: `debian-slim`, `distroless/cc-debian12`, or any Ubuntu derivative
-- Tracking issue: https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt
 
 
 ## Usage

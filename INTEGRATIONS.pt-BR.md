@@ -61,7 +61,6 @@
 | Jenkins | CI/CD | 2.400+ | Jenkinsfile | https://www.jenkins.io/doc |
 | Docker e Podman Alpine | Container | qualquer | Dockerfile | https://docs.docker.com |
 | Kubernetes | Orquestrador | 1.25+ | Job ou CronJob | https://kubernetes.io/docs |
-| Homebrew | Gerenciador Pacote | macOS e Linux | `brew install sqlite-graphrag` (planejado) | https://brew.sh |
 | Scoop e Chocolatey | Gerenciador Pacote | Windows | `scoop install sqlite-graphrag` (planejado) | https://scoop.sh e https://chocolatey.org |
 | Nix e Flakes | Gerenciador Pacote | qualquer | `nix run .#sqlite-graphrag` | https://nixos.org |
 
@@ -383,17 +382,6 @@
 - Versão mínima exige Kubernetes 1.25 ou posterior para Job CronJob e concurrency policy estáveis
 - Docs oficiais em https://kubernetes.io/docs descrevendo Job CronJob e PersistentVolumeClaim
 - Dica de ouro é montar o DB de um PVC com access mode `ReadWriteOnce` para segurança de dados
-
-
-## Homebrew
-### Gerenciador Pacote — macOS E Linux
-- Receita pronta para executar assim que a fórmula entrar, zero custo, instala o mesmo binário do cargo
-- Enquanto MCPs exigem servidor dedicado, sqlite-graphrag é binário único sem dependência de runtime
-- Propósito é instalar sqlite-graphrag em macOS e Linux com o familiar gerenciador Homebrew
-- Use `brew install sqlite-graphrag` assim que a fórmula oficial aparecer nos taps Homebrew core
-- Versão mínima suporta qualquer Homebrew 4.0 ou posterior em macOS ou distros Linuxbrew
-- Docs oficiais em https://brew.sh explicando descoberta de fórmulas e convenções de instalação
-- Dica de ouro é fixar a release via `brew install sqlite-graphrag@1.2.1` assim que taps versionados surjam
 
 
 ## Scoop E Chocolatey

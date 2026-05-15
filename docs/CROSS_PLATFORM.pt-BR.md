@@ -71,7 +71,6 @@ cargo install --path .
 - Binários não assinados baixados via navegador disparam quarentena na primeira execução
 - Remova a quarentena com `xattr -d com.apple.quarantine /usr/local/bin/sqlite-graphrag`
 - Binários instalados via `cargo install` ignoram Gatekeeper por virem do rustc local
-- Distribuição via Homebrew continua planejada sobre a linha pública atual de release
 - Os assets oficiais de macOS atualmente cobrem apenas Apple Silicon
 
 

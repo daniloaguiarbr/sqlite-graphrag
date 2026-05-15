@@ -69,7 +69,6 @@ cargo install --path .
 - Unsigned binaries downloaded via browser trigger Gatekeeper quarantine on first launch
 - Remove quarantine with `xattr -d com.apple.quarantine /usr/local/bin/sqlite-graphrag`
 - Binaries installed via `cargo install` bypass Gatekeeper since they come from rustc
-- Homebrew distribution remains planned on top of the current public release line
 - Official macOS release assets currently target Apple Silicon only
 
 ### Apple Silicon — Native Performance on M1 M2 M3 M4
