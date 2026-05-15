@@ -364,6 +364,13 @@ pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 1_100;
 /// "insufficient system resource to proceed".
 pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
 
+/// Process exit code returned when a duplicate memory or entity is detected (exit 9).
+///
+/// Moved from `2` to `9` in v1.0.52 to free exit code `2` for future use and align
+/// with the PRD exit code contract. Shell callers and LLM agents must use `9` from
+/// this version onwards.
+pub const DUPLICATE_EXIT_CODE: i32 = 9;
+
 /// Canonical value of `PRAGMA user_version` written after migrations.
 ///
 /// **Why 49 instead of `CURRENT_SCHEMA_VERSION` (9)?**

@@ -266,7 +266,7 @@ fn traverse_related(
     }
 
     // For each discovered entity (hop >= 1) find its memories, skipping the seed memory.
-    let mut out: Vec<RelatedMemory> = Vec::new();
+    let mut out: Vec<RelatedMemory> = Vec::with_capacity(limit);
     let mut dedup_ids: HashSet<i64> = HashSet::new();
     dedup_ids.insert(seed_memory_id);
 

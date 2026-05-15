@@ -10,6 +10,32 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.52] - 2026-05-15
+
+### Breaking
+- Exit code do erro `Duplicate` alterado de 2 para 9 para resolver colisão com erros de parsing de argumentos do Clap (L1). Agentes que roteiam no exit 2 para detecção de duplicatas devem atualizar para exit 9.
+- `forget` não mais emite JSON no stdout quando a memória não é encontrada (M2). Anteriormente emitia `{"action":"not_found",...}` + erro no stderr; agora emite apenas erro no stderr + exit 4, consistente com `read`, `edit`, `history`, `rename`.
+
+### Corrigido
+- Resposta JSON do `restore` agora inclui campo `action: "restored"`, consistente com `edit`, `rename`, `forget` (H1).
+- `--lang pt` agora traduz completamente os corpos das mensagens de erro para português, não apenas os prefixos (H2).
+- `ingest` em diretório inexistente retorna exit 1 (Validation) em vez de exit 14 (Io) (M1).
+- `prune-relations --dry-run` agora calcula a contagem de `entities_affected` em vez de retornar 0 fixo (L2).
+
+### Adicionado
+- Eventos NDJSON do `ingest` incluem campo `original_filename` preservando o basename do arquivo antes da normalização para kebab-case (H3).
+- Flag `--dry-run` para `ingest`: previsualiza o mapeamento arquivo→nome sem carregar o modelo ONNX nem persistir (M5).
+- Flag `--show-entities` para `prune-relations`: exibe os nomes das entidades afetadas durante `--dry-run` (L2).
+- Novo subcomando `export` transmite todas as memórias como NDJSON para backup/migração portátil (L4).
+- `health --json` inclui `mentions_ratio` e `mentions_warning` quando mentions dominam o grafo acima de 50% (C2).
+
+### Alterado
+- `Vec::new()` substituído por `Vec::with_capacity()` em 7 hot paths de produção: health checks, resultados do recall, travessia related, warnings do purge, NMS do GLiNER, construtor de relacionamentos, deduplicação de entidades (M3).
+
+### Encerrado (falsos positivos do gaps.md)
+- M4: `recall` já possui flag `--max-graph-results` para limitar a expansão de grafo independentemente de `--k`.
+- L3: `graph entities --json` já retorna o campo `entity_type` no schema EntityItem.
+
 ## [1.0.51] - 2026-05-15
 
 ### Corrigido

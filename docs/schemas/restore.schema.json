@@ -4,9 +4,10 @@
   "title": "RestoreResponse",
   "description": "Response emitted by `sqlite-graphrag restore` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["memory_id", "name", "version", "restored_from", "elapsed_ms"],
+  "required": ["action", "memory_id", "name", "version", "restored_from", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
+    "action":        { "type": "string", "enum": ["restored"], "description": "Always 'restored'." },
     "memory_id":     { "type": "integer" },
     "name":          { "type": "string" },
     "version":       { "type": "integer", "minimum": 1, "description": "New version number after restore." },

@@ -311,6 +311,7 @@ SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
 > `ingest` emite NDJSON no stdout: uma linha JSON por arquivo, seguida de uma linha de resumo.
 > Valores de `status` por arquivo: `indexed` (criado), `skipped` (duplicata ou nome inválido), `failed` (erro).
 > Duplicatas emitem `status: "skipped"` com `action: "duplicate"` e não contam como falhas.
+> Passe `--dry-run` para pré-visualizar o mapeamento de nomes (basenames em kebab-case) sem escrever nada no banco.
 > Schema: `docs/schemas/ingest-file-event.schema.json`, `docs/schemas/ingest-summary.schema.json`.
 
 ### Renomeie uma memória mantendo o histórico de versões
@@ -380,7 +381,7 @@ sqlite-graphrag cleanup-orphans --yes --json
 ### Remoção em massa de relacionamentos por tipo
 <!-- skip-test: requer que existam relacionamentos no namespace. -->
 ```bash
-sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --dry-run --show-entities --json
 sqlite-graphrag prune-relations --relation mentions --yes --json
 ```
 ### Limpe os modelos de embedding/NER em cache no diretório XDG
@@ -419,7 +420,8 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
 | `history` | `[nome]` ou `--name <nome>` | Lista todas as versões da memória |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON) |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON); `--dry-run` pré-visualiza o mapeamento de nomes sem gravar |
+| `export` | `--namespace`, `--type`, `--limit`, `--output <CAMINHO>` | Exporta memórias como NDJSON para backup ou migração |
 | `cache clear-models` | `--yes` | Remove arquivos de modelo de embedding/GLiNER do diretório XDG cache |
 
 > **Validação de nomes de memória.** Nomes devem corresponder a `[a-z0-9-]+` (kebab-case, somente ASCII).
@@ -451,7 +453,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Apaga permanentemente memórias soft-deleted |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entidades sem memórias e sem relacionamentos |
-| `prune-relations` | `--relation <tipo>`, `--namespace`, `--dry-run`, `--yes` | Remove em massa todos os relacionamentos de um determinado tipo |
+| `prune-relations` | `--relation <tipo>`, `--namespace`, `--dry-run`, `--yes`, `--show-entities` | Remove em massa todos os relacionamentos de um determinado tipo; `--show-entities` lista as entidades afetadas na pré-visualização do dry-run |
 
 ### Subcomandos de `cache`
 | Subcomando | Descrição |
@@ -521,7 +523,7 @@ RUN cargo install --path .
 | --- | --- | --- |
 | `0` | Sucesso | Comando concluído e payload JSON impresso quando solicitado |
 | `1` | Erro de validação ou falha em runtime | `--type` inválido, `--relation` malformado (vazio ou fora de snake_case), violação de kebab-case, erro genérico anyhow |
-| `2` | Duplicata, argumento CLI inválido ou erro de concorrência | `--name` existente, flag malformada, opções mutuamente exclusivas |
+| `9` | Duplicata detectada | `--name` existente sem `--force-merge`; o `ingest` pula o arquivo e emite `status: "skipped"` com `action: "duplicate"` |
 | `3` | Conflito durante atualização otimista | `edit` ou `restore` competiu com outro escritor |
 | `4` | Memória ou entidade não encontrada | Alvo de `read`, `forget`, `edit`, `rename`, `restore` ou `graph traverse` ausente |
 | `5` | Namespace não pôde ser resolvido | Sem `SQLITE_GRAPHRAG_NAMESPACE`, sem flag, sem padrão detectado |

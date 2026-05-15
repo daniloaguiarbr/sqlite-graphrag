@@ -232,6 +232,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 | `related` | sim | sim | json |
 | `namespace-detect` | sim | não | json |
 | `daemon` | sim | não | json |
+| `export` | sim | não | ndjson |
 
 ```bash
 # Forma curta — preferida em pipelines
@@ -304,6 +305,19 @@ sqlite-graphrag cleanup-orphans --yes
 - `--yes` suprime a confirmação interativa para pipelines automatizados
 - Exit code 0: limpeza concluída (ou nada a limpar)
 - Exit code 75: slot exaurido, repita após breve backoff
+
+### Usando export
+- Transmite todas as memórias como NDJSON para backup ou migração portátil
+- Saída: uma linha JSON por memória mais uma linha summary final
+```bash
+sqlite-graphrag export --limit 1000 > backup.ndjson
+sqlite-graphrag export --type decision --namespace meu-projeto > decisoes.ndjson
+sqlite-graphrag export --include-deleted --json
+```
+- Pré-requisitos: um banco inicializado deve existir
+- Suporta `--namespace`, `--type`, `--include-deleted`, `--limit` e `--offset` para filtragem
+- A linha summary final inclui `memories_total` e `elapsed_ms`
+- Exit code 0: exportação concluída
 
 ### Usando edit
 - Altera o corpo ou a descrição de uma memória existente criando nova versão imutável
@@ -398,6 +412,7 @@ sqlite-graphrag health --json
 - `wal_size_mb` reporta o tamanho atual do arquivo WAL em megabytes (0.0 quando não está em modo WAL)
 - `checks` é um array de objetos diagnósticos com `name` e `ok`
 - `integrity_ok` é `true` quando `integrity_check` retorna `"ok"` e `false` caso contrário
+- Quando relacionamentos `mentions` ultrapassam 50% de todos os relacionamentos do grafo, a resposta também inclui `mentions_ratio` (float) e `mentions_warning` (string)
 - Exit code 0: banco está íntegro
 - Exit code 10: verificação de integridade falhou — trate como banco corrompido
 
@@ -465,6 +480,7 @@ sqlite-graphrag restore --name design-auth --version 2
 - Pré-requisitos: a memória deve existir e o número de versão alvo deve ser válido
 - Restore NÃO sobrescreve o histórico — ele adiciona nova versão com o corpo antigo
 - `--expected-updated-at` habilita locking otimista para segurança em pipelines concorrentes
+- JSON response inclui campo `action: "restored"`, consistente com os demais comandos CRUD
 - Exit code 0: restore concluído e nova versão indexada
 - Exit code 4: número de versão não encontrado na tabela de histórico
 
@@ -487,17 +503,24 @@ sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends
 - Use `--yes` para pular confirmação interativa em pipelines automatizados
 ```bash
 sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --dry-run --show-entities --json
 sqlite-graphrag prune-relations --relation mentions --yes --json
 ```
 - Tipos de relação canônicos: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
 - Tipos customizados de relação (ex.: `implements`, `blocks`) também são aceitos
+- `--show-entities` adiciona o array `affected_entity_names` à resposta durante o preview de `--dry-run`
 - Após remoção em massa, execute `cleanup-orphans` para remover entidades sem relacionamentos restantes
-- Saída JSON: `{action, relation, count, namespace, elapsed_ms}`
+- Saída JSON: `{action, relation, count, entities_affected, affected_entity_names?, namespace, elapsed_ms}`
 - Exit code 0: relacionamentos removidos (ou contagem dry-run retornada)
 - Exit code 1: formato de relação inválido
 
 
 ## Notas Adicionais Sobre Comandos Essenciais
+### Nota sobre ingest
+- `ingest --dry-run` visualiza o mapeamento arquivo→nome sem carregar o modelo ONNX nem persistir nada
+- A saída NDJSON de `--dry-run` usa `status: "preview"` por arquivo; use para detectar truncamentos e colisões antes de confirmar
+- Quando o basename de um arquivo difere do nome kebab-case derivado (espaços, acentos, caracteres especiais), a linha NDJSON inclui `original_filename` com o basename original
+
 ### Nota sobre link
 - Pré-requisito: as entidades devem existir no grafo antes de criar links explícitos
 - Crie primeiro memórias com payloads explícitos de grafo e depois chame `link` para tipar arestas adicionais
@@ -515,6 +538,7 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - `forget` executa remoção lógica; a memória desaparece dos resultados de `recall` e `list`
 - Saída JSON: `{forgotten, name, namespace}`
 - Execute `purge` depois para apagar permanentemente as linhas removidas e recuperar espaço em disco
+- Desde v1.0.52: quando a memória não é encontrada, `forget` não emite mais JSON para stdout; apenas mensagem de erro em stderr e exit code 4 são produzidos
 
 ### Nota sobre optimize e migrate
 - `optimize --json` retorna `{db_path, status}`
@@ -531,7 +555,7 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - Campos de aresta são `{from, to, relation, weight}`
 
 ### Nota sobre remember
-- `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 em nome duplicado; desde v1.0.51 também restaura memórias soft-deleted e atualiza em um passo
+- `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 9 em nome duplicado; desde v1.0.51 também restaura memórias soft-deleted e atualiza em um passo
 - Use `--force-merge` em loops de pipeline idempotentes onde a mesma chave pode aparecer múltiplas vezes
 - `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
 - O campo alias `type` também é aceito como sinônimo de `entity_type`
@@ -603,7 +627,7 @@ sqlite-graphrag remember --name notas-config --type project \
 - Erro `exit 15` sinaliza banco ocupado após tentativas, reduza a pressão de escrita ou aumente `--wait-lock`
 - Erro `exit 75` sinaliza slots exauridos, repita após breve intervalo de backoff
 - Erro `exit 77` sinaliza RAM baixa, libere memória antes de invocar o modelo novamente
-- Erro `exit 2` no `remember` pode indicar memória soft-deleted; use `--force-merge` para restaurar e atualizar, ou `restore` para revivê-la primeiro
+- Erro `exit 9` no `remember` pode indicar memória soft-deleted; use `--force-merge` para restaurar e atualizar, ou `restore` para revivê-la primeiro
 - Use `--max-rss-mb <MiB>` no `remember` ou `ingest` para definir limite de RSS por chunk (padrão 8192 MiB) e prevenir que o ONNX runtime esgote a memória do sistema
 
 

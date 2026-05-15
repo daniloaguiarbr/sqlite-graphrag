@@ -312,6 +312,7 @@ SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
 > `ingest` emits NDJSON on stdout: one JSON line per file, then a summary line.
 > Per-file `status` values: `indexed` (created), `skipped` (duplicate or invalid name), `failed` (error).
 > Duplicates emit `status: "skipped"` with `action: "duplicate"` and do not count as failures.
+> Pass `--dry-run` to preview the name mapping (kebab-cased basenames) without writing anything to the database.
 > Schema: `docs/schemas/ingest-file-event.schema.json`, `docs/schemas/ingest-summary.schema.json`.
 
 ### Rename a memory while keeping its version history
@@ -381,7 +382,7 @@ sqlite-graphrag cleanup-orphans --yes --json
 ### Bulk-delete relationships by type
 <!-- skip-test: requires relationships to exist in the namespace. -->
 ```bash
-sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --dry-run --show-entities --json
 sqlite-graphrag prune-relations --relation mentions --yes --json
 ```
 ### Clear cached embedding/NER models from the XDG cache
@@ -420,7 +421,8 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
 | `history` | `[name]` or `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast` | Bulk-ingest every matching file as a separate memory (NDJSON output) |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Bulk-ingest every matching file as a separate memory (NDJSON output); `--dry-run` previews name mapping without writing |
+| `export` | `--namespace`, `--type`, `--limit`, `--output <PATH>` | Export memories as NDJSON for backup or migration |
 | `cache clear-models` | `--yes` | Remove cached embedding/GLiNER model files from the XDG cache directory |
 
 > **Memory name validation.** Names must match `[a-z0-9-]+` (kebab-case, ASCII only).
@@ -452,7 +454,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entities that have no memories and no relationships |
-| `prune-relations` | `--relation <type>`, `--namespace`, `--dry-run`, `--yes` | Bulk-delete all relationships of a given type |
+| `prune-relations` | `--relation <type>`, `--namespace`, `--dry-run`, `--yes`, `--show-entities` | Bulk-delete all relationships of a given type; `--show-entities` lists affected entities in the dry-run preview |
 
 ### `cache` subcommands
 | Subcommand | Description |
@@ -522,7 +524,7 @@ RUN cargo install --path .
 | --- | --- | --- |
 | `0` | Success | Command completed and JSON payload printed when requested |
 | `1` | Validation error or runtime failure | Invalid `--type`, malformed `--relation` (empty or non-snake_case), kebab-case violation, generic anyhow error |
-| `2` | Duplicate detected, invalid CLI argument, or concurrency error | Existing `--name`, malformed flag, mutually exclusive options |
+| `9` | Duplicate detected | Existing `--name` without `--force-merge`; `ingest` skips the file and emits `status: "skipped"` with `action: "duplicate"` instead |
 | `3` | Conflict during optimistic update | `edit` or `restore` raced against another writer |
 | `4` | Memory or entity not found | `read`, `forget`, `edit`, `rename`, `restore` or `graph traverse` target missing |
 | `5` | Namespace could not be resolved | No `SQLITE_GRAPHRAG_NAMESPACE`, no flag, no detected default |

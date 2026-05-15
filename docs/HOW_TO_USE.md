@@ -228,6 +228,7 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 | `related` | yes | yes | json |
 | `namespace-detect` | yes | no | json |
 | `daemon` | yes | no | json |
+| `export` | yes | no | ndjson |
 
 ```bash
 # Short form — preferred in pipelines
@@ -300,6 +301,19 @@ sqlite-graphrag cleanup-orphans --yes
 - `--yes` skips the interactive confirmation prompt for scripted pipelines
 - Exit code 0: cleanup succeeded (or nothing to clean)
 - Exit code 75: slot exhausted, retry after a short backoff
+
+### Using export
+- Streams all memories as NDJSON for portable backup or migration
+- Output: one JSON line per memory plus a final summary line
+```bash
+sqlite-graphrag export --limit 1000 > backup.ndjson
+sqlite-graphrag export --type decision --namespace my-project > decisions.ndjson
+sqlite-graphrag export --include-deleted --json
+```
+- Prerequisites: an initialized database must exist
+- Supports `--namespace`, `--type`, `--include-deleted`, `--limit`, and `--offset` for filtering
+- Final summary line includes `memories_total` and `elapsed_ms`
+- Exit code 0: export completed
 
 ### Using edit
 - Alters the body or description of an existing memory in-place creating a new version
@@ -394,6 +408,7 @@ sqlite-graphrag health --json
 - `wal_size_mb` reports the current WAL file size in megabytes (0.0 when not in WAL mode)
 - `checks` is an array of diagnostic objects with `name` and `ok`
 - `integrity_ok` is `true` when `integrity_check` returns `"ok"` and `false` otherwise
+- When `mentions` relationships exceed 50% of all graph relationships, the response also includes `mentions_ratio` (float) and `mentions_warning` (string)
 - Exit code 0: database is healthy
 - Exit code 10: integrity check failed — treat as corrupted database
 
@@ -461,6 +476,7 @@ sqlite-graphrag restore --name auth-design --version 2
 - Prerequisites: the memory must exist and the target version number must be valid
 - Restore does NOT overwrite history — it appends a new version with the old body
 - `--expected-updated-at` enables optimistic locking for concurrent pipeline safety
+- JSON response includes `action: "restored"` field, consistent with other CRUD commands
 - Exit code 0: restore succeeded and the new version is indexed
 - Exit code 4: version number not found in the history table
 
@@ -483,17 +499,24 @@ sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends
 - Use `--yes` to skip interactive confirmation in automated pipelines
 ```bash
 sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --dry-run --show-entities --json
 sqlite-graphrag prune-relations --relation mentions --yes --json
 ```
 - Canonical relation types: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
 - Custom relation types (e.g., `implements`, `blocks`) are also accepted
+- `--show-entities` adds an `affected_entity_names` array to the response during `--dry-run` preview
 - After bulk deletion, run `cleanup-orphans` to remove entities left without relationships
-- JSON output: `{action, relation, count, namespace, elapsed_ms}`
+- JSON output: `{action, relation, count, entities_affected, affected_entity_names?, namespace, elapsed_ms}`
 - Exit code 0: relationships deleted (or dry-run count returned)
 - Exit code 1: invalid relation format
 
 
 ## Additional Notes on Core Commands
+### Note on ingest
+- `ingest --dry-run` previews the file-to-name mapping without loading the ONNX model or persisting anything
+- `--dry-run` NDJSON output uses `status: "preview"` per file; use it to detect name truncations and collisions before committing
+- When a file basename differs from the derived kebab-case name (spaces, accents, special characters), the NDJSON line includes `original_filename` with the original basename
+
 ### Note on link
 - Prerequisite: entities must exist in the graph before creating explicit links
 - Create memories with explicit graph payloads first, then call `link` to type additional edges
@@ -512,6 +535,7 @@ sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
 - `forget` performs a soft delete; the memory disappears from `recall` and `list` results
 - JSON output: `{forgotten, name, namespace}`
 - Run `purge` later to hard-delete soft-deleted rows and reclaim disk space
+- Since v1.0.52: when the memory is not found, `forget` no longer emits JSON to stdout; only a stderr error message and exit code 4 are produced
 
 ### Note on optimize and migrate
 - `optimize --json` returns `{db_path, status}`
@@ -528,7 +552,7 @@ sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
 - Edge fields are `{from, to, relation, weight}`
 
 ### Note on remember
-- `--force-merge` updates an existing memory body instead of returning exit code 2 on duplicate name; since v1.0.51 also restores soft-deleted memories and updates them in one step
+- `--force-merge` updates an existing memory body instead of returning exit code 9 on duplicate name; since v1.0.51 also restores soft-deleted memories and updates them in one step
 - Use `--force-merge` in idempotent pipeline loops where the same key may appear multiple times
 ```bash
 sqlite-graphrag remember --name config-notes --type project \

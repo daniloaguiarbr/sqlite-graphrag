@@ -397,15 +397,46 @@ pub mod validation {
         }
 
         pub fn duplicate(msg: &str) -> String {
-            format!("duplicata detectada: {msg}")
+            let translated = msg
+                .replace("already exists in namespace", "já existe no namespace")
+                .replace(
+                    "exists but is soft-deleted in namespace",
+                    "existe mas está excluída temporariamente no namespace",
+                )
+                .replace(
+                    "Use --force-merge to update.",
+                    "Use --force-merge para atualizar.",
+                )
+                .replace(
+                    "use --force-merge to restore and update, or `restore` to revive it",
+                    "use --force-merge para restaurar e atualizar, ou `restore` para revivê-la",
+                )
+                .replace("memory", "memória");
+            format!("duplicata detectada: {translated}")
         }
 
         pub fn conflict(msg: &str) -> String {
-            format!("conflito: {msg}")
+            let translated = msg
+                .replace("optimistic lock conflict", "conflito de lock otimista")
+                .replace("but current is", "mas atual é")
+                .replace(
+                    "was modified by another process",
+                    "foi modificada por outro processo",
+                );
+            format!("conflito: {translated}")
         }
 
         pub fn not_found(msg: &str) -> String {
-            format!("não encontrado: {msg}")
+            let translated = msg
+                .replace("not found in namespace", "não encontrada no namespace")
+                .replace("not found for memory", "não encontrada para memória")
+                .replace("does not exist in namespace", "não existe no namespace")
+                .replace("memory or entity", "memória ou entidade")
+                .replace("memory", "memória")
+                .replace("entity", "entidade")
+                .replace("version", "versão")
+                .replace("soft-deleted", "excluída temporariamente");
+            format!("não encontrado: {translated}")
         }
 
         pub fn namespace_error(msg: &str) -> String {
@@ -413,7 +444,15 @@ pub mod validation {
         }
 
         pub fn limit_exceeded(msg: &str) -> String {
-            format!("limite excedido: {msg}")
+            let translated = msg
+                .replace("exceeds limit of", "excede limite de")
+                .replace("body exceeds", "corpo excede")
+                .replace("entities exceed limit", "entidades excedem limite")
+                .replace(
+                    "relationships exceed limit",
+                    "relacionamentos excedem limite",
+                );
+            format!("limite excedido: {translated}")
         }
 
         pub fn database(err: &str) -> String {
@@ -793,6 +832,43 @@ mod tests {
                 }
             };
             assert!(msg.contains("reservados para uso interno"), "obtido: {msg}");
+        }
+    }
+
+    mod app_error_pt_translation_tests {
+        use crate::errors::AppError;
+
+        #[test]
+        fn localized_message_pt_not_found_fully_translated() {
+            let err =
+                AppError::NotFound("memory 'test-mem' not found in namespace 'global'".into());
+            let pt = err.localized_message_for(crate::i18n::Language::Portuguese);
+            assert!(
+                pt.contains("memória"),
+                "PT must translate 'memory' to 'memória': {pt}"
+            );
+            assert!(
+                pt.contains("não encontrada no namespace"),
+                "PT must translate full phrase: {pt}"
+            );
+            assert!(
+                !pt.contains("not found in namespace"),
+                "PT must not contain English phrase: {pt}"
+            );
+        }
+
+        #[test]
+        fn localized_message_pt_duplicate_fully_translated() {
+            let err = AppError::Duplicate(
+                "memory 'x' already exists in namespace 'global'. Use --force-merge to update."
+                    .into(),
+            );
+            let pt = err.localized_message_for(crate::i18n::Language::Portuguese);
+            assert!(pt.contains("memória"), "PT must translate 'memory': {pt}");
+            assert!(
+                pt.contains("já existe no namespace"),
+                "PT must translate 'already exists': {pt}"
+            );
         }
     }
 }

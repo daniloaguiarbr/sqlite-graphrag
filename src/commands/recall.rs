@@ -134,8 +134,8 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let knn_results =
         memories::knn_search(&conn, &embedding, &namespaces, memory_type_str, effective_k)?;
 
-    let mut direct_matches = Vec::new();
-    let mut memory_ids: Vec<i64> = Vec::new();
+    let mut direct_matches = Vec::with_capacity(effective_k);
+    let mut memory_ids: Vec<i64> = Vec::with_capacity(effective_k);
     for (memory_id, distance) in knn_results {
         let row = {
             let mut stmt = conn.prepare_cached(

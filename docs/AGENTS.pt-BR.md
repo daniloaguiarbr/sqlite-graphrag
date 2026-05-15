@@ -453,6 +453,7 @@ let output = Command::new("sqlite-graphrag")
 - CONFERIR `journal_mode` igual a `wal` em produção
 - RODAR `optimize --json` para refrescar estatísticas do planner
 - DETECTAR deriva de schema via `__debug_schema` em troubleshooting
+- VERIFICAR `mentions_ratio` (float) e `mentions_warning` (string) no `health --json` quando relacionamentos `mentions` dominam o grafo acima de 50%
 ### Padrão Correto — Sequência de Bootstrap
 - `sqlite-graphrag init --namespace meu-projeto`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -543,6 +544,8 @@ let output = Command::new("sqlite-graphrag")
 ### OBRIGATÓRIO — Quando Usar ingest
 - USAR `ingest <DIR>` para importar diretórios inteiros como memórias
 - PREFERIR sobre loop `fd | xargs remember` em qualquer caso
+- USAR `ingest --dry-run` para visualizar o mapeamento arquivo→nome sem carregar o modelo ONNX nem persistir nada
+- A saída de `--dry-run` é NDJSON com `status: "preview"` por arquivo; use para detectar truncamentos e colisões antes de confirmar
 - CADA arquivo correspondente ao pattern vira memória individual
 - NOME da memória deriva do basename do arquivo sem extensão em kebab-case
 - NOMES com mais de 60 caracteres são TRUNCADOS automaticamente
@@ -615,7 +618,8 @@ let output = Command::new("sqlite-graphrag")
 - FILTRAR por `select(.status)` para ignorar a summary line que não tem campo `status`
 - `jaq -sc '[.[] | select(.status)] | group_by(.status) | map({status: .[0].status, count: length})' < resultados.ndjson`
 ### OBRIGATÓRIO — Schema NDJSON por Tipo de Linha
-- Linha por arquivo: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- Linha por arquivo: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"` `"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
+- `original_filename` preserva o basename do arquivo antes da normalização kebab-case; presente quando o basename difere do nome derivado (ex.: espaços, acentos, caracteres especiais)
 - Linha summary final: `summary` (true), `dir`, `pattern`, `recursive`, `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - Eventos de extração NER vão para stderr, NÃO stdout
 
@@ -632,6 +636,12 @@ let output = Command::new("sqlite-graphrag")
 - PAGINAR via `--offset <N>` para datasets grandes
 - INCLUIR memórias soft-deletadas via `--include-deleted`
 - EXPORTAR full dump com `--limit 10000 --json` antes de backup
+### OBRIGATÓRIO — Export em Streaming (export)
+- USAR `export` para transmitir todas as memórias como NDJSON para backup ou migração portátil
+- SUPORTA `--namespace`, `--type`, `--include-deleted`, `--limit` e `--offset`
+- SAÍDA é NDJSON: uma linha JSON por memória mais uma linha summary final
+- REDIRECIONAR para arquivo para backup: `sqlite-graphrag export --limit 1000 > backup.ndjson`
+- FILTRAR por tipo e namespace: `sqlite-graphrag export --type decision --namespace meu-projeto > decisoes.ndjson`
 ### Padrão Correto — Exemplos de Leitura
 - `sqlite-graphrag read --name design-auth --json`
 - `sqlite-graphrag list --type decision --limit 100 --json`
@@ -658,6 +668,7 @@ let output = Command::new("sqlite-graphrag")
 - OMITIR `--version` seleciona última versão não-restore automaticamente
 - RESTORE cria nova versão sem sobrescrever histórico anterior
 - RE-EMBED ocorre automaticamente para recall vetorial voltar a encontrar
+- JSON response inclui campo `action: "restored"`, consistente com os demais comandos CRUD
 ### OBRIGATÓRIO — Locking Otimista
 - PASSAR `--expected-updated-at <epoch_ou_RFC3339>` em pipelines concorrentes
 - TRATAR exit code 3 como concorrência detectada
@@ -676,6 +687,7 @@ let output = Command::new("sqlite-graphrag")
 - HISTÓRICO de versões permanece intacto no banco
 - REVERSÍVEL via `restore` enquanto não houver purge
 - JSON response: `action` (`"soft_deleted"` `"already_deleted"`), `forgotten`, `name`, `namespace`, `deleted_at?`, `deleted_at_iso?`, `elapsed_ms`
+- Desde v1.0.52: quando a memória não é encontrada, `forget` não emite mais JSON para stdout; apenas mensagem de erro em stderr e exit code 4 são produzidos
 ### OBRIGATÓRIO — Remoção Física (purge)
 - USAR `purge --retention-days <N> --yes` em automação
 - PADRÃO de retenção é 90 dias para memórias soft-deletadas
@@ -691,6 +703,11 @@ let output = Command::new("sqlite-graphrag")
 - APLICAR `--yes` em pipelines automatizados
 - REMOVE entidades sem memórias vinculadas nem arestas
 - RODAR periodicamente após operações `forget` em massa
+### OBRIGATÓRIO — Poda em Massa de Relacionamentos (prune-relations)
+- USAR `prune-relations --relation <tipo> --yes` para remover em massa todos os relacionamentos de um tipo
+- USAR `--dry-run` para visualizar a contagem antes de confirmar
+- USAR `--show-entities` durante `--dry-run` para incluir `affected_entity_names` na resposta
+- EXECUTAR `cleanup-orphans` depois para remover entidades sem relacionamentos restantes
 ### Padrão Correto — Round-Trip Forget e Restore
 - `sqlite-graphrag forget --name decisao-x`
 - `sqlite-graphrag history --name decisao-x --json | jaq '.deleted'`
@@ -897,11 +914,14 @@ let output = Command::new("sqlite-graphrag")
 - `edit` retorna `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` retorna `memory_id`, `name` (novo), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` retorna `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
-- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`
+- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos
 - `health.counts` contém: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
-- `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
+- `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `memories_total`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
+- `restore` retorna `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
+- `prune-relations` retorna `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` retorna modelos com tamanho em bytes e total de disco
 
 
@@ -929,7 +949,7 @@ let output = Command::new("sqlite-graphrag")
 - NUNCA aumentar concorrência após receber 75 ou 77
 - NUNCA tentar `restore` sem inspecionar `history` antes
 - NUNCA culpar ambiguidade sem ler stderr primeiro
-- NUNCA confundir exit 1 (validação) com exit 2 (duplicata)
+- NUNCA confundir exit 1 (validação) com exit 9 (duplicata)
 
 
 ## Concorrência e Recursos
@@ -1058,7 +1078,7 @@ let output = Command::new("sqlite-graphrag")
 
 
 ### Comandos Write — Optimistic Locking Protege Concorrência
-- `remember` usa `ON CONFLICT(name)` então chamadas duplicadas retornam exit code `2`
+- `remember` usa `ON CONFLICT(name)` então chamadas duplicadas retornam exit code `9`
 - `rename` exige `--expected-updated-at` para detectar escrita stale via exit `3`
 - `edit` cria nova linha em `memory_versions` preservando histórico imutável
 - `restore` retrocede o conteúdo criando uma nova versão em vez de sobrescrever

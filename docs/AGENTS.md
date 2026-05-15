@@ -453,6 +453,7 @@ let output = Command::new("sqlite-graphrag")
 - CHECK `journal_mode` equals `wal` in production
 - RUN `optimize --json` to refresh planner statistics
 - DETECT schema drift via `__debug_schema` for troubleshooting
+- CHECK `mentions_ratio` (float) and `mentions_warning` (string) in `health --json` output when `mentions` relationships dominate the graph above 50%
 ### Correct Pattern — Bootstrap Sequence
 - `sqlite-graphrag init --namespace my-project`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -543,6 +544,8 @@ let output = Command::new("sqlite-graphrag")
 ### REQUIRED — When to Use ingest
 - USE `ingest <DIR>` to import entire directories as memories
 - PREFER over the `fd | xargs remember` loop in any case
+- USE `ingest --dry-run` to preview the file-to-name mapping without loading the ONNX model or persisting anything
+- `--dry-run` output is NDJSON with `status: "preview"` for each file; use it to detect name truncations and collisions before committing
 - EACH file matching the pattern becomes an individual memory
 - MEMORY name derives from the file basename without extension in kebab-case
 - NAMES longer than 60 characters are TRUNCATED automatically
@@ -615,7 +618,8 @@ let output = Command::new("sqlite-graphrag")
 - FILTER by `select(.status)` to ignore the summary line that has no `status` field
 - `jaq -sc '[.[] | select(.status)] | group_by(.status) | map({status: .[0].status, count: length})' < results.ndjson`
 ### REQUIRED — NDJSON Schema by Line Type
-- Per-file line: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- Per-file line: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
+- `original_filename` preserves the file basename before kebab-case normalization; present when the basename differs from the derived name (e.g., spaces, accents, special characters)
 - Final summary line: `summary` (true), `dir`, `pattern`, `recursive`, `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - NER extraction events go to stderr, NOT stdout
 
@@ -632,6 +636,12 @@ let output = Command::new("sqlite-graphrag")
 - PAGINATE via `--offset <N>` for large datasets
 - INCLUDE soft-deleted memories via `--include-deleted`
 - EXPORT full dump with `--limit 10000 --json` before backup
+### REQUIRED — Streaming Export (export)
+- USE `export` to stream all memories as NDJSON for portable backup or migration
+- SUPPORTS `--namespace`, `--type`, `--include-deleted`, `--limit`, and `--offset`
+- OUTPUT is NDJSON: one JSON line per memory plus a final summary line
+- REDIRECT to a file for offline backup: `sqlite-graphrag export --limit 1000 > backup.ndjson`
+- FILTER by type and namespace: `sqlite-graphrag export --type decision --namespace my-project > decisions.ndjson`
 ### Correct Pattern — Read Examples
 - `sqlite-graphrag read --name design-auth --json`
 - `sqlite-graphrag list --type decision --limit 100 --json`
@@ -658,6 +668,7 @@ let output = Command::new("sqlite-graphrag")
 - OMIT `--version` to select the last non-restore version automatically
 - RESTORE creates a new version without overwriting prior history
 - RE-EMBED occurs automatically so vector recall can find it again
+- JSON response includes `action: "restored"` field, consistent with other CRUD commands
 ### REQUIRED — Optimistic Locking
 - PASS `--expected-updated-at <epoch_or_RFC3339>` in concurrent pipelines
 - TREAT exit code 3 as detected concurrency
@@ -676,6 +687,7 @@ let output = Command::new("sqlite-graphrag")
 - VERSION history remains intact in the database
 - REVERSIBLE via `restore` while no purge has occurred
 - JSON response: `action` (`"soft_deleted"` `"already_deleted"`), `forgotten`, `name`, `namespace`, `deleted_at?`, `deleted_at_iso?`, `elapsed_ms`
+- Since v1.0.52: when the memory is not found, `forget` no longer emits JSON to stdout; only a stderr error message and exit code 4 are produced
 ### REQUIRED — Hard Delete (purge)
 - USE `purge --retention-days <N> --yes` in automation
 - DEFAULT retention is 90 days for soft-deleted memories
@@ -691,6 +703,11 @@ let output = Command::new("sqlite-graphrag")
 - APPLY `--yes` in automated pipelines
 - REMOVES entities with no linked memories or edges
 - RUN periodically after bulk `forget` operations
+### REQUIRED — Bulk Relation Pruning (prune-relations)
+- USE `prune-relations --relation <type> --yes` to bulk-delete all relationships of a given type
+- USE `--dry-run` to preview the count before committing
+- USE `--show-entities` during `--dry-run` to include `affected_entity_names` in the response
+- RUN `cleanup-orphans` after to remove entities left without relationships
 ### Correct Pattern — Forget and Restore Round-Trip
 - `sqlite-graphrag forget --name decision-x`
 - `sqlite-graphrag history --name decision-x --json | jaq '.deleted'`
@@ -897,11 +914,14 @@ let output = Command::new("sqlite-graphrag")
 - `edit` returns `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` returns `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` returns `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
-- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`
+- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
-- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
+- `export` per memory: one JSON line per memory (NDJSON); final summary line includes `memories_total`, `elapsed_ms`; supports `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
+- `restore` returns `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
+- `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
 
 
@@ -929,7 +949,7 @@ let output = Command::new("sqlite-graphrag")
 - NEVER increase concurrency after receiving 75 or 77
 - NEVER attempt `restore` without inspecting `history` first
 - NEVER assume ambiguity without reading stderr first
-- NEVER confuse exit 1 (validation) with exit 2 (duplicate)
+- NEVER confuse exit 1 (validation) with exit 9 (duplicate)
 
 
 ## Concurrency and Resources
@@ -1058,7 +1078,7 @@ let output = Command::new("sqlite-graphrag")
 
 
 ### Write Commands — Optimistic Locking Protects Concurrency
-- `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `2`
+- `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `9`
 - `rename` requires `--expected-updated-at` to detect stale writes via exit `3`
 - `edit` creates a new row in `memory_versions` preserving immutable history
 - `restore` rewinds content while appending a new version instead of overwriting

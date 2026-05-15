@@ -61,6 +61,8 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
 
 #[derive(Serialize)]
 struct RestoreResponse {
+    /// Always `"restored"` — signals the completed action to shell callers and LLM agents.
+    action: String,
     memory_id: i64,
     name: String,
     version: i64,
@@ -216,6 +218,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     tx.commit()?;
 
     output::emit_json(&RestoreResponse {
+        action: "restored".to_string(),
         memory_id,
         name: old_name,
         version: next_v,
@@ -237,5 +240,22 @@ mod tests {
         );
         assert_eq!(err.exit_code(), 3);
         assert!(err.to_string().contains("conflict"));
+    }
+
+    #[test]
+    fn restore_response_includes_action_field() {
+        let resp = super::RestoreResponse {
+            action: "restored".to_string(),
+            memory_id: 1,
+            name: "test-mem".to_string(),
+            version: 3,
+            restored_from: 2,
+            elapsed_ms: 42,
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert_eq!(json["action"], "restored");
+        assert_eq!(json["memory_id"], 1);
+        assert_eq!(json["version"], 3);
+        assert_eq!(json["restored_from"], 2);
     }
 }

@@ -784,7 +784,7 @@ esac
 - Exit 13 means partial batch failure: reprocess only the failed items, NOT the entire batch
 - Exit 75 and 77 signal resource pressure: NEVER increase concurrency after receiving these codes
 - Exit 15 means database busy: widen `--wait-lock <ms>` to wait longer before failing
-- Full code table: 0=success, 1=validation, 2=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
+- Full code table: 0=success, 1=validation, 9=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
 
 
 ### Variants

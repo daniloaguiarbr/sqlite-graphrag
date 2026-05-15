@@ -2,17 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/forget.schema.json",
   "title": "ForgetResponse",
-  "description": "Response emitted by `sqlite-graphrag forget` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag forget` on stdout as a single JSON line. NOTE: this schema only applies when the memory is found (soft-deleted or already-deleted). When the memory does not exist, forget emits only a stderr error and exits with code 4 — no JSON is written to stdout.",
   "type": "object",
   "required": ["action", "forgotten", "name", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "action":          { "type": "string", "enum": ["soft_deleted", "already_deleted", "not_found"], "description": "Outcome of the forget operation." },
+    "action":          { "type": "string", "enum": ["soft_deleted", "already_deleted"], "description": "Outcome of the forget operation. 'soft_deleted' when the memory was active and is now soft-deleted; 'already_deleted' when it was already in a soft-deleted state." },
     "forgotten":       { "type": "boolean", "description": "True when the memory was soft-deleted by this invocation." },
     "name":            { "type": "string" },
     "namespace":       { "type": "string" },
-    "deleted_at":      { "type": "integer", "description": "Unix epoch seconds when the memory was soft-deleted. Absent when action=not_found." },
-    "deleted_at_iso":  { "type": "string", "description": "RFC 3339 timestamp parallel to deleted_at for ISO 8601 parsers. Absent when action=not_found." },
+    "deleted_at":      { "type": "integer", "description": "Unix epoch seconds when the memory was soft-deleted. Present when action=soft_deleted." },
+    "deleted_at_iso":  { "type": "string", "description": "RFC 3339 timestamp parallel to deleted_at for ISO 8601 parsers. Present when action=soft_deleted." },
     "elapsed_ms":      { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

@@ -293,6 +293,7 @@ fn main() {
         sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
         sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
         sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
+        sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
         sqlite_graphrag::cli::Commands::PruneRelations(args) => {
             commands::prune_relations::run(args)
         }

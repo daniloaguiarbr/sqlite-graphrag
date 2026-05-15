@@ -65,6 +65,8 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./notes --type note --pattern '*.txt' --recursive\n\n  \
     # Enable GLiNER NER extraction (disabled by default, slower)\n  \
     sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
+    # Preview file-to-name mapping without ingesting\n  \
+    sqlite-graphrag ingest ./docs --dry-run\n\n  \
 NOTES:\n  \
     Each file becomes a separate memory. Names derive from file basenames\n  \
     (kebab-case, lowercase, ASCII). Output is NDJSON: one JSON object per file,\n  \
@@ -117,6 +119,10 @@ pub struct IngestArgs {
     /// Stop on first per-file error instead of continuing with the next file.
     #[arg(long, default_value_t = false)]
     pub fail_fast: bool,
+
+    /// Preview file-to-name mapping without loading model or persisting.
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
 
     /// Maximum number of files to ingest (safety cap to prevent runaway ingestion).
     #[arg(long, default_value_t = 10_000)]
@@ -250,6 +256,9 @@ struct IngestFileEvent<'a> {
     /// Original derived name before truncation; only present when `truncated=true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     original_name: Option<String>,
+    /// Original file basename (without extension); only present when it differs from `name`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_filename: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -633,9 +642,9 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     let started = std::time::Instant::now();
 
     if !args.dir.exists() {
-        return Err(AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("directory not found: {}", args.dir.display()),
+        return Err(AppError::Validation(format!(
+            "directory not found: {}",
+            args.dir.display()
         )));
     }
     if !args.dir.is_dir() {
@@ -686,6 +695,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             derived_base: String,
             name_truncated: bool,
             original_name: Option<String>,
+            original_filename: Option<String>,
             reason: String,
         },
         Process {
@@ -693,6 +703,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             derived_name: String,
             name_truncated: bool,
             original_name: Option<String>,
+            original_filename: Option<String>,
         },
     }
 
@@ -710,6 +721,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();
         let (derived_base, name_truncated, original_name) = derive_kebab_name(path);
+        let original_basename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
         if name_truncated {
             if let Some(ref orig) = original_name {
@@ -718,11 +730,18 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         }
 
         if derived_base.is_empty() {
+            // original_filename: always include when it differs from the empty derived name
+            let orig_filename = if !original_basename.is_empty() {
+                Some(original_basename.to_string())
+            } else {
+                None
+            };
             slots_meta.push(SlotMeta::Skip {
                 file_str,
                 derived_base: String::new(),
                 name_truncated: false,
                 original_name: None,
+                original_filename: orig_filename,
                 reason: "could not derive a non-empty kebab-case name from filename".to_string(),
             });
             continue;
@@ -732,6 +751,12 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             Ok(derived_name) => {
                 taken_names.insert(derived_name.clone());
                 let idx = slots_meta.len();
+                // original_filename: present only when the raw basename differs from the derived name
+                let orig_filename = if original_basename != derived_name {
+                    Some(original_basename.to_string())
+                } else {
+                    None
+                };
                 process_items.push(ProcessItem {
                     idx,
                     path: path.clone(),
@@ -743,14 +768,21 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     derived_name,
                     name_truncated,
                     original_name,
+                    original_filename: orig_filename,
                 });
             }
             Err(e) => {
+                let orig_filename = if original_basename != derived_base {
+                    Some(original_basename.to_string())
+                } else {
+                    None
+                };
                 slots_meta.push(SlotMeta::Skip {
                     file_str,
                     derived_base,
                     name_truncated,
                     original_name,
+                    original_filename: orig_filename,
                     reason: e.to_string(),
                 });
             }
@@ -764,6 +796,65 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             max_len = DERIVED_NAME_MAX_LEN,
             "derived names truncated; pass -vv (debug) for per-file detail"
         );
+    }
+
+    // --dry-run: emit preview events and exit before loading ONNX or touching DB.
+    if args.dry_run {
+        for meta in &slots_meta {
+            match meta {
+                SlotMeta::Skip {
+                    file_str,
+                    derived_base,
+                    name_truncated,
+                    original_name,
+                    original_filename,
+                    reason,
+                } => {
+                    output::emit_json_compact(&IngestFileEvent {
+                        file: file_str,
+                        name: derived_base,
+                        status: "skip",
+                        truncated: *name_truncated,
+                        original_name: original_name.clone(),
+                        original_filename: original_filename.as_deref(),
+                        error: Some(reason.clone()),
+                        memory_id: None,
+                        action: None,
+                    })?;
+                }
+                SlotMeta::Process {
+                    file_str,
+                    derived_name,
+                    name_truncated,
+                    original_name,
+                    original_filename,
+                } => {
+                    output::emit_json_compact(&IngestFileEvent {
+                        file: file_str,
+                        name: derived_name,
+                        status: "preview",
+                        truncated: *name_truncated,
+                        original_name: original_name.clone(),
+                        original_filename: original_filename.as_deref(),
+                        error: None,
+                        memory_id: None,
+                        action: None,
+                    })?;
+                }
+            }
+        }
+        output::emit_json_compact(&IngestSummary {
+            summary: true,
+            dir: args.dir.to_string_lossy().into_owned(),
+            pattern: args.pattern.clone(),
+            recursive: args.recursive,
+            files_total: total,
+            files_succeeded: 0,
+            files_failed: 0,
+            files_skipped: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })?;
+        return Ok(());
     }
 
     // Determine rayon thread pool size, honoring --low-memory and the
@@ -874,6 +965,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
             derived_base,
             name_truncated,
             original_name,
+            original_filename,
             reason,
         } = meta
         {
@@ -883,6 +975,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                 status: "skipped",
                 truncated: *name_truncated,
                 original_name: original_name.clone(),
+                original_filename: original_filename.as_deref(),
                 error: Some(reason.clone()),
                 memory_id: None,
                 action: None,
@@ -915,13 +1008,21 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                 "channel idx {idx} has no corresponding Process slot"
             ))
         })?;
-        let (file_str, derived_name, name_truncated, original_name) = match meta {
+        let (file_str, derived_name, name_truncated, original_name, original_filename) = match meta
+        {
             SlotMeta::Process {
                 file_str,
                 derived_name,
                 name_truncated,
                 original_name,
-            } => (file_str, derived_name, name_truncated, original_name),
+                original_filename,
+            } => (
+                file_str,
+                derived_name,
+                name_truncated,
+                original_name,
+                original_filename,
+            ),
             SlotMeta::Skip { .. } => unreachable!("channel only carries Process results"),
         };
 
@@ -936,6 +1037,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     status: "failed",
                     truncated: *name_truncated,
                     original_name: original_name.clone(),
+                    original_filename: original_filename.as_deref(),
                     error: Some(err_clone.clone()),
                     memory_id: None,
                     action: None,
@@ -972,6 +1074,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     status: "indexed",
                     truncated: *name_truncated,
                     original_name: original_name.clone(),
+                    original_filename: original_filename.as_deref(),
                     error: None,
                     memory_id: Some(memory_id),
                     action: Some(action),
@@ -985,6 +1088,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     status: "skipped",
                     truncated: *name_truncated,
                     original_name: original_name.clone(),
+                    original_filename: original_filename.as_deref(),
                     error: Some(format!("{e}")),
                     memory_id: None,
                     action: Some("duplicate".to_string()),
@@ -999,6 +1103,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     status: "failed",
                     truncated: *name_truncated,
                     original_name: original_name.clone(),
+                    original_filename: original_filename.as_deref(),
                     error: Some(err_msg.clone()),
                     memory_id: None,
                     action: None,

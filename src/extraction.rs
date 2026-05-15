@@ -587,7 +587,7 @@ impl GlinerModel {
 
         // Greedy non-maximum suppression
         let mut used = vec![false; num_words];
-        let mut entities: Vec<ExtractedEntity> = Vec::new();
+        let mut entities: Vec<ExtractedEntity> = Vec::with_capacity(candidates.len().min(MAX_ENTS));
 
         for (start, end, class_idx, _score) in &candidates {
             let overlap = (*start..=*end).any(|i| used[i]);
@@ -853,7 +853,7 @@ fn build_relationships_by_sentence_cooccurrence(
         .map(|(i, e)| (i, e.name.to_lowercase()))
         .collect();
 
-    let mut rels: Vec<NewRelationship> = Vec::new();
+    let mut rels: Vec<NewRelationship> = Vec::with_capacity(max_rels);
     let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     let mut hit_cap = false;
 
@@ -1030,7 +1030,7 @@ fn merge_and_deduplicate(
     // - Longest-wins: on collision keep the entity with the longer name.
     // - Truncation warning at MAX_ENTS.
     let mut by_lc: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut result: Vec<ExtractedEntity> = Vec::new();
+    let mut result: Vec<ExtractedEntity> = Vec::with_capacity(MAX_ENTS);
     let mut truncated = false;
 
     let total_input = regex_ents.len() + ner_ents.len();

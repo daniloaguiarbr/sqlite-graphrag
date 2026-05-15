@@ -68,8 +68,16 @@ struct HealthResponse {
     missing_entities: Vec<String>,
     /// WAL file size in MB (0.0 if WAL does not exist or journal_mode != wal).
     wal_size_mb: f64,
-    /// Modo de journaling do SQLite (wal, delete, truncate, persist, memory, off).
+    /// SQLite journaling mode (wal, delete, truncate, persist, memory, off).
     journal_mode: String,
+    /// Fraction of relationships that use the `mentions` relation type (0.0–1.0).
+    /// Omitted when there are no relationships in the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mentions_ratio: Option<f64>,
+    /// Human-readable warning when `mentions` relationships dominate the graph (ratio > 0.5).
+    /// Omitted when the ratio is within acceptable bounds or there are no relationships.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mentions_warning: Option<String>,
     checks: Vec<HealthCheck>,
     elapsed_ms: u64,
 }
@@ -123,6 +131,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             missing_entities: vec![],
             wal_size_mb: 0.0,
             journal_mode: "unknown".to_string(),
+            mentions_ratio: None,
+            mentions_warning: None,
             checks: vec![HealthCheck {
                 name: "integrity".to_string(),
                 ok: false,
@@ -146,6 +156,28 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?;
     let vec_memories_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM vec_memories", [], |r| r.get(0))?;
+
+    let mentions_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM relationships WHERE relation = 'mentions'",
+        [],
+        |r| r.get(0),
+    )?;
+    let (mentions_ratio, mentions_warning) = if relationships_count > 0 {
+        let ratio = mentions_count as f64 / relationships_count as f64;
+        let warning = if ratio > 0.5 {
+            Some(format!(
+                "mentions relationships dominate graph at {:.1}% ({}/{} total); consider running prune-relations --relation mentions --dry-run",
+                ratio * 100.0,
+                mentions_count,
+                relationships_count
+            ))
+        } else {
+            None
+        };
+        (Some(ratio), warning)
+    } else {
+        (None, None)
+    };
 
     let status = "ok";
 
@@ -196,7 +228,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let model_ok = model_dir.exists();
 
     // Builds the checks array for detailed diagnostics
-    let mut checks: Vec<HealthCheck> = Vec::new();
+    let mut checks: Vec<HealthCheck> = Vec::with_capacity(7);
 
     // At this point integrity_ok is always true (corrupt DB returned early above).
     checks.push(HealthCheck {
@@ -291,6 +323,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         missing_entities,
         wal_size_mb,
         journal_mode,
+        mentions_ratio,
+        mentions_warning,
         checks,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
@@ -330,6 +364,8 @@ mod tests {
             missing_entities: vec![],
             wal_size_mb: 0.0,
             journal_mode: "wal".to_string(),
+            mentions_ratio: None,
+            mentions_warning: None,
             checks: vec![
                 HealthCheck {
                     name: "integrity".to_string(),

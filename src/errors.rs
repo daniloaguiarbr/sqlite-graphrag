@@ -19,7 +19,7 @@ pub enum AppError {
     #[error("validation error: {0}")]
     Validation(String),
 
-    /// A memory or entity with the same `(namespace, name)` already exists. Maps to exit code `2`.
+    /// A memory or entity with the same `(namespace, name)` already exists. Maps to exit code `9`.
     #[error("duplicate detected: {0}")]
     Duplicate(String),
 
@@ -105,7 +105,7 @@ impl AppError {
     /// Returns the deterministic process exit code for this error variant.
     ///
     /// The codes follow the contract documented in the README: `1` for
-    /// validation, `2` for duplicates, `3` for conflicts, `4` for missing
+    /// validation, `9` for duplicates (moved from `2` in v1.0.52), `3` for conflicts, `4` for missing
     /// records, `5` for namespace errors, `6` for limit violations, `10`–`14`
     /// for infrastructure failures, `13` for BatchPartialFailure (PRD 1822),
     /// `15` for DbBusy (migrated from `13` in v2.0.0), `20` for internal errors,
@@ -119,7 +119,7 @@ impl AppError {
     /// use sqlite_graphrag::errors::AppError;
     ///
     /// assert_eq!(AppError::Validation("invalid field".into()).exit_code(), 1);
-    /// assert_eq!(AppError::Duplicate("ns/mem".into()).exit_code(), 2);
+    /// assert_eq!(AppError::Duplicate("ns/mem".into()).exit_code(), 9);
     /// assert_eq!(AppError::Conflict("ts changed".into()).exit_code(), 3);
     /// assert_eq!(AppError::NotFound("id 42".into()).exit_code(), 4);
     /// assert_eq!(AppError::NamespaceError("no marker".into()).exit_code(), 5);
@@ -131,7 +131,7 @@ impl AppError {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::Validation(_) => 1,
-            Self::Duplicate(_) => 2,
+            Self::Duplicate(_) => crate::constants::DUPLICATE_EXIT_CODE,
             Self::Conflict(_) => 3,
             Self::NotFound(_) => 4,
             Self::NamespaceError(_) => 5,
@@ -222,8 +222,8 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_duplicate_returns_2() {
-        assert_eq!(AppError::Duplicate("namespace/name".into()).exit_code(), 2);
+    fn exit_code_duplicate_returns_9() {
+        assert_eq!(AppError::Duplicate("namespace/name".into()).exit_code(), 9);
     }
 
     #[test]

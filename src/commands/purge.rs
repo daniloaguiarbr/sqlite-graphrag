@@ -87,7 +87,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::with_capacity(1);
     let now = current_epoch()?;
 
     let cutoff_epoch = if let Some(secs) = args.older_than_seconds {

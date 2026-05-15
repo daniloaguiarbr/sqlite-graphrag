@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.52] - 2026-05-15
+
+### Breaking
+- Exit code for `Duplicate` error changed from 2 to 9 to resolve collision with Clap argument parsing errors (L1). Agents routing on exit 2 for duplicate detection must update to exit 9.
+- `forget` no longer emits JSON to stdout when memory is not found (M2). Previously emitted `{"action":"not_found",...}` + stderr error; now only emits stderr error + exit 4, consistent with `read`, `edit`, `history`, `rename`.
+
+### Fixed
+- `restore` JSON response now includes `action: "restored"` field, consistent with `edit`, `rename`, `forget` (H1).
+- `--lang pt` now fully translates error message bodies to Portuguese, not just prefixes (H2).
+- `ingest` on nonexistent directory returns exit 1 (Validation) instead of exit 14 (Io) (M1).
+- `prune-relations --dry-run` now computes `entities_affected` count instead of hardcoded 0 (L2).
+
+### Added
+- `ingest` NDJSON events include `original_filename` field preserving the file basename before kebab-case normalization (H3).
+- `ingest --dry-run` flag previews file-to-name mapping without loading ONNX model or persisting (M5).
+- `prune-relations --show-entities` flag shows affected entity names during `--dry-run` (L2).
+- New `export` subcommand streams all memories as NDJSON for portable backup/migration (L4).
+- `health --json` includes `mentions_ratio` and `mentions_warning` when mentions dominate the graph above 50% (C2).
+
+### Changed
+- `Vec::new()` replaced with `Vec::with_capacity()` in 7 production hot paths: health checks, recall results, related traversal, purge warnings, GLiNER NMS, relationship builder, entity dedup (M3).
+
+### Closed (false positives from gaps.md)
+- M4: `recall` already has `--max-graph-results` flag to cap graph expansion independently from `--k`.
+- L3: `graph entities --json` already returns `entity_type` field in the EntityItem schema.
+
 ## [1.0.51] - 2026-05-15
 
 ### Fixed

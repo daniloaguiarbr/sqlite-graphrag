@@ -782,7 +782,7 @@ esac
 - Exit 13 significa falha parcial em lote: reprocesse apenas os itens falhos, NÃO o lote inteiro
 - Exit 75 e 77 sinalizam pressão de recursos: NUNCA aumente concorrência após receber esses códigos
 - Exit 15 significa banco ocupado: amplie `--wait-lock <ms>` para esperar mais antes de falhar
-- Tabela completa de códigos: 0=sucesso, 1=validação, 2=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
+- Tabela completa de códigos: 0=sucesso, 1=validação, 9=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
 
 
 ### Variants

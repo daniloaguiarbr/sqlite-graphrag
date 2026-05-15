@@ -11,7 +11,8 @@
     "relation":          { "type": "string", "description": "The relation type that was pruned (e.g. 'mentions')." },
     "count":             { "type": "integer", "minimum": 0, "description": "Number of relationships deleted (or that would be deleted in dry_run)." },
     "entities_affected": { "type": "integer", "minimum": 0, "description": "Number of distinct entities whose degree was recalculated." },
-    "namespace":         { "type": "string", "description": "Namespace in which the prune was executed." },
-    "elapsed_ms":        { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+    "namespace":              { "type": "string", "description": "Namespace in which the prune was executed." },
+    "affected_entity_names":  { "type": "array", "items": { "type": "string" }, "description": "Names of entities whose degree was recalculated. Present only when --show-entities is used." },
+    "elapsed_ms":             { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }
 }

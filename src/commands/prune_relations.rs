@@ -30,6 +30,9 @@ pub struct PruneRelationsArgs {
     /// Skip confirmation for destructive operation.
     #[arg(long)]
     pub yes: bool,
+    /// Show affected entity names during --dry-run preview.
+    #[arg(long, default_value_t = false)]
+    pub show_entities: bool,
     #[arg(long, value_enum, default_value = "json")]
     pub format: OutputFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
@@ -47,6 +50,8 @@ struct PruneRelationsResponse {
     namespace: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    affected_entity_names: Option<Vec<String>>,
 }
 
 pub fn run(args: PruneRelationsArgs) -> Result<(), AppError> {
@@ -63,15 +68,28 @@ pub fn run(args: PruneRelationsArgs) -> Result<(), AppError> {
     if args.dry_run {
         let count = entities::count_relationships_by_relation(&conn, &namespace, &args.relation)?;
 
+        let affected_names = if args.show_entities {
+            Some(entities::list_entity_names_by_relation(
+                &conn,
+                &namespace,
+                &args.relation,
+            )?)
+        } else {
+            None
+        };
+
+        let entities_affected_count = affected_names.as_ref().map_or(0, |v| v.len());
+
         output::emit_progress(&i18n::prune_dry_run(count, &args.relation));
 
         let response = PruneRelationsResponse {
             action: "dry_run".to_string(),
             relation: args.relation.clone(),
             count,
-            entities_affected: 0,
+            entities_affected: entities_affected_count,
             namespace: namespace.clone(),
             elapsed_ms: inicio.elapsed().as_millis() as u64,
+            affected_entity_names: affected_names,
         };
 
         match args.format {
@@ -99,6 +117,7 @@ pub fn run(args: PruneRelationsArgs) -> Result<(), AppError> {
             entities_affected: 0,
             namespace: namespace.clone(),
             elapsed_ms: inicio.elapsed().as_millis() as u64,
+            affected_entity_names: None,
         };
 
         match args.format {
@@ -132,6 +151,7 @@ pub fn run(args: PruneRelationsArgs) -> Result<(), AppError> {
         entities_affected: entity_ids.len(),
         namespace: namespace.clone(),
         elapsed_ms: inicio.elapsed().as_millis() as u64,
+        affected_entity_names: None,
     };
 
     match args.format {
@@ -160,6 +180,7 @@ mod tests {
             entities_affected: 200,
             namespace: "global".to_string(),
             elapsed_ms: 42,
+            affected_entity_names: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "pruned");
@@ -179,6 +200,7 @@ mod tests {
             entities_affected: 0,
             namespace: "test".to_string(),
             elapsed_ms: 5,
+            affected_entity_names: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "dry_run");
@@ -197,6 +219,7 @@ mod tests {
             entities_affected: 10,
             namespace: "my-project".to_string(),
             elapsed_ms: 120,
+            affected_entity_names: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["action"], "pruned");
@@ -213,9 +236,46 @@ mod tests {
             entities_affected: 0,
             namespace: "global".to_string(),
             elapsed_ms: 1,
+            affected_entity_names: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["count"], 0);
         assert_eq!(json["entities_affected"], 0);
+    }
+
+    #[test]
+    fn prune_response_verbose_includes_entity_names() {
+        let resp = PruneRelationsResponse {
+            action: "dry_run".to_string(),
+            relation: "mentions".to_string(),
+            count: 10,
+            entities_affected: 3,
+            namespace: "global".to_string(),
+            elapsed_ms: 5,
+            affected_entity_names: Some(vec!["alpha".into(), "beta".into(), "gamma".into()]),
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        let names = json["affected_entity_names"]
+            .as_array()
+            .expect("must be array");
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn prune_response_no_verbose_omits_entity_names() {
+        let resp = PruneRelationsResponse {
+            action: "dry_run".to_string(),
+            relation: "mentions".to_string(),
+            count: 10,
+            entities_affected: 0,
+            namespace: "global".to_string(),
+            elapsed_ms: 5,
+            affected_entity_names: None,
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert!(
+            json.get("affected_entity_names").is_none(),
+            "must be omitted when None"
+        );
     }
 }

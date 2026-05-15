@@ -455,6 +455,31 @@ pub fn count_relationships_by_relation(
     Ok(count as usize)
 }
 
+/// Returns unique entity names involved in relationships of the given type.
+///
+/// Queries both source and target sides of every matching relationship row,
+/// deduplicates via `DISTINCT`, and returns the names in alphabetical order.
+///
+/// # Errors
+///
+/// Returns `Err(AppError::Database)` on any `rusqlite` failure.
+pub fn list_entity_names_by_relation(
+    conn: &Connection,
+    namespace: &str,
+    relation: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT e.name FROM entities e
+         INNER JOIN relationships r ON (e.id = r.source_id OR e.id = r.target_id)
+         WHERE r.namespace = ?1 AND r.relation = ?2
+         ORDER BY e.name",
+    )?;
+    let names: Vec<String> = stmt
+        .query_map(params![namespace, relation], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names)
+}
+
 /// Deletes all relationships matching a relation type within a namespace.
 ///
 /// Operates in chunks of 1000 to avoid holding long write locks and blocking

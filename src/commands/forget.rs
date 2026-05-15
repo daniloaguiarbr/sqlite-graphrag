@@ -124,6 +124,12 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         }
     }
 
+    if action == "not_found" {
+        return Err(AppError::NotFound(errors_msg::memory_not_found(
+            &name, &namespace,
+        )));
+    }
+
     let deleted_at_iso = deleted_at.map(crate::tz::epoch_to_iso);
     let response = ForgetResponse {
         action: action.to_string(),
@@ -135,12 +141,6 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
     output::emit_json(&response)?;
-
-    if action == "not_found" {
-        return Err(AppError::NotFound(errors_msg::memory_not_found(
-            &name, &namespace,
-        )));
-    }
 
     Ok(())
 }

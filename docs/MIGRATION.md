@@ -73,6 +73,20 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.52
+
+#### Breaking: Duplicate exit code changed from 2 to 9
+- `AppError::Duplicate` now returns exit code 9 instead of 2
+- Exit code 2 is now exclusively used by Clap for argument parsing errors
+- Agents routing on exit 2 for duplicate detection must update to exit 9
+- Constant `DUPLICATE_EXIT_CODE` added to `src/constants.rs`
+
+#### Breaking: forget no longer emits JSON on not-found
+- `forget` with a nonexistent memory name now returns only stderr error + exit 4
+- Previously it emitted JSON `{"action":"not_found",...}` to stdout AND stderr error
+- This aligns with `read`, `edit`, `history`, `rename` behavior on not-found
+- Agents parsing JSON stdout for forget not-found must switch to exit code routing
+
 ### v1.0.51
 
 - `SQLITE_GRAPHRAG_NAMESPACE` is now honored by all commands. If you relied on the previous behavior where `list`, `read`, `edit`, `forget`, `history`, `rename`, `restore`, and `remember` always used 'global' regardless of the environment variable, explicitly pass `--namespace global` to preserve the old behavior.

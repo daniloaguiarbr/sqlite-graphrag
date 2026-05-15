@@ -180,6 +180,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
 - Ingest duplicates emit `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
 - PREFER `--graph-stdin` with LLM-curated entities for best quality (NER is off by default; `--skip-extraction` is deprecated since v1.0.45)
+- USE `--dry-run` to preview file-to-name mapping without loading ONNX model or persisting
+- NDJSON per-file events include `original_filename` field preserving the file basename before kebab-case normalization
 ### FORBIDDEN — ingest Anti-patterns
 - NEVER use `fd | xargs sqlite-graphrag remember` when `ingest` exists
 - NEVER omit `--recursive` expecting automatic descent
@@ -244,6 +246,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - OMIT `--version` to select the last non-restore version automatically
 - RESTORE creates a new version without overwriting prior history
 - RE-EMBED occurs automatically so vector recall can find it again
+- JSON response includes `action: "restored"`, `memory_id`, `name`, `version`, `restored_from`, `elapsed_ms`
 ### REQUIRED — Optimistic Locking
 - PASS `--expected-updated-at <epoch_or_RFC3339>` in concurrent pipelines
 - TREAT exit code 3 as detected concurrency
@@ -262,6 +265,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - VERSION history remains intact in the database
 - REVERSIBLE via `restore` while no purge has occurred
 - JSON response: `action` (`"soft_deleted"` `"already_deleted"`), `forgotten`, `name`, `namespace`, `deleted_at?`, `deleted_at_iso?`, `elapsed_ms`
+- Since v1.0.52: forget does NOT emit JSON when memory is not found; returns only stderr error + exit 4
 ### REQUIRED — Hard Delete (purge)
 - USE `purge --retention-days <N> --yes` in automation
 - DEFAULT retention is 90 days for soft-deleted memories
@@ -281,10 +285,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Bulk Relationship Deletion (prune-relations)
 - USE `prune-relations --relation <type> --yes` for bulk-deleting all relationships of a given type
 - USE `--dry-run` to preview the count before committing
+- USE `--show-entities` with `--dry-run` to list affected entity names in the response
 - USE `--yes` to skip interactive confirmation in automated pipelines
 - ACCEPTS any kebab-case or snake_case relation string
 - RUN `cleanup-orphans` afterward to remove entities left without relationships
-- JSON response: `action` (`"pruned"` `"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
+- JSON response: `action` (`"pruned"` `"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 ### Correct Pattern — Forget and Restore Round-Trip
 - `sqlite-graphrag forget --name decision-x`
 - `sqlite-graphrag history --name decision-x --json | jaq '.deleted'`
@@ -556,18 +561,19 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `forget` returns `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
 - `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
+- `health` optionally returns `mentions_ratio` (float) and `mentions_warning` (string) when mentions exceed 50% of relationships
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
-- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
-- `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
+- `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 
 
 ## Exit Codes and Retry Strategy
 ### REQUIRED — Complete Exit Code Handling
 - `0` equals success; parse stdout
 - `1` equals validation (invalid weight, self-link, bad timezone, max-files exceeded)
-- `2` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
+- `9` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
 - `3` equals optimistic locking conflict; reload and retry
 - `4` equals entity, memory, or version not found
 - `5` equals namespace error (invalid name or conflict)
@@ -587,7 +593,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER increase concurrency after receiving 75 or 77
 - NEVER attempt `restore` without inspecting `history` first
 - NEVER assume ambiguity without reading stderr first
-- NEVER confuse exit 1 (validation) with exit 2 (duplicate)
+- NEVER confuse exit 1 (validation) with exit 9 (duplicate)
 
 
 ## Concurrency and Resources
@@ -615,7 +621,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Safe Backup
 - USE `sync-safe-copy --dest <path>` before syncing Dropbox or iCloud
 - COMPRESS snapshots via `ouch compress` for remote upload
-- EXPORT memories via `list --limit 10000 --json` to NDJSON
+- EXPORT memories via `sqlite-graphrag export` as NDJSON (one JSON line per memory + summary); supports `--namespace`, `--type`, `--include-deleted`, `--limit`
 - VERSION the database with Git LFS when feasible
 ### REQUIRED — Schema Diagnostics
 - USE `__debug_schema --json` for troubleshooting
