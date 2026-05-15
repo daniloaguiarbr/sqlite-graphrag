@@ -1,6 +1,5 @@
 //! Handler for the `unlink` CLI subcommand.
 
-use crate::cli::RelationKind;
 use crate::errors::AppError;
 use crate::i18n::errors_msg;
 use crate::output::{self, OutputFormat};
@@ -25,8 +24,10 @@ pub struct UnlinkArgs {
     /// Target ENTITY name (graph node, not memory). Also accepts the alias `--target`.
     #[arg(long, alias = "target")]
     pub to: String,
-    #[arg(long, value_enum)]
-    pub relation: RelationKind,
+    /// Relation type to remove. Accepts canonical values (e.g. uses, depends-on)
+    /// or any custom snake_case/kebab-case string.
+    #[arg(long, value_parser = crate::parsers::parse_relation, value_name = "RELATION")]
+    pub relation: String,
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
@@ -56,7 +57,7 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    let relation_str = args.relation.as_str();
+    let relation_str = &args.relation;
 
     let mut conn = open_rw(&paths.db)?;
 
@@ -108,7 +109,6 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::RelationKind;
 
     #[test]
     fn unlink_response_serializes_all_fields() {
@@ -129,15 +129,6 @@ mod tests {
         assert_eq!(json["relation"], "uses");
         assert_eq!(json["namespace"], "global");
         assert_eq!(json["elapsed_ms"], 5u64);
-    }
-
-    #[test]
-    fn unlink_args_relation_kind_as_str_correct() {
-        assert_eq!(RelationKind::Uses.as_str(), "uses");
-        assert_eq!(RelationKind::DependsOn.as_str(), "depends_on");
-        assert_eq!(RelationKind::AppliesTo.as_str(), "applies_to");
-        assert_eq!(RelationKind::Causes.as_str(), "causes");
-        assert_eq!(RelationKind::Fixes.as_str(), "fixes");
     }
 
     #[test]

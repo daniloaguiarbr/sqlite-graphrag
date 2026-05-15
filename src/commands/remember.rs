@@ -163,13 +163,14 @@ struct GraphInput {
 
 fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppError> {
     for rel in &mut graph.relationships {
-        rel.relation = rel.relation.replace('-', "_");
-        if !is_valid_relation(&rel.relation) {
+        rel.relation = crate::parsers::normalize_relation(&rel.relation);
+        if let Err(e) = crate::parsers::validate_relation_format(&rel.relation) {
             return Err(AppError::Validation(format!(
-                "invalid relation '{}' for relationship '{}' -> '{}'",
-                rel.relation, rel.source, rel.target
+                "{e} for relationship '{}' -> '{}'",
+                rel.source, rel.target
             )));
         }
+        crate::parsers::warn_if_non_canonical(&rel.relation);
         if !(0.0..=1.0).contains(&rel.strength) {
             return Err(AppError::Validation(format!(
                 "invalid strength {} for relationship '{}' -> '{}'; expected value in [0.0, 1.0]",
@@ -179,24 +180,6 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
     }
 
     Ok(())
-}
-
-fn is_valid_relation(relation: &str) -> bool {
-    matches!(
-        relation,
-        "applies_to"
-            | "uses"
-            | "depends_on"
-            | "causes"
-            | "fixes"
-            | "contradicts"
-            | "supports"
-            | "follows"
-            | "related"
-            | "mentions"
-            | "replaces"
-            | "tracked_in"
-    )
 }
 
 pub fn run(args: RememberArgs) -> Result<(), AppError> {

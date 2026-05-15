@@ -26,8 +26,8 @@
       },
       "relation": {
         "type": "string",
-        "enum": ["applies_to", "applies-to", "uses", "depends_on", "depends-on", "causes", "fixes", "contradicts", "supports", "follows", "related", "mentions", "replaces", "tracked_in", "tracked-in"],
-        "description": "Canonical stored relation label with underscores, or dashed alias normalized before storage."
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+        "description": "Relation label. 12 canonical values (applies-to, uses, depends-on, causes, fixes, contradicts, supports, follows, related, mentions, replaces, tracked-in) are well-known; any kebab-case or snake_case string is accepted since v1.0.49. Input is normalized to snake_case before storage."
       },
       "strength": {
         "type": "number",

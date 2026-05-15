@@ -333,7 +333,7 @@ sqlite-graphrag link \
 - `--entity-type tool` sobrescreve o tipo padrão para todas entidades auto-criadas nesta invocação
 - JSON response inclui `created_entities: ["auth-service", "postgres-db"]` quando entidades foram criadas
 - `--weight` é opcional com padrão 0.5; valores devem estar no intervalo `[0.0, 1.0]`
-- Vocabulário canônico de relações: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- 12 tipos canônicos de relação: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Qualquer string customizada em kebab-case ou snake_case também é aceita desde v1.0.49 (ex.: `implements`, `tested-by`, `blocks`).
 - Tipos válidos de entidade: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 
 

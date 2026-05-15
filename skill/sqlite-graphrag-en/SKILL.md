@@ -424,6 +424,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### Canonical Relation Vocabulary
 - `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`
 - `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Custom relation types (e.g., `implements`, `tested-by`, `blocks`) are accepted since v1.0.49; non-canonical values emit a `tracing::warn!`
 ### Valid Entity Types
 - `project`, `tool`, `person`, `file`, `concept`, `incident`
 - `decision`, `memory`, `dashboard`, `issue_tracker`

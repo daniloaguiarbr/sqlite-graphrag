@@ -10,6 +10,14 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.49] - 2026-05-15
+
+### Alterado
+- Vocabulário de relações agora é extensível: `link`, `unlink`, `related`, `remember --graph-stdin` e `ingest` aceitam qualquer string snake_case/kebab-case como relação, não apenas os 12 valores canônicos. Relações não canônicas emitem `tracing::warn!` para discoverability, mas são aceitas sem erro.
+- Migração V010 remove a constraint `CHECK(relation IN (...))` da tabela `relationships`.
+- Enum Clap `RelationKind` (`ValueEnum`) substituído por `String` com value parser `parse_relation` em `src/parsers/mod.rs`.
+- `is_valid_relation()` duplicado em `remember.rs` e `ingest.rs` consolidado no compartilhado `parsers::validate_relation_format()`.
+
 ## [1.0.48] - 2026-05-14
 
 ### Corrigido

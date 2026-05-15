@@ -335,7 +335,7 @@ sqlite-graphrag link \
 - `--entity-type tool` overrides the default type for all auto-created entities in this invocation
 - JSON response includes `created_entities: ["auth-service", "postgres-db"]` when entities were created
 - `--weight` is optional with default 0.5; values must fall within the range `[0.0, 1.0]`
-- Canonical relation vocabulary: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- 12 canonical relation types: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Any custom kebab-case or snake_case string is also accepted since v1.0.49 (e.g., `implements`, `tested-by`, `blocks`).
 - Valid entity types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 
 

@@ -838,6 +838,7 @@ let output = Command::new("sqlite-graphrag")
 ### Vocabulário Canônico de Relações
 - `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`
 - `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Tipos customizados de relação (ex.: `implements`, `tested-by`, `blocks`) são aceitos desde v1.0.49; valores não canônicos emitem `tracing::warn!`
 ### Tipos Válidos de Entidade
 - `project`, `tool`, `person`, `file`, `concept`, `incident`
 - `decision`, `memory`, `dashboard`, `issue_tracker`

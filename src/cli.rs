@@ -25,41 +25,6 @@ fn max_concurrency_ceiling() -> usize {
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
-pub enum RelationKind {
-    AppliesTo,
-    Uses,
-    DependsOn,
-    Causes,
-    Fixes,
-    Contradicts,
-    Supports,
-    Follows,
-    Related,
-    Mentions,
-    Replaces,
-    TrackedIn,
-}
-
-impl RelationKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::AppliesTo => "applies_to",
-            Self::Uses => "uses",
-            Self::DependsOn => "depends_on",
-            Self::Causes => "causes",
-            Self::Fixes => "fixes",
-            Self::Contradicts => "contradicts",
-            Self::Supports => "supports",
-            Self::Follows => "follows",
-            Self::Related => "related",
-            Self::Mentions => "mentions",
-            Self::Replaces => "replaces",
-            Self::TrackedIn => "tracked_in",
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
 pub enum GraphExportFormat {
     Json,
     Dot,

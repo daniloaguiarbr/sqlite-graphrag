@@ -1,6 +1,5 @@
 //! Handler for the `related` CLI subcommand.
 
-use crate::cli::RelationKind;
 use crate::constants::{
     DEFAULT_K_RECALL, DEFAULT_MAX_HOPS, DEFAULT_MIN_WEIGHT, TEXT_DESCRIPTION_PREVIEW_LEN,
 };
@@ -45,8 +44,8 @@ pub struct RelatedArgs {
     /// Maximum graph hop count. Also accepts the alias `--hops`.
     #[arg(long, alias = "hops", default_value_t = DEFAULT_MAX_HOPS)]
     pub max_hops: u32,
-    #[arg(long, value_enum)]
-    pub relation: Option<RelationKind>,
+    #[arg(long, value_parser = crate::parsers::parse_relation)]
+    pub relation: Option<String>,
     #[arg(long, default_value_t = DEFAULT_MIN_WEIGHT)]
     pub min_weight: f64,
     #[arg(long, default_value_t = DEFAULT_K_RECALL)]
@@ -149,7 +148,7 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
         }
     };
 
-    let relation_filter = args.relation.map(|r| r.as_str().to_string());
+    let relation_filter = args.relation;
     let results = traverse_related(
         &conn,
         seed_memory_id,

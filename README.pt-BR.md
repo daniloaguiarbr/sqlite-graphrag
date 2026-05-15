@@ -59,9 +59,9 @@ sqlite-graphrag --version
 ## Schema do Grafo
 ### Tipos de entidade, rótulos de relação e peso de aresta
 - `entity_type` aceita exatamente 13 valores: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- `relation` (entrada CLI) aceita exatamente 12 valores com hífen: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. A saída JSON armazena os mesmos valores com underscore (ex.: `applies_to`).
+- `relation` (entrada CLI) aceita qualquer string em kebab-case ou snake_case. 12 valores canônicos são bem conhecidos: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Valores customizados (ex.: `implements`, `tested-by`, `blocks`) são aceitos com um `tracing::warn!`. A saída JSON normaliza para underscores (ex.: `applies_to`).
 - `strength` é um float em `[0.0, 1.0]` representando o peso da aresta; mapeado para `weight` em todos os outputs de leitura
-- Valores de `entity_type` ou `relation` não listados são rejeitados na escrita com código de saída 1
+- Valores de `entity_type` não listados são rejeitados na escrita com código de saída 1. Valores customizados de `relation` são aceitos desde v1.0.49.
 - Use `sqlite-graphrag graph --format json` para inspecionar o grafo completo armazenado a qualquer momento
 
 
@@ -518,7 +518,7 @@ RUN cargo install --path .
 | Código | Significado | Causa Possível |
 | --- | --- | --- |
 | `0` | Sucesso | Comando concluído e payload JSON impresso quando solicitado |
-| `1` | Erro de validação ou falha em runtime | `--type` inválido, `--relation` inválido, violação de kebab-case, erro genérico anyhow |
+| `1` | Erro de validação ou falha em runtime | `--type` inválido, `--relation` malformado (vazio ou fora de snake_case), violação de kebab-case, erro genérico anyhow |
 | `2` | Duplicata, argumento CLI inválido ou erro de concorrência | `--name` existente, flag malformada, opções mutuamente exclusivas |
 | `3` | Conflito durante atualização otimista | `edit` ou `restore` competiu com outro escritor |
 | `4` | Memória ou entidade não encontrada | Alvo de `read`, `forget`, `edit`, `rename`, `restore` ou `graph traverse` ausente |

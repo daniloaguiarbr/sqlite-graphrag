@@ -59,9 +59,9 @@ sqlite-graphrag --version
 ## Graph Schema
 ### Entity types, relation labels and edge strength
 - `entity_type` accepts exactly 13 values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- `relation` (CLI input) accepts exactly 12 hyphenated values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. JSON output stores them with underscores (e.g., `applies_to`).
+- `relation` (CLI input) accepts any kebab-case or snake_case string. 12 canonical values are well-known: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Custom values (e.g., `implements`, `tested-by`, `blocks`) are accepted with a `tracing::warn!`. JSON output normalizes to underscores (e.g., `applies_to`).
 - `strength` is a float in `[0.0, 1.0]` representing edge weight; mapped to `weight` in all read outputs
-- Unlisted `entity_type` or `relation` values are rejected at write time with exit code 1
+- Unlisted `entity_type` values are rejected at write time with exit code 1. Custom `relation` values are accepted since v1.0.49.
 - Use `sqlite-graphrag graph --format json` to inspect the full stored graph at any time
 
 
@@ -519,7 +519,7 @@ RUN cargo install --path .
 | Code | Meaning | Possible Cause |
 | --- | --- | --- |
 | `0` | Success | Command completed and JSON payload printed when requested |
-| `1` | Validation error or runtime failure | Invalid `--type`, invalid `--relation`, kebab-case violation, generic anyhow error |
+| `1` | Validation error or runtime failure | Invalid `--type`, malformed `--relation` (empty or non-snake_case), kebab-case violation, generic anyhow error |
 | `2` | Duplicate detected, invalid CLI argument, or concurrency error | Existing `--name`, malformed flag, mutually exclusive options |
 | `3` | Conflict during optimistic update | `edit` or `restore` raced against another writer |
 | `4` | Memory or entity not found | `read`, `forget`, `edit`, `rename`, `restore` or `graph traverse` target missing |

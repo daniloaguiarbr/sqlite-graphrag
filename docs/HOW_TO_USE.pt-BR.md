@@ -474,7 +474,7 @@ sqlite-graphrag unlink --from design-auth --to spec-jwt --relation depends-on
 sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends-on
 ```
 - Pré-requisitos: a aresta deve existir; os três argumentos `--from`, `--to` e `--relation` são obrigatórios
-- Valores válidos para `--relation`: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- `--relation` aceita qualquer string em kebab-case ou snake_case. 12 valores canônicos: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Valores customizados (ex.: `implements`, `blocks`) são aceitos com warning desde v1.0.49.
 - Ambas as entidades `--from`/`--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: aresta removida
 - Exit code 4: aresta não encontrada

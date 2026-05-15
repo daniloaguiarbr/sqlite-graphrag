@@ -377,13 +377,14 @@ fn stage_file(
     }
 
     for rel in &mut extracted_relationships {
-        rel.relation = rel.relation.replace('-', "_");
-        if !is_valid_relation(&rel.relation) {
+        rel.relation = crate::parsers::normalize_relation(&rel.relation);
+        if let Err(e) = crate::parsers::validate_relation_format(&rel.relation) {
             return Err(AppError::Validation(format!(
-                "invalid relation '{}' for relationship '{}' -> '{}'",
-                rel.relation, rel.source, rel.target
+                "{e} for relationship '{}' -> '{}'",
+                rel.source, rel.target
             )));
         }
+        crate::parsers::warn_if_non_canonical(&rel.relation);
         if !(0.0..=1.0).contains(&rel.strength) {
             return Err(AppError::Validation(format!(
                 "invalid strength {} for relationship '{}' -> '{}'; expected value in [0.0, 1.0]",
@@ -1032,24 +1033,6 @@ fn init_storage(paths: &AppPaths) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
-fn is_valid_relation(relation: &str) -> bool {
-    matches!(
-        relation,
-        "applies_to"
-            | "uses"
-            | "depends_on"
-            | "causes"
-            | "fixes"
-            | "contradicts"
-            | "supports"
-            | "follows"
-            | "related"
-            | "mentions"
-            | "replaces"
-            | "tracked_in"
-    )
-}
-
 fn collect_files(
     dir: &Path,
     pattern: &str,
@@ -1367,10 +1350,14 @@ mod tests {
     // ── v1.0.32 Onda 4B: in-process pipeline validation ──
 
     #[test]
-    fn is_valid_relation_accepts_canonical_relations() {
-        assert!(is_valid_relation("applies_to"));
-        assert!(is_valid_relation("depends_on"));
-        assert!(!is_valid_relation("foo_bar"));
+    fn validate_relation_format_accepts_valid_relations() {
+        use crate::parsers::{is_canonical_relation, validate_relation_format};
+        assert!(validate_relation_format("applies_to").is_ok());
+        assert!(validate_relation_format("depends_on").is_ok());
+        assert!(validate_relation_format("implements").is_ok());
+        assert!(validate_relation_format("").is_err());
+        assert!(is_canonical_relation("applies_to"));
+        assert!(!is_canonical_relation("implements"));
     }
 
     // ── v1.0.40 H-A1: --low-memory flag and SQLITE_GRAPHRAG_LOW_MEMORY env var ──

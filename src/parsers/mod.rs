@@ -146,3 +146,132 @@ mod tests {
         assert!(parse_bool_flexible("nope").is_err());
     }
 }
+
+/// The 12 well-known relation types from v1.0.0.
+///
+/// Non-canonical relations are accepted but emit a `tracing::warn!`.
+pub const CANONICAL_RELATIONS: &[&str] = &[
+    "applies_to",
+    "uses",
+    "depends_on",
+    "causes",
+    "fixes",
+    "contradicts",
+    "supports",
+    "follows",
+    "related",
+    "mentions",
+    "replaces",
+    "tracked_in",
+];
+
+/// Returns `true` when the relation is one of the 12 canonical types.
+pub fn is_canonical_relation(s: &str) -> bool {
+    CANONICAL_RELATIONS.contains(&s)
+}
+
+/// Normalizes a relation string: lowercase + hyphens to underscores.
+pub fn normalize_relation(s: &str) -> String {
+    s.to_lowercase().replace('-', "_")
+}
+
+/// Validates that a normalized relation matches `^[a-z][a-z0-9_]*$`.
+pub fn validate_relation_format(s: &str) -> Result<(), String> {
+    if s.is_empty() {
+        return Err("relation must not be empty".to_string());
+    }
+    if !s.as_bytes()[0].is_ascii_lowercase() {
+        return Err(format!(
+            "relation must start with a lowercase letter, got '{s}'"
+        ));
+    }
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return Err(format!(
+            "relation must contain only lowercase letters, digits and underscores, got '{s}'"
+        ));
+    }
+    Ok(())
+}
+
+/// Emits a `tracing::warn!` when the relation is not in [`CANONICAL_RELATIONS`].
+pub fn warn_if_non_canonical(relation: &str) {
+    if !is_canonical_relation(relation) {
+        tracing::warn!(
+            relation,
+            "non-canonical relation accepted; consider using a well-known value"
+        );
+    }
+}
+
+/// Clap `value_parser` for `--relation`: normalizes and validates format.
+///
+/// Accepts any kebab-case or snake_case string. Non-canonical values are
+/// accepted at parse time; the warning is emitted at command execution.
+pub fn parse_relation(s: &str) -> Result<String, String> {
+    let normalized = normalize_relation(s);
+    validate_relation_format(&normalized)?;
+    Ok(normalized)
+}
+
+#[cfg(test)]
+mod relation_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_relations_all_valid() {
+        for r in CANONICAL_RELATIONS {
+            assert!(
+                validate_relation_format(r).is_ok(),
+                "canonical relation '{r}' should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_converts_hyphens_and_uppercase() {
+        assert_eq!(normalize_relation("Depends-On"), "depends_on");
+        assert_eq!(normalize_relation("TESTED-BY"), "tested_by");
+        assert_eq!(normalize_relation("uses"), "uses");
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        assert!(validate_relation_format("").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_digit_start() {
+        assert!(validate_relation_format("123abc").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_spaces() {
+        assert!(validate_relation_format("has spaces").is_err());
+    }
+
+    #[test]
+    fn validate_accepts_custom_relations() {
+        assert!(validate_relation_format("implements").is_ok());
+        assert!(validate_relation_format("tested_by").is_ok());
+        assert!(validate_relation_format("part_of").is_ok());
+        assert!(validate_relation_format("blocks").is_ok());
+    }
+
+    #[test]
+    fn parse_relation_normalizes_and_validates() {
+        assert_eq!(parse_relation("Tested-By").unwrap(), "tested_by");
+        assert_eq!(parse_relation("uses").unwrap(), "uses");
+        assert!(parse_relation("").is_err());
+    }
+
+    #[test]
+    fn is_canonical_detects_known() {
+        assert!(is_canonical_relation("uses"));
+        assert!(is_canonical_relation("applies_to"));
+        assert!(!is_canonical_relation("implements"));
+        assert!(!is_canonical_relation("blocks"));
+    }
+}

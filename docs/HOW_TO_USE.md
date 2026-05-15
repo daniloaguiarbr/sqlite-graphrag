@@ -470,7 +470,7 @@ sqlite-graphrag unlink --from auth-design --to jwt-spec --relation depends-on
 sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends-on
 ```
 - Prerequisites: the edge must exist; all three of `--from`, `--to`, and `--relation` are required
-- Valid `--relation` values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- `--relation` accepts any kebab-case or snake_case string. 12 canonical values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Custom values (e.g., `implements`, `blocks`) are accepted with a warning since v1.0.49.
 - Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: edge removed
 - Exit code 4: edge not found

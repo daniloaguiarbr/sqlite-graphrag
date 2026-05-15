@@ -1,6 +1,5 @@
 //! Handler for the `link` CLI subcommand.
 
-use crate::cli::RelationKind;
 use crate::constants::DEFAULT_RELATION_WEIGHT;
 use crate::entity_type::EntityType;
 use crate::errors::AppError;
@@ -20,6 +19,8 @@ use serde::Serialize;
     sqlite-graphrag link --from concept-a --to concept-b --relation depends-on --create-missing\n\n  \
     # Specify entity type for auto-created entities\n  \
     sqlite-graphrag link --from alice --to acme-corp --relation related --create-missing --entity-type person\n\n  \
+    # Use a custom (non-canonical) relation type\n  \
+    sqlite-graphrag link --from module-a --to module-b --relation implements --create-missing\n\n  \
     # If the entity does not exist and --create-missing is not set, the command fails with exit 4.\n  \
     # To list current entity names:\n  \
     sqlite-graphrag graph entities | jaq '.entities[].name'\n\n  \
@@ -36,8 +37,12 @@ pub struct LinkArgs {
     /// Target ENTITY name (graph node, not memory). See `--from` for sourcing entity names.
     #[arg(long)]
     pub to: String,
-    #[arg(long, value_enum)]
-    pub relation: RelationKind,
+    /// Relation type between entities. Canonical values: applies-to, uses,
+    /// depends-on, causes, fixes, contradicts, supports, follows, related,
+    /// mentions, replaces, tracked-in. Any kebab-case or snake_case string
+    /// is also accepted as a custom relation.
+    #[arg(long, value_parser = crate::parsers::parse_relation, value_name = "RELATION")]
+    pub relation: String,
     #[arg(long)]
     pub weight: Option<f64>,
     #[arg(long)]
@@ -90,7 +95,8 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    let relation_str = args.relation.as_str();
+    crate::parsers::warn_if_non_canonical(&args.relation);
+    let relation_str = &args.relation;
 
     let mut conn = open_rw(&paths.db)?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
