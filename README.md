@@ -125,6 +125,16 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - After the public release, prefer `--locked` to preserve the tested MSRV dependency graph
 
 
+## Version Highlights
+
+- **v1.0.51**: Namespace env var fix (8 commands), remember on soft-deleted fix, per-chunk RSS watchdog (`--max-rss-mb`), daemon test coverage
+- **v1.0.50**: `prune-relations` subcommand, daemon auto-restart on version mismatch, V011 index, 37 doc gaps fixed
+- **v1.0.49**: Extensible relation vocabulary, V010 migration, 15 doc updates
+- **v1.0.48**: GLiNER NER functional, 5 bug fixes, full doc audit
+- **v1.0.47**: Replace BERT NER with GLiNER zero-shot, 13 custom entity types, `--gliner-variant` flag
+- **v1.0.35**: Flag aliases (`--from`/`--to`, `--old`/`--new`, `--limit` as alias of `--k`)
+
+
 ## Memory Lifecycle
 ### Runnable sequence: init → remember → recall → forget → purge
 ```bash

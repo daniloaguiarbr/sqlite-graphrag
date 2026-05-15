@@ -40,7 +40,10 @@ pub struct RenameArgs {
     /// New memory name. Also accepts the aliases `--new` and `--to` (since v1.0.35).
     #[arg(long, alias = "new", alias = "to")]
     pub new_name: Option<String>,
-    #[arg(long, default_value = "global")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     /// Optimistic locking: reject if the current updated_at does not match (exit 3).
     #[arg(

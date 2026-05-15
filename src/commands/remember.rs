@@ -102,7 +102,10 @@ pub struct RememberArgs {
         ]
     )]
     pub graph_stdin: bool,
-    #[arg(long, default_value = "global")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     /// Inline JSON object with arbitrary metadata key-value pairs. Mutually exclusive with --metadata-file.
     #[arg(long)]
@@ -134,7 +137,7 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
         long,
         env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
         default_value = "fp32",
-        help = "GLiNER model variant: fp32 (best quality, 1.1GB), fp16 (580MB), int8 (349MB, fastest)"
+        help = "GLiNER model variant: fp32 (1.1GB, best quality), fp16 (580MB), int8 (349MB, fastest but may miss entities on short texts), q4, q4f16"
     )]
     pub gliner_variant: String,
     #[arg(long, hide = true)]
@@ -148,6 +151,10 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// Maximum process RSS in MiB; abort if exceeded during embedding.
+    #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_RSS_MB,
+          help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
+    pub max_rss_mb: u64,
 }
 
 #[derive(Deserialize, Default)]
@@ -376,6 +383,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
     }
 
+    // M7: detect soft-deleted memory before the standard duplicate check.
+    if let Some((sd_id, true)) =
+        memories::find_by_name_any_state(&conn, &namespace, &normalized_name)?
+    {
+        if args.force_merge {
+            memories::clear_deleted_at(&conn, sd_id)?;
+        } else {
+            return Err(AppError::Duplicate(
+                errors_msg::duplicate_memory_soft_deleted(&normalized_name, &namespace),
+            ));
+        }
+    }
+
     let existing_memory = memories::find_by_name(&conn, &namespace, &normalized_name)?;
     if existing_memory.is_some() && !args.force_merge {
         return Err(AppError::Duplicate(errors_msg::duplicate_memory(
@@ -449,6 +469,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         );
         let mut chunk_embeddings = Vec::with_capacity(chunk_texts.len());
         for chunk_text in &chunk_texts {
+            if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
+                if rss > args.max_rss_mb {
+                    tracing::error!(
+                        rss_mb = rss,
+                        max_rss_mb = args.max_rss_mb,
+                        "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
+                    );
+                    return Err(AppError::LowMemory {
+                        available_mb: crate::memory_guard::available_memory_mb(),
+                        required_mb: args.max_rss_mb,
+                    });
+                }
+            }
             chunk_embeddings.push(crate::daemon::embed_passage_or_local(
                 &paths.models,
                 chunk_text,

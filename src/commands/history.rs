@@ -29,8 +29,10 @@ pub struct HistoryArgs {
     /// so that `restore --version <V>` workflow remains discoverable after `forget`.
     #[arg(long)]
     pub name: Option<String>,
-    /// Namespace to query history from. Defaults to "global".
-    #[arg(long, default_value = "global", help = "Namespace to query")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     /// Omit body content from each version to reduce response size.
     #[arg(

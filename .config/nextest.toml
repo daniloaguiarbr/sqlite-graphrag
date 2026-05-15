@@ -19,6 +19,10 @@ filter = 'test(/^stress_/)'
 threads-required = "num-cpus"
 slow-timeout = { period = "600s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = 'binary(cookbook_recipes)'
+slow-timeout = { period = "180s", terminate-after = 2 }
+
 [profile.ci]
 test-threads = 2
 slow-timeout = { period = "180s", terminate-after = 3 }

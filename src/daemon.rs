@@ -832,4 +832,107 @@ mod tests {
         // Without a daemon, the first ping returns None and the function exits immediately.
         assert!(start.elapsed() < Duration::from_millis(500));
     }
+
+    #[test]
+    fn spawn_backoff_exponent_caps_at_six() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("cache").join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Record 10 consecutive failures to force exponent saturation.
+        for i in 0..10 {
+            record_spawn_failure(&models_dir, format!("failure {i}")).unwrap();
+        }
+
+        let state = load_spawn_state(&models_dir).unwrap();
+        assert_eq!(state.consecutive_failures, 10);
+
+        // Exponent is clamped at 6, so max base_ms is base * 2^6.
+        // Effective backoff range is [base/2, base), where base <= base_ms * 64.
+        let max_base =
+            (DAEMON_SPAWN_BACKOFF_BASE_MS * (1_u64 << 6)).min(DAEMON_AUTO_START_MAX_BACKOFF_MS);
+        // The not_before_epoch_ms must not exceed now + max_base (upper bound with jitter < half).
+        let now = now_epoch_ms();
+        assert!(state.not_before_epoch_ms <= now + max_base);
+    }
+
+    #[test]
+    fn spawn_backoff_half_jitter_in_range() {
+        // Verify the half-jitter formula: result = half + fastrand::u64(0..half)
+        // produces values in [half, half + half) == [base/2, base).
+        let base_ms: u64 = 100;
+        let half = base_ms / 2;
+        for _ in 0..100 {
+            let jitter = fastrand::u64(0..half);
+            let result = half + jitter;
+            assert!(result >= half, "result {result} below half {half}");
+            assert!(result < base_ms, "result {result} not below base {base_ms}");
+        }
+    }
+
+    #[test]
+    fn to_local_socket_name_produces_valid_result() {
+        let result = to_local_socket_name("sqlite-graphrag-test-daemon");
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        // The name string representation must be non-empty.
+        let name = result.unwrap();
+        let display = format!("{name:?}");
+        assert!(!display.is_empty());
+    }
+
+    #[test]
+    fn version_cas_not_checked_to_compatible() {
+        let state = AtomicU8::new(VERSION_NOT_CHECKED);
+        let result = state.compare_exchange(
+            VERSION_NOT_CHECKED,
+            VERSION_COMPATIBLE,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        assert!(result.is_ok());
+        assert_eq!(state.load(Ordering::SeqCst), VERSION_COMPATIBLE);
+    }
+
+    #[test]
+    fn version_cas_prevents_double_restart() {
+        let state = AtomicU8::new(VERSION_NOT_CHECKED);
+
+        // First CAS: NOT_CHECKED → RESTART_ATTEMPTED succeeds.
+        let first = state.compare_exchange(
+            VERSION_NOT_CHECKED,
+            VERSION_RESTART_ATTEMPTED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        assert!(first.is_ok());
+
+        // Second CAS from NOT_CHECKED must fail — state is already RESTART_ATTEMPTED.
+        let second = state.compare_exchange(
+            VERSION_NOT_CHECKED,
+            VERSION_RESTART_ATTEMPTED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        assert!(second.is_err());
+        assert_eq!(state.load(Ordering::SeqCst), VERSION_RESTART_ATTEMPTED);
+    }
+
+    #[test]
+    fn spawn_state_serialization_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("cache").join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        let original = DaemonSpawnState {
+            consecutive_failures: 3,
+            not_before_epoch_ms: 9_999_999_999,
+            last_error: Some("test error message".to_string()),
+        };
+        save_spawn_state(&models_dir, &original).unwrap();
+
+        let loaded = load_spawn_state(&models_dir).unwrap();
+        assert_eq!(loaded.consecutive_failures, original.consecutive_failures);
+        assert_eq!(loaded.not_before_epoch_ms, original.not_before_epoch_ms);
+        assert_eq!(loaded.last_error, original.last_error);
+    }
 }

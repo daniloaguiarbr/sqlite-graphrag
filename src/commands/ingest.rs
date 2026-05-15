@@ -106,7 +106,7 @@ pub struct IngestArgs {
         long,
         env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
         default_value = "fp32",
-        help = "GLiNER model variant: fp32 (best quality, 1.1GB), fp16 (580MB), int8 (349MB, fastest)"
+        help = "GLiNER model variant: fp32 (1.1GB, best quality), fp16 (580MB), int8 (349MB, fastest but may miss entities on short texts), q4, q4f16"
     )]
     pub gliner_variant: String,
 
@@ -159,6 +159,11 @@ pub struct IngestArgs {
                 SQLITE_GRAPHRAG_LOW_MEMORY=1 env var."
     )]
     pub low_memory: bool,
+
+    /// Maximum process RSS in MiB; abort if exceeded during embedding.
+    #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_RSS_MB,
+          help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
+    pub max_rss_mb: u64,
 }
 
 /// Returns true when the `SQLITE_GRAPHRAG_LOW_MEMORY` env var is set to a
@@ -310,6 +315,7 @@ fn stage_file(
     paths: &AppPaths,
     enable_ner: bool,
     gliner_variant: crate::extraction::GlinerVariant,
+    max_rss_mb: u64,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -416,6 +422,20 @@ fn stage_file(
             .collect();
         let mut chunk_embeddings = Vec::with_capacity(chunk_texts.len());
         for chunk_text in &chunk_texts {
+            if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
+                if rss > max_rss_mb {
+                    tracing::error!(
+                        rss_mb = rss,
+                        max_rss_mb = max_rss_mb,
+                        file = %path.display(),
+                        "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
+                    );
+                    return Err(AppError::LowMemory {
+                        available_mb: crate::memory_guard::available_memory_mb(),
+                        required_mb: max_rss_mb,
+                    });
+                }
+            }
             chunk_embeddings.push(crate::daemon::embed_passage_or_local(
                 &paths.models,
                 chunk_text,
@@ -764,6 +784,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         tracing::warn!("--skip-extraction is deprecated and has no effect (NER is disabled by default since v1.0.45); remove this flag");
     }
     let enable_ner = args.enable_ner;
+    let max_rss_mb = args.max_rss_mb;
     let gliner_variant: crate::extraction::GlinerVariant =
         args.gliner_variant.parse().unwrap_or_else(|e| {
             tracing::warn!("invalid --gliner-variant: {e}; using fp32");
@@ -801,6 +822,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     &paths_owned,
                     enable_ner,
                     gliner_variant,
+                    max_rss_mb,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

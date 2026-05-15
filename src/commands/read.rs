@@ -27,7 +27,10 @@ pub struct ReadArgs {
     /// Memory name to read. Returns NotFound (exit 4) if missing or soft-deleted.
     #[arg(long)]
     pub name: Option<String>,
-    #[arg(long, default_value = "global")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,

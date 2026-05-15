@@ -49,7 +49,10 @@ pub struct EditArgs {
 Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     )]
     pub expected_updated_at: Option<i64>,
-    #[arg(long, default_value = "global")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,

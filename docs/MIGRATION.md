@@ -73,6 +73,11 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.51
+
+- `SQLITE_GRAPHRAG_NAMESPACE` is now honored by all commands. If you relied on the previous behavior where `list`, `read`, `edit`, `forget`, `history`, `rename`, `restore`, and `remember` always used 'global' regardless of the environment variable, explicitly pass `--namespace global` to preserve the old behavior.
+- New `--max-rss-mb` flag for `remember` and `ingest` (default: 8192 MiB). No action needed unless you want to lower the threshold.
+
 ## Compatibility Notes
 - There is no backward-compatibility alias for the old binary name in this repository copy
 - Existing JSON contracts, exit codes, and operational semantics remain aligned with the legacy `v2.3.0` behavior

@@ -132,6 +132,7 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 - Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
 - Duplicate files return `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
 - Use `--fail-fast` to abort on the first per-file error instead of continuing with inline error reporting
+- Use `--max-rss-mb <MiB>` to abort embedding when process RSS exceeds the limit (default 8192 MiB); useful in memory-constrained CI or containers
 
 
 ### See Also
@@ -766,7 +767,7 @@ sqlite-graphrag remember --name "$NAME" --type project \
 rc=$?
 case $rc in
   0)  echo "Success" ;;
-  2)  echo "Duplicate: use --force-merge" ;;
+  2)  echo "Duplicate or soft-deleted: use --force-merge to restore and update" ;;
   3)  echo "Conflict: re-read and retry" ;;
   6)  echo "Payload too large: split body" ;;
   15) echo "Busy: widen --wait-lock" ;;
@@ -783,7 +784,7 @@ esac
 - Exit 13 means partial batch failure: reprocess only the failed items, NOT the entire batch
 - Exit 75 and 77 signal resource pressure: NEVER increase concurrency after receiving these codes
 - Exit 15 means database busy: widen `--wait-lock <ms>` to wait longer before failing
-- Full code table: 0=success, 1=validation, 2=duplicate, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
+- Full code table: 0=success, 1=validation, 2=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
 
 
 ### Variants
@@ -1421,6 +1422,7 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 - Two parallelism axes exist: `--max-concurrency` controls CLI invocations, `--ingest-parallelism` controls extract+embed threads
 - Trade-off is 3 to 4 times more wall-clock time for significantly lower memory footprint
 - NDJSON summary line reports `files_total`, `files_succeeded`, `files_failed`, and `elapsed_ms` for pipeline auditing
+- Use `--max-rss-mb 2048` (or similar) to abort embedding when process RSS exceeds the limit; provides fine-grained control beyond `--low-memory` in containers with hard memory caps
 
 
 ### Variants

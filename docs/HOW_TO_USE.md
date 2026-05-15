@@ -66,7 +66,8 @@ sqlite-graphrag purge --retention-days 90 --yes
 - GLiNER NER is disabled by default; add `--enable-ner` to activate automatic entity/relationship extraction
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
 - Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
-- Use `--gliner-variant` to select model size: `fp32` (default, 1.1 GB), `fp16` (580 MB), `int8` (349 MB)
+- Use `--gliner-variant` to select model size: `fp32` (default, 1.1 GB), `fp16` (580 MB), `int8` (349 MB); int8 trades 15–18% accuracy loss for 3× faster load and 68% smaller disk footprint
+- Use `--max-rss-mb <MiB>` on `remember` and `ingest` to abort embedding when process RSS exceeds the limit (default 8192 MiB); useful in memory-constrained CI
 - `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
 - `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
 - `--with-graph` augments results with graph traversal matches seeded from top RRF hits
@@ -174,7 +175,7 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 ## Configuration and Namespace Notes
 ### Namespace Default
 - Default namespace is `global` when `--namespace` is omitted
-- Configure via `SQLITE_GRAPHRAG_NAMESPACE` env var to override globally
+- Configure via `SQLITE_GRAPHRAG_NAMESPACE` env var to override globally; since v1.0.51 all commands respect this variable (previously 8 commands ignored it)
 - Use `namespace-detect` to inspect the resolved namespace before running bulk operations
 
 ### Score Semantics
@@ -527,7 +528,7 @@ sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
 - Edge fields are `{from, to, relation, weight}`
 
 ### Note on remember
-- `--force-merge` updates an existing memory body instead of returning exit code 2 on duplicate name
+- `--force-merge` updates an existing memory body instead of returning exit code 2 on duplicate name; since v1.0.51 also restores soft-deleted memories and updates them in one step
 - Use `--force-merge` in idempotent pipeline loops where the same key may appear multiple times
 ```bash
 sqlite-graphrag remember --name config-notes --type project \
@@ -599,6 +600,8 @@ sqlite-graphrag remember --name config-notes --type project \
 - Error `exit 15` signals database busy after retries, lower write pressure or raise `--wait-lock`
 - Error `exit 75` signals slots exhausted, retry after a short backoff interval
 - Error `exit 77` signals low RAM, free memory before invoking the embedding model again
+- Error `exit 2` on `remember` may signal a soft-deleted memory; use `--force-merge` to restore and update, or `restore` to revive it first
+- Use `--max-rss-mb <MiB>` on `remember` or `ingest` to set a per-chunk RSS abort threshold (default 8192 MiB) and prevent ONNX runtime from exhausting system memory
 
 
 ## Next Steps

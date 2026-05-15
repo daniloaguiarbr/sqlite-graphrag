@@ -22,7 +22,7 @@
 ## Comandos Principais
 ### Subcomandos agrupados por ciclo de vida
 - `init` inicializa o banco SQLite e baixa o modelo de embeddings uma única vez
-- `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional
+- `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional; use `--max-rss-mb` para limitar o RSS do processo durante embedding (padrão 8192 MiB)
 - `recall` realiza busca por similaridade vetorial KNN sobre as memórias armazenadas
 - `hybrid-search` funde FTS5 full-text e KNN vetorial via Reciprocal Rank Fusion
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
@@ -39,7 +39,7 @@
 - `SQLITE_GRAPHRAG_CACHE_DIR` diretório para os arquivos de cache do modelo de embeddings
 - `SQLITE_GRAPHRAG_LOG_LEVEL` nível de filtro de rastreamento com valores de `error` a `trace`
 - `SQLITE_GRAPHRAG_LANG` idioma de saída da CLI com valores `en` ou `pt`
-- `SQLITE_GRAPHRAG_NAMESPACE` override de namespace ignorando a detecção automática
+- `SQLITE_GRAPHRAG_NAMESPACE` override de namespace respeitado por todos os comandos (corrigido em v1.0.51)
 
 
 ## Entrada do Grafo
@@ -62,6 +62,7 @@
 - Sobrescreva o modelo com `SQLITE_GRAPHRAG_GLINER_MODEL`; ajuste o limiar com `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (padrão `0.5`)
 - Campo de resposta `extraction_method`: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
 - `--skip-extraction` está depreciado desde v1.0.45; use `--enable-ner` em vez disso
+- `--max-rss-mb <MiB>` em `remember` e `ingest` aborta embedding quando o RSS do processo excede o limite (padrão 8192 MiB)
 
 
 ## Exit Codes

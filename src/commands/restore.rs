@@ -36,7 +36,10 @@ pub struct RestoreArgs {
     /// requiring the user to discover the version first.
     #[arg(long)]
     pub version: Option<i64>,
-    #[arg(long, default_value = "global")]
+    #[arg(
+        long,
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
+    )]
     pub namespace: Option<String>,
     /// Optimistic locking: reject if the current updated_at does not match (exit 3).
     #[arg(

@@ -19,11 +19,9 @@ use serde::Serialize;
     # Include soft-deleted memories\n  \
     sqlite-graphrag list --include-deleted")]
 pub struct ListArgs {
-    /// Namespace to list memories from. Defaults to "global".
     #[arg(
         long,
-        default_value = "global",
-        help = "Namespace to list memories from"
+        help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
     )]
     pub namespace: Option<String>,
     /// Filter by memory.type. Note: distinct from graph entity_type

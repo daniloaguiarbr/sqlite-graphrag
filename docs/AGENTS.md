@@ -470,6 +470,7 @@ let output = Command::new("sqlite-graphrag")
 - SET namespace via `--namespace` or `SQLITE_GRAPHRAG_NAMESPACE`
 - VALIDATE resolution with `namespace-detect --json`
 - USE `global` as the default namespace when absent
+- SINCE v1.0.51 ALL commands respect `SQLITE_GRAPHRAG_NAMESPACE`; previously `list`, `read`, `edit`, `forget`, `history`, `rename`, `restore`, and `remember` ignored it
 - ISOLATE projects via namespace per repository
 - ADOPT `swarm-<agent_id>` for multi-agent swarms
 ### REQUIRED — Output Language
@@ -507,11 +508,12 @@ let output = Command::new("sqlite-graphrag")
 - DECLARE `--type` from `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
-- PASS `--force-merge` in idempotent loops
+- PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51)
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
 - Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
 - RESPECT the limit of 512000 bytes and 512 chunks per body
+- USE `--max-rss-mb <MiB>` to cap process RSS during embedding (default: 8192 MiB); aborts with exit 77 if exceeded
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array
 - USE `--relationships-file` for typed edges
@@ -575,6 +577,7 @@ let output = Command::new("sqlite-graphrag")
 - `--low-memory` forces `--ingest-parallelism 1` internally
 - TRADE-OFF is 3 to 4 times more execution time
 - CHOOSE when RSS is a greater constraint than latency
+- USE `--max-rss-mb <MiB>` to abort if process RSS exceeds threshold during embedding (default: 8192 MiB)
 ### REQUIRED — Two Parallelism Axes
 - `--max-concurrency <N>` controls simultaneous CLI invocations
 - `--ingest-parallelism <N>` controls extract plus embed in parallel
@@ -906,7 +909,7 @@ let output = Command::new("sqlite-graphrag")
 ### REQUIRED — Complete Exit Code Handling
 - `0` equals success; parse stdout
 - `1` equals validation (invalid weight, self-link, bad timezone, max-files exceeded)
-- `2` equals duplicate (memory already exists without `--force-merge`)
+- `2` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
 - `3` equals optimistic locking conflict; reload and retry
 - `4` equals entity, memory, or version not found
 - `5` equals namespace error (invalid name or conflict)
@@ -994,7 +997,7 @@ let output = Command::new("sqlite-graphrag")
 | --- | --- | --- |
 | `0` | Success | Continue the agent loop |
 | `1` | Validation or runtime failure | Log and surface to operator |
-| `2` | CLI usage error or duplicate | Fix arguments then retry |
+| `2` | CLI usage error or duplicate (includes soft-deleted) | Fix arguments then retry; for soft-deleted use `--force-merge` to restore |
 | `3` | Optimistic update conflict | Re-read `updated_at` and retry |
 | `4` | Memory or entity not found | Handle missing resource gracefully |
 | `5` | Namespace limit or unresolved | Pass `--namespace` explicitly |

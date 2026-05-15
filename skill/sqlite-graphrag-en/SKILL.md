@@ -57,6 +57,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `global` as the default namespace when absent
 - ISOLATE projects via namespace per repository
 - ADOPT `swarm-<agent_id>` for multi-agent swarms
+- NOTE that `SQLITE_GRAPHRAG_NAMESPACE` is now respected by all commands (fixed in v1.0.51; previously 8 commands ignored it)
 ### REQUIRED — Output Language
 - USE `--lang en` or `--lang pt` to force output language
 - SET `SQLITE_GRAPHRAG_LANG=en` for session override
@@ -92,11 +93,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - DECLARE `--type` from `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
-- PASS `--force-merge` in idempotent loops
+- PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51)
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
 - Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect; use `--enable-ner` to activate NER
 - RESPECT the limit of 512000 bytes and 512 chunks per body
+- USE `--max-rss-mb <MiB>` to abort embedding if process RSS exceeds the threshold (default 8192 MiB); lower this in memory-constrained environments
 ### REQUIRED — Attaching Graph in remember
 - USE `--entities-file` with a typed JSON array
 - USE `--relationships-file` for typed edges
@@ -160,6 +162,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `--low-memory` forces `--ingest-parallelism 1` internally
 - TRADE-OFF is 3 to 4 times more execution time
 - CHOOSE when RSS is a greater constraint than latency
+- USE `--max-rss-mb <MiB>` to abort if process RSS exceeds the threshold during embedding (default 8192 MiB)
 ### REQUIRED — Two Parallelism Axes
 - `--max-concurrency <N>` controls simultaneous CLI invocations
 - `--ingest-parallelism <N>` controls extract plus embed in parallel
@@ -564,7 +567,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Complete Exit Code Handling
 - `0` equals success; parse stdout
 - `1` equals validation (invalid weight, self-link, bad timezone, max-files exceeded)
-- `2` equals duplicate (memory already exists without `--force-merge`)
+- `2` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
 - `3` equals optimistic locking conflict; reload and retry
 - `4` equals entity, memory, or version not found
 - `5` equals namespace error (invalid name or conflict)

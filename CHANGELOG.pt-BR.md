@@ -10,6 +10,22 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.51] - 2026-05-15
+
+### Corrigido
+- `remember` e `remember --force-merge` em memória soft-deletada agora retornam exit 2 (Duplicate) com mensagem acionável em vez de exit 10 (Database/UNIQUE constraint). Com `--force-merge`, a memória soft-deletada é restaurada e atualizada em um único passo (M7).
+- Variável de ambiente `SQLITE_GRAPHRAG_NAMESPACE` agora respeitada por todos os comandos. Anteriormente, 8 comandos (`list`, `remember`, `read`, `edit`, `forget`, `history`, `rename`, `restore`) ignoravam a variável de ambiente devido ao `default_value = "global"` do Clap preenchendo o argumento de namespace (M8).
+
+### Adicionado
+- Flag `--max-rss-mb` para `remember` e `ingest`: aborta o embedding se o RSS do processo ultrapassar o threshold (padrão 8192 MiB). Previne que o ONNX runtime esgote a memória do sistema em documentos grandes (mitigação C1).
+- 6 novos testes unitários do daemon cobrindo capping de backoff exponencial, range de half-jitter, transições CAS de versão, resolução de nome de socket e roundtrip de serialização de estado (M3).
+- Seção "Destaques da Versão" no README (L3).
+
+### Alterado
+- Timeout do nextest para `recipe_01_bootstrap` elevado para 180s no perfil default para prevenir falsos negativos em builds debug (M6).
+- Texto de ajuda do `--gliner-variant` agora documenta o trade-off de precisão do int8 (L4).
+- Texto de ajuda do `--namespace` nos 8 comandos agora mostra precedência da variável de ambiente.
+
 ## [1.0.50] - 2026-05-15
 
 ### Adicionado

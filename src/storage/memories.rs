@@ -94,6 +94,46 @@ pub fn find_by_name(
     }
 }
 
+/// Looks up a memory by `(namespace, name)` regardless of deletion state.
+///
+/// Returns `Some((id, is_deleted))` when the row exists.
+/// `is_deleted` is `true` when `deleted_at IS NOT NULL`.
+///
+/// # Errors
+///
+/// Propagates [`AppError::Database`] on SQLite failures.
+pub fn find_by_name_any_state(
+    conn: &Connection,
+    namespace: &str,
+    name: &str,
+) -> Result<Option<(i64, bool)>, AppError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, (deleted_at IS NOT NULL) AS is_deleted
+         FROM memories WHERE namespace = ?1 AND name = ?2",
+    )?;
+    let result = stmt.query_row(params![namespace, name], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?))
+    });
+    match result {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(AppError::Database(e)),
+    }
+}
+
+/// Clears `deleted_at` to restore a soft-deleted memory.
+///
+/// # Errors
+///
+/// Propagates [`AppError::Database`] on SQLite failures.
+pub fn clear_deleted_at(conn: &Connection, memory_id: i64) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE memories SET deleted_at = NULL WHERE id = ?1",
+        params![memory_id],
+    )?;
+    Ok(())
+}
+
 /// Looks up a live memory by exact `body_hash` within a namespace.
 ///
 /// Used during `remember` to short-circuit semantic duplicates before
@@ -1346,6 +1386,57 @@ mod tests {
         )?;
         let rows = fts_search(&conn, "graphrag-precompact", "global", None, 10)?;
         assert!(!rows.is_empty(), "should find compound hyphenated term");
+        Ok(())
+    }
+
+    #[test]
+    fn find_by_name_any_state_returns_deleted_flag() -> TestResult {
+        let conn = setup_conn()?;
+        let m = new_memory("mem-soft-del");
+        let id = insert(&conn, &m)?;
+        conn.execute(
+            "UPDATE memories SET deleted_at = unixepoch() WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        let result = find_by_name_any_state(&conn, "global", "mem-soft-del")?;
+        assert_eq!(result, Some((id, true)));
+        Ok(())
+    }
+
+    #[test]
+    fn find_by_name_any_state_returns_not_deleted() -> TestResult {
+        let conn = setup_conn()?;
+        let m = new_memory("mem-active");
+        let id = insert(&conn, &m)?;
+        let result = find_by_name_any_state(&conn, "global", "mem-active")?;
+        assert_eq!(result, Some((id, false)));
+        Ok(())
+    }
+
+    #[test]
+    fn find_by_name_any_state_returns_none_when_absent() -> TestResult {
+        let conn = setup_conn()?;
+        let result = find_by_name_any_state(&conn, "global", "does-not-exist")?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn clear_deleted_at_restores_memory() -> TestResult {
+        let conn = setup_conn()?;
+        let m = new_memory("mem-restore");
+        let id = insert(&conn, &m)?;
+        conn.execute(
+            "UPDATE memories SET deleted_at = unixepoch() WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        // Soft-deleted: find_by_name should return None.
+        assert!(find_by_name(&conn, "global", "mem-restore")?.is_none());
+        clear_deleted_at(&conn, id)?;
+        // Restored: find_by_name should return Some again.
+        let found = find_by_name(&conn, "global", "mem-restore")?;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().0, id);
         Ok(())
     }
 }

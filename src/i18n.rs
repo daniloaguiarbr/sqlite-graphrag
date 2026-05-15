@@ -184,6 +184,13 @@ pub mod errors_msg {
         )
     }
 
+    pub fn duplicate_memory_soft_deleted(name: &str, namespace: &str) -> String {
+        format!(
+            "memory '{name}' exists but is soft-deleted in namespace '{namespace}'; \
+             use --force-merge to restore and update, or `restore` to revive it"
+        )
+    }
+
     pub fn optimistic_lock_conflict(expected: i64, current_ts: i64) -> String {
         format!(
             "optimistic lock conflict: expected updated_at={expected}, but current is {current_ts}"

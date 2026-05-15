@@ -337,6 +337,10 @@ pub const MAX_CONCURRENT_CLI_INSTANCES: usize = 4;
 /// (exit code [`LOW_MEMORY_EXIT_CODE`]).
 pub const MIN_AVAILABLE_MEMORY_MB: u64 = 2_048;
 
+/// Maximum process RSS in MiB before aborting embedding operations.
+/// Users can override via `--max-rss-mb`. Set to 8 GiB by default.
+pub const DEFAULT_MAX_RSS_MB: u64 = 8_192;
+
 /// Maximum time in seconds an instance waits to acquire a concurrency slot.
 ///
 /// Passed as the default for `--max-wait-secs` in the CLI. After exhausting this limit,

@@ -66,7 +66,8 @@ sqlite-graphrag purge --retention-days 90 --yes
 - GLiNER NER desabilitado por padrão; adicione `--enable-ner` para ativar extração automática de entidades/relacionamentos
 - `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
 - Campo de resposta `extraction_method` informa: `gliner-<variant>+regex`, `regex-only`, ou `none:extraction-failed`
-- Use `--gliner-variant` para selecionar tamanho do modelo: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB)
+- Use `--gliner-variant` para selecionar tamanho do modelo: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB); int8 troca perda de 15–18% de acurácia por carregamento 3× mais rápido e pegada 68% menor em disco
+- Use `--max-rss-mb <MiB>` em `remember` e `ingest` para abortar embedding quando RSS do processo exceder o limite (padrão 8192 MiB); útil em CI com memória restrita
 - `recall` executa KNN vetorial sobre `vec_memories` e expande matches de grafo por padrão, exceto com `--no-graph`
 - `hybrid-search` funde FTS5 textual e KNN vetorial via Reciprocal Rank Fusion
 - `--with-graph` enriquece resultados com matches de travessia de grafo semeados pelos top hits RRF
@@ -178,7 +179,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 ## Configuração e Notas de Namespace
 ### Namespace Padrão
 - Namespace padrão é `global` quando `--namespace` é omitido
-- Configure via variável de ambiente `SQLITE_GRAPHRAG_NAMESPACE` para sobrescrever globalmente
+- Configure via variável de ambiente `SQLITE_GRAPHRAG_NAMESPACE` para override global; desde v1.0.51 todos os comandos respeitam esta variável (anteriormente 8 comandos a ignoravam)
 - Use `namespace-detect` para inspecionar o namespace resolvido antes de operações em massa
 
 ### Semântica do Score
@@ -530,7 +531,7 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 - Campos de aresta são `{from, to, relation, weight}`
 
 ### Nota sobre remember
-- `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 por nome duplicado
+- `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 2 em nome duplicado; desde v1.0.51 também restaura memórias soft-deleted e atualiza em um passo
 - Use `--force-merge` em loops de pipeline idempotentes onde a mesma chave pode aparecer múltiplas vezes
 - `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
 - O campo alias `type` também é aceito como sinônimo de `entity_type`
@@ -602,6 +603,8 @@ sqlite-graphrag remember --name notas-config --type project \
 - Erro `exit 15` sinaliza banco ocupado após tentativas, reduza a pressão de escrita ou aumente `--wait-lock`
 - Erro `exit 75` sinaliza slots exauridos, repita após breve intervalo de backoff
 - Erro `exit 77` sinaliza RAM baixa, libere memória antes de invocar o modelo novamente
+- Erro `exit 2` no `remember` pode indicar memória soft-deleted; use `--force-merge` para restaurar e atualizar, ou `restore` para revivê-la primeiro
+- Use `--max-rss-mb <MiB>` no `remember` ou `ingest` para definir limite de RSS por chunk (padrão 8192 MiB) e prevenir que o ONNX runtime esgote a memória do sistema
 
 
 ## Próximos Passos

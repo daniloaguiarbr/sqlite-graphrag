@@ -83,7 +83,7 @@
 ## Testes do Daemon
 ### Valide Explicitamente O Reuso Do Processo Persistente
 - Execute `/usr/bin/timeout 900 cargo test --all-features --test daemon_integration -- --nocapture` para validar o daemon ponta a ponta
-- A suíte do daemon prova `ping`, `shutdown`, auto-start, restart após stop, auto-restart por version mismatch (desde v1.0.50) e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`
+- A suíte do daemon prova `ping`, `shutdown`, auto-start, restart após stop, auto-restart por version mismatch (desde v1.0.50) e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`; v1.0.51 adicionou 6 testes unitários (capping de backoff, half-jitter, nome de socket, CAS de versão, roundtrip de state) elevando o total do daemon para 10
 - Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` para isolar o socket do daemon e o cache do modelo por execução
 - Se um teste do daemon travar, execute `sqlite-graphrag daemon --stop` com o mesmo cache dir antes de tentar de novo
 - A flag oculta de testes `--skip-memory-guard` agora desabilita auto-start do daemon por padrão, exceto quando `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1` estiver definido

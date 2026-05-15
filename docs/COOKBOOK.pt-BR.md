@@ -132,6 +132,7 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 - Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
 - Arquivos duplicados retornam `status: "skipped"` com `action: "duplicate"` em vez de `status: "failed"`
 - Use `--fail-fast` para abortar no primeiro erro por arquivo em vez de continuar com report inline
+- Use `--max-rss-mb <MiB>` para abortar embedding quando o RSS do processo exceder o limite (padrão 8192 MiB); útil em CI ou containers com memória restrita
 
 
 ### See Also
@@ -764,7 +765,7 @@ sqlite-graphrag remember --name "$NAME" --type project \
 rc=$?
 case $rc in
   0)  echo "Success" ;;
-  2)  echo "Duplicate: use --force-merge" ;;
+  2)  echo "Duplicata ou soft-deleted: use --force-merge para restaurar e atualizar" ;;
   3)  echo "Conflict: re-read and retry" ;;
   6)  echo "Payload too large: split body" ;;
   15) echo "Busy: widen --wait-lock" ;;
@@ -781,7 +782,7 @@ esac
 - Exit 13 significa falha parcial em lote: reprocesse apenas os itens falhos, NÃO o lote inteiro
 - Exit 75 e 77 sinalizam pressão de recursos: NUNCA aumente concorrência após receber esses códigos
 - Exit 15 significa banco ocupado: amplie `--wait-lock <ms>` para esperar mais antes de falhar
-- Tabela completa de códigos: 0=sucesso, 1=validação, 2=duplicata, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
+- Tabela completa de códigos: 0=sucesso, 1=validação, 2=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
 
 
 ### Variants
@@ -1419,6 +1420,7 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 - Dois eixos de paralelismo existem: `--max-concurrency` controla invocações CLI, `--ingest-parallelism` controla threads de extract+embed
 - Trade-off é 3 a 4 vezes mais tempo de wall-clock para footprint de memória significativamente menor
 - Linha resumo NDJSON reporta `files_total`, `files_succeeded`, `files_failed` e `elapsed_ms` para auditoria de pipeline
+- Use `--max-rss-mb 2048` (ou similar) para abortar embedding quando o RSS do processo exceder o limite; fornece controle granular além de `--low-memory` em containers com caps de memória rígidos
 
 
 ### Variants
