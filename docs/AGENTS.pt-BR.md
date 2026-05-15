@@ -854,6 +854,7 @@ let output = Command::new("sqlite-graphrag")
 - TRATAR daemon como opcional para invocações single-shot
 - INSPECIONAR contador de embedding requests no `--ping`
 - `daemon --ping` emite um aviso quando a versão do daemon em execução difere da versão do binário CLI; reinicie o daemon após upgrades com `daemon --stop` seguido de `daemon`
+- Desde v1.0.50, a CLI reinicia automaticamente um daemon desatualizado em caso de incompatibilidade de versão antes do primeiro request de embedding; `daemon --stop` manual após upgrades não é mais necessário
 
 
 ## Cache — Gestão de Modelos

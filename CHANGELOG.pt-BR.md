@@ -10,6 +10,38 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.50] - 2026-05-15
+
+### Adicionado
+- Novo subcomando `prune-relations` para remoção em massa de relacionamentos por tipo (H8). Suporta flags `--dry-run`, `--yes`, `--namespace` e `--json`. Inclui `after_long_help` com exemplos de uso.
+- Migração V011 adiciona índice `idx_relationships_ns_relation` para filtragem eficiente por tipo de relação.
+- Auto-restart do daemon em version mismatch (H7): CLI agora detecta quando o daemon em execução é de uma versão anterior e reinicia automaticamente antes do primeiro request de embedding. Limitado a uma tentativa de restart por processo para prevenir loops.
+- Nova constante `DAEMON_VERSION_RESTART_WAIT_MS` (5 segundos) para timeout de restart do daemon.
+- Nova constante `CHUNK_BATCH_SIZE` (16) para futuro pipeline de embedding em streaming.
+
+### Alterado
+- `warn_if_non_canonical` agora chamado nos comandos `unlink` (H1) e `related` (H2) para consistência com `link`, `remember` e `ingest`.
+- `related --help` agora documenta os 12 tipos canônicos de relação e suporte a relações customizadas (H6).
+- Funções `errors_msg::*` em `src/i18n.rs` sempre retornam inglês (H3). Traduções para português permanecem em `app_error_pt` para stderr via `localized_message_for()`. JSON stdout agora é contrato de API totalmente determinístico somente em inglês.
+- `Vec::with_capacity()` aplicado em `graph.rs`, `ingest.rs`, `link.rs` onde os tamanhos são previsíveis (M2).
+- `.iter().cloned().collect()` substituído por `.iter().copied().collect()` para valores i64 em BFS de `graph.rs` (M1).
+- Exportação de grafo agora emite `tracing::warn!` quando edges referenciam entidades inexistentes em vez de descartá-las silenciosamente (C2).
+- String de erro em português no caminho multi-chunk de remember.rs substituída por inglês (H3).
+
+### Corrigido
+- `graph_export.rs` descarte silencioso de edges: edges órfãs agora logadas com IDs de entidade e tipo de relação (C2).
+- Comandos `unlink` e `related` agora emitem warning em relações não canônicas para consistência (H1, H2).
+- Módulo `errors_msg` não mais retorna strings em português que vazavam para JSON stdout (H3).
+- `MIGRATION.md` atualizado com nota do rename `.items` para `.entities` (v1.0.44) e mudanças v1.0.49/v1.0.50 (L2).
+- Versão do schema incrementada para 11 correspondendo à migração V011.
+
+### Encerrado (falsos positivos do gaps.md)
+- H4: SystemTime no jitter do daemon já havia sido corrigido na v1.0.43 (usa fastrand). `now_epoch_ms()` legitimamente usa SystemTime para timestamps epoch.
+- H5: EntityType já é um enum Clap `value_enum` estrito com 13 variantes validadas.
+- M4: Streaming NDJSON do ingest já estava implementado via `mpsc::sync_channel`.
+- L1: Todos os 28 subcomandos já possuem `after_long_help`.
+- M5: Falha do GLiNER int8 em textos curtos é limitação de quantização do modelo, não bug de código.
+
 ## [1.0.49] - 2026-05-15
 
 ### Alterado

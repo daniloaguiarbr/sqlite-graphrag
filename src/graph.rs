@@ -53,7 +53,7 @@ pub fn traverse_from_memories(
     }
 
     // Step 1: collect seed entity IDs from seed memories
-    let mut seed_entities: Vec<i64> = Vec::new();
+    let mut seed_entities: Vec<i64> = Vec::with_capacity(seed_memory_ids.len());
     for &mem_id in seed_memory_ids {
         let mut stmt =
             conn.prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
@@ -101,7 +101,7 @@ pub fn traverse_from_memories(
     }
 
     // Step 3: find memories connected to traversed entities (excluding seeds)
-    let seed_set: HashSet<i64> = seed_memory_ids.iter().cloned().collect();
+    let seed_set: HashSet<i64> = seed_memory_ids.iter().copied().collect();
     let graph_only_entities: Vec<i64> = visited
         .into_iter()
         .filter(|id| !seed_entities.contains(id))
@@ -149,7 +149,7 @@ pub fn traverse_from_memories_with_hops(
     }
 
     // Collect seed entity IDs from seed memories
-    let mut seed_entities: Vec<i64> = Vec::new();
+    let mut seed_entities: Vec<i64> = Vec::with_capacity(seed_memory_ids.len());
     for &mem_id in seed_memory_ids {
         let mut stmt =
             conn.prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
@@ -197,8 +197,8 @@ pub fn traverse_from_memories_with_hops(
     }
 
     // Find memories connected to traversed entities (excluding seeds), preserving hop depth
-    let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().cloned().collect();
-    let seed_entity_set: std::collections::HashSet<i64> = seed_entities.iter().cloned().collect();
+    let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().copied().collect();
+    let seed_entity_set: std::collections::HashSet<i64> = seed_entities.iter().copied().collect();
 
     let mut result: Vec<(i64, u32)> = Vec::new();
     let mut seen_memories: std::collections::HashSet<i64> = std::collections::HashSet::new();

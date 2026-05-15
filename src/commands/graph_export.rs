@@ -275,14 +275,23 @@ fn run_entities_snapshot(
         .collect();
 
     let mut edges: Vec<EdgeOut> = Vec::with_capacity(edges_raw.len());
+    let mut orphan_edges: usize = 0;
     for r in edges_raw {
         let from = match id_to_name.get(&r.source_id) {
             Some(n) => n.clone(),
-            None => continue,
+            None => {
+                orphan_edges += 1;
+                tracing::warn!(source_id = r.source_id, relation = %r.relation, "edge skipped: source entity not found in id_to_name map");
+                continue;
+            }
         };
         let to = match id_to_name.get(&r.target_id) {
             Some(n) => n.clone(),
-            None => continue,
+            None => {
+                orphan_edges += 1;
+                tracing::warn!(target_id = r.target_id, relation = %r.relation, "edge skipped: target entity not found in id_to_name map");
+                continue;
+            }
         };
         edges.push(EdgeOut {
             from,
@@ -290,6 +299,12 @@ fn run_entities_snapshot(
             relation: r.relation,
             weight: r.weight,
         });
+    }
+    if orphan_edges > 0 {
+        tracing::warn!(
+            count = orphan_edges,
+            "edges skipped due to orphaned entity references"
+        );
     }
 
     let effective_format = if json {

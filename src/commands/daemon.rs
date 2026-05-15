@@ -49,7 +49,7 @@ pub fn run(args: DaemonArgs) -> Result<(), AppError> {
                 tracing::warn!(
                     daemon_version = %version,
                     cli_version = crate::constants::SQLITE_GRAPHRAG_VERSION,
-                    "daemon version mismatch; consider: sqlite-graphrag daemon --stop && sqlite-graphrag daemon"
+                    "daemon version mismatch; auto-restart will occur on the next embedding request"
                 );
             }
         }

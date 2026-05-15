@@ -83,7 +83,7 @@
 ## Daemon Tests
 ### Validate Persistent-Process Reuse Explicitly
 - Run `/usr/bin/timeout 900 cargo test --all-features --test daemon_integration -- --nocapture` to validate the daemon end to end
-- The daemon suite proves `ping`, `shutdown`, auto-start, restart after stop, and counter increments across `init`, `remember`, `recall`, and `hybrid-search`
+- The daemon suite proves `ping`, `shutdown`, auto-start, restart after stop, version mismatch auto-restart (since v1.0.50), and counter increments across `init`, `remember`, `recall`, and `hybrid-search`
 - Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` to isolate the daemon socket and model cache per run
 - If a daemon test hangs, run `sqlite-graphrag daemon --stop` with the same cache dir before retrying
 - Hidden test flag `--skip-memory-guard` now disables daemon auto-start by default unless `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1` is set

@@ -269,11 +269,19 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - ACCEPT `--source`/`--target` as aliases of `--from`/`--to`
 - TREAT exit code 4 as nonexistent edge
 - ALL three arguments are mandatory without exception
+- `--relation` accepts any kebab-case or snake_case string; non-canonical values emit a `tracing::warn!` since v1.0.50
 ### REQUIRED — Orphan Entity Cleanup (cleanup-orphans)
 - RUN `cleanup-orphans --dry-run` to audit
 - APPLY `--yes` in automated pipelines
 - REMOVES entities with no linked memories or edges
 - RUN periodically after bulk `forget` operations
+### REQUIRED — Bulk Relationship Deletion (prune-relations)
+- USE `prune-relations --relation <type> --yes` for bulk-deleting all relationships of a given type
+- USE `--dry-run` to preview the count before committing
+- USE `--yes` to skip interactive confirmation in automated pipelines
+- ACCEPTS any kebab-case or snake_case relation string
+- RUN `cleanup-orphans` afterward to remove entities left without relationships
+- JSON response: `action` (`"pruned"` `"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
 ### Correct Pattern — Forget and Restore Round-Trip
 - `sqlite-graphrag forget --name decision-x`
 - `sqlite-graphrag history --name decision-x --json | jaq '.deleted'`
@@ -344,6 +352,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - TWO hops reveal transitive knowledge invisible to vector search
 - HOP distance delivers an explicit signal to the orchestrator
 - USE when the query requires chained multi-step reasoning
+- `--relation` filter accepts any kebab-case or snake_case string; non-canonical values emit a `tracing::warn!` since v1.0.50
 ### REQUIRED — Alternative Layer 3 with graph traverse
 - USE `graph traverse --from <root> --depth <N>` for a focused subgraph
 - DEFAULT depth is 2 when omitted
@@ -410,6 +419,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `--format mermaid` to embed in Markdown
 - WRITE directly to a file via `--output <PATH>`
 - INSPECT `nodes` and `edges` in the exported JSON
+- EDGES referencing missing entities are logged via `tracing::warn!` and skipped since v1.0.50
 ### REQUIRED — Entity Enumeration (graph entities)
 - USE `graph entities --json` to list all entities
 - ACCESS via `jaq -r '.entities[].name'` (field is `entities`, NOT `items`)
@@ -431,6 +441,67 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `organization`, `location`, `date`
 
 
+## LLM-Driven Graph Quality
+### REQUIRED — Relation Mapping Table
+- MAP non-canonical relations to canonical equivalents before persisting
+- `adds` maps to `causes` (creation implies causation)
+- `creates` maps to `causes` (same rationale)
+- `implements` maps to `supports` (implementation supports a design)
+- `blocks` maps to `contradicts` (blocking contradicts progress)
+- `tested-by` maps to `related` (testing is a form of relatedness)
+- `part-of` maps to `applies-to` (a part applies to its whole)
+- PREFER the canonical value over custom strings to avoid `tracing::warn!` noise
+- CUSTOM relations are accepted but canonical ones yield better cross-memory recall
+### REQUIRED — Entity Curation
+- EXTRACT only domain-specific concepts: real projects, tools, people, decisions, files
+- NEVER create entities from stop words, articles, pronouns, or generic verbs
+- NEVER create entities from UUIDs, hashes, timestamps, or line numbers
+- NEVER create entities from single characters or two-letter abbreviations
+- CHOOSE entity_type deliberately: `concept` for abstract ideas, `tool` for software, `decision` for architectural choices, `project` for codebases, `person` for contributors, `file` for source paths
+- PREFER fewer high-quality entities over many low-signal ones
+- DEDUPLICATE: search `graph entities --json` before creating to avoid near-duplicates like "auth" and "authentication"
+### REQUIRED — Relation Curation
+- `depends-on`: A cannot function without B (hard dependency)
+- `uses`: A leverages B but could substitute it (soft dependency)
+- `supports`: A reinforces or enables B (design backing implementation)
+- `causes`: A triggers or produces B (causal chain)
+- `fixes`: A resolves a problem described in B (bug fix, incident resolution)
+- `contradicts`: A conflicts with or invalidates B (competing designs, blockers)
+- `applies-to`: A is relevant to or scoped within B (rule applies to module)
+- `follows`: A comes after B in sequence or priority (workflow ordering)
+- `replaces`: A supersedes B (migration, deprecation)
+- `tracked-in`: A is monitored or managed in B (issue in tracker, metric in dashboard)
+- `related`: A and B share context but no stronger relation fits (use sparingly, never as default)
+- `mentions`: A references B without implying a relationship (use ONLY for citations, never as a catch-all)
+- ASSIGN `strength` based on coupling: 0.9 for hard dependencies, 0.7 for design relationships, 0.5 for contextual links, 0.3 for weak references
+### REQUIRED — Description Enrichment
+- GENERIC descriptions like "ingested from docs/README.md" waste the description field
+- UPGRADE via `edit --name <name> --description "concise semantic summary"`
+- GOOD description answers: what is this memory ABOUT and WHY does it matter?
+- BAD: "ingested from auth.md" → GOOD: "JWT token rotation strategy with 15-min expiry and refresh flow"
+- BAD: "user feedback" → GOOD: "user prefers single bundled PR over many small ones for refactors"
+- LIMIT to one sentence, 10-20 words, focusing on the unique insight
+- RUN `list --type <kind> --json | jaq '.items[] | select(.description | test("ingested|imported|added")) | .name'` to find generic descriptions
+- BATCH enrichment: pipe names to a loop calling `edit --description` for each
+### REQUIRED — Graph Quality Improvement Workflow
+- STEP 1 — Audit: `graph stats --json` to measure node_count, edge_count, avg_degree
+- STEP 2 — Identify noise: `list --json | jaq '.items[] | select(.description | test("ingested|imported")) | .name'`
+- STEP 3 — Enrich descriptions: `edit --name <name> --description "semantic summary"`
+- STEP 4 — Prune low-signal relations: `prune-relations --relation mentions --dry-run --json`
+- STEP 5 — Execute prune: `prune-relations --relation mentions --yes --json`
+- STEP 6 — Clean orphans: `cleanup-orphans --yes --json`
+- STEP 7 — Verify: `health --json | jaq '.integrity_ok'`
+- SCHEDULE this workflow after bulk `ingest` operations
+### FORBIDDEN — LLM Graph Anti-patterns
+- NEVER use `mentions` as a default relation; it adds noise without signal
+- NEVER create entities from implementation details (variable names, line numbers, commit hashes)
+- NEVER set all strengths to 1.0; differentiate coupling levels
+- NEVER leave "ingested from" descriptions without enrichment
+- NEVER create redundant edges (if A depends-on B, do not also add A uses B)
+- NEVER persist ephemeral state (current branch, WIP progress, temporary workarounds)
+- NEVER skip deduplication; search `hybrid-search` or `graph entities` before creating
+
+
 ## Daemon and Reduced Latency
 ### REQUIRED — Embedding Model Reuse
 - START `sqlite-graphrag daemon` in long agent sessions
@@ -440,6 +511,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - TREAT daemon as optional for single-shot invocations
 - INSPECT the embedding request counter in `--ping`
 - `daemon --ping` warns when daemon version differs from CLI version; restart with `daemon --stop` followed by `daemon` after upgrades
+- Since v1.0.50, the CLI auto-restarts the daemon on version mismatch before the first embedding request; manual `daemon --stop` after upgrades is no longer required
 
 
 ## Cache — Model Management
@@ -485,6 +557,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
+- `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
 
 
 ## Exit Codes and Retry Strategy
@@ -544,10 +617,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Schema Diagnostics
 - USE `__debug_schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`
+- CURRENT schema version is 11 (V011 adds `idx_relationships_ns_relation` index)
 - COMMAND is hidden from `--help`; invoke by exact name
 ### Correct Pattern — Weekly Cron
 - `sqlite-graphrag purge --retention-days 30 --yes`
 - `sqlite-graphrag cleanup-orphans --yes`
+- `sqlite-graphrag prune-relations --relation mentions --yes` (when NER-generated edges need cleanup)
 - `sqlite-graphrag vacuum --json`
 - `sqlite-graphrag optimize --json`
 - `sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite`

@@ -15,6 +15,7 @@ pub mod list;
 pub mod migrate;
 pub mod namespace_detect;
 pub mod optimize;
+pub mod prune_relations;
 pub mod purge;
 pub mod read;
 pub mod recall;

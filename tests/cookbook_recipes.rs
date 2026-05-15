@@ -40,7 +40,11 @@ fn recipe_01_bootstrap_60s() {
     let dir = TempDir::new().unwrap();
     init(&dir);
 
-    let output = cmd(&dir).args(["health", "--json"]).output().unwrap();
+    let output = cmd(&dir)
+        .args(["health", "--json"])
+        .timeout(std::time::Duration::from_secs(120))
+        .output()
+        .unwrap();
     assert!(output.status.success(), "health deve ter exit 0");
 
     let json: serde_json::Value =

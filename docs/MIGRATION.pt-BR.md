@@ -52,6 +52,27 @@ sqlite-graphrag namespace-detect
 ```
 - Confirme que `schema_version`, namespace resolvido e caminho do banco batem com o esperado
 
+## Mudanças de Schema JSON
+
+### v1.0.44 — Rename no output de `graph entities`
+- O campo de array JSON foi renomeado de `.items` para `.entities`
+- Consumidores devem atualizar seus filtros: `.items[]` → `.entities[]`
+- Exemplo: `sqlite-graphrag graph entities --json | jaq '.entities[].name'`
+
+### v1.0.49 — Vocabulário extensível de relações
+- O argumento `--relation` agora aceita qualquer string em kebab-case ou snake_case
+- 12 relações canônicas permanecem como valores bem conhecidos
+- Relações não canônicas emitem `tracing::warn!` no stderr mas são aceitas
+
+### v1.0.50 — `prune-relations`, daemon auto-restart, schema v11
+- Novo subcomando `prune-relations` para remoção em massa de relacionamentos por tipo: `sqlite-graphrag prune-relations --relation mentions --yes --json`
+- Auto-restart do daemon em version mismatch: CLI detecta daemon desatualizado e reinicia antes do primeiro request de embedding (uma tentativa por processo)
+- Migração V011 adiciona índice `idx_relationships_ns_relation` para filtragem por tipo de relação
+- Versão do schema atualizada de 10 para 11
+- `warn_if_non_canonical` agora emite warnings em `unlink` e `related` (antes apenas em `link`, `remember`, `ingest`)
+- Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
+- Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
+
 ## Notas de Compatibilidade
 - Não existe alias de compatibilidade para o nome antigo do binário nesta cópia do repositório
 - Contratos JSON, exit codes e semântica operacional permanecem alinhados ao comportamento legado `v2.3.0`

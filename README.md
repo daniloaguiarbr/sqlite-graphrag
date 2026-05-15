@@ -46,6 +46,7 @@ sqlite-graphrag --version
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
 - Every invocation can stay stateless, but heavy commands auto-start a persistent daemon for embedding inference, reusing it across calls (this is daemon autostart, separate from automatic entity extraction)
+- After binary upgrades, the CLI auto-detects a version mismatch with the running daemon and restarts it transparently before the first embedding request (since v1.0.50)
 - `sqlite-graphrag daemon` still exists for explicit control, but the common path no longer requires manual startup
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one `{body?, entities, relationships}` object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
@@ -383,6 +384,12 @@ sqlite-graphrag graph entities --entity-type organization --limit 50 --json
 sqlite-graphrag cleanup-orphans --dry-run --json
 sqlite-graphrag cleanup-orphans --yes --json
 ```
+### Bulk-delete relationships by type
+<!-- skip-test: requires relationships to exist in the namespace. -->
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
 ### Clear cached embedding/NER models from the XDG cache
 <!-- skip-test: deletes the embedding model cache; safe in production but slows the integration suite by forcing a re-download on later commands. -->
 ```bash
@@ -451,6 +458,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entities that have no memories and no relationships |
+| `prune-relations` | `--relation <type>`, `--namespace`, `--dry-run`, `--yes` | Bulk-delete all relationships of a given type |
 
 ### `cache` subcommands
 | Subcommand | Description |
@@ -756,7 +764,7 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Canonical contracts for every subcommand response
 - Authoritative JSON Schemas for every `--json` response live under [`docs/schemas/`](docs/schemas/) and are versioned alongside the crate
-- 30 schemas cover `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`
+- 33 schemas cover `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`
 - Treat these schemas as the agent contract; SKILL.md documents the same shapes in human-readable form
 - Validate downstream consumers with any standard JSON Schema validator (e.g. `ajv`, `jsonschema`)
 

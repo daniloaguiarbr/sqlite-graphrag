@@ -434,6 +434,81 @@ pub fn delete_entities_by_ids(conn: &Connection, entity_ids: &[i64]) -> Result<u
     Ok(removed)
 }
 
+/// Counts relationships matching the given relation type within a namespace.
+///
+/// Used by `prune-relations --dry-run` to preview the number of relationships
+/// that would be deleted without actually modifying the database.
+///
+/// # Errors
+///
+/// Returns `Err(AppError::Database)` on any `rusqlite` failure.
+pub fn count_relationships_by_relation(
+    conn: &Connection,
+    namespace: &str,
+    relation: &str,
+) -> Result<usize, AppError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM relationships WHERE namespace = ?1 AND relation = ?2",
+        params![namespace, relation],
+        |r| r.get(0),
+    )?;
+    Ok(count as usize)
+}
+
+/// Deletes all relationships matching a relation type within a namespace.
+///
+/// Operates in chunks of 1000 to avoid holding long write locks and blocking
+/// WAL readers. After deletion, recalculates degree for every affected entity.
+///
+/// Returns `(count_deleted, affected_entity_ids)`.
+///
+/// # Errors
+///
+/// Returns `Err(AppError::Database)` on any `rusqlite` failure.
+pub fn delete_relationships_by_relation(
+    conn: &Connection,
+    namespace: &str,
+    relation: &str,
+) -> Result<(usize, Vec<i64>), AppError> {
+    // Step 1: collect all affected entity IDs before deletion.
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT source_id FROM relationships WHERE namespace = ?1 AND relation = ?2
+         UNION
+         SELECT DISTINCT target_id FROM relationships WHERE namespace = ?1 AND relation = ?2",
+    )?;
+    let entity_ids: Vec<i64> = stmt
+        .query_map(params![namespace, relation], |r| r.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Step 2: collect relationship IDs to delete.
+    let mut id_stmt =
+        conn.prepare("SELECT id FROM relationships WHERE namespace = ?1 AND relation = ?2")?;
+    let rel_ids: Vec<i64> = id_stmt
+        .query_map(params![namespace, relation], |r| r.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Step 3: delete in chunks of 1000 (memory_relationships + relationships).
+    let mut total_deleted: usize = 0;
+    for chunk in rel_ids.chunks(1000) {
+        for &rel_id in chunk {
+            conn.execute(
+                "DELETE FROM memory_relationships WHERE relationship_id = ?1",
+                params![rel_id],
+            )?;
+            let affected =
+                conn.execute("DELETE FROM relationships WHERE id = ?1", params![rel_id])?;
+            total_deleted += affected;
+        }
+    }
+
+    // Step 4: recalculate degree for all affected entities.
+    for &eid in &entity_ids {
+        recalculate_degree(conn, eid)?;
+    }
+
+    Ok((total_deleted, entity_ids))
+}
+
 pub fn knn_search(
     conn: &Connection,
     embedding: &[f32],

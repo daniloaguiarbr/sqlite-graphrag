@@ -28,6 +28,7 @@
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
 - `link` `unlink` `related` gerenciam relacionamentos tipados entre entidades para travessia multi-hop
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` gerenciam o banco de dados
+- `cleanup-orphans` `prune-relations` removem entidades órfãs e relações fracas ou não utilizadas do grafo
 - `purge` `namespace-detect` cuidam de manutenção e resolução de namespace
 
 

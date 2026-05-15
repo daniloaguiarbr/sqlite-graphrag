@@ -331,6 +331,8 @@ pub enum Commands {
     Related(related::RelatedArgs),
     /// Export a graph snapshot in json, dot or mermaid
     Graph(graph_export::GraphArgs),
+    /// Bulk-delete all relationships of a given type (e.g. mentions)
+    PruneRelations(prune_relations::PruneRelationsArgs),
     /// Remove entities that have no memories and no relationships
     CleanupOrphans(cleanup_orphans::CleanupOrphansArgs),
     /// Manage cached resources (embedding models, etc.)

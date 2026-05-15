@@ -1431,3 +1431,37 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 ### See Also
 - Recipe "How to bulk-import a knowledge base directory"
 - Recipe "How to handle exit codes in automated pipelines"
+
+
+## How To Bulk-Delete Relationships By Type
+### Recipe — Clean up noisy NER-generated edges
+- Use `prune-relations` to remove low-signal relationship types in bulk
+- Preview with `--dry-run` before committing
+- Clean orphaned entities afterward
+
+#### Step 1 — Audit relationship distribution
+```bash
+sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
+```
+
+#### Step 2 — Dry-run the prune
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+```
+
+#### Step 3 — Execute the prune
+```bash
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
+
+#### Step 4 — Clean orphaned entities
+```bash
+sqlite-graphrag cleanup-orphans --dry-run --json
+sqlite-graphrag cleanup-orphans --yes --json
+```
+
+#### Step 5 — Verify graph health
+```bash
+sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
+sqlite-graphrag health --json | jaq '.integrity_ok'
+```

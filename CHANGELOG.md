@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.50] - 2026-05-15
+
+### Added
+- New `prune-relations` subcommand for bulk-deleting relationships by type (H8). Supports `--dry-run`, `--yes`, `--namespace`, and `--json` flags. Includes `after_long_help` with usage examples.
+- V011 migration adds `idx_relationships_ns_relation` index for efficient relation-type filtering.
+- Daemon auto-restart on version mismatch (H7): CLI now detects when the running daemon is an older version and automatically restarts it before the first embedding request. Limited to one restart attempt per process to prevent loops.
+- New constant `DAEMON_VERSION_RESTART_WAIT_MS` (5 seconds) for daemon restart timeout.
+- New constant `CHUNK_BATCH_SIZE` (16) for future streaming embedding pipeline.
+
+### Changed
+- `warn_if_non_canonical` now called in `unlink` (H1) and `related` (H2) commands for consistency with `link`, `remember`, and `ingest`.
+- `related --help` now documents the 12 canonical relation types and custom relation support (H6).
+- `errors_msg::*` functions in `src/i18n.rs` always return English (H3). Portuguese translations remain in `app_error_pt` for stderr via `localized_message_for()`. JSON stdout is now a fully deterministic English-only API contract.
+- `Vec::with_capacity()` applied in `graph.rs`, `ingest.rs`, `link.rs` where sizes are predictable (M2).
+- `.iter().cloned().collect()` replaced with `.iter().copied().collect()` for i64 values in `graph.rs` BFS (M1).
+- Graph export now emits `tracing::warn!` when edges reference missing entities instead of silently dropping them (C2).
+- Portuguese error string in remember.rs multi-chunk path replaced with English (H3).
+
+### Fixed
+- `graph_export.rs` silent edge discard: orphaned edges now logged with entity IDs and relation type (C2).
+- `unlink` and `related` commands now warn on non-canonical relations for consistency (H1, H2).
+- `errors_msg` module no longer returns Portuguese strings that leak into JSON stdout (H3).
+- `MIGRATION.md` updated with `.items` to `.entities` rename note (v1.0.44) and v1.0.49/v1.0.50 changes (L2).
+- Schema version bumped to 11 to match V011 migration.
+
+### Closed (false positives from gaps.md)
+- H4: SystemTime in daemon jitter was already fixed in v1.0.43 (uses fastrand). `now_epoch_ms()` legitimately uses SystemTime for epoch timestamps.
+- H5: EntityType is already a strict Clap `value_enum` enum with 13 validated variants.
+- M4: Ingest NDJSON streaming was already implemented via `mpsc::sync_channel`.
+- L1: All 28 subcommands already have `after_long_help`.
+- M5: GLiNER int8 failure on short texts is a model quantization limitation, not a code bug.
+
 ## [1.0.49] - 2026-05-15
 
 ### Changed

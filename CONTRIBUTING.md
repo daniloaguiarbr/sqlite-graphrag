@@ -91,6 +91,7 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Run `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"` locally before pushing
 - Documentation formatting rules are defined in `docs_rules/rules_rust_documentacao.md`
 - Bilingual README, CONTRIBUTING, SECURITY, and CODE_OF_CONDUCT MUST stay synchronized across EN and pt-BR
+- When adding or modifying CLI commands, update documentation in BOTH English and Portuguese files (e.g., `README.md` and `README.pt-BR.md`, `docs/HOW_TO_USE.md` and `docs/HOW_TO_USE.pt-BR.md`)
 - Update the CHANGELOG under the Unreleased section for every user-visible change
 
 

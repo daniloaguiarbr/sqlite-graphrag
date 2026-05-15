@@ -269,11 +269,19 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - ACEITAR `--source`/`--target` como aliases de `--from`/`--to`
 - TRATAR exit code 4 como aresta inexistente
 - TODOS os três argumentos são obrigatórios sem exceção
+- `--relation` aceita qualquer string em kebab-case ou snake_case; valores não canônicos emitem `tracing::warn!` desde v1.0.50
 ### OBRIGATÓRIO — Limpeza de Entidades Órfãs (cleanup-orphans)
 - EXECUTAR `cleanup-orphans --dry-run` para auditar
 - APLICAR `--yes` em pipelines automatizados
 - REMOVE entidades sem memórias vinculadas nem arestas
 - RODAR periodicamente após operações `forget` em massa
+### OBRIGATÓRIO — Remoção em Massa de Relacionamentos (prune-relations)
+- USAR `prune-relations --relation <tipo> --yes` para remoção em massa de todos os relacionamentos de um tipo
+- USAR `--dry-run` para visualizar a contagem antes de confirmar
+- USAR `--yes` para pular confirmação interativa em pipelines automatizados
+- ACEITA qualquer string em kebab-case ou snake_case como relação
+- EXECUTAR `cleanup-orphans` depois para remover entidades sem relacionamentos restantes
+- JSON response: `action` (`"pruned"` `"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
 ### Padrão Correto — Round-Trip Forget e Restore
 - `sqlite-graphrag forget --name decisao-x`
 - `sqlite-graphrag history --name decisao-x --json | jaq '.deleted'`
@@ -344,6 +352,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - DOIS hops revelam conhecimento transitivo invisível à busca vetorial
 - DISTÂNCIA de hop entrega sinal explícito ao orquestrador
 - USAR quando a query exige raciocínio multi-passo encadeado
+- Filtro `--relation` aceita qualquer string em kebab-case ou snake_case; valores não canônicos emitem `tracing::warn!` desde v1.0.50
 ### OBRIGATÓRIO — Camada 3 Alternativa com graph traverse
 - USAR `graph traverse --from <raiz> --depth <N>` para subgrafo focado
 - PADRÃO de profundidade é 2 quando omitido
@@ -410,6 +419,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - USAR `--format mermaid` para embutir em Markdown
 - GRAVAR direto em arquivo via `--output <PATH>`
 - INSPECIONAR `nodes` e `edges` no JSON exportado
+- EDGES referenciando entidades inexistentes são logadas via `tracing::warn!` e ignoradas desde v1.0.50
 ### OBRIGATÓRIO — Enumeração de Entidades (graph entities)
 - USAR `graph entities --json` para listar todas as entidades
 - ACESSAR via `jaq -r '.entities[].name'` (campo é `entities`, NÃO `items`)
@@ -431,6 +441,67 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `organization`, `location`, `date`
 
 
+## Qualidade do Grafo Dirigida por LLM
+### OBRIGATÓRIO — Tabela de Mapeamento de Relações
+- MAPEAR relações não canônicas para equivalentes canônicos antes de persistir
+- `adds` mapeia para `causes` (criação implica causalidade)
+- `creates` mapeia para `causes` (mesma lógica)
+- `implements` mapeia para `supports` (implementação suporta um design)
+- `blocks` mapeia para `contradicts` (bloqueio contradiz progresso)
+- `tested-by` mapeia para `related` (teste é uma forma de relação)
+- `part-of` mapeia para `applies-to` (parte se aplica ao todo)
+- PREFERIR o valor canônico sobre strings customizadas para evitar ruído de `tracing::warn!`
+- RELAÇÕES customizadas são aceitas mas canônicas geram melhor recall cross-memory
+### OBRIGATÓRIO — Curadoria de Entidades
+- EXTRAIR apenas conceitos específicos do domínio: projetos reais, ferramentas, pessoas, decisões, arquivos
+- NUNCA criar entidades de stop words, artigos, pronomes ou verbos genéricos
+- NUNCA criar entidades de UUIDs, hashes, timestamps ou números de linha
+- NUNCA criar entidades de caracteres únicos ou abreviações de duas letras
+- ESCOLHER entity_type deliberadamente: `concept` para ideias abstratas, `tool` para software, `decision` para escolhas arquiteturais, `project` para codebases, `person` para contribuidores, `file` para caminhos de fonte
+- PREFERIR menos entidades de alta qualidade sobre muitas de baixo sinal
+- DEDUPLICAR: buscar `graph entities --json` antes de criar para evitar quase-duplicatas como "auth" e "authentication"
+### OBRIGATÓRIO — Curadoria de Relações
+- `depends-on`: A não funciona sem B (dependência forte)
+- `uses`: A utiliza B mas poderia substituí-lo (dependência suave)
+- `supports`: A reforça ou viabiliza B (design sustentando implementação)
+- `causes`: A dispara ou produz B (cadeia causal)
+- `fixes`: A resolve um problema descrito em B (correção de bug, resolução de incidente)
+- `contradicts`: A conflita com ou invalida B (designs concorrentes, bloqueios)
+- `applies-to`: A é relevante para ou tem escopo dentro de B (regra se aplica a módulo)
+- `follows`: A vem depois de B em sequência ou prioridade (ordenação de workflow)
+- `replaces`: A substitui B (migração, depreciação)
+- `tracked-in`: A é monitorado ou gerenciado em B (issue em tracker, métrica em dashboard)
+- `related`: A e B compartilham contexto mas nenhuma relação mais forte se aplica (usar com parcimônia, nunca como padrão)
+- `mentions`: A referencia B sem implicar relacionamento (usar APENAS para citações, nunca como catch-all)
+- ATRIBUIR `strength` baseado em acoplamento: 0.9 para dependências fortes, 0.7 para relações de design, 0.5 para links contextuais, 0.3 para referências fracas
+### OBRIGATÓRIO — Enrichment de Descrições
+- DESCRIÇÕES genéricas como "ingested from docs/README.md" desperdiçam o campo description
+- ATUALIZAR via `edit --name <nome> --description "resumo semântico conciso"`
+- BOA descrição responde: sobre o que é esta memória e POR QUE ela importa?
+- RUIM: "ingested from auth.md" → BOM: "JWT token rotation strategy with 15-min expiry and refresh flow"
+- RUIM: "user feedback" → BOM: "user prefers single bundled PR over many small ones for refactors"
+- LIMITAR a uma frase, 10-20 palavras, focando no insight único
+- EXECUTAR `list --type <tipo> --json | jaq '.items[] | select(.description | test("ingested|imported|added")) | .name'` para encontrar descrições genéricas
+- ENRIQUECIMENTO em lote: encaminhar nomes para loop chamando `edit --description` para cada
+### OBRIGATÓRIO — Workflow de Melhoria de Qualidade do Grafo
+- PASSO 1 — Auditar: `graph stats --json` para medir node_count, edge_count, avg_degree
+- PASSO 2 — Identificar ruído: `list --json | jaq '.items[] | select(.description | test("ingested|imported")) | .name'`
+- PASSO 3 — Enriquecer descrições: `edit --name <nome> --description "resumo semântico"`
+- PASSO 4 — Podar relações de baixo sinal: `prune-relations --relation mentions --dry-run --json`
+- PASSO 5 — Executar poda: `prune-relations --relation mentions --yes --json`
+- PASSO 6 — Limpar órfãos: `cleanup-orphans --yes --json`
+- PASSO 7 — Verificar: `health --json | jaq '.integrity_ok'`
+- AGENDAR este workflow após operações `ingest` em massa
+### PROIBIDO — Anti-padrões de LLM no Grafo
+- NUNCA usar `mentions` como relação padrão; adiciona ruído sem sinal
+- NUNCA criar entidades de detalhes de implementação (nomes de variáveis, números de linha, hashes de commit)
+- NUNCA definir todos os strengths como 1.0; diferenciar níveis de acoplamento
+- NUNCA deixar descrições "ingested from" sem enriquecimento
+- NUNCA criar edges redundantes (se A depends-on B, não adicionar também A uses B)
+- NUNCA persistir estado efêmero (branch atual, progresso WIP, workarounds temporários)
+- NUNCA pular deduplicação; buscar `hybrid-search` ou `graph entities` antes de criar
+
+
 ## Daemon e Latência Reduzida
 ### OBRIGATÓRIO — Reuso do Modelo de Embeddings
 - INICIAR `sqlite-graphrag daemon` em sessões longas de agente
@@ -440,6 +511,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - TRATAR daemon como opcional para invocações single-shot
 - INSPECIONAR contador de embedding requests no `--ping`
 - `daemon --ping` avisa quando versão do daemon difere do binário CLI; reiniciar com `daemon --stop` seguido de `daemon` após upgrades
+- Desde v1.0.50, a CLI reinicia automaticamente o daemon em caso de incompatibilidade de versão antes do primeiro request de embedding; `daemon --stop` manual após upgrades não é mais necessário
 
 
 ## Cache — Gestão de Modelos
@@ -485,6 +557,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `cache list` retorna modelos com tamanho em bytes e total de disco
+- `prune-relations` retorna `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `namespace`, `elapsed_ms`
 
 
 ## Códigos de Saída e Estratégia de Retry
@@ -544,10 +617,12 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 ### OBRIGATÓRIO — Diagnóstico de Schema
 - USAR `__debug_schema --json` para troubleshooting
 - INSPECIONAR `schema_version`, `objects`, `migrations`
+- VERSÃO atual do schema é 11 (V011 adiciona índice `idx_relationships_ns_relation`)
 - COMANDO oculto do `--help`, invocar pelo nome exato
 ### Padrão Correto — Cron Semanal
 - `sqlite-graphrag purge --retention-days 30 --yes`
 - `sqlite-graphrag cleanup-orphans --yes`
+- `sqlite-graphrag prune-relations --relation mentions --yes` (quando edges geradas por NER precisam de limpeza)
 - `sqlite-graphrag vacuum --json`
 - `sqlite-graphrag optimize --json`
 - `sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite`

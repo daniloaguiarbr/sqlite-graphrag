@@ -90,6 +90,7 @@ sqlite-graphrag daemon --db ./graphrag.sqlite --ping --json
 - Manual `sqlite-graphrag daemon` startup is now optional and useful mainly for explicit supervision or debugging
 - Use `--ping` to confirm the daemon is alive and inspect handled embedding request counts
 - `daemon --ping` emits a warning when the running daemon version differs from the CLI binary version; restart the daemon after upgrades with `daemon --stop` followed by `daemon`
+- Since v1.0.50, the CLI auto-restarts the daemon on version mismatch before the first embedding request, eliminating the need for manual `daemon --stop` after upgrades
 - Use `--stop` for a graceful shutdown after long-running batch or agent sessions
 - `--db` and `--json` are accepted for the same global CLI contract used by agent pipelines
 
@@ -474,6 +475,21 @@ sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends
 - Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: edge removed
 - Exit code 4: edge not found
+
+### Using prune-relations
+- Bulk-deletes all relationships matching a specific relation type across the namespace
+- Use `--dry-run` to preview the count before committing
+- Use `--yes` to skip interactive confirmation in automated pipelines
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
+- Canonical relation types: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Custom relation types (e.g., `implements`, `blocks`) are also accepted
+- After bulk deletion, run `cleanup-orphans` to remove entities left without relationships
+- JSON output: `{action, relation, count, namespace, elapsed_ms}`
+- Exit code 0: relationships deleted (or dry-run count returned)
+- Exit code 1: invalid relation format
 
 
 ## Additional Notes on Core Commands

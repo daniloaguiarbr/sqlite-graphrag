@@ -6,7 +6,8 @@
 use crate::constants::{
     DAEMON_AUTO_START_INITIAL_BACKOFF_MS, DAEMON_AUTO_START_MAX_BACKOFF_MS,
     DAEMON_AUTO_START_MAX_WAIT_MS, DAEMON_IDLE_SHUTDOWN_SECS, DAEMON_PING_TIMEOUT_MS,
-    DAEMON_SPAWN_BACKOFF_BASE_MS, DAEMON_SPAWN_LOCK_WAIT_MS, SQLITE_GRAPHRAG_VERSION,
+    DAEMON_SPAWN_BACKOFF_BASE_MS, DAEMON_SPAWN_LOCK_WAIT_MS, DAEMON_VERSION_RESTART_WAIT_MS,
+    SQLITE_GRAPHRAG_VERSION,
 };
 use crate::errors::AppError;
 use crate::{embedder, shutdown_requested};
@@ -22,10 +23,17 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const VERSION_NOT_CHECKED: u8 = 0;
+const VERSION_COMPATIBLE: u8 = 1;
+const VERSION_RESTART_ATTEMPTED: u8 = 2;
+
+/// Guards against restart loops: tracks version check state per process lifetime.
+static DAEMON_VERSION_STATE: AtomicU8 = AtomicU8::new(VERSION_NOT_CHECKED);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request", rename_all = "snake_case")]
@@ -452,11 +460,91 @@ fn should_autostart(cli_flag: bool) -> bool {
     !autostart_disabled_by_env()
 }
 
+/// Checks whether a running daemon has a different version from the current CLI binary.
+/// If a mismatch is detected, shuts down the stale daemon, waits for it to exit, and
+/// re-spawns a fresh one. The `VERSION_RESTART_ATTEMPTED` state prevents infinite loops:
+/// this function is a no-op after the first attempt regardless of outcome.
+fn maybe_restart_for_version_mismatch(models_dir: &Path) -> Result<(), AppError> {
+    if DAEMON_VERSION_STATE
+        .compare_exchange(
+            VERSION_NOT_CHECKED,
+            VERSION_COMPATIBLE,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        // Already checked (compatible) or already attempted a restart — skip.
+        return Ok(());
+    }
+
+    let response = match try_ping(models_dir)? {
+        Some(r) => r,
+        None => return Ok(()), // no daemon running, nothing to check
+    };
+
+    let daemon_version = match &response {
+        DaemonResponse::Ok { version, .. } => version.as_str(),
+        _ => return Ok(()), // unexpected response shape, skip
+    };
+
+    if daemon_version == SQLITE_GRAPHRAG_VERSION {
+        return Ok(()); // versions match, state already set to COMPATIBLE
+    }
+
+    // Mismatch detected — mark as restart-attempted so we never loop.
+    DAEMON_VERSION_STATE.store(VERSION_RESTART_ATTEMPTED, Ordering::SeqCst);
+
+    tracing::warn!(
+        daemon_version = %daemon_version,
+        cli_version = SQLITE_GRAPHRAG_VERSION,
+        "daemon version mismatch detected; auto-restarting daemon"
+    );
+
+    // Send shutdown request.
+    try_shutdown(models_dir)?;
+
+    // Wait for the stale daemon to exit.
+    wait_for_daemon_exit(models_dir)?;
+
+    // Re-spawn the daemon via the existing mechanism.
+    ensure_daemon_running(models_dir)?;
+
+    Ok(())
+}
+
+/// Polls until the daemon stops responding to pings, with exponential backoff.
+/// Starts at 50 ms, doubles each iteration, caps at 500 ms per sleep.
+/// Returns `Ok(())` once the daemon is gone or the timeout is reached.
+fn wait_for_daemon_exit(models_dir: &Path) -> Result<(), AppError> {
+    let deadline = Instant::now() + Duration::from_millis(DAEMON_VERSION_RESTART_WAIT_MS);
+    let mut sleep_ms: u64 = 50;
+
+    while Instant::now() < deadline {
+        if try_ping(models_dir)?.is_none() {
+            tracing::debug!("stale daemon exited after version-mismatch shutdown");
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(sleep_ms));
+        sleep_ms = (sleep_ms * 2).min(500);
+    }
+
+    tracing::warn!(
+        timeout_ms = DAEMON_VERSION_RESTART_WAIT_MS,
+        "timed out waiting for stale daemon to exit after version-mismatch shutdown"
+    );
+    Ok(())
+}
+
 fn request_or_autostart(
     models_dir: &Path,
     request: &DaemonRequest,
     cli_autostart: bool,
 ) -> Result<Option<DaemonResponse>, AppError> {
+    if DAEMON_VERSION_STATE.load(Ordering::SeqCst) == VERSION_NOT_CHECKED {
+        maybe_restart_for_version_mismatch(models_dir)?;
+    }
+
     if let Some(response) = request_if_available(models_dir, request)? {
         clear_spawn_backoff_state(models_dir).ok();
         return Ok(Some(response));
@@ -724,5 +812,24 @@ mod tests {
         let base = PathBuf::from("/tmp/sqlite-graphrag-cache-test");
         let models_dir = base.join("models");
         assert_eq!(daemon_control_dir(&models_dir), base);
+    }
+
+    #[test]
+    fn version_state_constants_are_distinct() {
+        assert_ne!(VERSION_NOT_CHECKED, VERSION_COMPATIBLE);
+        assert_ne!(VERSION_NOT_CHECKED, VERSION_RESTART_ATTEMPTED);
+        assert_ne!(VERSION_COMPATIBLE, VERSION_RESTART_ATTEMPTED);
+    }
+
+    #[test]
+    fn wait_for_daemon_exit_immediate_when_not_running() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models_dir = tmp.path().join("cache").join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        let start = Instant::now();
+        wait_for_daemon_exit(&models_dir).unwrap();
+        // Without a daemon, the first ping returns None and the function exits immediately.
+        assert!(start.elapsed() < Duration::from_millis(500));
     }
 }

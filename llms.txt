@@ -28,6 +28,7 @@
 - `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle
 - `link` `unlink` `related` manage typed entity relationships for multi-hop traversal
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database
+- `cleanup-orphans` `prune-relations` remove orphaned entities and weak or unused relations from the graph
 - `purge` `namespace-detect` handle maintenance and namespace resolution
 
 

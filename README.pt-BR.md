@@ -46,6 +46,7 @@ sqlite-graphrag --version
 ### Contrato de CLI de primeira classe para orquestração
 - Todo subcomando aceita `--json` produzindo payloads determinísticos em stdout
 - Toda invocação pode continuar stateless, mas comandos pesados sobem um daemon persistente para inferência de embeddings automaticamente, reutilizando-o entre chamadas (este é o autostart do daemon, separado da extração automática de entidades)
+- Após upgrades do binário, a CLI detecta automaticamente incompatibilidade de versão com o daemon em execução e o reinicia de forma transparente antes do primeiro request de embedding (desde v1.0.50)
 - `sqlite-graphrag daemon` continua existindo para controle explícito, mas o caminho comum não exige mais startup manual
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin é explícito: use `--body-stdin` para texto ou `--graph-stdin` para um objeto `{body?, entities, relationships}`; arrays crus de entidades e relacionamentos usam `--entities-file` e `--relationships-file`
@@ -382,6 +383,12 @@ sqlite-graphrag graph entities --entity-type organization --limit 50 --json
 sqlite-graphrag cleanup-orphans --dry-run --json
 sqlite-graphrag cleanup-orphans --yes --json
 ```
+### Remoção em massa de relacionamentos por tipo
+<!-- skip-test: requer que existam relacionamentos no namespace. -->
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
 ### Limpe os modelos de embedding/NER em cache no diretório XDG
 <!-- skip-test: apaga o cache de modelos de embedding; seguro em produção, mas no suite de integração obriga um re-download caro nos comandos seguintes. -->
 ```bash
@@ -450,6 +457,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Apaga permanentemente memórias soft-deleted |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entidades sem memórias e sem relacionamentos |
+| `prune-relations` | `--relation <tipo>`, `--namespace`, `--dry-run`, `--yes` | Remove em massa todos os relacionamentos de um determinado tipo |
 
 ### Subcomandos de `cache`
 | Subcomando | Descrição |
@@ -755,7 +763,7 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Contratos canônicos para cada resposta de subcomando
 - JSON Schemas autoritativos para cada resposta `--json` ficam em [`docs/schemas/`](docs/schemas/) e são versionados junto com a crate
-- 30 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`
+- 33 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`
 - Trate estes schemas como o contrato de agente; SKILL.md documenta as mesmas formas em formato humano
 - Valide consumidores downstream com qualquer validador JSON Schema padrão (e.g. `ajv`, `jsonschema`)
 

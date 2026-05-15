@@ -58,6 +58,7 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
 
     let relation_str = &args.relation;
+    crate::parsers::warn_if_non_canonical(relation_str);
 
     let mut conn = open_rw(&paths.db)?;
 

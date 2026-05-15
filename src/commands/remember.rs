@@ -575,7 +575,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
         let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
-                "cache de embeddings de chunks ausente no caminho multi-chunk do remember"
+                "chunk embeddings cache missing in multi-chunk remember path"
             ))
         })?;
 

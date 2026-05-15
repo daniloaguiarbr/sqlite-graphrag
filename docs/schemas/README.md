@@ -38,6 +38,9 @@
 | `graph stats` | `graph-stats.schema.json` |
 | `graph entities` | `graph-entities.schema.json` |
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
+| `prune-relations` | `prune-relations.schema.json` |
+| `ingest` (per-file event) | `ingest-file-event.schema.json` |
+| `ingest` (summary) | `ingest-summary.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`

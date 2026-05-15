@@ -90,6 +90,7 @@ sqlite-graphrag daemon --db ./graphrag.sqlite --ping --json
 - Subir `sqlite-graphrag daemon` manualmente agora é opcional e útil principalmente para supervisão explícita ou debug
 - Use `--ping` para confirmar que o daemon está vivo e inspecionar o contador de requests de embedding atendidos
 - `daemon --ping` emite um aviso quando a versão do daemon em execução difere da versão do binário CLI; reinicie o daemon após upgrades com `daemon --stop` seguido de `daemon`
+- Desde v1.0.50, a CLI reinicia automaticamente o daemon em caso de incompatibilidade de versão antes do primeiro request de embedding, eliminando a necessidade de `daemon --stop` manual após upgrades
 - Use `--stop` para shutdown gracioso após sessões longas de agentes ou ingestão em lote
 - `--db` e `--json` são aceitos para manter o mesmo contrato global da CLI usado por pipelines de agentes
 
@@ -478,6 +479,21 @@ sqlite-graphrag unlink --source design-auth --target spec-jwt --relation depends
 - Ambas as entidades `--from`/`--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Exit code 0: aresta removida
 - Exit code 4: aresta não encontrada
+
+### Usando prune-relations
+- Remove em massa todos os relacionamentos que correspondem a um tipo específico de relação no namespace
+- Use `--dry-run` para visualizar a contagem antes de confirmar
+- Use `--yes` para pular confirmação interativa em pipelines automatizados
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
+- Tipos de relação canônicos: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
+- Tipos customizados de relação (ex.: `implements`, `blocks`) também são aceitos
+- Após remoção em massa, execute `cleanup-orphans` para remover entidades sem relacionamentos restantes
+- Saída JSON: `{action, relation, count, namespace, elapsed_ms}`
+- Exit code 0: relacionamentos removidos (ou contagem dry-run retornada)
+- Exit code 1: formato de relação inválido
 
 
 ## Notas Adicionais Sobre Comandos Essenciais

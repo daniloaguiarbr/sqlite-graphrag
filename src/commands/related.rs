@@ -44,6 +44,10 @@ pub struct RelatedArgs {
     /// Maximum graph hop count. Also accepts the alias `--hops`.
     #[arg(long, alias = "hops", default_value_t = DEFAULT_MAX_HOPS)]
     pub max_hops: u32,
+    /// Filter results to a specific relation type. Canonical values:
+    /// applies-to, uses, depends-on, causes, fixes, contradicts, supports,
+    /// follows, related, mentions, replaces, tracked-in.
+    /// Any kebab-case or snake_case string is also accepted as a custom relation.
     #[arg(long, value_parser = crate::parsers::parse_relation)]
     pub relation: Option<String>,
     #[arg(long, default_value_t = DEFAULT_MIN_WEIGHT)]
@@ -149,6 +153,9 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     };
 
     let relation_filter = args.relation;
+    if let Some(ref r) = relation_filter {
+        crate::parsers::warn_if_non_canonical(r);
+    }
     let results = traverse_related(
         &conn,
         seed_memory_id,

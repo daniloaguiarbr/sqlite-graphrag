@@ -24,6 +24,9 @@
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## Comportamento do Daemon (desde v1.0.50)
+- Após upgrades do binário, a CLI reinicia automaticamente o daemon em caso de incompatibilidade de versão (desde v1.0.50)
+
 
 ## Tabela Resumo
 ### Catálogo — Toda Integração Suportada

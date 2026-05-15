@@ -118,6 +118,29 @@ pub fn tr(en: &'static str, pt: &'static str) -> &'static str {
     }
 }
 
+/// Progress message emitted after pruning relationships.
+///
+/// English-only: this string is emitted to stderr as a progress notice and
+/// does not vary by language because the prune-relations command targets
+/// agent-first pipelines where deterministic output matters.
+pub fn relations_pruned(count: usize, relation: &str, namespace: &str) -> String {
+    format!("pruned {count} '{relation}' relationships in namespace '{namespace}'")
+}
+
+/// Progress message for dry-run preview of prune-relations.
+///
+/// English-only: emitted to stderr as a progress notice.
+pub fn prune_dry_run(count: usize, relation: &str) -> String {
+    format!("dry run: {count} '{relation}' relationships would be removed")
+}
+
+/// Warning message when --yes is not passed for destructive prune-relations.
+///
+/// English-only: emitted to stderr as a progress notice.
+pub fn prune_requires_yes() -> String {
+    "destructive operation requires --yes flag; use --dry-run to preview".to_string()
+}
+
 /// Localized prefix for error messages displayed to the end user.
 pub fn error_prefix() -> &'static str {
     match current() {
@@ -126,142 +149,71 @@ pub fn error_prefix() -> &'static str {
     }
 }
 
-/// Localized error messages for `AppError` variants.
+/// Error messages for `AppError` variants — always English.
+///
+/// These strings end up inside `AppError` inner fields and may appear in
+/// deterministic JSON stdout (e.g. ingest NDJSON). Portuguese translations
+/// for stderr live in `pub mod app_error_pt` and are applied by
+/// `localized_message_for(Language::Portuguese)`.
 pub mod errors_msg {
-    use super::current;
-    use crate::i18n::Language;
-
     pub fn memory_not_found(nome: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => {
-                format!("memory '{nome}' not found in namespace '{namespace}'")
-            }
-            Language::Portuguese => {
-                format!("memória '{nome}' não encontrada no namespace '{namespace}'")
-            }
-        }
+        format!("memory '{nome}' not found in namespace '{namespace}'")
     }
 
     pub fn memory_or_entity_not_found(name: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => {
-                format!("memory or entity '{name}' not found in namespace '{namespace}'")
-            }
-            Language::Portuguese => {
-                format!("memória ou entidade '{name}' não encontrada no namespace '{namespace}'")
-            }
-        }
+        format!("memory or entity '{name}' not found in namespace '{namespace}'")
     }
 
     pub fn database_not_found(path: &str) -> String {
-        match current() {
-            Language::English => {
-                format!("database not found at {path}. Run 'sqlite-graphrag init' first.")
-            }
-            Language::Portuguese => format!(
-                "banco de dados não encontrado em {path}. Execute 'sqlite-graphrag init' primeiro."
-            ),
-        }
+        format!("database not found at {path}. Run 'sqlite-graphrag init' first.")
     }
 
     pub fn entity_not_found(nome: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => {
-                format!("entity \"{nome}\" does not exist in namespace \"{namespace}\"")
-            }
-            Language::Portuguese => {
-                format!("entidade \"{nome}\" não existe no namespace \"{namespace}\"")
-            }
-        }
+        format!("entity \"{nome}\" does not exist in namespace \"{namespace}\"")
     }
 
     pub fn relationship_not_found(de: &str, rel: &str, para: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => format!(
-                "relationship \"{de}\" --[{rel}]--> \"{para}\" does not exist in namespace \"{namespace}\""
-            ),
-            Language::Portuguese => format!(
-                "relacionamento \"{de}\" --[{rel}]--> \"{para}\" não existe no namespace \"{namespace}\""
-            ),
-        }
+        format!(
+            "relationship \"{de}\" --[{rel}]--> \"{para}\" does not exist in namespace \"{namespace}\""
+        )
     }
 
     pub fn duplicate_memory(nome: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => format!(
-                "memory '{nome}' already exists in namespace '{namespace}'. Use --force-merge to update."
-            ),
-            Language::Portuguese => format!(
-                "memória '{nome}' já existe no namespace '{namespace}'. Use --force-merge para atualizar."
-            ),
-        }
+        format!(
+            "memory '{nome}' already exists in namespace '{namespace}'. Use --force-merge to update."
+        )
     }
 
     pub fn optimistic_lock_conflict(expected: i64, current_ts: i64) -> String {
-        match current() {
-            Language::English => format!(
-                "optimistic lock conflict: expected updated_at={expected}, but current is {current_ts}"
-            ),
-            Language::Portuguese => format!(
-                "conflito de optimistic lock: esperava updated_at={expected}, mas atual é {current_ts}"
-            ),
-        }
+        format!(
+            "optimistic lock conflict: expected updated_at={expected}, but current is {current_ts}"
+        )
     }
 
     pub fn version_not_found(versao: i64, nome: &str) -> String {
-        match current() {
-            Language::English => format!("version {versao} not found for memory '{nome}'"),
-            Language::Portuguese => {
-                format!("versão {versao} não encontrada para a memória '{nome}'")
-            }
-        }
+        format!("version {versao} not found for memory '{nome}'")
     }
 
     pub fn no_recall_results(max_distance: f32, query: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => format!(
-                "no results within --max-distance {max_distance} for query '{query}' in namespace '{namespace}'"
-            ),
-            Language::Portuguese => format!(
-                "nenhum resultado dentro de --max-distance {max_distance} para a consulta '{query}' no namespace '{namespace}'"
-            ),
-        }
+        format!(
+            "no results within --max-distance {max_distance} for query '{query}' in namespace '{namespace}'"
+        )
     }
 
     pub fn soft_deleted_memory_not_found(nome: &str, namespace: &str) -> String {
-        match current() {
-            Language::English => {
-                format!("soft-deleted memory '{nome}' not found in namespace '{namespace}'")
-            }
-            Language::Portuguese => {
-                format!("memória soft-deleted '{nome}' não encontrada no namespace '{namespace}'")
-            }
-        }
+        format!("soft-deleted memory '{nome}' not found in namespace '{namespace}'")
     }
 
     pub fn concurrent_process_conflict() -> String {
-        match current() {
-            Language::English => {
-                "optimistic lock conflict: memory was modified by another process".to_string()
-            }
-            Language::Portuguese => {
-                "conflito de optimistic lock: memória foi modificada por outro processo".to_string()
-            }
-        }
+        "optimistic lock conflict: memory was modified by another process".to_string()
     }
 
     pub fn entity_limit_exceeded(max: usize) -> String {
-        match current() {
-            Language::English => format!("entities exceed limit of {max}"),
-            Language::Portuguese => format!("entidades excedem o limite de {max}"),
-        }
+        format!("entities exceed limit of {max}")
     }
 
     pub fn relationship_limit_exceeded(max: usize) -> String {
-        match current() {
-            Language::English => format!("relationships exceed limit of {max}"),
-            Language::Portuguese => format!("relacionamentos excedem o limite de {max}"),
-        }
+        format!("relationships exceed limit of {max}")
     }
 }
 

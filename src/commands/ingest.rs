@@ -684,8 +684,8 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     }
 
     let mut slots_meta: Vec<SlotMeta> = Vec::with_capacity(files.len());
-    let mut process_items: Vec<ProcessItem> = Vec::new();
-    let mut truncations: Vec<(String, String)> = Vec::new();
+    let mut process_items: Vec<ProcessItem> = Vec::with_capacity(files.len());
+    let mut truncations: Vec<(String, String)> = Vec::with_capacity(files.len());
 
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();

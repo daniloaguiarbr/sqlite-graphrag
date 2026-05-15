@@ -24,6 +24,9 @@
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` tunes the entity confidence threshold (float, default `0.5`).
 - Entity types now include `organization`, `location`, `date` alongside `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## Daemon Behavior (since v1.0.50)
+- After binary upgrades, the CLI auto-restarts the daemon on version mismatch (since v1.0.50)
+
 
 ## Summary Table
 ### Catalog — Every Supported Integration

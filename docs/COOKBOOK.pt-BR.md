@@ -1429,3 +1429,37 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 ### See Also
 - Receita "Como Importar Em Massa Um Diretório De Base De Conhecimento"
 - Receita "Como Tratar Exit Codes Em Pipelines Automatizados"
+
+
+## Como Remover Relacionamentos Em Massa Por Tipo
+### Receita — Limpar arestas de baixo sinal geradas por NER
+- Use `prune-relations` para remover tipos de relação de baixo valor em massa
+- Visualize com `--dry-run` antes de confirmar
+- Limpe entidades órfãs em seguida
+
+#### Passo 1 — Auditar distribuição de relacionamentos
+```bash
+sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
+```
+
+#### Passo 2 — Dry-run do prune
+```bash
+sqlite-graphrag prune-relations --relation mentions --dry-run --json
+```
+
+#### Passo 3 — Executar o prune
+```bash
+sqlite-graphrag prune-relations --relation mentions --yes --json
+```
+
+#### Passo 4 — Limpar entidades órfãs
+```bash
+sqlite-graphrag cleanup-orphans --dry-run --json
+sqlite-graphrag cleanup-orphans --yes --json
+```
+
+#### Passo 5 — Verificar saúde do grafo
+```bash
+sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
+sqlite-graphrag health --json | jaq '.integrity_ok'
+```

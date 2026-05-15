@@ -173,6 +173,9 @@ pub const DAEMON_IDLE_SHUTDOWN_SECS: u64 = 600;
 /// Maximum wait time for the daemon to become healthy after auto-start.
 pub const DAEMON_AUTO_START_MAX_WAIT_MS: u64 = 5_000;
 
+/// Maximum wait time (ms) for a stale daemon to exit after a version-mismatch shutdown.
+pub const DAEMON_VERSION_RESTART_WAIT_MS: u64 = 5_000;
+
 /// Initial polling interval to check whether the daemon became healthy.
 pub const DAEMON_AUTO_START_INITIAL_BACKOFF_MS: u64 = 50;
 
@@ -375,7 +378,7 @@ pub const SCHEMA_USER_VERSION: i64 = 49;
 /// Added in v1.0.27 as a runtime and test sanity check.
 /// Must be bumped in sync with new Refinery migrations; the unit test
 /// `schema_version_matches_migrations_count` validates this automatically.
-pub const CURRENT_SCHEMA_VERSION: u32 = 10;
+pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 
 #[cfg(test)]
 mod tests_schema_version {

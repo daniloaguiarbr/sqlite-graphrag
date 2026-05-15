@@ -170,6 +170,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
+| `cleanup-orphans` | `--dry-run`, `--yes` | Remove orphaned entities with no linked memories or edges |
+| `prune-relations` | `--min-weight <f>`, `--dry-run`, `--yes`, `--json` | Remove weak or unused relations from the graph |
 
 
 ## Environment Variables
@@ -272,6 +274,7 @@ RUN cargo install --locked sqlite-graphrag
 ### Measured on a 1000-memory database
 - Cold and warm timings depend on hardware, model residency, and database size
 - `recall` and `hybrid-search` become much cheaper when the daemon already holds the model
+- Since v1.0.50, the CLI auto-restarts a stale daemon on version mismatch before the first embedding request; manual `daemon --stop` after upgrades is no longer required
 - First `init` downloads the quantized model once and caches it locally
 - Embedding model uses roughly 1.1 GB of RAM per heavy process after the current calibration
 

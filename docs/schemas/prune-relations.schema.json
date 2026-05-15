@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/prune-relations.schema.json",
+  "title": "PruneRelationsResponse",
+  "description": "Response emitted by `sqlite-graphrag prune-relations` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "relation", "count", "entities_affected", "namespace", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":            { "type": "string", "enum": ["pruned", "dry_run"], "description": "Whether relationships were actually deleted or just counted." },
+    "relation":          { "type": "string", "description": "The relation type that was pruned (e.g. 'mentions')." },
+    "count":             { "type": "integer", "minimum": 0, "description": "Number of relationships deleted (or that would be deleted in dry_run)." },
+    "entities_affected": { "type": "integer", "minimum": 0, "description": "Number of distinct entities whose degree was recalculated." },
+    "namespace":         { "type": "string", "description": "Namespace in which the prune was executed." },
+    "elapsed_ms":        { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

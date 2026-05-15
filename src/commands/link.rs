@@ -101,7 +101,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-    let mut created_entities: Vec<String> = Vec::new();
+    let mut created_entities: Vec<String> = Vec::with_capacity(2);
 
     let source_id = match entities::find_entity_id(&tx, &namespace, &args.from)? {
         Some(id) => id,
