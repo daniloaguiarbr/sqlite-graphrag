@@ -32,12 +32,10 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             use-cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            use-cross: false
-            # macos-latest is now Apple Silicon (aarch64); we cross-compile to
-            # x86_64 via `rustup target add x86_64-apple-darwin`. The macos-13
-            # Intel runner was retired by GitHub in December 2025.
+          # v1.0.53: dropped `x86_64-apple-darwin` because `ort-sys` (the ONNX
+          # runtime backend used by `fastembed`) does not ship prebuilt binaries
+          # for Intel macOS. Releases v1.0.37-v1.0.53 all failed on this job.
+          # Intel Mac users should install via `cargo install sqlite-graphrag --locked`.
           - target: aarch64-apple-darwin
             os: macos-latest
             use-cross: false
