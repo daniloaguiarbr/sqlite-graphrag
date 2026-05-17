@@ -73,6 +73,44 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.55 — Documentation accuracy fixes for SKILL.md, CLAUDE.md, and exit code table
+
+#### Export summary field corrected from `total` to `exported`
+- SKILL.md previously documented the export summary field as `total`; the actual JSON field is `exported`
+- Agents parsing `.total` from export summary should switch to `.exported`
+
+#### List response fields corrected
+- SKILL.md previously documented `total`, `limit`, `offset` as top-level fields in the `list` response
+- The actual response contains only `items[]` and `elapsed_ms` at the top level
+- Agents parsing `.total`, `.limit`, or `.offset` from list should remove those references
+
+#### Invalid timezone exit code corrected from 1 to 2
+- `--tz` with an invalid timezone value returns exit 2 (Clap argument parsing), not exit 1 (application validation)
+- Clap validates `chrono_tz::Tz` via `FromStr` before application code runs
+- Exit code 2 now explicitly documented in SKILL.md and CLAUDE.md exit code tables
+
+#### Stats legacy alias fields documented
+- `stats` response includes undocumented legacy aliases: `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
+- These are now documented; prefer the canonical field names (`db_size_bytes`, `relationships`, etc.)
+
+### v1.0.54 — WAL checkpoint for prune-relations, empty body validation, memory_type consistency
+
+#### WAL checkpoint TRUNCATE added to prune-relations
+- `prune-relations` was the last remaining write command without `PRAGMA wal_checkpoint(TRUNCATE)` after commit
+- All 12 write commands now checkpoint consistently; no action needed
+
+#### Empty body validation with --graph-stdin
+- `remember --graph-stdin` with empty body and no entities now correctly returns exit 1 (Validation) instead of silently creating an inert memory with zero chunks
+- Agents that relied on empty-body `--graph-stdin` creating a memory must provide a non-empty body or at least one entity
+
+#### memory_type field added to list and export JSON
+- `list` and `export` JSON output now includes `memory_type` alongside `type`, consistent with `read`
+- Agents parsing `.memory_type` from `list` or `export` no longer receive null
+- No action needed: the existing `type` field remains unchanged
+
+#### Vec::with_capacity applied in 9 cold paths
+- Performance improvement only; no API or behavioral changes
+
 ### v1.0.53 — WAL checkpoint after writes, export --json
 
 #### WAL checkpoint TRUNCATE on every write command

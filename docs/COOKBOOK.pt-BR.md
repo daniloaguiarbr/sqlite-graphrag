@@ -764,7 +764,8 @@ sqlite-graphrag remember --name "$NAME" --type project \
 rc=$?
 case $rc in
   0)  echo "Success" ;;
-  2)  echo "Duplicata ou soft-deleted: use --force-merge para restaurar e atualizar" ;;
+  2)  echo "Bad CLI argument (invalid flag, bad timezone): fix usage" ;;
+  9)  echo "Duplicata ou soft-deleted: use --force-merge para restaurar e atualizar" ;;
   3)  echo "Conflict: re-read and retry" ;;
   6)  echo "Payload too large: split body" ;;
   15) echo "Busy: widen --wait-lock" ;;
@@ -776,12 +777,12 @@ esac
 
 
 ### Explanation
-- 16 exit codes de 0 a 77 seguindo convenções sysexits.h para roteamento de erros parseável por máquina
+- 17 exit codes de 0 a 77 seguindo convenções sysexits.h para roteamento de erros parseável por máquina
 - Exit 3 significa conflito de locking otimista: recarregue a memória com `read --json` e tente novamente
 - Exit 13 significa falha parcial em lote: reprocesse apenas os itens falhos, NÃO o lote inteiro
 - Exit 75 e 77 sinalizam pressão de recursos: NUNCA aumente concorrência após receber esses códigos
 - Exit 15 significa banco ocupado: amplie `--wait-lock <ms>` para esperar mais antes de falhar
-- Tabela completa de códigos: 0=sucesso, 1=validação, 9=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
+- Tabela completa de códigos: 0=sucesso, 1=validação, 2=erro-argumento-Clap, 9=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
 
 
 ### Variants

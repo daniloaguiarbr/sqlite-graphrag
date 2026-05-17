@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.55] - 2026-05-17
+
+### Fixed
+- SKILL.md (EN+PT): export summary field corrected from `total` to `exported` to match actual JSON output from `ExportSummary` struct (G1).
+- SKILL.md (EN+PT): `list` response-level fields corrected — removed nonexistent `total`, `limit`, `offset` fields; actual response contains only `items[]` and `elapsed_ms` (G2).
+- SKILL.md (EN+PT) and CLAUDE.md: `--tz` with invalid timezone now correctly documented under exit 2 (Clap argument parsing) instead of exit 1 (application validation). Clap's `FromStr` for `chrono_tz::Tz` validates before application code runs (G3).
+- SKILL.md (EN+PT): exit code 2 added to exit code table with description covering Clap argument parsing errors including invalid timezone values (G3+G4).
+- SKILL.md (EN+PT): `stats` response now documents legacy alias fields `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total` (G6).
+- AGENTS.md (EN+PT): `--tz` invalid IANA timezone corrected from exit 1 to exit 2; `bad timezone` moved from exit 1 to exit 2 description; `stats` legacy aliases documented.
+- HOW_TO_USE.md (EN+PT): export summary field corrected from `memories_total` to `exported`.
+- COOKBOOK.md (EN+PT): exit code count updated from 16 to 17; exit 2 added to exit code table and bash case example.
+- SKILL.md, AGENTS.md, CLAUDE.md (EN+PT): `--min-weight` default corrected from 0.0 to 0.3 to match `src/commands/hybrid_search.rs:60`.
+- README.md (EN+PT): exit code 2 added to exit code table — was missing between exit 1 and exit 9.
+- README.md (EN+PT), llms.txt (EN+PT): spurious exit code 73 (`EX_NOPERM`) removed — not implemented in source code; only 17 exit codes exist (0-77).
+
 ## [1.0.54] - 2026-05-17
 
 ### Fixed

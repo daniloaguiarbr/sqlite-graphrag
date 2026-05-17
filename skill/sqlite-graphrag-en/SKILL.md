@@ -68,7 +68,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `SQLITE_GRAPHRAG_DISPLAY_TZ=<IANA>` to persist
 - AFFECTS only `*_iso` fields in the JSON
 - INTEGER epoch fields remain in UTC
-- ABORT when an invalid IANA name returns exit 1 (Validation)
+- ABORT when an invalid IANA name returns exit 2 (Clap argument parsing)
 ### REQUIRED — Log Format
 - ENABLE `SQLITE_GRAPHRAG_LOG_FORMAT=json` for log aggregators
 - DEFAULT `pretty` is intended for humans in the terminal only
@@ -115,6 +115,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER rely on GLiNER auto-extraction in RAM-sensitive CI
 - NEVER exceed the relations cap per memory without adjusting env
 - NEVER use `remember` in a loop when `ingest` covers the case
+- NEVER pass empty body with no entities via `--graph-stdin`; since v1.0.54 this returns exit 1 (Validation) instead of silently creating an inert memory with zero chunks
 ### Correct Pattern — remember Examples
 - `sqlite-graphrag remember --name design-auth --type decision --description "auth JWT" --body-stdin < doc.md`
 - `sqlite-graphrag remember --name doc-readme --type document --description "import" --body-file README.md --force-merge`
@@ -334,7 +335,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — hybrid-search with Graph Expansion
 - ENABLE graph traversal via `--with-graph` to discover connected memories
 - ADJUST depth with `--max-hops <N>` (default 2)
-- FILTER weak edges with `--min-weight <F>` (default 0.0)
+- FILTER weak edges with `--min-weight <F>` (default 0.3)
 - GRAPH results are in `graph_matches[]`, SEPARATE from `results[]`
 - `graph_matches[]` uses RecallItem schema: `name`, `distance`, `source` ("graph"), `graph_depth`
 - READ BOTH `results[]` and `graph_matches[]` when `--with-graph` is active
@@ -559,10 +560,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `edit` returns `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` returns `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` returns `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
+- `list` response-level: `items[]`, `elapsed_ms`; each item has `id`, `memory_id`, `name`, `namespace`, `type`, `memory_type`, `description`, `snippet`, `updated_at`, `updated_at_iso`, `deleted_at?`, `deleted_at_iso?`
+- `export` per-line: `name`, `type`, `memory_type`, `description`, `body`, `namespace`, `created_at_iso`, `updated_at_iso`, `deleted_at_iso?`; summary line: `summary` (true), `exported`, `namespace`, `elapsed_ms`
 - `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `health` optionally returns `mentions_ratio` (float) and `mentions_warning` (string) when mentions exceed 50% of relationships
-- `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
+- `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
@@ -572,7 +575,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ## Exit Codes and Retry Strategy
 ### REQUIRED — Complete Exit Code Handling
 - `0` equals success; parse stdout
-- `1` equals validation (invalid weight, self-link, bad timezone, max-files exceeded)
+- `1` equals validation (invalid weight, self-link, max-files exceeded)
+- `2` equals Clap argument parsing error (invalid flag, bad timezone value, missing required arg)
 - `9` equals duplicate (memory already exists without `--force-merge`); since v1.0.51 also returned when the memory is soft-deleted — use `--force-merge` to restore and update, or `restore` to revive
 - `3` equals optimistic locking conflict; reload and retry
 - `4` equals entity, memory, or version not found

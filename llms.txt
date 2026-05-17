@@ -69,7 +69,8 @@
 ### Deterministic status for pipeline routing
 - `0` success: continue the agent loop
 - `1` validation or runtime failure: log and surface to operator
-- `2` duplicate detected or invalid CLI argument: fix then retry
+- `2` invalid CLI argument: fix usage then retry
+- `9` duplicate memory detected: skip or use `--force-merge`
 - `3` optimistic update conflict: re-read `updated_at` and retry
 - `4` memory or entity not found: handle missing resource gracefully
 - `5` namespace could not be resolved: pass `--namespace` explicitly
@@ -81,7 +82,6 @@
 - `14` filesystem I/O error: cache directory not writable, nonexistent ingest target directory
 - `15` database busy after retries: wait and retry
 - `20` internal or JSON serialization error
-- `73` memory guard rejected low RAM condition
 - `75` EX_TEMPFAIL: all concurrency slots busy, retry with backoff
 - `77` available RAM below minimum required to load embedding model
 
@@ -97,7 +97,7 @@
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.48 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.55 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

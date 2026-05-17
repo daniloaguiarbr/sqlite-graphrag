@@ -221,7 +221,8 @@ RUN cargo install --locked sqlite-graphrag
 | --- | --- | --- |
 | `0` | Success | Continue the agent loop |
 | `1` | Validation or runtime failure | Log and surface to operator |
-| `2` | CLI usage error or duplicate | Fix arguments then retry |
+| `2` | CLI usage error | Fix arguments then retry |
+| `9` | Duplicate memory detected | Skip or use `--force-merge` |
 | `3` | Optimistic update conflict | Re-read `updated_at` and retry |
 | `4` | Memory or entity not found | Handle missing resource gracefully |
 | `5` | Namespace limit or unresolved | Pass `--namespace` explicitly |
@@ -301,7 +302,7 @@ RUN cargo install --locked sqlite-graphrag
 
 
 ### Write Commands — Optimistic Locking Protects Concurrency
-- `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `2`
+- `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `9`
 - `rename` requires `--expected-updated-at` to detect stale writes via exit `3`
 - `edit` creates a new row in `memory_versions` preserving immutable history
 - `restore` rewinds content while appending a new version instead of overwriting
@@ -422,7 +423,7 @@ fd -e md docs/ -0 | xargs -0 -n 1 -I{} sh -c '
 '
 ```
 - `--body-stdin` pipes the Markdown body without quoting or shell escape accidents
-- Exit code `2` flags duplicates for you to skip cleanly inside the outer shell
+- Exit code `9` flags duplicates for you to skip cleanly inside the outer shell
 - Saves 4 hours per thousand files versus hand-crafted CSV loaders
 
 
@@ -509,7 +510,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.48 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.55 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

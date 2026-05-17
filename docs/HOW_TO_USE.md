@@ -312,7 +312,7 @@ sqlite-graphrag export --include-deleted --json
 ```
 - Prerequisites: an initialized database must exist
 - Supports `--namespace`, `--type`, `--include-deleted`, `--limit`, and `--offset` for filtering
-- Final summary line includes `memories_total` and `elapsed_ms`
+- Final summary line includes `exported` and `elapsed_ms`
 - Exit code 0: export completed
 
 ### Using edit

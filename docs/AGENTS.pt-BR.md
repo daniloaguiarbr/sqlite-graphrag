@@ -484,7 +484,7 @@ let output = Command::new("sqlite-graphrag")
 - USAR `SQLITE_GRAPHRAG_DISPLAY_TZ=<IANA>` para persistir
 - AFETA apenas campos `*_iso` no JSON
 - CAMPOS epoch inteiros permanecem em UTC
-- ABORTAR quando nome IANA inválido retorna exit 1 (Validation)
+- ABORTAR quando nome IANA inválido retorna exit 2 (parsing de argumentos Clap)
 ### OBRIGATÓRIO — Formato de Logs
 - ATIVAR `SQLITE_GRAPHRAG_LOG_FORMAT=json` para agregadores
 - PADRÃO `pretty` serve apenas para humanos no terminal
@@ -752,7 +752,7 @@ let output = Command::new("sqlite-graphrag")
 ### OBRIGATÓRIO — hybrid-search com Expansão de Grafo
 - ATIVAR travessia de grafo via `--with-graph` para descobrir memórias conectadas
 - AJUSTAR profundidade com `--max-hops <N>` (padrão 2)
-- FILTRAR arestas fracas com `--min-weight <F>` (padrão 0.0)
+- FILTRAR arestas fracas com `--min-weight <F>` (padrão 0.3)
 - RESULTADOS do grafo ficam em `graph_matches[]`, SEPARADOS de `results[]`
 - `graph_matches[]` usa schema RecallItem: `name`, `distance`, `source` ("graph"), `graph_depth`
 - LER AMBOS `results[]` e `graph_matches[]` quando `--with-graph` ativo
@@ -916,7 +916,7 @@ let output = Command::new("sqlite-graphrag")
 - `forget` retorna `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
 - `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos
 - `health.counts` contém: `memories`, `entities`, `relationships`, `vec_memories`
-- `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`
+- `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; também inclui aliases legados `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `exported`, `namespace`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
@@ -928,8 +928,8 @@ let output = Command::new("sqlite-graphrag")
 ## Códigos de Saída e Estratégia de Retry
 ### OBRIGATÓRIO — Tratamento Completo de Exit Codes
 - `0` igual sucesso, parsear stdout
-- `1` igual validação (peso inválido, self-link, timezone ruim, max-files excedido)
-- `2` igual erro de parsing de argumentos Clap (flags inválidas, args obrigatórios ausentes)
+- `1` igual validação (peso inválido, self-link, max-files excedido)
+- `2` igual erro de parsing de argumentos Clap (flags inválidas, timezone inválido, args obrigatórios ausentes)
 - `9` igual duplicata (memória já existe sem `--force-merge`); desde v1.0.51 também retornado quando a memória é soft-deleted — use `--force-merge` para restaurar e atualizar, ou `restore` para reviver
 - `3` igual conflito de locking otimista, recarregar e repetir
 - `4` igual entidade, memória ou versão não encontrada

@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.55**: Full doc audit — export summary `total`→`exported`, list response fields corrected, `--tz` exit code 1→2, exit 2 added to exit code table, stats legacy aliases documented
 - **v1.0.54**: WAL checkpoint for `prune-relations` (last missing command), `--graph-stdin` empty body validation, `memory_type` JSON field in `list`/`export`, `Vec::with_capacity` in 9 cold paths
 - **v1.0.53**: WAL checkpoint TRUNCATE after every write command for Dropbox/cloud-sync safety, `export --json` contract fix, `Vec::with_capacity` in 12 hot paths
 - **v1.0.52**: 12 gaps fixed, new `export` subcommand, exit code Duplicate 2→9 (breaking), `forget` not-found no JSON (breaking)
@@ -527,6 +528,7 @@ RUN cargo install --path .
 | --- | --- | --- |
 | `0` | Success | Command completed and JSON payload printed when requested |
 | `1` | Validation error or runtime failure | Invalid `--type`, malformed `--relation` (empty or non-snake_case), kebab-case violation, generic anyhow error |
+| `2` | CLI usage error | Invalid flag, missing required argument, invalid `--tz` timezone (Clap `FromStr` rejects before app code) |
 | `9` | Duplicate detected | Existing `--name` without `--force-merge`; `ingest` skips the file and emits `status: "skipped"` with `action: "duplicate"` instead |
 | `3` | Conflict during optimistic update | `edit` or `restore` raced against another writer |
 | `4` | Memory or entity not found | `read`, `forget`, `edit`, `rename`, `restore` or `graph traverse` target missing |
@@ -539,7 +541,6 @@ RUN cargo install --path .
 | `14` | Filesystem I/O error | Cache or database directory not writable, nonexistent `ingest` target directory |
 | `15` | Database busy after retries | WAL contention exceeded `with_busy_retry` budget |
 | `20` | Internal or JSON serialization error | Unexpected serde failure or invariant violation |
-| `73` | `EX_NOPERM` memory guard rejected low RAM | Available RAM below safety threshold during slot acquisition |
 | `75` | `EX_TEMPFAIL` lock timeout or all concurrency slots busy | Five-plus concurrent invocations or `flock` waited longer than 300s |
 | `77` | Available RAM below minimum required | Less than 2 GB free RAM detected before model load |
 

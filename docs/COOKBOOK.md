@@ -766,7 +766,8 @@ sqlite-graphrag remember --name "$NAME" --type project \
 rc=$?
 case $rc in
   0)  echo "Success" ;;
-  2)  echo "Duplicate or soft-deleted: use --force-merge to restore and update" ;;
+  2)  echo "Bad CLI argument (invalid flag, bad timezone): fix usage" ;;
+  9)  echo "Duplicate or soft-deleted: use --force-merge to restore and update" ;;
   3)  echo "Conflict: re-read and retry" ;;
   6)  echo "Payload too large: split body" ;;
   15) echo "Busy: widen --wait-lock" ;;
@@ -778,12 +779,12 @@ esac
 
 
 ### Explanation
-- 16 exit codes from 0 to 77 following sysexits.h conventions for machine-parseable error routing
+- 17 exit codes from 0 to 77 following sysexits.h conventions for machine-parseable error routing
 - Exit 3 means optimistic locking conflict: reload the memory with `read --json` and retry
 - Exit 13 means partial batch failure: reprocess only the failed items, NOT the entire batch
 - Exit 75 and 77 signal resource pressure: NEVER increase concurrency after receiving these codes
 - Exit 15 means database busy: widen `--wait-lock <ms>` to wait longer before failing
-- Full code table: 0=success, 1=validation, 9=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
+- Full code table: 0=success, 1=validation, 2=Clap-argument-error, 9=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
 
 
 ### Variants

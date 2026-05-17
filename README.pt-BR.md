@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.55**: Auditoria completa de docs — export summary `total`→`exported`, campos de resposta do list corrigidos, exit code de `--tz` 1→2, exit 2 adicionado à tabela de exit codes, aliases legados do stats documentados
+- **v1.0.54**: WAL checkpoint para `prune-relations` (último comando faltante), validação de body vazio com `--graph-stdin`, campo JSON `memory_type` em `list`/`export`, `Vec::with_capacity` em 9 cold paths
 - **v1.0.53**: WAL checkpoint TRUNCATE após cada escrita para segurança com Dropbox/cloud-sync, correção do contrato `export --json`, `Vec::with_capacity` em 12 hot paths
 - **v1.0.52**: 12 gaps corrigidos, novo subcomando `export`, exit code Duplicate 2→9 (breaking), `forget` not-found sem JSON (breaking)
 - **v1.0.51**: Correção da env var de namespace (8 comandos), correção do remember em memória soft-deletada, watchdog de RSS por chunk (`--max-rss-mb`), cobertura de testes do daemon
@@ -525,6 +527,7 @@ RUN cargo install --path .
 | --- | --- | --- |
 | `0` | Sucesso | Comando concluído e payload JSON impresso quando solicitado |
 | `1` | Erro de validação ou falha em runtime | `--type` inválido, `--relation` malformado (vazio ou fora de snake_case), violação de kebab-case, erro genérico anyhow |
+| `2` | Erro de uso da CLI | Flag inválida, argumento obrigatório ausente, timezone `--tz` inválido (Clap `FromStr` rejeita antes do código da aplicação) |
 | `9` | Duplicata detectada | `--name` existente sem `--force-merge`; o `ingest` pula o arquivo e emite `status: "skipped"` com `action: "duplicate"` |
 | `3` | Conflito durante atualização otimista | `edit` ou `restore` competiu com outro escritor |
 | `4` | Memória ou entidade não encontrada | Alvo de `read`, `forget`, `edit`, `rename`, `restore` ou `graph traverse` ausente |
@@ -537,7 +540,6 @@ RUN cargo install --path .
 | `14` | Erro de I/O do sistema de arquivos | Diretório de cache ou de banco sem permissão de escrita, diretório de destino `ingest` inexistente |
 | `15` | Banco ocupado após tentativas | Contenção do WAL excedeu o orçamento de `with_busy_retry` |
 | `20` | Erro interno ou de serialização JSON | Falha inesperada do serde ou violação de invariante |
-| `73` | `EX_NOPERM` guarda de memória rejeitou pouca RAM | RAM disponível abaixo do limite de segurança ao adquirir slot |
 | `75` | `EX_TEMPFAIL` lock timeout ou todos os slots ocupados | Cinco ou mais invocações concorrentes ou `flock` esperou mais de 300s |
 | `77` | RAM disponível abaixo do mínimo | Menos de 2 GB de RAM livre detectados antes do load do modelo |
 
@@ -582,7 +584,7 @@ RUN cargo install --path .
 ## Solução de Problemas
 ### Segurança com cloud sync (Dropbox, iCloud, OneDrive)
 - sqlite-graphrag usa modo WAL por padrão para escrita de alta concorrência
-- Desde v1.0.53, todo comando de escrita executa `PRAGMA wal_checkpoint(TRUNCATE)` após commit
+- Desde v1.0.54, todo comando de escrita executa `PRAGMA wal_checkpoint(TRUNCATE)` após commit (v1.0.53 cobriu 11 de 12; v1.0.54 adicionou o `prune-relations` faltante)
 - Isso garante que o arquivo `.sqlite` esteja sempre autocontido quando ferramentas de cloud sync o leem
 - Se ocorrer corrupção apesar do checkpoint, recupere com `sqlite3 corrompido.sqlite ".recover" | sqlite3 reparado.sqlite`
 
@@ -767,7 +769,7 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Contratos canônicos para cada resposta de subcomando
 - JSON Schemas autoritativos para cada resposta `--json` ficam em [`docs/schemas/`](docs/schemas/) e são versionados junto com a crate
-- 33 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`
+- 35 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`, `export-memory-line`, `export-summary`
 - Trate estes schemas como o contrato de agente; SKILL.md documenta as mesmas formas em formato humano
 - Valide consumidores downstream com qualquer validador JSON Schema padrão (e.g. `ajv`, `jsonschema`)
 

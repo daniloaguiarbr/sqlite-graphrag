@@ -10,6 +10,31 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.55] - 2026-05-17
+
+### Corrigido
+- SKILL.md (EN+PT): campo do summary de export corrigido de `total` para `exported`, conforme o JSON real da struct `ExportSummary` (G1).
+- SKILL.md (EN+PT): campos response-level de `list` corrigidos — removidos campos inexistentes `total`, `limit`, `offset`; resposta real contém apenas `items[]` e `elapsed_ms` (G2).
+- SKILL.md (EN+PT) e CLAUDE.md: `--tz` com timezone inválido agora corretamente documentado como exit 2 (parsing de argumentos Clap) em vez de exit 1 (validação da aplicação). O `FromStr` do Clap para `chrono_tz::Tz` valida antes do código da aplicação (G3).
+- SKILL.md (EN+PT): exit code 2 adicionado à tabela de exit codes com descrição cobrindo erros de parsing do Clap incluindo valores de timezone inválidos (G3+G4).
+- SKILL.md (EN+PT): resposta de `stats` agora documenta campos alias legados `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total` (G6).
+- AGENTS.md (EN+PT): timezone IANA inválido de `--tz` corrigido de exit 1 para exit 2; `timezone ruim` movido da descrição de exit 1 para exit 2; aliases legados de `stats` documentados.
+- HOW_TO_USE.md (EN+PT): campo do summary de export corrigido de `memories_total` para `exported`.
+- COOKBOOK.md (EN+PT): contagem de exit codes atualizada de 16 para 17; exit 2 adicionado à tabela de exit codes e ao exemplo bash case.
+- SKILL.md, AGENTS.md, CLAUDE.md (EN+PT): default de `--min-weight` corrigido de 0.0 para 0.3, conforme `src/commands/hybrid_search.rs:60`.
+- README.md (EN+PT): exit code 2 adicionado à tabela de exit codes — estava ausente entre exit 1 e exit 9.
+- README.md (EN+PT), llms.txt (EN+PT): exit code 73 espúrio (`EX_NOPERM`) removido — não implementado no código-fonte; existem apenas 17 exit codes (0-77).
+
+## [1.0.54] - 2026-05-17
+
+### Corrigido
+- WAL checkpoint TRUNCATE adicionado ao `prune-relations` — último comando de escrita sem checkpoint (H1).
+- `remember --graph-stdin` com body vazio e sem entidades agora retorna corretamente exit 1 (Validation) em vez de criar silenciosamente uma memória inerte com zero chunks (H2).
+- Saída JSON de `list` e `export` agora inclui campo `memory_type` junto com `type`, consistente com `read` (H3). Agentes que parseiam `.memory_type` não recebem mais null.
+
+### Alterado
+- `Vec::with_capacity()` aplicado em 9 cold paths adicionais: listagem de arquivos do ingest, graph matches do recall, resultados do related, graph matches do hybrid-search, hops do graph-export, entradas do cache, warnings do remember, extração de URLs, candidatos do embedder (M2).
+
 ## [1.0.53] - 2026-05-15
 
 ### Corrigido

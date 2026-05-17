@@ -73,6 +73,44 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.55 — Correções de precisão de documentação para SKILL.md, CLAUDE.md e tabela de exit codes
+
+#### Campo do summary de export corrigido de `total` para `exported`
+- SKILL.md documentava o campo do summary de export como `total`; o campo real no JSON é `exported`
+- Agentes que parseiam `.total` do summary de export devem migrar para `.exported`
+
+#### Campos de resposta do list corrigidos
+- SKILL.md documentava `total`, `limit`, `offset` como campos top-level na resposta do `list`
+- A resposta real contém apenas `items[]` e `elapsed_ms` no nível superior
+- Agentes que parseiam `.total`, `.limit` ou `.offset` do list devem remover essas referências
+
+#### Exit code de timezone inválido corrigido de 1 para 2
+- `--tz` com valor de timezone inválido retorna exit 2 (parsing de argumentos Clap), não exit 1 (validação da aplicação)
+- Clap valida `chrono_tz::Tz` via `FromStr` antes do código da aplicação executar
+- Exit code 2 agora explicitamente documentado nas tabelas de exit codes do SKILL.md e CLAUDE.md
+
+#### Campos alias legados do stats documentados
+- Resposta de `stats` inclui aliases legados não documentados: `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
+- Agora documentados; prefira os nomes canônicos dos campos (`db_size_bytes`, `relationships`, etc.)
+
+### v1.0.54 — WAL checkpoint para prune-relations, validação de body vazio, consistência memory_type
+
+#### WAL checkpoint TRUNCATE adicionado ao prune-relations
+- `prune-relations` era o último comando de escrita sem `PRAGMA wal_checkpoint(TRUNCATE)` após commit
+- Todos os 12 comandos de escrita agora fazem checkpoint consistentemente; nenhuma ação necessária
+
+#### Validação de body vazio com --graph-stdin
+- `remember --graph-stdin` com body vazio e sem entidades agora retorna corretamente exit 1 (Validation) em vez de criar silenciosamente uma memória inerte com zero chunks
+- Agentes que dependiam de `--graph-stdin` com body vazio criando uma memória devem fornecer body não-vazio ou pelo menos uma entidade
+
+#### Campo memory_type adicionado ao JSON de list e export
+- Saída JSON de `list` e `export` agora inclui `memory_type` junto com `type`, consistente com `read`
+- Agentes que parseiam `.memory_type` de `list` ou `export` não recebem mais null
+- Nenhuma ação necessária: o campo `type` existente permanece inalterado
+
+#### Vec::with_capacity aplicado em 9 cold paths
+- Melhoria de performance apenas; sem mudanças de API ou comportamento
+
 ### v1.0.53 — WAL checkpoint após escritas, export --json
 
 #### WAL checkpoint TRUNCATE em cada comando de escrita
