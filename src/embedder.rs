@@ -61,7 +61,7 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
 fn maybe_init_dynamic_ort(models_dir: &Path) -> Result<(), AppError> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(4);
 
     if let Ok(path) = std::env::var("ORT_DYLIB_PATH") {
         if !path.is_empty() {

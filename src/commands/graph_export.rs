@@ -353,7 +353,7 @@ fn run_traverse(args: GraphTraverseArgs) -> Result<(), AppError> {
         .map(|e| (e.id, e.name.clone()))
         .collect();
 
-    let mut hops: Vec<TraverseHop> = Vec::new();
+    let mut hops: Vec<TraverseHop> = Vec::with_capacity(16);
     let mut visited: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut frontier: Vec<(i64, u32)> = vec![(from_id, 0)];
 

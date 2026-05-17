@@ -181,7 +181,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         }
     }
 
-    let mut graph_matches = Vec::new();
+    let mut graph_matches = Vec::with_capacity(8);
     if !args.no_graph {
         let entity_knn = entities::knn_search(&conn, &embedding, &namespace_for_graph, 5)?;
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.54] - 2026-05-17
+
+### Fixed
+- WAL checkpoint TRUNCATE added to `prune-relations` — last remaining write command without checkpoint (H1).
+- `remember --graph-stdin` with empty body and no entities now correctly returns exit 1 (Validation) instead of silently creating an inert memory with zero chunks (H2).
+- `list` and `export` JSON output now includes `memory_type` field alongside `type`, consistent with `read` (H3). Agents parsing `.memory_type` no longer receive null.
+
+### Changed
+- `Vec::with_capacity()` applied in 9 additional cold paths: ingest file listing, recall graph matches, related results, hybrid-search graph matches, graph-export hops, cache entries, remember warnings, URL extraction, embedder candidates (M2).
+
 ## [1.0.53] - 2026-05-15
 
 ### Fixed

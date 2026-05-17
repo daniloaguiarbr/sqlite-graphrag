@@ -63,7 +63,10 @@ struct ListItem {
     memory_id: i64,
     name: String,
     namespace: String,
+    /// Semantic alias for agents that parse `.type` in the JSON output.
     #[serde(rename = "type")]
+    type_field: String,
+    /// Semantic alias for agents that parse `.memory_type` in the JSON output.
     memory_type: String,
     description: String,
     snippet: String,
@@ -116,6 +119,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
                 memory_id: r.id,
                 name: r.name,
                 namespace: r.namespace,
+                type_field: r.memory_type.clone(),
                 memory_type: r.memory_type,
                 description: r.description,
                 snippet,
@@ -153,6 +157,7 @@ mod tests {
                 memory_id: 1,
                 name: "test-memory".to_string(),
                 namespace: "global".to_string(),
+                type_field: "note".to_string(),
                 memory_type: "note".to_string(),
                 description: "descricao de teste".to_string(),
                 snippet: "corpo resumido".to_string(),
@@ -181,6 +186,7 @@ mod tests {
             memory_id: 99,
             name: "soft-deleted-memory".to_string(),
             namespace: "global".to_string(),
+            type_field: "note".to_string(),
             memory_type: "note".to_string(),
             description: "deleted".to_string(),
             snippet: "snip".to_string(),
@@ -213,6 +219,7 @@ mod tests {
             memory_id: 42,
             name: "memory-alias".to_string(),
             namespace: "projeto".to_string(),
+            type_field: "fact".to_string(),
             memory_type: "fact".to_string(),
             description: "desc".to_string(),
             snippet: "snip".to_string(),
@@ -233,6 +240,30 @@ mod tests {
         let body_longo: String = "a".repeat(300);
         let snippet: String = body_longo.chars().take(200).collect();
         assert_eq!(snippet.len(), 200, "snippet deve ter exatamente 200 chars");
+    }
+
+    #[test]
+    fn list_item_emits_both_type_and_memory_type() {
+        let item = ListItem {
+            id: 1,
+            memory_id: 1,
+            name: "test".to_string(),
+            namespace: "global".to_string(),
+            type_field: "note".to_string(),
+            memory_type: "note".to_string(),
+            description: "desc".to_string(),
+            snippet: "snip".to_string(),
+            updated_at: 0,
+            updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            deleted_at_iso: None,
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["type"], "note", "serde rename must produce 'type'");
+        assert_eq!(
+            json["memory_type"], "note",
+            "memory_type must also be present"
+        );
     }
 
     #[test]

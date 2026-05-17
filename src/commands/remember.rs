@@ -261,8 +261,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         String::new()
     };
 
-    let entities_provided_externally =
-        args.entities_file.is_some() || args.relationships_file.is_some() || args.graph_stdin;
+    let mut entities_provided_externally =
+        args.entities_file.is_some() || args.relationships_file.is_some();
 
     let mut graph = GraphInput::default();
     if let Some(path) = args.entities_file {
@@ -278,6 +278,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             AppError::Validation(format!("invalid JSON payload on --graph-stdin: {e}"))
         })?;
         raw_body = graph.body.take().unwrap_or_default();
+    }
+    if args.graph_stdin && !graph.entities.is_empty() {
+        entities_provided_externally = true;
     }
 
     if graph.entities.len() > max_entities_per_memory() {
@@ -516,7 +519,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         metadata,
     };
 
-    let mut warnings = Vec::new();
+    let mut warnings = Vec::with_capacity(4);
     let mut entities_persisted = 0usize;
     let mut relationships_persisted = 0usize;
 

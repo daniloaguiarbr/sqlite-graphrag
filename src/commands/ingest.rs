@@ -654,7 +654,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         )));
     }
 
-    let mut files: Vec<PathBuf> = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::with_capacity(128);
     collect_files(&args.dir, &args.pattern, args.recursive, &mut files)?;
     files.sort();
 

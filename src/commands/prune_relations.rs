@@ -141,6 +141,7 @@ pub fn run(args: PruneRelationsArgs) -> Result<(), AppError> {
 
     // Run ANALYZE to refresh query planner statistics after bulk deletion.
     conn.execute_batch("ANALYZE relationships; ANALYZE memory_relationships;")?;
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
     output::emit_progress(&i18n::relations_pruned(count, &args.relation, &namespace));
 
@@ -277,5 +278,22 @@ mod tests {
             json.get("affected_entity_names").is_none(),
             "must be omitted when None"
         );
+    }
+
+    #[test]
+    fn prune_response_action_values_are_exhaustive() {
+        for action in &["pruned", "dry_run", "aborted"] {
+            let resp = PruneRelationsResponse {
+                action: action.to_string(),
+                relation: "mentions".to_string(),
+                count: 0,
+                entities_affected: 0,
+                namespace: "global".to_string(),
+                elapsed_ms: 0,
+                affected_entity_names: None,
+            };
+            let json = serde_json::to_value(&resp).expect("serialization");
+            assert_eq!(json["action"], *action);
+        }
     }
 }

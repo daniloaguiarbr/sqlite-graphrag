@@ -214,7 +214,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         .collect();
 
     // --- Graph traversal (activated by --with-graph) ---
-    let mut graph_matches: Vec<RecallItem> = Vec::new();
+    let mut graph_matches: Vec<RecallItem> = Vec::with_capacity(8);
     if args.with_graph && !results.is_empty() {
         let namespace_for_graph = namespace.clone();
         let memory_ids: Vec<i64> = results.iter().map(|r| r.memory_id).collect();

@@ -47,6 +47,7 @@ pub struct ExportArgs {
 struct ExportMemoryLine {
     name: String,
     r#type: String,
+    memory_type: String,
     description: String,
     body: String,
     namespace: String,
@@ -147,9 +148,11 @@ fn fetch_rows(
 }
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExportMemoryLine> {
+    let memory_type_val: String = row.get(1)?;
     Ok(ExportMemoryLine {
         name: row.get(0)?,
-        r#type: row.get(1)?,
+        r#type: memory_type_val.clone(),
+        memory_type: memory_type_val,
         description: row.get(2)?,
         body: row.get(3)?,
         namespace: row.get(4)?,
@@ -157,4 +160,27 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExportMemoryLine> {
         updated_at_iso: crate::tz::epoch_to_iso(row.get::<_, i64>(6)?),
         deleted_at_iso: row.get::<_, Option<i64>>(7)?.map(crate::tz::epoch_to_iso),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_line_emits_both_type_and_memory_type() {
+        let line = ExportMemoryLine {
+            name: "test".to_string(),
+            r#type: "document".to_string(),
+            memory_type: "document".to_string(),
+            description: "desc".to_string(),
+            body: "body".to_string(),
+            namespace: "global".to_string(),
+            created_at_iso: "2025-01-01T00:00:00Z".to_string(),
+            updated_at_iso: "2025-01-01T00:00:00Z".to_string(),
+            deleted_at_iso: None,
+        };
+        let json = serde_json::to_value(&line).unwrap();
+        assert_eq!(json["type"], "document");
+        assert_eq!(json["memory_type"], "document");
+    }
 }

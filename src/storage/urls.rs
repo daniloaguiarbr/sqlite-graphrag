@@ -51,7 +51,7 @@ pub fn list_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<MemoryUrl
             offset: row.get(1)?,
         })
     })?;
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(8);
     for row in rows {
         result.push(row?);
     }

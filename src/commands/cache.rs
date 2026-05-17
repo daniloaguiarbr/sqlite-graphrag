@@ -226,7 +226,7 @@ fn run_list(args: CacheListArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(None)?;
     let models_dir = &paths.models;
 
-    let mut entries: Vec<CacheFileEntry> = Vec::new();
+    let mut entries: Vec<CacheFileEntry> = Vec::with_capacity(4);
     if models_dir.exists() {
         collect_cache_files(models_dir, models_dir, &mut entries).map_err(AppError::Io)?;
     }

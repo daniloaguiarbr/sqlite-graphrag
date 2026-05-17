@@ -354,7 +354,7 @@ fn fetch_neighbours(
         JOIN entities te ON te.id = r.target_id
         WHERE r.target_id = ?1 AND r.weight >= ?2 AND r.namespace = ?3";
 
-    let mut results: Vec<Neighbour> = Vec::new();
+    let mut results: Vec<Neighbour> = Vec::with_capacity(16);
 
     let forward_sql = match relation_filter {
         Some(_) => format!("{base_sql} AND r.relation = ?4"),
