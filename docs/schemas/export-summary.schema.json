@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/export-summary.schema.json",
+  "title": "ExportSummary",
+  "description": "Final NDJSON line emitted by `sqlite-graphrag export` after all memory lines.",
+  "type": "object",
+  "required": ["summary", "exported", "namespace", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "summary":    { "type": "boolean", "const": true },
+    "exported":   { "type": "integer", "minimum": 0 },
+    "namespace":  { "type": "string" },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

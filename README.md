@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.54**: WAL checkpoint for `prune-relations` (last missing command), `--graph-stdin` empty body validation, `memory_type` JSON field in `list`/`export`, `Vec::with_capacity` in 9 cold paths
 - **v1.0.53**: WAL checkpoint TRUNCATE after every write command for Dropbox/cloud-sync safety, `export --json` contract fix, `Vec::with_capacity` in 12 hot paths
 - **v1.0.52**: 12 gaps fixed, new `export` subcommand, exit code Duplicate 2→9 (breaking), `forget` not-found no JSON (breaking)
 - **v1.0.51**: Namespace env var fix (8 commands), remember on soft-deleted fix, per-chunk RSS watchdog (`--max-rss-mb`), daemon test coverage
@@ -583,7 +584,7 @@ RUN cargo install --path .
 ## Troubleshooting FAQ
 ### Cloud sync safety (Dropbox, iCloud, OneDrive)
 - sqlite-graphrag uses WAL mode by default for high-concurrency writes
-- Since v1.0.53, every write command runs `PRAGMA wal_checkpoint(TRUNCATE)` after committing
+- Since v1.0.54, every write command runs `PRAGMA wal_checkpoint(TRUNCATE)` after committing (v1.0.53 covered 11 of 12; v1.0.54 added the missing `prune-relations`)
 - This ensures the `.sqlite` file is always self-contained when cloud sync tools read it
 - If corruption occurs despite the checkpoint, recover with `sqlite3 broken.sqlite ".recover" | sqlite3 repaired.sqlite`
 
@@ -768,7 +769,7 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Canonical contracts for every subcommand response
 - Authoritative JSON Schemas for every `--json` response live under [`docs/schemas/`](docs/schemas/) and are versioned alongside the crate
-- 33 schemas cover `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`
+- 35 schemas cover `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`, `export-memory-line`, `export-summary`
 - Treat these schemas as the agent contract; SKILL.md documents the same shapes in human-readable form
 - Validate downstream consumers with any standard JSON Schema validator (e.g. `ajv`, `jsonschema`)
 

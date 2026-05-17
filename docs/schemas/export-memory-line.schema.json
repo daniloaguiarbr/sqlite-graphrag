@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/export-memory-line.schema.json",
+  "title": "ExportMemoryLine",
+  "description": "Per-memory NDJSON line emitted by `sqlite-graphrag export` on stdout. One line per memory, followed by a single ExportSummary line.",
+  "type": "object",
+  "required": ["name", "type", "memory_type", "description", "body", "namespace", "created_at_iso", "updated_at_iso"],
+  "additionalProperties": false,
+  "properties": {
+    "name":           { "type": "string" },
+    "type":           { "type": "string" },
+    "memory_type":    { "type": "string", "description": "Alias of `type` for agents that parse `.memory_type` instead of `.type`. Always equal to `type`." },
+    "description":    { "type": "string" },
+    "body":           { "type": "string" },
+    "namespace":      { "type": "string" },
+    "created_at_iso": { "type": "string", "format": "date-time" },
+    "updated_at_iso": { "type": "string", "format": "date-time" },
+    "deleted_at_iso": { "type": ["string", "null"], "format": "date-time", "description": "Present only when `--include-deleted` is used and the memory is soft-deleted." }
+  }
+}

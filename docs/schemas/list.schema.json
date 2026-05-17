@@ -11,7 +11,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "memory_id", "name", "namespace", "type", "description", "snippet", "updated_at", "updated_at_iso"],
+        "required": ["id", "memory_id", "name", "namespace", "type", "memory_type", "description", "snippet", "updated_at", "updated_at_iso"],
         "additionalProperties": false,
         "properties": {
           "id":             { "type": "integer" },
@@ -19,6 +19,7 @@
           "name":           { "type": "string" },
           "namespace":      { "type": "string" },
           "type":           { "type": "string" },
+          "memory_type":    { "type": "string", "description": "Alias of `type` for agents that parse `.memory_type` instead of `.type`. Always equal to `type`." },
           "description":    { "type": "string" },
           "snippet":        { "type": "string" },
           "updated_at":     { "type": "integer" },
