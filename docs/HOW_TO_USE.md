@@ -172,6 +172,23 @@ sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
 - End-to-end latency depends on the local CLI plus the downstream model runtime
 
 
+### Recipe Six — Entity Rename With Impact Assessment (v1.0.58)
+```bash
+# Step 1: check which memories reference the entity
+sqlite-graphrag memory-entities --entity auth --json | jaq '.memories[].name'
+
+# Step 2: rename the entity (preserves all relationships and memory bindings)
+sqlite-graphrag rename-entity --name auth --new-name authentication --json
+
+# Step 3: update the entity description
+sqlite-graphrag reclassify --name authentication --description "JWT-based authentication service" --json
+```
+- `memory-entities --entity` provides impact assessment before rename or delete
+- `rename-entity` is atomic: updates entity name and re-embeds vector in one transaction
+- All relationships and memory bindings use integer FK and are unaffected by the name change
+- Combine with `reclassify --description` to enrich the entity metadata in the same session
+
+
 ## Configuration and Namespace Notes
 ### Namespace Default
 - Default namespace is `global` when `--namespace` is omitted

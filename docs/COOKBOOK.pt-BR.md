@@ -1561,3 +1561,44 @@ sqlite-graphrag cleanup-orphans --yes --json
 sqlite-graphrag health --json | jaq '.integrity_ok'
 sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
 ```
+
+
+## Como Renomear Uma Entidade (v1.0.58)
+### Problema
+- Uma entidade tem nome errado ou não-canônico (ex.: "auth" deveria ser "authentication")
+- Renomear manualmente exige criar nova entidade, migrar todas as arestas e deletar a antiga
+### Solução
+```bash
+sqlite-graphrag rename-entity --name auth --new-name authentication --json
+```
+### Explicação
+- Renomeia a entidade preservando todos os relacionamentos e vínculos com memórias (usam FK inteiro)
+- Re-gera o vetor com o novo nome para precisão na busca semântica
+- Retorna `{action: "renamed", old_name, new_name, entity_id}` em sucesso
+- Falha com exit 4 se entidade não existe, exit 1 se novo nome já existe
+
+## Como Listar Memórias Vinculadas a Uma Entidade (v1.0.58)
+### Problema
+- Antes de renomear ou deletar uma entidade, é preciso saber quais memórias a referenciam
+- O comando `memory-entities` existente só funciona memória→entidades, não o inverso
+### Solução
+```bash
+sqlite-graphrag memory-entities --entity authentication --json
+```
+### Explicação
+- Flag `--entity` faz busca reversa: entidade→memórias via tabela junction `memory_entities`
+- Retorna `{entity_name, memories: [{name, description, memory_type}], count}` em sucesso
+- Retorna apenas memórias ativas (soft-deleted são excluídas)
+
+## Como Atualizar Descrição de Uma Entidade (v1.0.58)
+### Problema
+- 88% das entidades têm descrição NULL ou vazia (vindas de extração automática)
+- Não existia comando para atualizar descrições de entidades
+### Solução
+```bash
+sqlite-graphrag reclassify --name rust-lang --description "The Rust programming language" --json
+```
+### Explicação
+- Flag `--description` no `reclassify` atualiza a descrição da entidade no modo individual
+- Pode ser combinada com `--new-type` para alterar tipo e descrição em uma operação
+- Modo batch (`--batch`) ignora `--description`

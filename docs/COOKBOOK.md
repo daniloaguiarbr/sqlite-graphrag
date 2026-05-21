@@ -1563,3 +1563,44 @@ sqlite-graphrag cleanup-orphans --yes --json
 sqlite-graphrag health --json | jaq '.integrity_ok'
 sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
 ```
+
+
+## How To Rename An Entity (v1.0.58)
+### Problem
+- An entity has a misspelled or non-canonical name (e.g., "auth" should be "authentication")
+- Manually renaming requires creating a new entity, migrating all edges, and deleting the old one
+### Solution
+```bash
+sqlite-graphrag rename-entity --name auth --new-name authentication --json
+```
+### Explanation
+- Renames the entity row in place preserving all relationships and memory bindings (they use integer FK)
+- Re-embeds the vector with the new name for semantic search accuracy
+- Returns `{action: "renamed", old_name, new_name, entity_id}` on success
+- Fails with exit 4 if entity not found, exit 1 if new name already exists
+
+## How To List Memories Bound To An Entity (v1.0.58)
+### Problem
+- Before renaming or deleting an entity, you need to know which memories reference it
+- The existing `memory-entities` command only works memory→entities, not the reverse
+### Solution
+```bash
+sqlite-graphrag memory-entities --entity authentication --json
+```
+### Explanation
+- `--entity` flag performs a reverse lookup: entity→memories via the `memory_entities` junction table
+- Returns `{entity_name, memories: [{name, description, memory_type}], count}` on success
+- Only returns non-deleted memories (soft-deleted are excluded)
+
+## How To Update An Entity Description (v1.0.58)
+### Problem
+- 88% of entities have NULL or empty descriptions (from auto-extraction)
+- No command existed to update entity descriptions
+### Solution
+```bash
+sqlite-graphrag reclassify --name rust-lang --description "The Rust programming language" --json
+```
+### Explanation
+- `--description` flag on `reclassify` updates the entity description in single mode
+- Can be combined with `--new-type` to change both type and description in one operation
+- Batch mode (`--batch`) ignores `--description`

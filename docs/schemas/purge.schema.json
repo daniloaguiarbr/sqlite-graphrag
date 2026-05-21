@@ -4,9 +4,10 @@
   "title": "PurgeResponse",
   "description": "Response emitted by `sqlite-graphrag purge` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["purged_count", "bytes_freed", "dry_run", "namespace", "elapsed_ms"],
+  "required": ["action", "purged_count", "bytes_freed", "dry_run", "namespace", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
+    "action":               { "type": "string", "enum": ["purged", "dry_run"] },
     "purged_count":         { "type": "integer", "minimum": 0 },
     "bytes_freed":          { "type": "integer", "minimum": 0 },
     "oldest_deleted_at":    { "type": ["integer", "null"], "description": "Unix epoch seconds of the oldest soft-deleted memory that was purged." },

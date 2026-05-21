@@ -73,6 +73,53 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.58 — FTS5 force-merge sync fix (CRITICAL), merge-entities UNIQUE fix, rename-entity, entity validation
+
+#### CRITICAL: FTS5 index corruption via remember --force-merge fixed
+- Every `remember --force-merge` operation was silently corrupting the FTS5 index since v1.0.56
+- `hybrid-search` returned stale results and `fts check` reported `integrity_ok: false` after force-merge
+- Fixed: `sync_fts_after_update()` is now called after the UPDATE in the force-merge path
+- **Action**: Run `sqlite-graphrag fts rebuild` once after upgrading to rebuild the corrupted FTS5 index
+
+#### merge-entities UNIQUE constraint fixed for memory_entities
+- `merge-entities` failed with exit 10 when source and target entities shared bindings to the same memory
+- Fixed: uses `UPDATE OR IGNORE` + cleanup for `memory_entities` (same pattern already applied to `relationships` in v1.0.57)
+- No action needed: previously failing merges will now succeed
+
+#### New command: rename-entity
+- `sqlite-graphrag rename-entity --name <old> --new-name <new> --json` renames an entity preserving all relationships and memory bindings
+- Re-embeds the vector with the new name for semantic search accuracy
+- Agents that previously used manual unlink/re-link cascades can now use this single command
+
+#### New feature: memory-entities --entity (reverse lookup)
+- `sqlite-graphrag memory-entities --entity <name> --json` lists all memories bound to a given entity
+- Complements the existing memory→entities direction
+- Useful for impact assessment before renaming or deleting an entity
+
+#### New feature: reclassify --description
+- `sqlite-graphrag reclassify --name <entity> --description "text" --json` updates entity description in single mode
+- Previously only `entity_type` could be changed; now description is also updatable
+
+#### Entity name validation
+- Entity names are now validated at creation time: newlines rejected, minimum 2 characters, short ALL_CAPS abbreviations rejected
+- Existing entities with invalid names are not affected retroactively
+- Agents providing `--graph-stdin` with curated entities should verify names comply
+
+#### purge response includes action field
+- `purge` JSON response now includes `"action": "purged"` or `"action": "dry_run"` for consistency with all other commands
+- Agents parsing purge response should update to check the new `action` field
+
+### v1.0.57 — 16 fixes: merge-entities relationships UNIQUE, memory-entities column, WAL checkpoint, atomic backup
+
+- `merge-entities` relationships `UPDATE OR IGNORE` fix (same pattern now extended to `memory_entities` in v1.0.58)
+- `memory-entities` column name fixed from `type` to `entity_type`
+- `--clear-body` validation for `remember --force-merge`
+- WAL checkpoint TRUNCATE added to `fts rebuild` and `fts check`
+- Degree recalculation for adjacent entities in `delete-entity` and `merge-entities`
+- Atomic backup via tempfile-rename pattern
+- 18 new contract and schema tests
+- No breaking changes; no action needed
+
 ### v1.0.56 — FTS5 sync fix, 7 new commands, JSON error envelope, graceful degradation
 
 - FTS5 sync now works in `edit`, `rename`, `restore` — previously edited memories were invisible to full-text search

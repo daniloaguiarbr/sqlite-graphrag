@@ -73,6 +73,32 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.58 — Correção FTS5 force-merge (CRÍTICO), correção UNIQUE merge-entities, rename-entity, validação
+
+#### CRÍTICO: Corrupção do índice FTS5 via remember --force-merge corrigida
+- Cada `remember --force-merge` corrompia silenciosamente o FTS5 desde v1.0.56
+- **Ação**: Execute `sqlite-graphrag fts rebuild` após atualizar
+
+#### Correção UNIQUE do merge-entities para memory_entities
+- Usa `UPDATE OR IGNORE` + cleanup (padrão de relationships do v1.0.57)
+
+#### Novo comando: rename-entity
+- `rename-entity --name <antigo> --new-name <novo>` renomeia entidade preservando relacionamentos
+
+#### Novas funcionalidades
+- `memory-entities --entity <nome>` busca reversa entidade→memórias
+- `reclassify --description "texto"` atualiza descrição da entidade
+- Validação de nomes de entidade (rejeita newlines, <2 chars, ALL_CAPS curto)
+- Campo `action` na resposta do purge
+
+### v1.0.57 — 16 correções: merge-entities UNIQUE, memory-entities coluna, WAL checkpoint, backup atômico
+
+- `UPDATE OR IGNORE` em relationships do merge-entities
+- Coluna `entity_type` no memory-entities
+- WAL checkpoint em fts rebuild/check
+- Backup atômico via tempfile-rename
+- 18 novos testes
+
 ### v1.0.56 — Correção FTS5 sync, 7 novos comandos, envelope JSON de erro, degradação graciosa
 
 - Sync FTS5 agora funciona em `edit`, `rename`, `restore` — memórias editadas antes ficavam invisíveis à busca textual

@@ -29,6 +29,22 @@
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
 
+## New in v1.0.58
+### Bug Fixes
+- `remember --force-merge` now synchronizes the FTS5 index after update — previously every force-merge silently corrupted the full-text search index (CRITICAL fix)
+- `merge-entities` uses `UPDATE OR IGNORE` for `memory_entities` table — fixes UNIQUE constraint failures when source and target entities share memory bindings
+### New Commands and Features
+- `rename-entity --name <old> --new-name <new> --json` — renames an entity preserving all relationships and memory bindings; re-embeds the vector with the new name
+- `memory-entities --entity <name> --json` — reverse lookup: lists all memories bound to a given entity (complementing the existing memory→entities direction)
+- `reclassify --name <entity> --description "text" --json` — updates entity description in single mode (previously only type could be changed)
+### Enhancements
+- `purge` response now includes `action` field (`"purged"` or `"dry_run"`) for consistency with all other commands
+- Entity name validation rejects names with newlines, shorter than 2 characters, or short ALL_CAPS abbreviations (NER noise prevention)
+- `fts --help` shows EXAMPLES section for subcommands
+- `health` command emits `tracing::info!` at key checkpoints for `-vv` debugging
+- `reclassify --help` lists all valid entity types
+- `history --diff` JSON field is named `changes` (containing `added_chars` and `removed_chars`), not `diff`
+
 
 ## The Question No Agent Framework Answers
 ### Open Loop — Why 27 AI Agents Choose This As Their Memory Layer

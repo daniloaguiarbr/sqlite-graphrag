@@ -40,6 +40,37 @@ pub struct NewRelationship {
     pub description: Option<String>,
 }
 
+/// Validates entity name against quality rules.
+///
+/// Rejects names with newlines, names shorter than 2 characters, and
+/// ALL_CAPS abbreviations of 4 characters or fewer (common NER noise).
+///
+/// # Errors
+///
+/// Returns `Err(AppError::Validation)` when the name violates any rule.
+pub fn validate_entity_name(name: &str) -> Result<(), AppError> {
+    if name.len() < 2 {
+        return Err(AppError::Validation(format!(
+            "entity name '{name}' must be at least 2 characters"
+        )));
+    }
+    if name.contains('\n') || name.contains('\r') {
+        return Err(AppError::Validation(
+            "entity name must not contain newline characters".to_string(),
+        ));
+    }
+    if name.len() <= 4
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c == '-')
+    {
+        return Err(AppError::Validation(format!(
+            "entity name '{name}' rejected: short ALL_CAPS names are typically NER noise"
+        )));
+    }
+    Ok(())
+}
+
 /// Upserts an entity and returns its primary key.
 ///
 /// Uses `ON CONFLICT(namespace, name)` to keep one row per entity within a
@@ -49,6 +80,7 @@ pub struct NewRelationship {
 ///
 /// Returns `Err(AppError::Database)` on any `rusqlite` failure.
 pub fn upsert_entity(conn: &Connection, namespace: &str, e: &NewEntity) -> Result<i64, AppError> {
+    validate_entity_name(&e.name)?;
     conn.execute(
         "INSERT INTO entities (namespace, name, type, description)
          VALUES (?1, ?2, ?3, ?4)
@@ -1193,5 +1225,43 @@ mod tests {
             resultado.is_err(),
             "both fields in the same JSON are a duplicate"
         );
+    }
+
+    #[test]
+    fn validate_entity_name_accepts_valid() {
+        assert!(validate_entity_name("rust-lang").is_ok());
+        assert!(validate_entity_name("sqlite-graphrag").is_ok());
+        assert!(validate_entity_name("ab").is_ok());
+    }
+
+    #[test]
+    fn validate_entity_name_rejects_short() {
+        assert!(validate_entity_name("a").is_err());
+        assert!(validate_entity_name("").is_err());
+    }
+
+    #[test]
+    fn validate_entity_name_rejects_newlines() {
+        assert!(validate_entity_name("foo\nbar").is_err());
+        assert!(validate_entity_name("foo\rbar").is_err());
+    }
+
+    #[test]
+    fn validate_entity_name_rejects_short_allcaps() {
+        assert!(validate_entity_name("RAM").is_err());
+        assert!(validate_entity_name("NAO").is_err());
+        assert!(validate_entity_name("OK").is_err());
+    }
+
+    #[test]
+    fn validate_entity_name_accepts_long_allcaps() {
+        assert!(validate_entity_name("SQLITE").is_ok());
+        assert!(validate_entity_name("GRAPHRAG").is_ok());
+    }
+
+    #[test]
+    fn validate_entity_name_accepts_mixed_case() {
+        assert!(validate_entity_name("FTS5").is_ok()); // 4 chars but has digit
+        assert!(validate_entity_name("WAL").is_err()); // 3 chars ALL_CAPS
     }
 }

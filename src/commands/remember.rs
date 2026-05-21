@@ -644,10 +644,32 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 }
             }
 
+            // C1 fix: capture old values for FTS5 sync before update
+            let (old_fts_name, old_fts_desc, old_fts_body): (String, String, String) = tx
+                .query_row(
+                    "SELECT name, description, body FROM memories WHERE id = ?1",
+                    rusqlite::params![existing_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?;
+
             storage_chunks::delete_chunks(&tx, existing_id)?;
 
             let next_v = versions::next_version(&tx, existing_id)?;
             memories::update(&tx, existing_id, &new_memory, args.expected_updated_at)?;
+
+            // C1 fix: sync FTS5 external-content index after update
+            // (trg_fts_au trigger is absent by design due to sqlite-vec conflict)
+            memories::sync_fts_after_update(
+                &tx,
+                existing_id,
+                &old_fts_name,
+                &old_fts_desc,
+                &old_fts_body,
+                &normalized_name,
+                &resolved_description,
+                &new_memory.body,
+            )?;
+
             versions::insert_version(
                 &tx,
                 existing_id,

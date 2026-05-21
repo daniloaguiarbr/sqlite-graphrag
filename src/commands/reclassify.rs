@@ -28,7 +28,10 @@ use serde::Serialize;
 NOTE:\n  \
     Single mode requires --name and --new-type.\n  \
     Batch mode requires --from-type, --to-type and --batch.\n  \
-    Providing --name together with --batch is an error.")]
+    Providing --name together with --batch is an error.\n\n\
+VALID ENTITY TYPES:\n  \
+    project, tool, person, file, concept, incident, decision,\n  \
+    memory, dashboard, issue_tracker, organization, location, date")]
 pub struct ReclassifyArgs {
     /// Entity name to reclassify (single mode). Mutually exclusive with --from-type + --batch.
     #[arg(long, conflicts_with_all = ["from_type", "batch"])]
@@ -36,6 +39,9 @@ pub struct ReclassifyArgs {
     /// New entity type for single mode.
     #[arg(long, value_enum, value_name = "TYPE")]
     pub new_type: Option<EntityType>,
+    /// New description for the entity (single mode only). Ignored in batch mode.
+    #[arg(long, value_name = "TEXT")]
+    pub description: Option<String>,
     /// Current entity type to match in batch mode. Requires --to-type and --batch.
     #[arg(
         long,
@@ -124,6 +130,13 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
              WHERE name = ?2 AND namespace = ?3",
             params![new_type.as_str(), entity_name, namespace],
         )?;
+        if let Some(ref desc) = args.description {
+            tx.execute(
+                "UPDATE entities SET description = ?1, updated_at = unixepoch()
+                 WHERE name = ?2 AND namespace = ?3",
+                params![desc, entity_name, namespace],
+            )?;
+        }
         tx.commit()?;
         affected
     };

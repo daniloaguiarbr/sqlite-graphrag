@@ -29,6 +29,22 @@
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
 
+## Novidades na v1.0.58
+### Correções de Bugs
+- `remember --force-merge` agora sincroniza o índice FTS5 após atualização — anteriormente cada force-merge corrompia silenciosamente o índice de busca textual (correção CRÍTICA)
+- `merge-entities` usa `UPDATE OR IGNORE` para tabela `memory_entities` — corrige falhas de UNIQUE constraint quando entidades compartilham vínculos com memórias
+### Novos Comandos e Funcionalidades
+- `rename-entity --name <antigo> --new-name <novo> --json` — renomeia entidade preservando todos os relacionamentos e vínculos; re-gera vetor com o novo nome
+- `memory-entities --entity <nome> --json` — busca reversa: lista todas as memórias vinculadas a uma entidade (complementando a direção existente memória→entidades)
+- `reclassify --name <entidade> --description "texto" --json` — atualiza descrição da entidade no modo individual (anteriormente só o tipo podia ser alterado)
+### Melhorias
+- Resposta do `purge` agora inclui campo `action` (`"purged"` ou `"dry_run"`) para consistência com demais comandos
+- Validação de nomes de entidade rejeita nomes com quebras de linha, menores que 2 caracteres, ou abreviações ALL_CAPS curtas (prevenção de ruído NER)
+- `fts --help` mostra seção EXAMPLES para subcomandos
+- Comando `health` emite `tracing::info!` nos checkpoints para debugging com `-vv`
+- `reclassify --help` lista todos os tipos de entidade válidos
+- Campo JSON de `history --diff` se chama `changes` (contendo `added_chars` e `removed_chars`), não `diff`
+
 
 ## A Pergunta Que Nenhum Framework Responde
 ### Open Loop — Por Que 27 Agentes de IA Escolhem Esta Como Sua Camada de Memória

@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.58**: Correção FTS5 (CRÍTICO: remember --force-merge corrompia silenciosamente o índice FTS5), correção UNIQUE no merge-entities para memory_entities, novo comando `rename-entity`, validação de nomes de entidades, `memory-entities --entity` busca reversa, `reclassify --description`, campo `action` no purge, EXAMPLES no fts, tracing no health
 - **v1.0.57**: 16 correções — UNIQUE constraint no merge-entities, coluna errada no memory-entities, validação --clear-body, WAL checkpoint para fts rebuild/check, recálculo de degree para delete-entity/merge-entities adjacentes, backup atômico via tempfile-rename, 18 novos testes de contrato+schema
 - **v1.0.56**: 9 novos comandos (fts, backup, delete-entity, reclassify, merge-entities, memory-entities, prune-ner), 7 novas flags, 19 novos campos JSON, degradação graciosa FTS5, envelope de erro JSON
 - **v1.0.55**: Auditoria completa de docs — export summary `total`→`exported`, campos de resposta do list corrigidos, exit code de `--tz` 1→2, exit 2 adicionado à tabela de exit codes, aliases legados do stats documentados
@@ -426,7 +427,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `rename` | `[antigo]`, ou `--name`/`--old`/`--from <NOME>` (desde v1.0.35), `--new-name`/`--new`/`--to <NOME>` (desde v1.0.35) | Renomeia memória mantendo versões |
 | `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
 | `history` | `[nome]` ou `--name <nome>`, `--diff` | Lista versões da memória; `--diff` inclui resumo de mudanças por caractere |
-| `memory-entities` | `[nome]` ou `--name <nome>` | Lista entidades vinculadas a uma memória específica |
+| `memory-entities` | `[nome]` ou `--name <nome>`, `--entity <nome>` | Lista entidades de uma memória, ou memórias vinculadas a uma entidade (busca reversa via `--entity`) |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
 | `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Ingere em massa cada arquivo correspondente como memória separada (saída NDJSON); `--dry-run` pré-visualiza o mapeamento de nomes sem gravar |
 | `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Exporta memórias como NDJSON para backup ou migração |
@@ -463,7 +464,8 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entidades sem memórias e sem relacionamentos |
 | `prune-relations` | `--relation <tipo>`, `--namespace`, `--dry-run`, `--yes`, `--show-entities` | Remove em massa todos os relacionamentos de um tipo; `--show-entities` lista entidades afetadas |
 | `delete-entity` | `--name <entidade>`, `--cascade` | Remove entidade e cascateia remoção de relacionamentos e bindings |
-| `reclassify` | `--name <entidade> --entity-type <novo>` ou `--from-type <antigo> --to-type <novo> --batch` | Reclassifica tipos de entidade individual ou em massa |
+| `rename-entity` | `--name <entidade>`, `--new-name <nome>` | Renomeia uma entidade preservando todos os relacionamentos e vínculos com memórias; re-gera vetor |
+| `reclassify` | `--name <entidade> --new-type <tipo>`, `--description <texto>`, ou `--from-type <antigo> --to-type <novo> --batch` | Reclassifica tipos de entidade individual ou em massa; `--description` atualiza descrição no modo individual |
 | `merge-entities` | `--names <a,b,c> --into <destino>` | Funde entidades-fonte no destino, movendo todas as edges |
 | `prune-ner` | `--entity <nome>` ou `--all`, `--dry-run`, `--yes` | Remove bindings NER da tabela memory_entities |
 | `fts rebuild` | `--json` | Reconstrói o índice FTS5 de busca textual do zero |

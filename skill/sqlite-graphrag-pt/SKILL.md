@@ -704,9 +704,17 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - JSON response: `{action, entity_name, namespace, relationships_removed, bindings_removed, elapsed_ms}`
 - EXECUTAR `cleanup-orphans` depois para remover entidades recém-órfãs
 - TRATAR exit code 4 como entidade não encontrada
+### OBRIGATÓRIO — rename-entity (v1.0.58)
+- USAR `rename-entity --name <antigo> --new-name <novo> --json` para renomear entidade preservando todos os relacionamentos e vínculos
+- RE-GERA o vetor da entidade com o novo nome para precisão na busca semântica
+- JSON response: `{action: "renamed", old_name, new_name, entity_id, namespace, elapsed_ms}`
+- TRATAR exit code 4 como entidade não encontrada; exit 1 se novo nome já existe
+- TODOS os relacionamentos e memory_entities usam FK inteiro e não são afetados pela mudança de nome
 ### OBRIGATÓRIO — reclassify
 - USAR `reclassify --name <entidade> --new-type <tipo> --json` para alteração individual de tipo de entidade
 - USAR `reclassify --from-type <antigo> --to-type <novo> --batch --json` para reclassificação em massa
+- USAR `reclassify --name <entidade> --description "texto" --json` para atualizar descrição da entidade no modo individual (v1.0.58)
+- COMBINAR `--new-type` com `--description` para alterar tipo e descrição em uma operação
 - JSON response: `{action, count, namespace, elapsed_ms}`
 - TRATAR count 0 no modo batch como indicação de que --from-type pode conter erro de digitação
 ### OBRIGATÓRIO — merge-entities
@@ -717,8 +725,11 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - TRATAR exit code 4 como entidade alvo não encontrada
 ### OBRIGATÓRIO — memory-entities
 - USAR `memory-entities --name <memória> --json` para listar todas entidades vinculadas a uma memória específica
-- JSON response: `{memory_name, entities: [{entity_id, name, entity_type}], count, elapsed_ms}`
-- TRATAR exit code 4 como memória não encontrada; exit 0 com count 0 significa memória existe mas sem entidades vinculadas
+- USAR `memory-entities --entity <nome-entidade> --json` para listar todas memórias vinculadas a uma entidade (busca reversa, v1.0.58)
+- RESPOSTA direta: `{memory_name, entities: [{entity_id, name, entity_type}], count, elapsed_ms}`
+- RESPOSTA reversa: `{entity_name, memories: [{memory_id, name, description, memory_type}], count, elapsed_ms}`
+- TRATAR exit code 4 como memória/entidade não encontrada; exit 0 com count 0 significa que existe mas sem vínculos
+- USAR busca reversa antes de rename-entity ou delete-entity para avaliação de impacto
 ### OBRIGATÓRIO — prune-ner
 - USAR `prune-ner --entity <nome> --dry-run --json` para pré-visualizar remoção de bindings NER
 - USAR `prune-ner --entity <nome> --yes --json` para remover bindings NER de uma única entidade

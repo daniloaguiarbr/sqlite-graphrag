@@ -10,6 +10,25 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.58] - 2026-05-21
+
+### Corrigido
+- **C1 CRÍTICO**: `remember --force-merge` agora chama `sync_fts_after_update` — elimina corrupção silenciosa do índice FTS5 a cada force-merge
+- **H1/H3 ALTO**: `merge-entities` usa `UPDATE OR IGNORE` para `memory_entities` — corrige falha de UNIQUE constraint quando entidades compartilham vínculos
+- **M6**: resposta do `purge` agora inclui campo `action` (`"purged"` ou `"dry_run"`) para consistência com demais comandos
+
+### Adicionado
+- **H2**: Novo comando `rename-entity` — renomeia entidade preservando todos os relacionamentos e vínculos, re-gera vetor
+- **M3**: `memory-entities --entity <nome>` busca reversa — lista todas as memórias vinculadas a uma entidade
+- **L6**: Flag `reclassify --description` — atualiza descrição da entidade no modo individual
+- **H4**: Validação de nomes de entidade — rejeita nomes com quebras de linha, menores que 2 caracteres, ou abreviações ALL_CAPS (ruído de NER)
+
+### Melhorado
+- **L1**: `fts --help` agora mostra seção EXAMPLES para subcomandos
+- **L3**: Comando `health` emite `tracing::info!` nos checkpoints para debugging com `-vv`
+- **L2**: `reclassify --help` agora lista todos os tipos de entidade válidos
+- **M1**: Correção de documentação: campo JSON de `history --diff` é `changes` (não `diff`)
+
 ## [1.0.57] - 2026-05-21
 
 ### Corrigido

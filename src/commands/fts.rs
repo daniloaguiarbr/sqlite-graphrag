@@ -12,7 +12,16 @@ use serde::Serialize;
 
 /// Arguments for the `fts` subcommand family.
 #[derive(clap::Args)]
-#[command(about = "FTS5 full-text search index management")]
+#[command(
+    about = "FTS5 full-text search index management",
+    after_long_help = "EXAMPLES:\n  \
+        # Rebuild the full-text search index from memories table\n  \
+        sqlite-graphrag fts rebuild\n\n  \
+        # Check FTS5 index integrity\n  \
+        sqlite-graphrag fts check --json\n\n  \
+        # Show FTS5 index statistics\n  \
+        sqlite-graphrag fts stats --json"
+)]
 pub struct FtsArgs {
     #[command(subcommand)]
     pub command: FtsSubcommand,

@@ -309,6 +309,7 @@ fn main() {
         sqlite_graphrag::cli::Commands::Cache(args) => commands::cache::run(args),
         sqlite_graphrag::cli::Commands::DeleteEntity(args) => commands::delete_entity::run(args),
         sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
+        sqlite_graphrag::cli::Commands::RenameEntity(args) => commands::rename_entity::run(args),
         sqlite_graphrag::cli::Commands::MergeEntities(args) => commands::merge_entities::run(args),
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };

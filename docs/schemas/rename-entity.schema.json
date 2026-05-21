@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rename-entity response",
+  "type": "object",
+  "required": ["action", "old_name", "new_name", "entity_id", "namespace", "elapsed_ms"],
+  "properties": {
+    "action": {"type": "string", "const": "renamed"},
+    "old_name": {"type": "string"},
+    "new_name": {"type": "string"},
+    "entity_id": {"type": "integer"},
+    "namespace": {"type": "string"},
+    "elapsed_ms": {"type": "integer"}
+  }
+}

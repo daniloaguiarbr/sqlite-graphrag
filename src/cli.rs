@@ -355,6 +355,9 @@ pub enum Commands {
     DeleteEntity(delete_entity::DeleteEntityArgs),
     /// Reclassify one entity or a batch of entities to a new type
     Reclassify(reclassify::ReclassifyArgs),
+    /// Rename an entity preserving all relationships and memory bindings
+    #[command(name = "rename-entity")]
+    RenameEntity(rename_entity::RenameEntityArgs),
     /// Merge multiple source entities into a single target entity
     #[command(name = "merge-entities")]
     MergeEntities(merge_entities::MergeEntitiesArgs),

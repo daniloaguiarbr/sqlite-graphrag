@@ -704,9 +704,17 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - JSON response: `{action, entity_name, namespace, relationships_removed, bindings_removed, elapsed_ms}`
 - RUN `cleanup-orphans` afterwards to remove any newly orphaned entities
 - TREAT exit code 4 as entity not found
+### REQUIRED — rename-entity (v1.0.58)
+- USE `rename-entity --name <old> --new-name <new> --json` to rename an entity preserving all relationships and memory bindings
+- RE-EMBEDS the entity vector with the new name for semantic search accuracy
+- JSON response: `{action: "renamed", old_name, new_name, entity_id, namespace, elapsed_ms}`
+- TREAT exit code 4 as entity not found; exit 1 if new name already exists
+- ALL relationships and memory_entities bindings use integer FK and are unaffected by the name change
 ### REQUIRED — reclassify
 - USE `reclassify --name <entity> --new-type <type> --json` for single entity type change
 - USE `reclassify --from-type <old> --to-type <new> --batch --json` for bulk reclassification
+- USE `reclassify --name <entity> --description "text" --json` to update entity description in single mode (v1.0.58)
+- COMBINE `--new-type` with `--description` to change both type and description in one operation
 - JSON response: `{action, count, namespace, elapsed_ms}`
 - TREAT count 0 in batch mode as indication that --from-type may be a typo
 ### REQUIRED — merge-entities
@@ -717,8 +725,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - TREAT exit code 4 as target entity not found
 ### REQUIRED — memory-entities
 - USE `memory-entities --name <memory> --json` to list all entities linked to a specific memory
-- JSON response: `{memory_name, entities: [{entity_id, name, entity_type}], count, elapsed_ms}`
-- TREAT exit code 4 as memory not found; exit 0 with count 0 means memory exists but has no linked entities
+- USE `memory-entities --entity <entity-name> --json` to list all memories bound to an entity (reverse lookup, v1.0.58)
+- FORWARD response: `{memory_name, entities: [{entity_id, name, entity_type}], count, elapsed_ms}`
+- REVERSE response: `{entity_name, memories: [{memory_id, name, description, memory_type}], count, elapsed_ms}`
+- TREAT exit code 4 as memory/entity not found; exit 0 with count 0 means it exists but has no linked items
+- USE reverse lookup before rename-entity or delete-entity for impact assessment
 ### REQUIRED — prune-ner
 - USE `prune-ner --entity <name> --dry-run --json` to preview NER binding removal
 - USE `prune-ner --entity <name> --yes --json` to remove NER bindings for a single entity

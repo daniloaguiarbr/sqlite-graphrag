@@ -140,10 +140,17 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
     )?;
 
     // Step 4: retarget memory_entities bindings.
+    // Use UPDATE OR IGNORE to skip conflicts when memory is already bound to
+    // target entity. Then DELETE remaining source rows (the conflicting ones
+    // that UPDATE OR IGNORE skipped). Same pattern as relationships (Step 1).
     for &src_id in &source_ids {
         tx.execute(
-            "UPDATE memory_entities SET entity_id = ?1 WHERE entity_id = ?2",
+            "UPDATE OR IGNORE memory_entities SET entity_id = ?1 WHERE entity_id = ?2",
             params![target_id, src_id],
+        )?;
+        tx.execute(
+            "DELETE FROM memory_entities WHERE entity_id = ?1",
+            params![src_id],
         )?;
     }
 
@@ -278,6 +285,22 @@ mod tests {
         let json = serde_json::to_value(&resp).expect("serialization failed");
         let sources = json["sources"].as_array().expect("must be array");
         assert_eq!(sources.len(), 0);
+    }
+
+    #[test]
+    fn merge_entities_response_with_zero_relationships_moved() {
+        let resp = MergeEntitiesResponse {
+            action: "merged".to_string(),
+            sources: vec!["src-a".to_string()],
+            target: "tgt".to_string(),
+            namespace: "global".to_string(),
+            relationships_moved: 0,
+            entities_removed: 1,
+            elapsed_ms: 5,
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert_eq!(json["relationships_moved"], 0);
+        assert_eq!(json["entities_removed"], 1);
     }
 
     #[test]

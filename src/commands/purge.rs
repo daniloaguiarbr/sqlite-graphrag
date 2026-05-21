@@ -58,6 +58,7 @@ pub struct PurgeArgs {
 
 #[derive(Serialize)]
 pub struct PurgeResponse {
+    pub action: String,
     pub purged_count: usize,
     pub bytes_freed: i64,
     pub oldest_deleted_at: Option<i64>,
@@ -138,6 +139,11 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
     };
 
     output::emit_json(&PurgeResponse {
+        action: if args.dry_run {
+            "dry_run".to_string()
+        } else {
+            "purged".to_string()
+        },
         purged_count: candidates_count,
         bytes_freed,
         oldest_deleted_at,
@@ -409,6 +415,7 @@ mod tests {
     #[test]
     fn purge_response_serializes_all_new_fields() {
         let resp = PurgeResponse {
+            action: "purged".to_string(),
             purged_count: 3,
             bytes_freed: 1024,
             oldest_deleted_at: Some(1_700_000_000),
@@ -434,6 +441,7 @@ mod tests {
     fn purge_response_serializes_message_when_present() {
         // M2 (v1.0.32): zero purges include a human-readable hint message.
         let resp = PurgeResponse {
+            action: "purged".to_string(),
             purged_count: 0,
             bytes_freed: 0,
             oldest_deleted_at: None,

@@ -109,6 +109,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 
     let integrity: String = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0))?;
     let integrity_ok = integrity == "ok";
+    tracing::info!(integrity_ok = %integrity_ok, "PRAGMA integrity_check complete");
 
     if !integrity_ok {
         let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
@@ -201,6 +202,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let vec_memories_ok = table_exists(&conn, "vec_memories");
     let vec_entities_ok = table_exists(&conn, "vec_entities");
     let vec_chunks_ok = table_exists(&conn, "vec_chunks");
+    tracing::info!(vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, "vector table checks complete");
     let fts_ok = table_exists(&conn, "fts_memories");
 
     // Verifies that FTS5 can execute a MATCH query (catches index corruption distinct from table absence).
@@ -214,6 +216,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     } else {
         false
     };
+
+    tracing::info!(fts_ok = %fts_ok, fts_query_ok = %fts_query_ok, "FTS5 checks complete");
 
     // Captures the SQLite runtime version for observability.
     let sqlite_version: String = conn

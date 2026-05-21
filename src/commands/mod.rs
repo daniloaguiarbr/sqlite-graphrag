@@ -30,6 +30,7 @@ pub mod reclassify;
 pub mod related;
 pub mod remember;
 pub mod rename;
+pub mod rename_entity;
 pub mod restore;
 pub mod stats;
 pub mod sync_safe_copy;

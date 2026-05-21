@@ -594,6 +594,23 @@ sqlite-graphrag remember --name notas-config --type project \
 ```
 
 
+## Receita — Renomear Entidade Com Avaliação de Impacto (v1.0.58)
+```bash
+# Passo 1: verificar quais memórias referenciam a entidade
+sqlite-graphrag memory-entities --entity auth --json | jaq '.memories[].name'
+
+# Passo 2: renomear a entidade (preserva todos os relacionamentos e vínculos)
+sqlite-graphrag rename-entity --name auth --new-name authentication --json
+
+# Passo 3: atualizar a descrição da entidade
+sqlite-graphrag reclassify --name authentication --description "JWT-based authentication service" --json
+```
+- `memory-entities --entity` fornece avaliação de impacto antes de renomear ou deletar
+- `rename-entity` é atômico: atualiza nome e re-gera vetor em uma transação
+- Todos os relacionamentos e vínculos usam FK inteiro e não são afetados pela mudança de nome
+- Combine com `reclassify --description` para enriquecer metadados na mesma sessão
+
+
 ## Integração Com Agentes de IA
 ### Vinte e Um Agentes — Uma Única Camada de Persistência
 - Claude Code da Anthropic consome JSON do stdout e orquestra via códigos de saída
