@@ -21,10 +21,10 @@
 - `fts check --json` — executa integrity-check do FTS5 e reporta inconsistências; seguro para rodar em bancos em uso
 - `fts stats --json` — retorna estatísticas do índice FTS5 incluindo contagem de linhas, tokens e segmentos
 ### Backup
-- `backup --output <path> --json` — cria backup consistente do SQLite usando a SQLite Backup API; seguro para rodar com o banco em uso; o caminho de saída não deve existir previamente
+- `backup --output <path> --json` — cria backup consistente do SQLite usando a SQLite Backup API; seguro para rodar com o banco em uso; destino existente é substituído atomicamente via tempfile-rename
 ### Operações de Entidade
 - `delete-entity --name <entity> --json` — deleta um nó de entidade; use `--cascade` para remover também todas as arestas conectadas à entidade; sem `--cascade` falha com exit 4 se houver arestas
-- `reclassify --name <entity> --entity-type <new-type> --json` — altera o `entity_type` de uma entidade existente in place sem tocar nas arestas ou links de memória
+- `reclassify --name <entity> --new-type <type> --json` — altera o `entity_type` de uma entidade existente in place sem tocar nas arestas ou links de memória
 - `merge-entities --names "a,b,c" --into <target> --json` — funde dois ou mais nós de entidade em um nó alvo; todas as arestas dos nós fonte são redirecionadas para o alvo; nós fonte são deletados após a fusão
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade

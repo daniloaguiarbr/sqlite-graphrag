@@ -10,6 +10,28 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.57] - 2026-05-21
+
+### Corrigido
+- `merge-entities` não falha mais com violação de UNIQUE constraint quando entidades de origem compartilham relacionamentos idênticos — usa `UPDATE OR IGNORE` + limpeza em vez de UPDATE direto (BUG-1).
+- `memory-entities` agora usa coluna correta `e.type` em vez de `e.entity_type` inexistente (BUG-2).
+- Flag `--clear-body` no `remember` não é mais bloqueada pela validação de body vazio — o guard agora reconhece intenção explícita de limpeza (BUG-3).
+- `fts rebuild` e `fts check` agora chamam `PRAGMA wal_checkpoint(TRUNCATE)` após operações de escrita, consistente com todos os outros comandos de escrita (G1, G2).
+- `delete-entity --cascade` agora recalcula degree para todas entidades adjacentes após remover relacionamentos, prevenindo valores de degree obsoletos (G3).
+- `merge-entities` agora recalcula degree para a entidade alvo E todas entidades adjacentes, não apenas o alvo (G4).
+- Caminho destrutivo do `prune-ner` agora executa COUNT e DELETE na mesma transação, eliminando condição de corrida sob acesso concorrente (G5).
+- `backup` agora usa padrão atômico tempfile-rename via `NamedTempFile::persist` — backups interrompidos não corrompem mais o arquivo de destino existente (G6).
+- `backup` agora registra erros de chmod via `tracing::warn!` em vez de descartá-los silenciosamente (G7).
+- `reclassify --batch` agora emite `tracing::warn!` quando `--from-type` corresponde a zero entidades, ajudando a detectar erros de digitação em nomes de tipo (G8).
+- `emit_error_json` agora escreve JSON de fallback manualmente se serialização falhar, garantindo que o contrato JSON do stdout nunca é violado (G11).
+- `list --limit 0` agora retorna exit 1 com erro de validação em vez de retornar resultado vazio indistinguível de banco vazio (G12).
+- `fts rebuild` agora verifica existência da tabela `fts_memories` antes de tentar reconstruir, retornando erro de validação claro em bancos novos (G16).
+
+### Alterado
+- Destino de `backup` agora é escrito atomicamente via tempfile-rename; crate `tempfile` promovida de dev-dependency para dependência runtime.
+- 5 JSON schemas corrigidos: `merge-entities`, `delete-entity`, `reclassify`, `prune-ner` agora incluem campo `namespace`; `fts-stats` removeu campo fantasma `action`.
+- 9 novos contract tests (contract_26–contract_34) e 9 novos schema validation tests (schema_26–schema_34) adicionados para todos os comandos v1.0.56.
+
 ## [1.0.56] - 2026-05-21
 
 ### Adicionado

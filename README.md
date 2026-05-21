@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.57**: 16 fixes — merge-entities UNIQUE constraint, memory-entities column name, --clear-body validation, WAL checkpoint for fts rebuild/check, degree recalculation for delete-entity/merge-entities adjacents, atomic backup via tempfile-rename, 18 new contract+schema tests
+- **v1.0.56**: 9 new commands (fts, backup, delete-entity, reclassify, merge-entities, memory-entities, prune-ner), 7 new flags, 19 new JSON fields, FTS5 graceful degradation, JSON error envelope
 - **v1.0.55**: Full doc audit — export summary `total`→`exported`, list response fields corrected, `--tz` exit code 1→2, exit 2 added to exit code table, stats legacy aliases documented
 - **v1.0.54**: WAL checkpoint for `prune-relations` (last missing command), `--graph-stdin` empty body validation, `memory_type` JSON field in `list`/`export`, `Vec::with_capacity` in 9 cold paths
 - **v1.0.53**: WAL checkpoint TRUNCATE after every write command for Dropbox/cloud-sync safety, `export --json` contract fix, `Vec::with_capacity` in 12 hot paths

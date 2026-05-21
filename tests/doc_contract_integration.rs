@@ -999,3 +999,261 @@ fn contract_25_debug_schema() {
     assert!(json["objects"].is_array());
     assert!(json["migrations"].is_array());
 }
+
+// ---------------------------------------------------------------------------
+// 26 — fts rebuild
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_26_fts_rebuild() {
+    let env = Env::new();
+    env.init();
+
+    let out = env.cmd().args(["fts", "rebuild"]).output().unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "fts rebuild",
+        &json,
+        &["action", "rows_indexed", "elapsed_ms"],
+    );
+    assert_eq!(json["action"], "rebuilt");
+}
+
+// ---------------------------------------------------------------------------
+// 27 — fts check
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_27_fts_check() {
+    let env = Env::new();
+    env.init();
+
+    let out = env.cmd().args(["fts", "check"]).output().unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "fts check",
+        &json,
+        &["action", "integrity_ok", "elapsed_ms"],
+    );
+    assert_eq!(json["action"], "checked");
+}
+
+// ---------------------------------------------------------------------------
+// 28 — fts stats
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_28_fts_stats() {
+    let env = Env::new();
+    env.init();
+
+    let out = env.cmd().args(["fts", "stats"]).output().unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "fts stats",
+        &json,
+        &["total_rows", "fts_functional", "elapsed_ms"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 29 — backup
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_29_backup() {
+    let env = Env::new();
+    env.init();
+    let dest = env.tmp.path().join("contract-backup.sqlite");
+
+    let out = env
+        .cmd()
+        .args(["backup", "--output", dest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "backup",
+        &json,
+        &[
+            "action",
+            "source",
+            "destination",
+            "size_bytes",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "backed_up");
+    assert!(dest.exists(), "backup file must exist");
+}
+
+// ---------------------------------------------------------------------------
+// 30 — delete-entity
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_30_delete_entity() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) =
+        env.remember_with_entities("del-ent-contract", "body for delete entity contract");
+
+    let out = env
+        .cmd()
+        .args(["delete-entity", "--name", &ent_a, "--cascade"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "delete-entity",
+        &json,
+        &[
+            "action",
+            "entity_name",
+            "namespace",
+            "relationships_removed",
+            "bindings_removed",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "deleted");
+}
+
+// ---------------------------------------------------------------------------
+// 31 — reclassify
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_31_reclassify() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) =
+        env.remember_with_entities("reclass-contract", "body for reclassify contract");
+
+    let out = env
+        .cmd()
+        .args(["reclassify", "--name", &ent_a, "--new-type", "tool"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "reclassify",
+        &json,
+        &["action", "count", "namespace", "elapsed_ms"],
+    );
+    assert_eq!(json["action"], "reclassified");
+}
+
+// ---------------------------------------------------------------------------
+// 32 — merge-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_32_merge_entities() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, ent_b) =
+        env.remember_with_entities("merge-contract", "body for merge entities contract");
+
+    let out = env
+        .cmd()
+        .args(["merge-entities", "--names", &ent_a, "--into", &ent_b])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "merge-entities failed: {:?}\nstdout: {}\nstderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "merge-entities",
+        &json,
+        &[
+            "action",
+            "sources",
+            "target",
+            "namespace",
+            "relationships_moved",
+            "entities_removed",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "merged");
+}
+
+// ---------------------------------------------------------------------------
+// 33 — memory-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_33_memory_entities() {
+    let env = Env::new();
+    env.init();
+    env.remember_with_entities("mem-ent-contract", "body for memory entities contract");
+
+    let out = env
+        .cmd()
+        .args(["memory-entities", "--name", "mem-ent-contract"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "memory-entities",
+        &json,
+        &["memory_name", "entities", "count", "elapsed_ms"],
+    );
+    assert!(json["entities"].is_array());
+    let ents = json["entities"].as_array().unwrap();
+    if !ents.is_empty() {
+        assert_array_items_have_keys(
+            "memory-entities",
+            &json["entities"],
+            &["entity_id", "name", "entity_type"],
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 34 — prune-ner
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_34_prune_ner() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) =
+        env.remember_with_entities("prune-ner-contract", "body for prune ner contract");
+
+    let out = env
+        .cmd()
+        .args(["prune-ner", "--entity", &ent_a, "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "prune-ner",
+        &json,
+        &["action", "bindings_removed", "namespace", "elapsed_ms"],
+    );
+    assert_eq!(json["action"], "dry_run");
+}

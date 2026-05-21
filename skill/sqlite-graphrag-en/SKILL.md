@@ -623,6 +623,15 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
 - `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
+- `fts rebuild` returns `action` ("rebuilt"), `rows_indexed`, `elapsed_ms`
+- `fts check` returns `action` ("checked"), `integrity_ok`, `detail?`, `elapsed_ms`
+- `fts stats` returns `total_rows`, `shadow_pages?`, `fts_functional`, `elapsed_ms`
+- `backup` returns `action` ("backed_up"), `source`, `destination`, `size_bytes`, `elapsed_ms`
+- `delete-entity` returns `action` ("deleted"), `entity_name`, `namespace`, `relationships_removed`, `bindings_removed`, `elapsed_ms`
+- `reclassify` returns `action` ("reclassified"), `count`, `namespace`, `elapsed_ms`
+- `merge-entities` returns `action` ("merged"), `sources[]`, `target`, `namespace`, `relationships_moved`, `entities_removed`, `elapsed_ms`
+- `memory-entities` returns `memory_name`, `entities[].{entity_id, name, entity_type}`, `count`, `elapsed_ms`
+- `prune-ner` returns `action` (`"pruned"`/`"dry_run"`/`"aborted"`), `bindings_removed`, `namespace`, `entity?`, `elapsed_ms`
 
 
 ## Exit Codes and Retry Strategy
@@ -686,6 +695,36 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - JSON response: `{action, source, destination, size_bytes, elapsed_ms}`
 - PREFER `backup` over `sync-safe-copy` for programmatic backups; both are safe but `backup` uses the native SQLite API
 - TREAT exit code 14 as an I/O error (destination path not writable, disk full)
+
+
+## Entity Operations (v1.0.56)
+### REQUIRED — delete-entity
+- USE `delete-entity --name <entity> --cascade --json` to remove an entity and all its relationships and memory bindings
+- FLAG `--cascade` is required as a confirmation gate; without it the command exits with validation error
+- JSON response: `{action, entity_name, namespace, relationships_removed, bindings_removed, elapsed_ms}`
+- RUN `cleanup-orphans` afterwards to remove any newly orphaned entities
+- TREAT exit code 4 as entity not found
+### REQUIRED — reclassify
+- USE `reclassify --name <entity> --new-type <type> --json` for single entity type change
+- USE `reclassify --from-type <old> --to-type <new> --batch --json` for bulk reclassification
+- JSON response: `{action, count, namespace, elapsed_ms}`
+- TREAT count 0 in batch mode as indication that --from-type may be a typo
+### REQUIRED — merge-entities
+- USE `merge-entities --names "a,b" --into <target> --json` to merge source entities into a target
+- ALL relationships from source nodes are redirected to the target via UPDATE OR IGNORE
+- DUPLICATE relationships are removed automatically after redirection
+- JSON response: `{action, sources, target, namespace, relationships_moved, entities_removed, elapsed_ms}`
+- TREAT exit code 4 as target entity not found
+### REQUIRED — memory-entities
+- USE `memory-entities --name <memory> --json` to list all entities linked to a specific memory
+- JSON response: `{memory_name, entities: [{entity_id, name, entity_type}], count, elapsed_ms}`
+- TREAT exit code 4 as memory not found; exit 0 with count 0 means memory exists but has no linked entities
+### REQUIRED — prune-ner
+- USE `prune-ner --entity <name> --dry-run --json` to preview NER binding removal
+- USE `prune-ner --entity <name> --yes --json` to remove NER bindings for a single entity
+- USE `prune-ner --all --yes --json` to remove ALL NER bindings in the namespace
+- JSON response: `{action, bindings_removed, namespace, entity, elapsed_ms}`
+- RUN `cleanup-orphans` afterwards to remove entity nodes left without any bindings
 
 
 ## Maintenance and Backup

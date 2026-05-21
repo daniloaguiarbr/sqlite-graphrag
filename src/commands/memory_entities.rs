@@ -68,7 +68,7 @@ pub fn run(args: MemoryEntitiesArgs) -> Result<(), AppError> {
         })?;
 
     let mut stmt = conn.prepare(
-        "SELECT e.id, e.name, e.entity_type
+        "SELECT e.id, e.name, e.type AS entity_type
          FROM memory_entities me
          JOIN entities e ON e.id = me.entity_id
          WHERE me.memory_id = ?1

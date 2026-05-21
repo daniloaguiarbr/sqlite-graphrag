@@ -96,6 +96,11 @@ struct ListResponse {
 }
 
 pub fn run(args: ListArgs) -> Result<(), AppError> {
+    if args.limit == Some(0) {
+        return Err(AppError::Validation(
+            "--limit must be greater than zero".to_string(),
+        ));
+    }
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;

@@ -4,10 +4,9 @@
   "title": "FtsStatsResponse",
   "description": "Response emitted by `sqlite-graphrag fts stats --json` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["action", "total_rows", "fts_functional", "elapsed_ms"],
+  "required": ["total_rows", "fts_functional", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
-    "action":         { "type": "string", "const": "stats", "description": "Always 'stats' on success." },
     "total_rows":     { "type": "integer", "minimum": 0, "description": "Total number of rows present in the FTS5 index." },
     "shadow_pages":   { "type": ["integer", "null"], "minimum": 0, "description": "Number of FTS5 shadow b-tree pages, or null when unavailable." },
     "fts_functional": { "type": "boolean", "description": "True when the FTS5 index is operational and can serve queries." },

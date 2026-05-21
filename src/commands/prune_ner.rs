@@ -143,7 +143,7 @@ pub fn run(args: PruneNerArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // Destructive path: delete memory_entities rows.
+    // Destructive path: COUNT + DELETE in same transaction for consistency.
     let removed: usize = if let Some(ref entity_name) = args.entity {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let n = tx.execute(
@@ -155,7 +155,6 @@ pub fn run(args: PruneNerArgs) -> Result<(), AppError> {
         tx.commit()?;
         n
     } else {
-        // --all: remove every binding for entities in the namespace.
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let n = tx.execute(
             "DELETE FROM memory_entities WHERE entity_id IN (

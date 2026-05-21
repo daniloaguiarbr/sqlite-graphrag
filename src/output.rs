@@ -108,7 +108,14 @@ pub fn emit_error_json(code: i32, message: &str) {
         code,
         message,
     };
-    let _ = emit_json(&envelope);
+    if emit_json(&envelope).is_err() {
+        use std::io::Write;
+        let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = writeln!(
+            std::io::stdout().lock(),
+            r#"{{"error":true,"code":{code},"message":"{escaped}"}}"#
+        );
+    }
 }
 
 /// Emits a localised error message to stderr with the `Error:`/`Erro:` prefix.

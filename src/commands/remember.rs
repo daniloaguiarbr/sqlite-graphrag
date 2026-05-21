@@ -329,6 +329,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         && graph.entities.is_empty()
         && raw_body.trim().is_empty()
         && !body_will_be_preserved
+        && !args.clear_body
     {
         return Err(AppError::Validation(crate::i18n::validation::empty_body()));
     }

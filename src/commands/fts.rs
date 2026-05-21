@@ -128,9 +128,23 @@ fn run_rebuild(args: FtsRebuildArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_rw(&paths.db)?;
 
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fts_memories'",
+        [],
+        |r| r.get::<_, i64>(0).map(|v| v > 0),
+    )?;
+    if !table_exists {
+        return Err(AppError::Validation(
+            "FTS5 table 'fts_memories' does not exist — run 'sqlite-graphrag init' first"
+                .to_string(),
+        ));
+    }
+
     conn.execute_batch("INSERT INTO fts_memories(fts_memories) VALUES('rebuild');")?;
 
     let rows: i64 = conn.query_row("SELECT COUNT(*) FROM fts_memories", [], |r| r.get(0))?;
+
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
     output::emit_json(&FtsRebuildResponse {
         action: "rebuilt".to_string(),
@@ -163,6 +177,8 @@ fn run_check(args: FtsCheckArgs) -> Result<(), AppError> {
     let integrity_ok = conn
         .execute_batch("INSERT INTO fts_memories(fts_memories, rank) VALUES('integrity-check', 1);")
         .is_ok();
+
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").ok();
 
     output::emit_json(&FtsCheckResponse {
         action: "checked".to_string(),

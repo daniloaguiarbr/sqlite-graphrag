@@ -845,3 +845,254 @@ fn schema_25_debug_schema() {
         &instancia,
     );
 }
+
+// ---------------------------------------------------------------------------
+// 26 — fts rebuild
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_26_fts_rebuild() {
+    let env = Env::new();
+    env.init();
+    let saida = env
+        .cmd()
+        .args(["fts", "rebuild"])
+        .output()
+        .expect("fts rebuild failed");
+    assert!(
+        saida.status.success(),
+        "fts rebuild: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "fts-rebuild");
+    validar_schema(
+        "fts-rebuild",
+        include_str!("../docs/schemas/fts-rebuild.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 27 — fts check
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_27_fts_check() {
+    let env = Env::new();
+    env.init();
+    let saida = env
+        .cmd()
+        .args(["fts", "check"])
+        .output()
+        .expect("fts check failed");
+    assert!(
+        saida.status.success(),
+        "fts check: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "fts-check");
+    validar_schema(
+        "fts-check",
+        include_str!("../docs/schemas/fts-check.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 28 — fts stats
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_28_fts_stats() {
+    let env = Env::new();
+    env.init();
+    let saida = env
+        .cmd()
+        .args(["fts", "stats"])
+        .output()
+        .expect("fts stats failed");
+    assert!(
+        saida.status.success(),
+        "fts stats: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "fts-stats");
+    validar_schema(
+        "fts-stats",
+        include_str!("../docs/schemas/fts-stats.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 29 — backup
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_29_backup() {
+    let env = Env::new();
+    env.init();
+    let dest = env.tmp.path().join("schema-backup.sqlite");
+    let saida = env
+        .cmd()
+        .args(["backup", "--output", dest.to_str().unwrap()])
+        .output()
+        .expect("backup failed");
+    assert!(
+        saida.status.success(),
+        "backup: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "backup");
+    validar_schema(
+        "backup",
+        include_str!("../docs/schemas/backup.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 30 — delete-entity
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_30_delete_entity() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("del-ent-schema");
+    let saida = env
+        .cmd()
+        .args(["delete-entity", "--name", &ent_a, "--cascade"])
+        .output()
+        .expect("delete-entity failed");
+    assert!(
+        saida.status.success(),
+        "delete-entity: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "delete-entity");
+    validar_schema(
+        "delete-entity",
+        include_str!("../docs/schemas/delete-entity.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 31 — reclassify
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_31_reclassify() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("reclass-schema");
+    let saida = env
+        .cmd()
+        .args(["reclassify", "--name", &ent_a, "--new-type", "tool"])
+        .output()
+        .expect("reclassify failed");
+    assert!(
+        saida.status.success(),
+        "reclassify: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "reclassify");
+    validar_schema(
+        "reclassify",
+        include_str!("../docs/schemas/reclassify.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 32 — merge-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_32_merge_entities() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, ent_b) = env.remember_with_entities("merge-schema");
+    let saida = env
+        .cmd()
+        .args(["merge-entities", "--names", &ent_a, "--into", &ent_b])
+        .output()
+        .expect("merge-entities failed");
+    assert!(
+        saida.status.success(),
+        "merge-entities: exit {:?}\nstdout: {}\nstderr: {}",
+        saida.status.code(),
+        String::from_utf8_lossy(&saida.stdout),
+        String::from_utf8_lossy(&saida.stderr)
+    );
+    let instancia = Env::parse_stdout(&saida, "merge-entities");
+    validar_schema(
+        "merge-entities",
+        include_str!("../docs/schemas/merge-entities.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 33 — memory-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_33_memory_entities() {
+    let env = Env::new();
+    env.init();
+    env.remember_with_entities("mem-ent-schema");
+    let saida = env
+        .cmd()
+        .args(["memory-entities", "--name", "mem-ent-schema"])
+        .output()
+        .expect("memory-entities failed");
+    assert!(
+        saida.status.success(),
+        "memory-entities: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "memory-entities");
+    validar_schema(
+        "memory-entities",
+        include_str!("../docs/schemas/memory-entities.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 34 — prune-ner
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_34_prune_ner() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("prune-schema");
+    let saida = env
+        .cmd()
+        .args(["prune-ner", "--entity", &ent_a, "--dry-run"])
+        .output()
+        .expect("prune-ner failed");
+    assert!(
+        saida.status.success(),
+        "prune-ner: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "prune-ner");
+    validar_schema(
+        "prune-ner",
+        include_str!("../docs/schemas/prune-ner.schema.json"),
+        &instancia,
+    );
+}

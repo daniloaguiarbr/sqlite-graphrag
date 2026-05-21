@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.57] - 2026-05-21
+
+### Fixed
+- `merge-entities` no longer crashes with UNIQUE constraint violation when source entities share identical relationships — uses `UPDATE OR IGNORE` + cleanup instead of bare UPDATE (BUG-1).
+- `memory-entities` SQL query now uses correct column `e.type` instead of non-existent `e.entity_type` (BUG-2).
+- `--clear-body` flag in `remember` no longer blocked by empty body validation — the guard now recognizes explicit clear intent (BUG-3).
+- `fts rebuild` and `fts check` now call `PRAGMA wal_checkpoint(TRUNCATE)` after write operations, consistent with all other write commands (G1, G2).
+- `delete-entity --cascade` now recalculates degree for all adjacent entities after removing relationships, preventing stale degree values (G3).
+- `merge-entities` now recalculates degree for the target entity AND all adjacent entities, not just the target (G4).
+- `prune-ner` destructive path now executes COUNT and DELETE within the same transaction, eliminating race condition under concurrent access (G5).
+- `backup` now uses atomic tempfile-rename pattern via `NamedTempFile::persist` — interrupted backups no longer corrupt existing destination files (G6).
+- `backup` now logs chmod errors via `tracing::warn!` instead of silently discarding them (G7).
+- `reclassify --batch` now emits `tracing::warn!` when `--from-type` matches zero entities, helping users detect typos in type names (G8).
+- `emit_error_json` now writes a fallback JSON string manually if `serde_json` serialization fails, guaranteeing the stdout JSON contract is never violated (G11).
+- `list --limit 0` now returns exit 1 validation error instead of silently returning empty results indistinguishable from an empty database (G12).
+- `fts rebuild` now checks that the `fts_memories` table exists before attempting rebuild, returning a clear validation error on fresh databases (G16).
+
+### Changed
+- `backup` destination is now written atomically via tempfile-rename; the `tempfile` crate was promoted from dev-dependency to runtime dependency.
+- 5 JSON schemas corrected: `merge-entities`, `delete-entity`, `reclassify`, `prune-ner` schemas now include the `namespace` field; `fts-stats` schema removed phantom `action` field that the struct does not emit.
+- 9 new contract tests (contract_26–contract_34) and 9 new schema validation tests (schema_26–schema_34) added for all v1.0.56 commands.
+
 ## [1.0.56] - 2026-05-21
 
 ### Added

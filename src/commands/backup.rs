@@ -9,6 +9,7 @@ use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
 use serde::Serialize;
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
@@ -20,7 +21,8 @@ use std::path::PathBuf;
     sqlite-graphrag backup --output /tmp/snap.sqlite --json\n\n  \
 NOTES:\n  \
     Uses the SQLite Online Backup API: safe to run while the database is in use.\n  \
-    The destination file is created (or overwritten) at the path given by --output.\n  \
+    The destination is written atomically via tempfile-rename in the same directory.\n  \
+    If the process is interrupted, the previous file (if any) remains intact.\n  \
     On Unix the destination is chmod 0600 after the backup completes.")]
 pub struct BackupArgs {
     /// Destination path for the backup file. Required.
@@ -55,19 +57,26 @@ pub fn run(args: BackupArgs) -> Result<(), AppError> {
     }
 
     // Create parent directories if necessary.
-    if let Some(parent) = args.output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    let parent = args.output.parent().unwrap_or(std::path::Path::new("."));
+    if !parent.as_os_str().is_empty() {
+        std::fs::create_dir_all(parent)?;
     }
 
+    // Atomic write: backup to tempfile in the SAME directory, then rename.
+    let temp = NamedTempFile::new_in(parent).map_err(AppError::Io)?;
+    let temp_path = temp.path().to_path_buf();
+
     let src_conn = open_ro(&paths.db)?;
-    let mut dst_conn = rusqlite::Connection::open(&args.output)?;
+    let mut dst_conn = rusqlite::Connection::open(&temp_path)?;
 
     {
         let backup = rusqlite::backup::Backup::new(&src_conn, &mut dst_conn)?;
         backup.run_to_completion(100, std::time::Duration::from_millis(50), None)?;
     }
+    drop(dst_conn);
+
+    temp.persist(&args.output)
+        .map_err(|e| AppError::Io(e.error))?;
 
     // Apply 0600 permissions on Unix to prevent leakage in shared directories.
     #[cfg(unix)]
@@ -76,7 +85,13 @@ pub fn run(args: BackupArgs) -> Result<(), AppError> {
         if let Ok(meta) = std::fs::metadata(&args.output) {
             let mut perms = meta.permissions();
             perms.set_mode(0o600);
-            let _ = std::fs::set_permissions(&args.output, perms);
+            if let Err(e) = std::fs::set_permissions(&args.output, perms) {
+                tracing::warn!(
+                    path = %args.output.display(),
+                    error = %e,
+                    "failed to set 0600 permissions on backup file"
+                );
+            }
         }
     }
     #[cfg(windows)]

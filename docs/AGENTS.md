@@ -21,10 +21,10 @@
 - `fts check --json` — runs FTS5 integrity-check and reports any inconsistencies; safe to run on live databases
 - `fts stats --json` — returns FTS5 index statistics including row count, token count, and segment count
 ### Backup
-- `backup --output <path> --json` — creates a consistent SQLite online backup using the SQLite Backup API; safe to run while the database is in use; output path must not already exist
+- `backup --output <path> --json` — creates a consistent SQLite online backup using the SQLite Backup API; safe to run while the database is in use; existing destination is atomically replaced via tempfile-rename
 ### Entity Operations
 - `delete-entity --name <entity> --json` — deletes an entity node; use `--cascade` to also remove all edges connected to the entity; without `--cascade` fails with exit 4 if edges exist
-- `reclassify --name <entity> --entity-type <new-type> --json` — changes the `entity_type` of an existing entity in place without touching its edges or memory links
+- `reclassify --name <entity> --new-type <type> --json` — changes the `entity_type` of an existing entity in place without touching its edges or memory links
 - `merge-entities --names "a,b,c" --into <target> --json` — merges two or more source entities into a target entity; all edges from source nodes are redirected to the target; source nodes are deleted after merge
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities

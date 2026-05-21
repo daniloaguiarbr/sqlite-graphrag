@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.56"
+version = "1.0.57"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -94,6 +94,7 @@ text-splitter = { version = "0.30.1", features = ["markdown", "tokenizers"] }
 huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
 unicode-normalization = "0.1.25"
 ndarray = "0.16"
+tempfile = "3"
 
 # ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
 # pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:

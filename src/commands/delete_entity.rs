@@ -78,6 +78,18 @@ pub fn run(args: DeleteEntityArgs) -> Result<(), AppError> {
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
+    // Step 0: collect adjacent entity IDs BEFORE deleting relationships.
+    let adjacent_ids: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT CASE WHEN source_id = ?1 THEN target_id ELSE source_id END
+             FROM relationships WHERE source_id = ?1 OR target_id = ?1",
+        )?;
+        let ids: Vec<i64> = stmt
+            .query_map(params![entity_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids
+    };
+
     // Step 1: collect relationship IDs for this entity (source or target).
     let rel_ids: Vec<i64> = {
         let mut stmt =
@@ -116,6 +128,13 @@ pub fn run(args: DeleteEntityArgs) -> Result<(), AppError> {
 
     // Step 6: delete the entity itself.
     tx.execute("DELETE FROM entities WHERE id = ?1", params![entity_id])?;
+
+    // Step 7: recalculate degree for adjacent entities that lost relationships.
+    for &adj_id in &adjacent_ids {
+        if adj_id != entity_id {
+            entities::recalculate_degree(&tx, adj_id)?;
+        }
+    }
 
     tx.commit()?;
 

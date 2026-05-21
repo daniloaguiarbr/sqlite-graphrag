@@ -16,7 +16,13 @@ use serde::Serialize;
     # List versions using the named flag form\n  \
     sqlite-graphrag history --name onboarding\n\n  \
     # Omit body content to reduce response size\n  \
-    sqlite-graphrag history onboarding --no-body")]
+    sqlite-graphrag history onboarding --no-body\n\n  \
+    # Include character-level change summary between versions\n  \
+    sqlite-graphrag history onboarding --diff\n\n\
+DIFF OUTPUT:\n  \
+    When --diff is active, each version (except the first) includes a `changes`\n  \
+    object with `added_chars` and `removed_chars` — the character count difference\n  \
+    between that version and its predecessor.")]
 pub struct HistoryArgs {
     /// Memory name as a positional argument. Alternative to `--name`.
     #[arg(

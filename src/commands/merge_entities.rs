@@ -103,15 +103,23 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
     let mut relationships_moved: usize = 0;
 
     for &src_id in &source_ids {
-        // Step 1a: redirect source_id from src → target.
+        // Step 1a: redirect source_id, ignoring UNIQUE conflicts.
         let moved_src = tx.execute(
-            "UPDATE relationships SET source_id = ?1 WHERE source_id = ?2",
+            "UPDATE OR IGNORE relationships SET source_id = ?1 WHERE source_id = ?2",
             params![target_id, src_id],
         )?;
-        // Step 1b: redirect target_id from src → target.
+        tx.execute(
+            "DELETE FROM relationships WHERE source_id = ?1",
+            params![src_id],
+        )?;
+        // Step 1b: redirect target_id, ignoring UNIQUE conflicts.
         let moved_tgt = tx.execute(
-            "UPDATE relationships SET target_id = ?1 WHERE target_id = ?2",
+            "UPDATE OR IGNORE relationships SET target_id = ?1 WHERE target_id = ?2",
             params![target_id, src_id],
+        )?;
+        tx.execute(
+            "DELETE FROM relationships WHERE target_id = ?1",
+            params![src_id],
         )?;
         relationships_moved += moved_src + moved_tgt;
     }
@@ -120,7 +128,7 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
     tx.execute("DELETE FROM relationships WHERE source_id = target_id", [])?;
 
     // Step 3: deduplicate relationships that now share (source, target, relation).
-    // Keep only the row with the lowest id in each duplicate group.
+    // Safety net — UPDATE OR IGNORE should have handled most duplicates above.
     tx.execute(
         "DELETE FROM relationships
          WHERE id NOT IN (
@@ -161,8 +169,21 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
         entities_removed += removed;
     }
 
-    // Recalculate degree for target after all rewirings.
+    // Step 7: recalculate degree for target and all adjacent entities.
+    let adjacent_ids: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT CASE WHEN source_id = ?1 THEN target_id ELSE source_id END
+             FROM relationships WHERE source_id = ?1 OR target_id = ?1",
+        )?;
+        let ids: Vec<i64> = stmt
+            .query_map(params![target_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids
+    };
     entities::recalculate_degree(&tx, target_id)?;
+    for &adj_id in &adjacent_ids {
+        entities::recalculate_degree(&tx, adj_id)?;
+    }
 
     tx.commit()?;
 

@@ -95,6 +95,13 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
             params![to_type.as_str(), from_type.as_str(), namespace],
         )?;
         tx.commit()?;
+        if affected == 0 {
+            tracing::warn!(
+                from_type = from_type.as_str(),
+                namespace = %namespace,
+                "reclassify batch matched zero entities — verify --from-type value exists"
+            );
+        }
         affected
     } else {
         // Single mode: --name + --new-type
