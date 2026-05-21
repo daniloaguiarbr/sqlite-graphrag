@@ -73,6 +73,21 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.56 — Correção FTS5 sync, 7 novos comandos, envelope JSON de erro, degradação graciosa
+
+- Sync FTS5 agora funciona em `edit`, `rename`, `restore` — memórias editadas antes ficavam invisíveis à busca textual
+- `hybrid-search` degrada graciosamente quando FTS5 está corrompido: cai para apenas vetorial com `fts_degraded: true`
+- TODOS os caminhos de erro emitem JSON no stdout: `{"error": true, "code": N, "message": "..."}`
+- `--force-merge` com body vazio preserva body existente (mudança: use `--clear-body` para limpar explicitamente)
+- `--type` e `--description` agora opcionais com `--force-merge` (herdados da memória existente)
+- Limite padrão de `list --json` alterado de 50 para todas as memórias (output texto mantém 50)
+- `unlink --relation` agora opcional (remove todos entre o par); `--entity X --all` para remoção em massa
+- 7 novos comandos: `fts` (rebuild/check/stats), `backup`, `delete-entity`, `reclassify`, `merge-entities`, `memory-entities`, `prune-ner`
+- `graph entities` adiciona campo `degree` e `--sort-by degree|name|created_at --order asc|desc`
+- `health` adiciona `fts_query_ok` (teste funcional FTS5) e `sqlite_version`
+- `optimize` agora reconstrói índice FTS5 (pule com `--skip-fts`)
+- `ingest` auto-prefixa basenames numéricos com `doc-` e adiciona flag `--max-name-length`
+
 ### v1.0.55 — Correções de precisão de documentação para SKILL.md, CLAUDE.md e tabela de exit codes
 
 #### Campo do summary de export corrigido de `total` para `exported`

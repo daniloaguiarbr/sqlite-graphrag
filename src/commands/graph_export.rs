@@ -121,6 +121,25 @@ pub struct GraphStatsArgs {
     pub db: Option<String>,
 }
 
+/// Field to sort entities by in `graph entities`.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum EntitySortField {
+    /// Sort alphabetically by entity name.
+    Name,
+    /// Sort by degree (total number of relationships, descending by default).
+    Degree,
+    /// Sort by entity creation timestamp.
+    CreatedAt,
+}
+
+/// Sort direction for `graph entities`.
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum SortOrder {
+    #[default]
+    Asc,
+    Desc,
+}
+
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
     # List all entities (default limit applies)\n  \
@@ -131,6 +150,10 @@ pub struct GraphStatsArgs {
     sqlite-graphrag graph entities --namespace project-x --entity-type concept\n\n  \
     # Paginate results (skip first 20, return next 10)\n  \
     sqlite-graphrag graph entities --offset 20 --limit 10\n\n  \
+    # Sort by degree descending (most connected first)\n  \
+    sqlite-graphrag graph entities --sort-by degree --order desc\n\n  \
+    # Sort by creation date ascending\n  \
+    sqlite-graphrag graph entities --sort-by created-at --order asc\n\n  \
 NOTES:\n  \
     Output is always JSON with `entities`, `total_count`, `limit`, and `offset` fields.\n  \
     Entity types are strings extracted by GLiNER NER (e.g. `person`, `organization`, `location`).")]
@@ -146,6 +169,12 @@ pub struct GraphEntitiesArgs {
     /// Number of results to skip for pagination.
     #[arg(long, default_value_t = 0usize)]
     pub offset: usize,
+    /// Sort entities by this field. When omitted, the default order is by name ascending.
+    #[arg(long, value_enum, help = "Sort entities by field")]
+    pub sort_by: Option<EntitySortField>,
+    /// Sort direction: `asc` (default) or `desc`.
+    #[arg(long, value_enum, default_value_t = SortOrder::Asc, help = "Sort order")]
+    pub order: SortOrder,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -216,6 +245,8 @@ struct EntityItem {
     entity_type: String,
     namespace: String,
     created_at: String,
+    /// Total number of relationships (inbound + outbound) for this entity.
+    degree: u32,
 }
 
 #[derive(Serialize)]
@@ -313,6 +344,12 @@ fn run_entities_snapshot(
         format
     };
 
+    if effective_format == GraphExportFormat::Ndjson {
+        let elapsed_ms = inicio.elapsed().as_millis() as u64;
+        render_ndjson_streaming(&nodes, &edges, elapsed_ms, output_path)?;
+        return Ok(());
+    }
+
     let rendered = match effective_format {
         GraphExportFormat::Json => render_json(&GraphSnapshot {
             nodes,
@@ -321,6 +358,7 @@ fn run_entities_snapshot(
         })?,
         GraphExportFormat::Dot => render_dot(&nodes, &edges),
         GraphExportFormat::Mermaid => render_mermaid(&nodes, &edges),
+        GraphExportFormat::Ndjson => unreachable!("ndjson handled above"),
     };
 
     if let Some(path) = output_path.filter(|_| !json) {
@@ -483,6 +521,27 @@ fn run_stats(args: GraphStatsArgs) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Builds the `ORDER BY` clause fragment from sort options.
+///
+/// Returns a static SQL fragment such as `ORDER BY e.name ASC`.
+fn build_order_by(sort_by: Option<EntitySortField>, order: SortOrder) -> &'static str {
+    // The combinations are enumerated as static strings to avoid
+    // format!() allocations in the hot path and satisfy the borrow checker
+    // when the string is used inside conn.prepare().
+    match (sort_by, order) {
+        (None, SortOrder::Asc) | (Some(EntitySortField::Name), SortOrder::Asc) => {
+            "ORDER BY e.name ASC"
+        }
+        (Some(EntitySortField::Name), SortOrder::Desc) => "ORDER BY e.name DESC",
+        (Some(EntitySortField::Degree), SortOrder::Asc) => "ORDER BY degree ASC",
+        (Some(EntitySortField::Degree), SortOrder::Desc) => "ORDER BY degree DESC",
+        (Some(EntitySortField::CreatedAt), SortOrder::Asc) => "ORDER BY e.created_at ASC",
+        (Some(EntitySortField::CreatedAt), SortOrder::Desc) => "ORDER BY e.created_at DESC",
+        // Fallback: None/Desc → sort by name desc (consistent with dir variable).
+        (None, SortOrder::Desc) => "ORDER BY e.name DESC",
+    }
+}
+
 fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
     let inicio = Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -503,11 +562,18 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
             entity_type: r.get(2)?,
             namespace: r.get(3)?,
             created_at,
+            degree: r.get(5)?,
         })
     };
 
     let limit_i = args.limit as i64;
     let offset_i = args.offset as i64;
+    let order_clause = build_order_by(args.sort_by, args.order);
+
+    let base_select = "SELECT e.id, e.name, COALESCE(e.type, ''), e.namespace, e.created_at,
+                        (SELECT COUNT(*) FROM relationships r
+                         WHERE r.source_id = e.id OR r.target_id = e.id) AS degree
+                 FROM entities e";
 
     let (total_count, items) = match (
         args.namespace.as_deref(),
@@ -519,11 +585,10 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 rusqlite::params![ns, et],
                 |r| r.get(0),
             )?;
-            let mut stmt = conn.prepare(
-                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
-                 WHERE namespace = ?1 AND type = ?2
-                 ORDER BY name ASC LIMIT ?3 OFFSET ?4",
-            )?;
+            let sql = format!(
+                "{base_select} WHERE e.namespace = ?1 AND e.type = ?2 {order_clause} LIMIT ?3 OFFSET ?4"
+            );
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![ns, et, limit_i, offset_i], row_to_item)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -535,11 +600,9 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 rusqlite::params![ns],
                 |r| r.get(0),
             )?;
-            let mut stmt = conn.prepare(
-                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
-                 WHERE namespace = ?1
-                 ORDER BY name ASC LIMIT ?2 OFFSET ?3",
-            )?;
+            let sql =
+                format!("{base_select} WHERE e.namespace = ?1 {order_clause} LIMIT ?2 OFFSET ?3");
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![ns, limit_i, offset_i], row_to_item)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -551,11 +614,8 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
                 rusqlite::params![et],
                 |r| r.get(0),
             )?;
-            let mut stmt = conn.prepare(
-                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
-                 WHERE type = ?1
-                 ORDER BY name ASC LIMIT ?2 OFFSET ?3",
-            )?;
+            let sql = format!("{base_select} WHERE e.type = ?1 {order_clause} LIMIT ?2 OFFSET ?3");
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![et, limit_i, offset_i], row_to_item)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -563,10 +623,8 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
         }
         (None, None) => {
             let count: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
-            let mut stmt = conn.prepare(
-                "SELECT id, name, COALESCE(type, ''), namespace, created_at FROM entities
-                 ORDER BY name ASC LIMIT ?1 OFFSET ?2",
-            )?;
+            let sql = format!("{base_select} {order_clause} LIMIT ?1 OFFSET ?2");
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![limit_i, offset_i], row_to_item)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -586,6 +644,104 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
 
 fn render_json(snapshot: &GraphSnapshot) -> Result<String, AppError> {
     Ok(serde_json::to_string_pretty(snapshot)?)
+}
+
+/// Streams the graph as NDJSON: one object per node, one per edge, then a summary.
+///
+/// Each line is flushed immediately so consumers can process incrementally.
+/// When `output_path` is `Some`, lines are written to the file; otherwise to stdout.
+fn render_ndjson_streaming(
+    nodes: &[NodeOut],
+    edges: &[EdgeOut],
+    elapsed_ms: u64,
+    output_path: Option<&std::path::Path>,
+) -> Result<(), AppError> {
+    #[derive(serde::Serialize)]
+    struct NdjsonNode<'a> {
+        kind: &'static str,
+        id: i64,
+        name: &'a str,
+        namespace: &'a str,
+        #[serde(rename = "type")]
+        r#type: &'a str,
+    }
+    #[derive(serde::Serialize)]
+    struct NdjsonEdge<'a> {
+        kind: &'static str,
+        from: &'a str,
+        to: &'a str,
+        relation: &'a str,
+        weight: f64,
+    }
+    #[derive(serde::Serialize)]
+    struct NdjsonSummary {
+        kind: &'static str,
+        nodes: usize,
+        edges: usize,
+        elapsed_ms: u64,
+    }
+
+    use std::io::Write as IoWrite;
+
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+
+    let emit_line =
+        |buf: &mut Vec<u8>, line: &str, path: Option<&std::path::Path>| -> Result<(), AppError> {
+            buf.clear();
+            buf.extend_from_slice(line.as_bytes());
+            buf.push(b'\n');
+            if let Some(p) = path {
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(p)
+                    .map_err(AppError::Io)?;
+                f.write_all(buf).map_err(AppError::Io)?;
+            } else {
+                output::emit_text(line);
+            }
+            Ok(())
+        };
+
+    // Truncate the output file once before starting (avoids re-opening with append for every line).
+    if let Some(p) = output_path {
+        fs::write(p, b"")?;
+    }
+
+    for node in nodes {
+        let obj = NdjsonNode {
+            kind: "node",
+            id: node.id,
+            name: &node.name,
+            namespace: &node.namespace,
+            r#type: &node.r#type,
+        };
+        let line = serde_json::to_string(&obj)?;
+        emit_line(&mut buf, &line, output_path)?;
+    }
+
+    for edge in edges {
+        let obj = NdjsonEdge {
+            kind: "edge",
+            from: &edge.from,
+            to: &edge.to,
+            relation: &edge.relation,
+            weight: edge.weight,
+        };
+        let line = serde_json::to_string(&obj)?;
+        emit_line(&mut buf, &line, output_path)?;
+    }
+
+    let summary = NdjsonSummary {
+        kind: "summary",
+        nodes: nodes.len(),
+        edges: edges.len(),
+        elapsed_ms,
+    };
+    let line = serde_json::to_string(&summary)?;
+    emit_line(&mut buf, &line, output_path)?;
+
+    Ok(())
 }
 
 fn sanitize_dot_id(raw: &str) -> String {
@@ -771,6 +927,7 @@ mod tests {
                 entity_type: "agent".to_string(),
                 namespace: "global".to_string(),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                degree: 0,
             }],
             total_count: 1,
             limit: 50,
@@ -796,6 +953,7 @@ mod tests {
             entity_type: "concept".to_string(),
             namespace: "project-a".to_string(),
             created_at: "2026-04-19T12:00:00Z".to_string(),
+            degree: 3,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["id"], 42);
@@ -814,6 +972,7 @@ mod tests {
             entity_type: String::new(),
             namespace: "ns".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
+            degree: 0,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert!(
@@ -879,5 +1038,106 @@ mod tests {
             json.get("entities").is_some(),
             "'entities' key must be present"
         );
+    }
+
+    #[test]
+    fn build_order_by_defaults_to_name_asc() {
+        let clause = build_order_by(None, SortOrder::Asc);
+        assert_eq!(clause, "ORDER BY e.name ASC");
+    }
+
+    #[test]
+    fn build_order_by_name_desc() {
+        let clause = build_order_by(Some(EntitySortField::Name), SortOrder::Desc);
+        assert_eq!(clause, "ORDER BY e.name DESC");
+    }
+
+    #[test]
+    fn build_order_by_degree_desc() {
+        let clause = build_order_by(Some(EntitySortField::Degree), SortOrder::Desc);
+        assert_eq!(clause, "ORDER BY degree DESC");
+    }
+
+    #[test]
+    fn build_order_by_degree_asc() {
+        let clause = build_order_by(Some(EntitySortField::Degree), SortOrder::Asc);
+        assert_eq!(clause, "ORDER BY degree ASC");
+    }
+
+    #[test]
+    fn build_order_by_created_at_asc() {
+        let clause = build_order_by(Some(EntitySortField::CreatedAt), SortOrder::Asc);
+        assert_eq!(clause, "ORDER BY e.created_at ASC");
+    }
+
+    #[test]
+    fn build_order_by_created_at_desc() {
+        let clause = build_order_by(Some(EntitySortField::CreatedAt), SortOrder::Desc);
+        assert_eq!(clause, "ORDER BY e.created_at DESC");
+    }
+
+    #[test]
+    fn graph_entities_cli_accepts_sort_by_degree_desc() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "entities",
+            "--sort-by",
+            "degree",
+            "--order",
+            "desc",
+        ])
+        .expect("graph entities --sort-by degree --order desc must parse");
+        match parsed.command {
+            Commands::Graph(args) => match args.subcommand {
+                Some(GraphSubcommand::Entities(e)) => {
+                    assert!(matches!(e.sort_by, Some(EntitySortField::Degree)));
+                    assert!(matches!(e.order, SortOrder::Desc));
+                }
+                _ => unreachable!("unexpected subcommand"),
+            },
+            _ => unreachable!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn graph_entities_cli_accepts_sort_by_created_at_asc() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "entities",
+            "--sort-by",
+            "created-at",
+        ])
+        .expect("graph entities --sort-by created-at must parse");
+        match parsed.command {
+            Commands::Graph(args) => match args.subcommand {
+                Some(GraphSubcommand::Entities(e)) => {
+                    assert!(matches!(e.sort_by, Some(EntitySortField::CreatedAt)));
+                    assert!(matches!(e.order, SortOrder::Asc));
+                }
+                _ => unreachable!("unexpected subcommand"),
+            },
+            _ => unreachable!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn graph_entities_cli_defaults_to_no_sort_by() {
+        let parsed = Cli::try_parse_from(["sqlite-graphrag", "graph", "entities"])
+            .expect("graph entities must parse without sort flags");
+        match parsed.command {
+            Commands::Graph(args) => match args.subcommand {
+                Some(GraphSubcommand::Entities(e)) => {
+                    assert!(e.sort_by.is_none(), "sort_by must default to None");
+                    assert!(
+                        matches!(e.order, SortOrder::Asc),
+                        "order must default to Asc"
+                    );
+                }
+                _ => unreachable!("unexpected subcommand"),
+            },
+            _ => unreachable!("unexpected command"),
+        }
     }
 }

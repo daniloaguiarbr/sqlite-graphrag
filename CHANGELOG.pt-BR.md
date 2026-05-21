@@ -10,6 +10,55 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.56] - 2026-05-21
+
+### Adicionado
+- Comando `fts rebuild` reconstrói o índice FTS5 de busca textual do zero (GAP-07).
+- Comando `fts check` executa integrity-check do FTS5 sem modificar o índice (GAP-07).
+- Comando `fts stats` exibe estatísticas do índice FTS5: contagem de linhas, páginas shadow, status funcional (GAP-32).
+- Comando `backup` cria cópia segura do banco via SQLite Online Backup API (GAP-20).
+- Comando `delete-entity` remove entidade e cascateia para relacionamentos e bindings NER (GAP-17).
+- Comando `reclassify` altera tipo de entidade individual ou em massa via `--from-type`/`--to-type --batch` (GAP-18).
+- Comando `merge-entities` funde múltiplas entidades-fonte em um destino, movendo todas as edges (GAP-19).
+- Comando `memory-entities` lista entidades vinculadas a uma memória específica (GAP-22).
+- Comando `prune-ner` remove bindings NER da tabela `memory_entities` por entidade ou globalmente (GAP-16).
+- Flag `--dry-run` em `remember` valida input e reporta ações planejadas sem persistir (GAP-26).
+- Flag `--clear-body` em `remember` limpa explicitamente o body durante `--force-merge` (GAP-08/09).
+- Flag `--strict-relations` em `link` rejeita tipos de relação não-canônicos com exit 1 (GAP-15).
+- Flags `--sort-by degree|name|created_at` e `--order asc|desc` em `graph entities` (GAP-25).
+- Flag `--skip-fts` em `optimize` para pular rebuild do FTS5 (GAP-06).
+- Flag `--max-name-length` em `ingest` para configurar limite de truncagem de nomes (GAP-34).
+- Campos `fts_degraded`, `fts_error` no JSON de `hybrid-search` para degradação graciosa do FTS5 (GAP-04).
+- Campo `fts_auto_rebuilt` no JSON de `hybrid-search` quando FTS5 é auto-reparado em corrupção (GAP-05).
+- Campo `normalized_score` no JSON de `hybrid-search` para comparabilidade de scores entre métodos (GAP-12).
+- Campos `vec_distance`, `fts_bm25` de scores brutos no JSON de `hybrid-search` (GAP-30).
+- Campo `fts_query_ok` no JSON de `health` verifica se FTS5 é funcionalmente consultável (GAP-02).
+- Campo `sqlite_version` no JSON de `health` reporta versão do SQLite bundled (GAP-28).
+- Campos `model_name`, `model_variant` na resposta de `daemon --ping` (GAP-29).
+- Campo `degree` no JSON de `graph entities` via subquery COUNT (GAP-13).
+- Campo `body_length` no JSON de `list` (GAP-14).
+- Campo `body_length` nos eventos NDJSON por arquivo de `ingest` (GAP-27).
+- Campos `total_count`, `truncated` na resposta JSON de `list` (GAP-11).
+- Campo `warnings` na resposta JSON de `link` para avisos de relações não-canônicas (GAP-15).
+- Flag `--diff` em `history` inclui resumo de mudanças por caractere entre versões (GAP-23).
+- Envelope JSON de erro no stdout para todos os caminhos de erro: `{"error": true, "code": N, "message": "..."}` (GAP-03).
+
+### Corrigido
+- Sync FTS5 de external-content implementado nos handlers `edit`, `rename` e `restore` via `sync_fts_after_update()` — corrige corrupção silenciosa do índice FTS5 onde memórias editadas/renomeadas ficavam invisíveis à busca textual (GAP-01 causa raiz).
+- `hybrid-search` não aborta mais quando FTS5 está corrompido — cai para resultados apenas vetoriais com `fts_degraded: true` (GAP-04).
+- `hybrid-search` pula consulta FTS5 completamente quando `--weight-fts 0.0` em vez de executar e falhar (GAP-04).
+- `hybrid-search` reconstrói automaticamente o índice FTS5 em erros "malformed" e retenta uma vez antes de degradar (GAP-05).
+- `health --json` agora faz smoke test funcional com query FTS5 MATCH em vez de apenas verificar existência da tabela em `sqlite_master` (GAP-02).
+- `optimize` agora reconstrói índice FTS5 após `PRAGMA optimize` (GAP-06).
+- `--force-merge` com body vazio preserva body existente em vez de destruí-lo — use `--clear-body` para limpar explicitamente (GAP-08/09).
+- `--type` e `--description` agora opcionais com `--force-merge` — herdados da memória existente quando omitidos (GAP-10).
+- Limite padrão de `list --json` alterado de 50 para todas as memórias — output texto mantém padrão 50 (GAP-11).
+- `unlink` `--relation` agora opcional — omitir remove todos os relacionamentos entre o par (GAP-24).
+- `unlink` suporta `--entity X --all` para remoção em massa de todas edges de uma entidade (GAP-24).
+- `ingest` auto-prefixa nomes começando com dígitos com `doc-` em vez de rejeitar (GAP-35).
+- Pesos extremos (>= 0.95 ou <= 0.05) agora emitem `tracing::warn!` (GAP-36).
+- Entity type "memory" emite `tracing::warn!` quando nome colide com memória existente (GAP-33).
+
 ## [1.0.55] - 2026-05-17
 
 ### Corrigido

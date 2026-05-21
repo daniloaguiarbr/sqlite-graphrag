@@ -27,7 +27,11 @@ use crate::storage::memories;
     # Filter by memory type\n  \
     sqlite-graphrag recall \"deployment\" --type decision --k 10\n\n  \
     # Cap results by distance threshold\n  \
-    sqlite-graphrag recall \"API design\" --k 5 --max-distance 0.8")]
+    sqlite-graphrag recall \"API design\" --k 5 --max-distance 0.8\n\n  \
+NOTES:\n  \
+    When --no-graph is active, graph traversal is skipped and every result has\n  \
+    source=\"direct\". The source field is therefore redundant with --no-graph and\n  \
+    may be ignored by callers in that mode.")]
 pub struct RecallArgs {
     #[arg(help = "Search query string (semantic vector search via sqlite-vec)")]
     pub query: String,

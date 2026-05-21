@@ -288,23 +288,33 @@ fn main() {
         sqlite_graphrag::cli::Commands::Optimize(args) => commands::optimize::run(args),
         sqlite_graphrag::cli::Commands::Stats(args) => commands::stats::run(args),
         sqlite_graphrag::cli::Commands::SyncSafeCopy(args) => commands::sync_safe_copy::run(args),
+        sqlite_graphrag::cli::Commands::Backup(args) => commands::backup::run(args),
         sqlite_graphrag::cli::Commands::Vacuum(args) => commands::vacuum::run(args),
         sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
         sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
         sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
         sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
         sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
+        sqlite_graphrag::cli::Commands::Fts(args) => commands::fts::run(args),
         sqlite_graphrag::cli::Commands::PruneRelations(args) => {
             commands::prune_relations::run(args)
         }
+        sqlite_graphrag::cli::Commands::PruneNer(args) => commands::prune_ner::run(args),
         sqlite_graphrag::cli::Commands::CleanupOrphans(args) => {
             commands::cleanup_orphans::run(args)
         }
+        sqlite_graphrag::cli::Commands::MemoryEntities(args) => {
+            commands::memory_entities::run(args)
+        }
         sqlite_graphrag::cli::Commands::Cache(args) => commands::cache::run(args),
+        sqlite_graphrag::cli::Commands::DeleteEntity(args) => commands::delete_entity::run(args),
+        sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
+        sqlite_graphrag::cli::Commands::MergeEntities(args) => commands::merge_entities::run(args),
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };
 
     if let Err(e) = result {
+        sqlite_graphrag::output::emit_error_json(e.exit_code(), &e.localized_message());
         sqlite_graphrag::output::emit_error(&e.localized_message());
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());

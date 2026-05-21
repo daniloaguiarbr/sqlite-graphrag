@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.55"
+version = "1.0.56"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -61,7 +61,7 @@ path = "tests/loom_lock_slots.rs"
 # v0.9.1). Native SQLite linking forbids two rusqlite versions in the graph
 # (see https://stackoverflow.com/questions/69403524). Reassess when a refinery
 # release supporting rusqlite 0.39 ships; tracked for v1.0.41.
-rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace"] }
+rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace", "backup"] }
 sqlite-vec = "0.1.9"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 clap = { version = "4.6", features = ["derive", "env"] }

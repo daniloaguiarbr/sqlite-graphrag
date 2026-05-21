@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/fts-check.schema.json",
+  "title": "FtsCheckResponse",
+  "description": "Response emitted by `sqlite-graphrag fts check --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "integrity_ok", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":       { "type": "string", "const": "checked", "description": "Always 'checked' on success." },
+    "integrity_ok": { "type": "boolean", "description": "True when the FTS5 index passes its integrity check." },
+    "detail":       { "type": ["string", "null"], "description": "Optional human-readable detail message, null when integrity_ok is true." },
+    "elapsed_ms":   { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

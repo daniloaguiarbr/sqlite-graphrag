@@ -617,6 +617,24 @@ sqlite-graphrag remember --name config-notes --type project \
 
 
 ## Common Errors
+### FTS5 Index Repair
+- Check FTS5 health: `sqlite-graphrag health --json | jaq '.fts_query_ok'`
+- If false, rebuild: `sqlite-graphrag fts rebuild --json`
+- Verify: `sqlite-graphrag fts check --json`
+- View stats: `sqlite-graphrag fts stats --json`
+
+### Database Backup
+- Create safe backup: `sqlite-graphrag backup --output backup.sqlite --json`
+- Uses SQLite Online Backup API — safe with WAL mode and concurrent reads
+
+### Entity Management
+- List entities of a memory: `sqlite-graphrag memory-entities --name my-mem --json`
+- Delete entity with cascade: `sqlite-graphrag delete-entity --name bad-entity --cascade --json`
+- Reclassify entity type: `sqlite-graphrag reclassify --name my-entity --entity-type concept --json`
+- Bulk reclassify: `sqlite-graphrag reclassify --from-type organization --to-type concept --batch --json`
+- Merge duplicates: `sqlite-graphrag merge-entities --names "auth-system,auth-jwt" --into auth --json`
+- Remove NER bindings: `sqlite-graphrag prune-ner --entity noisy-entity --json`
+
 ### Troubleshooting — Five Failures and Their Fixes
 - Error `exit 10` signals database lock, run `sqlite-graphrag vacuum` to checkpoint WAL
 - Error `exit 12` signals `sqlite-vec` load failure, verify SQLite version is 3.40 plus

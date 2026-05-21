@@ -24,11 +24,13 @@ fn max_concurrency_ceiling() -> usize {
         .unwrap_or(8)
 }
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum GraphExportFormat {
     Json,
     Dot,
     Mermaid,
+    /// Stream one JSON object per entity, then one per edge, then a summary line.
+    Ndjson,
 }
 
 #[derive(Parser)]
@@ -321,6 +323,8 @@ pub enum Commands {
     Stats(stats::StatsArgs),
     /// Create a checkpointed copy safe for file sync
     SyncSafeCopy(sync_safe_copy::SyncSafeCopyArgs),
+    /// Back up the database using the SQLite Online Backup API
+    Backup(backup::BackupArgs),
     /// Run VACUUM after checkpointing the WAL
     Vacuum(vacuum::VacuumArgs),
     /// Create an explicit relationship between two entities
@@ -333,12 +337,27 @@ pub enum Commands {
     Graph(graph_export::GraphArgs),
     /// Export memories as NDJSON (one JSON line per memory, plus a summary line)
     Export(export::ExportArgs),
+    /// FTS5 full-text search index management (rebuild or check)
+    Fts(fts::FtsArgs),
     /// Bulk-delete all relationships of a given type (e.g. mentions)
     PruneRelations(prune_relations::PruneRelationsArgs),
+    /// Remove NER bindings (memory_entities rows) for an entity or all entities
+    #[command(name = "prune-ner")]
+    PruneNer(prune_ner::PruneNerArgs),
     /// Remove entities that have no memories and no relationships
     CleanupOrphans(cleanup_orphans::CleanupOrphansArgs),
+    /// List entities linked to a specific memory
+    MemoryEntities(memory_entities::MemoryEntitiesArgs),
     /// Manage cached resources (embedding models, etc.)
     Cache(cache::CacheArgs),
+    /// Delete an entity and all its relationships from the graph
+    #[command(name = "delete-entity")]
+    DeleteEntity(delete_entity::DeleteEntityArgs),
+    /// Reclassify one entity or a batch of entities to a new type
+    Reclassify(reclassify::ReclassifyArgs),
+    /// Merge multiple source entities into a single target entity
+    #[command(name = "merge-entities")]
+    MergeEntities(merge_entities::MergeEntitiesArgs),
     #[command(name = "__debug_schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
 }

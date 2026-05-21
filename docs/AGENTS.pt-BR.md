@@ -15,6 +15,21 @@
 - Campos JSON `schema_version` (`init`, `stats`, `migrate`, `health`) são emitidos como números JSON desde v1.0.35.
 
 
+## Novos Comandos em v1.0.56
+### Manutenção do Índice FTS5
+- `fts rebuild --json` — reconstrói o índice full-text FTS5 do zero; use após importações em massa ou suspeita de corrupção do índice
+- `fts check --json` — executa integrity-check do FTS5 e reporta inconsistências; seguro para rodar em bancos em uso
+- `fts stats --json` — retorna estatísticas do índice FTS5 incluindo contagem de linhas, tokens e segmentos
+### Backup
+- `backup --output <path> --json` — cria backup consistente do SQLite usando a SQLite Backup API; seguro para rodar com o banco em uso; o caminho de saída não deve existir previamente
+### Operações de Entidade
+- `delete-entity --name <entity> --json` — deleta um nó de entidade; use `--cascade` para remover também todas as arestas conectadas à entidade; sem `--cascade` falha com exit 4 se houver arestas
+- `reclassify --name <entity> --entity-type <new-type> --json` — altera o `entity_type` de uma entidade existente in place sem tocar nas arestas ou links de memória
+- `merge-entities --names "a,b,c" --into <target> --json` — funde dois ou mais nós de entidade em um nó alvo; todas as arestas dos nós fonte são redirecionadas para o alvo; nós fonte são deletados após a fusão
+- `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
+- `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
+
+
 ## A Pergunta Que Nenhum Framework Responde
 ### Open Loop — Por Que 27 Agentes de IA Escolhem Esta Como Sua Camada de Memória
 - Por que 27 agentes de IA escolhem sqlite-graphrag como sua camada de memória persistente?
@@ -509,7 +524,9 @@ let output = Command::new("sqlite-graphrag")
 - DECLARAR `--type` entre `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - PREFERIR `--body-stdin` para corpos longos
 - USAR `--body-file <PATH>` para evitar escape shell em Markdown
-- PASSAR `--force-merge` em loops idempotentes; também restaura memórias soft-deleted e atualiza em um passo (desde v1.0.51)
+- PASSAR `--force-merge` em loops idempotentes; também restaura memórias soft-deleted e atualiza em um passo (desde v1.0.51); `--type` e `--description` são opcionais com `--force-merge` — valores existentes são herdados quando omitidos
+- USAR `--dry-run` para validar o payload (tamanho do body, schema de entidades/relacionamentos, unicidade do nome) sem persistir nada; retorna 0 em sucesso, não-zero em falha de validação
+- USAR `--clear-body` com `--force-merge` para definir explicitamente o body como string vazia em vez de herdar o body existente
 - NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração GLiNER
 - `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
 - Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
@@ -632,10 +649,12 @@ let output = Command::new("sqlite-graphrag")
 - APLICAR `--tz` para localizar timestamps na saída
 ### OBRIGATÓRIO — Enumeração com Filtros (list)
 - USAR `list --type <kind>` para filtrar por tipo de memória
-- AJUSTAR `--limit <N>` com padrão 50 conforme volume esperado
+- PADRÃO de limit é TODAS as memórias quando `--json` está ativo; padrão é 50 para saída em texto
+- AJUSTAR `--limit <N>` para limitar resultados quando o padrão JSON (todos) for muito amplo
 - PAGINAR via `--offset <N>` para datasets grandes
 - INCLUIR memórias soft-deletadas via `--include-deleted`
 - EXPORTAR full dump com `--limit 10000 --json` antes de backup
+- RESPOSTA inclui `total_count` (total de linhas correspondentes ignorando o limit), `truncated` (true quando limit foi aplicado) e `body_length` por item (tamanho em bytes do body armazenado)
 ### OBRIGATÓRIO — Export em Streaming (export)
 - USAR `export` para transmitir todas as memórias como NDJSON para backup ou migração portátil
 - SUPORTA `--namespace`, `--type`, `--include-deleted`, `--limit` e `--offset`
@@ -697,7 +716,8 @@ let output = Command::new("sqlite-graphrag")
 - USAR `unlink --from <a> --to <b> --relation <tipo>`
 - ACEITAR `--source`/`--target` como aliases de `--from`/`--to`
 - TRATAR exit code 4 como aresta inexistente
-- TODOS os três argumentos são obrigatórios sem exceção
+- `--relation` agora é OPCIONAL; omitir remove TODOS os relacionamentos entre o par independente do tipo
+- NOVO MODO: `unlink --entity <name> --all` remove todas as arestas (em ambas as direções) de uma dada entidade em uma única chamada
 ### OBRIGATÓRIO — Limpeza de Entidades Órfãs (cleanup-orphans)
 - EXECUTAR `cleanup-orphans --dry-run` para auditar
 - APLICAR `--yes` em pipelines automatizados
@@ -849,6 +869,8 @@ let output = Command::new("sqlite-graphrag")
 - ACESSAR via `jaq -r '.entities[].name'` (campo é `entities`, NÃO `items`)
 - FILTRAR por `--entity-type <tipo>` quando necessário
 - PAGINAR com `--limit` e `--offset`
+- ORDENAR com `--sort-by degree|name|created_at` (padrão `name`) e `--order asc|desc` (padrão `asc`)
+- RESPOSTA inclui `degree` por entidade (total de arestas, ambas as direções)
 - USAR antes de planejar travessias ou links em lote
 ### OBRIGATÓRIO — Estatísticas (graph stats)
 - USAR `graph stats --json` antes de travessias caras
@@ -905,8 +927,8 @@ let output = Command::new("sqlite-graphrag")
 ### OBRIGATÓRIO — Campos Críticos por Comando
 - `recall` retorna `results[].name`, `snippet`, `distance`, `score`, `source` (`"direct"`/`"graph"`), `graph_depth?`
 - `recall` response-level: `query`, `k`, `direct_matches[]`, `graph_matches[]`, `results[]`, `elapsed_ms`
-- `hybrid-search` retorna `results[].name`, `combined_score`, `score`, `vec_rank`, `fts_rank`, `source`, `body`
-- `hybrid-search` response-level: `query`, `k`, `rrf_k`, `weights`, `results[]`, `graph_matches[]`, `elapsed_ms`
+- `hybrid-search` retorna `results[].name`, `combined_score`, `score`, `vec_rank`, `fts_rank`, `source`, `body`, `normalized_score`, `vec_distance`, `fts_bm25`
+- `hybrid-search` response-level: `query`, `k`, `rrf_k`, `weights`, `results[]`, `graph_matches[]`, `elapsed_ms`, `fts_degraded`, `fts_error`, `fts_auto_rebuilt`
 - `hybrid-search` `graph_matches[]` usa RecallItem: `name`, `distance`, `source` ("graph"), `graph_depth`
 - `related` retorna `results[].name`, `hop_distance`, `relation`, `source_entity`, `target_entity`, `weight`
 - `graph traverse` retorna `hops[].entity`, `relation`, `direction`, `weight`, `depth`
@@ -914,15 +936,29 @@ let output = Command::new("sqlite-graphrag")
 - `edit` retorna `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` retorna `memory_id`, `name` (novo), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` retorna `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
-- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos
+- `list` response-level: `items[]`, `total_count`, `truncated`, `elapsed_ms`; cada item inclui `body_length` (tamanho em bytes do body armazenado) além dos campos existentes
+- `link` response inclui `warnings` (array de strings) para tipos de relação não canônicos ou outros avisos
+- `graph entities` itens incluem `degree` (total de arestas da entidade, ambas as direções)
+- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos
 - `health.counts` contém: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; também inclui aliases legados `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
-- `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
+- `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`, `body_length?` (tamanho em bytes do body indexado, presente em linhas `"indexed"`)
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `exported`, `namespace`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
 - `restore` retorna `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
 - `prune-relations` retorna `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` retorna modelos com tamanho em bytes e total de disco
+- `daemon --ping` retorna os campos existentes mais `model_name` (identificador do modelo de embedding ativo) e `model_variant` (ex.: `"fp32"` ou `"int8"`)
+
+
+## Envelope JSON de Erro
+### OBRIGATÓRIO — Formato de Erro Legível por Máquina
+- TODOS os erros emitem um objeto JSON no stdout quando `--json` está ativo: `{"error": true, "code": N, "message": "..."}`
+- `code` corresponde ao exit code do processo (veja tabela de Exit Codes)
+- `message` é uma string estável em inglês adequada para logging e roteamento
+- Stderr continua a carregar saída de tracing legível por humanos independente de `--json`
+- Faça parse do booleano `error` no stdout ANTES de acessar outros campos quando o exit code for não-zero
+- Exemplo: `{"error": true, "code": 4, "message": "memory not found: design-auth"}`
 
 
 ## Códigos de Saída e Estratégia de Retry

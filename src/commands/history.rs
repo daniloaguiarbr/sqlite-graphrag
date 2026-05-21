@@ -41,6 +41,13 @@ pub struct HistoryArgs {
         help = "Omit body content from response"
     )]
     pub no_body: bool,
+    /// Include character-level change summary between consecutive versions.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Include character-level change summary between consecutive versions"
+    )]
+    pub diff: bool,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     /// Path to graphrag.sqlite (overrides SQLITE_GRAPHRAG_DB_PATH and default CWD).
@@ -50,6 +57,13 @@ pub struct HistoryArgs {
         help = "Path to graphrag.sqlite"
     )]
     pub db: Option<String>,
+}
+
+/// Character-level change summary between two consecutive versions.
+#[derive(Serialize)]
+struct VersionChanges {
+    added_chars: usize,
+    removed_chars: usize,
 }
 
 #[derive(Serialize)]
@@ -72,6 +86,8 @@ struct HistoryVersion {
     changed_by: Option<String>,
     created_at: i64,
     created_at_iso: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changes: Option<VersionChanges>,
 }
 
 /// Maps the raw `change_reason` stored in `memory_versions` to the past-tense
@@ -137,7 +153,8 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
     )?;
 
     let no_body = args.no_body;
-    let versions = stmt
+    let want_diff = args.diff;
+    let mut versions = stmt
         .query_map(params![memory_id], |r| {
             let created_at: i64 = r.get(8)?;
             let created_at_iso = crate::tz::epoch_to_iso(created_at);
@@ -159,9 +176,30 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
                 changed_by: r.get(7)?,
                 created_at,
                 created_at_iso,
+                changes: None,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Compute character-level change summaries between consecutive versions.
+    // Version N receives the diff relative to version N-1 (i.e., what changed going forward).
+    // Version 1 (the first) has no predecessor so `changes` stays `None`.
+    if want_diff && versions.len() > 1 {
+        // Collect body lengths first to avoid borrowing issues.
+        let body_lens: Vec<usize> = versions
+            .iter()
+            .map(|v| v.body.as_deref().map_or(0, str::len))
+            .collect();
+
+        for i in 1..versions.len() {
+            let old_len = body_lens[i - 1];
+            let new_len = body_lens[i];
+            versions[i].changes = Some(VersionChanges {
+                added_chars: new_len.saturating_sub(old_len),
+                removed_chars: old_len.saturating_sub(new_len),
+            });
+        }
+    }
 
     output::emit_json(&HistoryResponse {
         name,
@@ -176,9 +214,42 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::change_reason_to_action;
+    use super::{change_reason_to_action, VersionChanges};
 
     // Bug M-A6: action is always populated and maps known reasons to past tense.
+    #[test]
+    fn version_changes_serializes_correctly() {
+        let changes = VersionChanges {
+            added_chars: 10,
+            removed_chars: 3,
+        };
+        let json = serde_json::to_value(&changes).expect("serialization failed");
+        assert_eq!(json["added_chars"], 10u64);
+        assert_eq!(json["removed_chars"], 3u64);
+    }
+
+    #[test]
+    fn added_chars_saturating_sub_no_underflow() {
+        // new body shorter than old — added_chars must be 0, not wrapping
+        let old_len: usize = 100;
+        let new_len: usize = 40;
+        let added = new_len.saturating_sub(old_len);
+        let removed = old_len.saturating_sub(new_len);
+        assert_eq!(added, 0);
+        assert_eq!(removed, 60);
+    }
+
+    #[test]
+    fn removed_chars_saturating_sub_no_underflow() {
+        // new body longer than old — removed_chars must be 0
+        let old_len: usize = 20;
+        let new_len: usize = 80;
+        let added = new_len.saturating_sub(old_len);
+        let removed = old_len.saturating_sub(new_len);
+        assert_eq!(added, 60);
+        assert_eq!(removed, 0);
+    }
+
     #[test]
     fn change_reason_create_maps_to_created() {
         assert_eq!(change_reason_to_action("create"), "created");

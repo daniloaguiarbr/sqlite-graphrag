@@ -42,6 +42,16 @@
 | `ingest` (per-file event) | `ingest-file-event.schema.json` |
 | `ingest` (summary) | `ingest-summary.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
+| `fts rebuild` | `fts-rebuild.schema.json` |
+| `fts check` | `fts-check.schema.json` |
+| `fts stats` | `fts-stats.schema.json` |
+| `backup` | `backup.schema.json` |
+| `delete-entity` | `delete-entity.schema.json` |
+| `reclassify` | `reclassify.schema.json` |
+| `merge-entities` | `merge-entities.schema.json` |
+| `memory-entities` | `memory-entities.schema.json` |
+| `prune-ner` | `prune-ner.schema.json` |
+| error envelope (all commands) | `error-envelope.schema.json` |
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`

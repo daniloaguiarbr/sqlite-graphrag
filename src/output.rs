@@ -90,6 +90,27 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
     }
 }
 
+/// Emits a JSON error envelope to stdout for machine consumers.
+///
+/// Ensures the stdout JSON contract is honoured even on error paths:
+/// `{"error": true, "code": <exit_code>, "message": "<localized_msg>"}`.
+/// A `BrokenPipe` error is silenced so piping to early-closing consumers
+/// does not surface a secondary error.
+pub fn emit_error_json(code: i32, message: &str) {
+    #[derive(serde::Serialize)]
+    struct ErrorEnvelope<'a> {
+        error: bool,
+        code: i32,
+        message: &'a str,
+    }
+    let envelope = ErrorEnvelope {
+        error: true,
+        code,
+        message,
+    };
+    let _ = emit_json(&envelope);
+}
+
 /// Emits a localised error message to stderr with the `Error:`/`Erro:` prefix.
 ///
 /// Centralises human-readable error output following Pattern 5 (`output.rs` is the
@@ -423,6 +444,25 @@ mod tests {
         assert!(json.contains("\"k\":"));
         assert!(json.contains("\"results\""));
         assert!(json.contains("\"elapsed_ms\""));
+    }
+
+    #[test]
+    fn error_envelope_serializes_correctly() {
+        #[derive(serde::Serialize)]
+        struct ErrorEnvelope<'a> {
+            error: bool,
+            code: i32,
+            message: &'a str,
+        }
+        let envelope = ErrorEnvelope {
+            error: true,
+            code: 10,
+            message: "database disk image is malformed",
+        };
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["error"], true);
+        assert_eq!(json["code"], 10);
+        assert_eq!(json["message"], "database disk image is malformed");
     }
 
     #[test]

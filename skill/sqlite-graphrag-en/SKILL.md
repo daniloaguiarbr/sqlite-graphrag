@@ -36,7 +36,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Continuous Monitoring
 - INSPECT `wal_size_mb` in `health` to detect fragmentation
 - CHECK `journal_mode` equals `wal` in production
-- RUN `optimize --json` to refresh planner statistics
+- RUN `optimize --json` to refresh planner statistics; response includes `fts_rebuilt` (bool) indicating whether the FTS5 index was also rebuilt
+- USE `optimize --skip-fts --json` to skip the FTS5 rebuild step (faster, use when FTS5 was recently rebuilt)
 - DETECT schema drift via `__debug_schema` for troubleshooting
 ### Correct Pattern — Bootstrap Sequence
 - `sqlite-graphrag init --namespace my-project`
@@ -90,10 +91,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ## CRUD — Create with remember
 ### REQUIRED — Writing Individual Memories
 - USE a unique kebab-case name per memory
-- DECLARE `--type` from `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
+- DECLARE `--type` from `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`; `--type` and `--description` are OPTIONAL when `--force-merge` is used (inherited from existing memory)
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
 - PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51)
+- USE `--dry-run` to validate inputs without persisting or running embeddings
+- USE `--clear-body` to explicitly clear the body of an existing memory when using `--force-merge`; without `--clear-body`, `--force-merge` with an empty body PRESERVES the existing body
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
 - Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect; use `--enable-ner` to activate NER
@@ -204,9 +207,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - FILTER by `select(.status)` to ignore the summary line that has no `status` field
 - `jaq -sc '[.[] | select(.status)] | group_by(.status) | map({status: .[0].status, count: length})' < results.ndjson`
 ### REQUIRED — NDJSON Schema by Line Type
-- Per-file line: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`
+- Per-file line: `file`, `name`, `status` (`"indexed"` `"skipped"` `"failed"`), `truncated`, `original_name?`, `memory_id?`, `action?`, `error?`, `body_length?`
 - Final summary line: `summary` (true), `dir`, `pattern`, `recursive`, `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - NER extraction events go to stderr, NOT stdout
+- USE `--max-name-length N` to override the default 60-character truncation threshold for memory names
+- NUMERIC basenames (e.g. `123.md`) are automatically prefixed with `doc-` to produce valid kebab-case names (e.g. `doc-123`)
 
 
 ## CRUD — Read with read and list
@@ -217,10 +222,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - APPLY `--tz` to localize timestamps in the output
 ### REQUIRED — Enumeration with Filters (list)
 - USE `list --type <kind>` to filter by memory type
-- ADJUST `--limit <N>` with default 50 according to expected volume
+- ADJUST `--limit <N>`; default is ALL records in JSON mode, 50 in text mode
 - PAGINATE via `--offset <N>` for large datasets
 - INCLUDE soft-deleted memories via `--include-deleted`
 - EXPORT full dump with `--limit 10000 --json` before backup
+- RESPONSE now includes `total_count` (total matching records), `truncated` (bool), and `body_length` (int) per item
 ### Correct Pattern — Read Examples
 - `sqlite-graphrag read --name design-auth --json`
 - `sqlite-graphrag list --type decision --limit 100 --json`
@@ -235,12 +241,14 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - EACH edit creates a new immutable version preserving history
 - VALIDATE exit code 3 as an optimistic locking conflict
 - JSON response: `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
+- v1.0.56: FTS5 desync bug fixed — edited memories are immediately findable via full-text search
 ### REQUIRED — History-Preserving Rename (rename)
 - USE `rename --name <old> --new-name <new>`
 - ACCEPT `--old`/`--new` and `--from`/`--to` as aliases since v1.0.35
 - PRESERVE all versions and graph connections
 - TREAT exit code 4 as missing source memory
 - JSON response: `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
+- v1.0.56: FTS5 desync bug fixed — renamed memories are immediately findable via full-text search
 ### REQUIRED — Old Version Restore (restore)
 - INSPECT versions via `history --name <name>` first
 - USE `restore --name <name> --version <N>` for a specific version
@@ -248,6 +256,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - RESTORE creates a new version without overwriting prior history
 - RE-EMBED occurs automatically so vector recall can find it again
 - JSON response includes `action: "restored"`, `memory_id`, `name`, `version`, `restored_from`, `elapsed_ms`
+- v1.0.56: FTS5 desync bug fixed — restored memories are immediately findable via full-text search
 ### REQUIRED — Optimistic Locking
 - PASS `--expected-updated-at <epoch_or_RFC3339>` in concurrent pipelines
 - TREAT exit code 3 as detected concurrency
@@ -273,10 +282,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - RUN `--dry-run` first to audit the count
 - PERMANENTLY deletes rows and reclaims disk space
 ### REQUIRED — Edge Removal (unlink)
-- USE `unlink --from <a> --to <b> --relation <type>`
+- USE `unlink --from <a> --to <b> --relation <type>` for targeted removal
+- `--relation` is now OPTIONAL; omit to remove all edges between `--from` and `--to`
+- USE `--entity <name> --all` to bulk-remove ALL relationships for a given entity (any direction)
 - ACCEPT `--source`/`--target` as aliases of `--from`/`--to`
 - TREAT exit code 4 as nonexistent edge
-- ALL three arguments are mandatory without exception
 - `--relation` accepts any kebab-case or snake_case string; non-canonical values emit a `tracing::warn!` since v1.0.50
 ### REQUIRED — Orphan Entity Cleanup (cleanup-orphans)
 - RUN `cleanup-orphans --dry-run` to audit
@@ -298,12 +308,42 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `sqlite-graphrag recall "decision" --json`
 
 
+## Entity Management (v1.0.56)
+### REQUIRED — Delete Entity (delete-entity)
+- USE `delete-entity --name <entity> --json` to permanently remove an entity node
+- ADD `--cascade` to also remove all relationships and memory bindings attached to the entity
+- WITHOUT `--cascade` the command fails with exit 1 if the entity has relationships
+- JSON response: `action`, `entity_name`, `relationships_removed`, `bindings_removed`, `elapsed_ms`
+- TREAT exit code 4 as entity not found
+### REQUIRED — Reclassify Entity Type (reclassify)
+- USE `reclassify --name <entity> --entity-type <new> --json` to change a single entity's type
+- USE `reclassify --from-type <old> --to-type <new> --batch --json` to bulk-reclassify all entities of one type
+- JSON response: `action`, `count`, `elapsed_ms`
+### REQUIRED — Merge Entities (merge-entities)
+- USE `merge-entities --names "a,b,c" --into <target> --json` to merge multiple entities into one
+- ALL relationships from source entities are moved to `<target>`
+- SOURCE entities are deleted after merge
+- JSON response: `action`, `sources`, `target`, `relationships_moved`, `entities_removed`, `elapsed_ms`
+- TREAT exit code 4 as any named entity not found
+### REQUIRED — List Memory Entities (memory-entities)
+- USE `memory-entities --name <memory> --json` to list all entities linked to a specific memory
+- JSON response: `memory_name`, `entities: [{entity_id, name, entity_type}]`, `count`, `elapsed_ms`
+- TREAT exit code 4 as memory not found
+### REQUIRED — Remove NER Bindings (prune-ner)
+- USE `prune-ner --entity <name> --json` to remove NER bindings for a specific entity
+- USE `prune-ner --all --yes --json` to remove ALL NER bindings in the namespace
+- JSON response: `action`, `bindings_removed`, `elapsed_ms`
+- NER bindings are the links created automatically by GLiNER extraction; manual graph links are NOT affected
+
+
 ## Immutable Version History
 ### REQUIRED — Inspection with history
 - USE `history --name <name> --json` to list versions
+- USE `history --name <name> --diff --json` to include character diff stats between versions
 - VERSIONS start at 1 and increment with each `edit` or `restore`
 - CHRONOLOGICAL reverse order by default
 - INCLUDES soft-deleted memories with flag `deleted: true`
+- WITH `--diff`, each version includes `changes: {added_chars, removed_chars}` showing the diff vs the previous version
 ### REQUIRED — Version Semantics
 - EACH `edit` creates a new immutable version preserving prior ones
 - EACH `restore` creates a new version with the body of an old version
@@ -374,6 +414,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `hybrid-search` returns `combined_score`; higher is better ranking
 - `hybrid-search` exposes `vec_rank` and `fts_rank` to audit fusion
 - `hybrid-search` with `--with-graph` adds `graph_matches[]` in a separate field
+- `hybrid-search` response now includes `fts_degraded` (bool), `fts_error` (string?), `fts_auto_rebuilt` (bool); when `fts_degraded` is true, only vector results are returned
+- `hybrid-search` per-result fields also include `normalized_score` (0-1 normalized combined score), `vec_distance` (float?), `fts_bm25` (float?)
 - `related` returns `hop_distance`, explicit depth in the graph
 - `graph traverse` returns `depth` per visited hop
 - DISCARD weak hits before spending tokens in the prompt
@@ -422,6 +464,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - ACCEPT `--source`/`--target` as aliases of `--from`/`--to`
 - SET `--weight` optional for relation weight (default 0.5)
 - TREAT exit code 4 as nonexistent entity (without `--create-missing`)
+- USE `--strict-relations` to fail with exit 1 when a non-canonical relation type is used; response includes `warnings` field listing any non-canonical relations when not strict
 ### REQUIRED — Export with graph
 - EXPORT snapshot via `graph --format json`
 - USE `--format dot` for offline Graphviz
@@ -435,6 +478,9 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - FILTER by `--entity-type <type>` when needed
 - PAGINATE with `--limit` and `--offset`
 - USE before planning traversals or batch links
+- SORT via `--sort-by degree|name|created_at` (default `name`)
+- SET sort direction via `--order asc|desc` (default `asc`)
+- RESPONSE now includes `degree` field per entity (number of connected relationships)
 ### REQUIRED — Statistics (graph stats)
 - USE `graph stats --json` before expensive traversals
 - INSPECT `node_count`, `edge_count`, `avg_degree`, `max_degree`
@@ -521,6 +567,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - INSPECT the embedding request counter in `--ping`
 - `daemon --ping` warns when daemon version differs from CLI version; restart with `daemon --stop` followed by `daemon` after upgrades
 - Since v1.0.50, the CLI auto-restarts the daemon on version mismatch before the first embedding request; manual `daemon --stop` after upgrades is no longer required
+- `daemon --ping` response now includes `model_name` and `model_variant` fields showing the currently loaded embedding model
 
 
 ## Cache — Model Management
@@ -538,6 +585,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - FILTER fields via `jaq` instead of regex on stdout
 - READ only fields actually returned by the subcommand
 - TREAT JSON as a SemVer-versioned API
+### REQUIRED — Error JSON Contract (v1.0.56)
+- ALL error paths now emit a JSON object on stdout: `{"error": true, "code": N, "message": "..."}`
+- stderr still receives the human-readable error with a descriptive prefix
+- CONSUMERS must check `stdout` JSON first (look for `"error": true`), then fall back to the exit code
+- This applies to ALL commands when `--json` is passed; without `--json` errors go only to stderr
 ### REQUIRED — --json vs --format json Matrix
 - `--json` is accepted by ALL subcommands
 - `--format json` accepted only in a subset with `--format`
@@ -565,6 +617,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `health` optionally returns `mentions_ratio` (float) and `mentions_warning` (string) when mentions exceed 50% of relationships
+- `health` now includes `fts_query_ok` (bool) indicating whether a live FTS5 query succeeded (not just schema integrity), and `sqlite_version` (string) showing the SQLite version in use
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
@@ -614,6 +667,25 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - ADJUST both independently according to RAM and CPU
 - USE `--low-memory` to force unitary parallelism
 - HONOR `SQLITE_GRAPHRAG_LOW_MEMORY=1` on constrained hosts
+
+
+## FTS5 Management (v1.0.56)
+### REQUIRED — FTS5 Commands
+- USE `fts rebuild --json` to fully rebuild the FTS5 full-text index; response: `{action, rows_indexed, elapsed_ms}`
+- USE `fts check --json` to run the FTS5 integrity-check; response: `{action, integrity_ok, detail, elapsed_ms}`
+- USE `fts stats --json` to inspect FTS5 health; response: `{total_rows, shadow_pages, fts_functional, elapsed_ms}`
+- RUN `fts rebuild` when `hybrid-search` returns `fts_degraded: true` or after suspected index corruption
+- RUN `fts check` as part of periodic health audits alongside `health --json`
+- TREAT `fts_functional: false` in `fts stats` as a signal to run `fts rebuild`
+
+
+## Safe Backup (v1.0.56)
+### REQUIRED — backup Command
+- USE `backup --output <path> --json` for a safe, online backup using the SQLite Online Backup API
+- BACKUP is consistent even while writes are in progress — no need to stop the daemon
+- JSON response: `{action, source, destination, size_bytes, elapsed_ms}`
+- PREFER `backup` over `sync-safe-copy` for programmatic backups; both are safe but `backup` uses the native SQLite API
+- TREAT exit code 14 as an I/O error (destination path not writable, disk full)
 
 
 ## Maintenance and Backup

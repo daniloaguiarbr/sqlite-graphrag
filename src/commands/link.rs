@@ -60,6 +60,17 @@ pub struct LinkArgs {
     /// Entity type assigned to auto-created entities (only effective with `--create-missing`).
     #[arg(long, value_enum, default_value = "concept")]
     pub entity_type: EntityType,
+    /// Reject non-canonical relation types with exit 1.
+    ///
+    /// When set, any relation not in the canonical list causes an immediate error.
+    /// Canonical values: applies-to, uses, depends-on, causes, fixes, contradicts,
+    /// supports, follows, related, mentions, replaces, tracked-in.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Reject non-canonical relation types with exit 1"
+    )]
+    pub strict_relations: bool,
 }
 
 #[derive(Serialize)]
@@ -75,6 +86,9 @@ struct LinkResponse {
     /// Entity names that were auto-created by `--create-missing`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     created_entities: Vec<String>,
+    /// Non-fatal warnings (e.g. non-canonical relation type).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 pub fn run(args: LinkArgs) -> Result<(), AppError> {
@@ -92,16 +106,50 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
             weight,
         )));
     }
+    if weight >= 0.95 {
+        tracing::warn!(
+            weight = weight,
+            "weight >= 0.95 compresses the scoring range; consider using a value below 0.95"
+        );
+    }
+    if weight <= 0.05 {
+        tracing::warn!(
+            weight = weight,
+            "weight <= 0.05 may be too weak to influence traversal; consider using a value above 0.05"
+        );
+    }
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    crate::parsers::warn_if_non_canonical(&args.relation);
+    let mut warnings: Vec<String> = Vec::new();
+    let is_canonical = crate::parsers::is_canonical_relation(&args.relation);
+    if !is_canonical {
+        if args.strict_relations {
+            return Err(AppError::Validation(format!(
+                "non-canonical relation '{}': use --strict-relations=false or choose from: {}",
+                args.relation,
+                crate::parsers::CANONICAL_RELATIONS.join(", ")
+            )));
+        }
+        warnings.push(format!("non-canonical relation '{}'", args.relation));
+        tracing::warn!(
+            relation = %args.relation,
+            "non-canonical relation accepted; consider using a well-known value"
+        );
+    }
     let relation_str = &args.relation;
 
     let mut conn = open_rw(&paths.db)?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     let mut created_entities: Vec<String> = Vec::with_capacity(2);
+
+    if args.entity_type.as_str() == "memory" {
+        tracing::warn!(
+            entity_type = "memory",
+            "entity_type 'memory' may conflict with memory table semantics; consider using 'concept' or another type"
+        );
+    }
 
     let source_id = match entities::find_entity_id(&tx, &namespace, &args.from)? {
         Some(id) => id,
@@ -172,6 +220,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
         namespace: namespace.clone(),
         elapsed_ms: inicio.elapsed().as_millis() as u64,
         created_entities,
+        warnings,
     };
 
     match args.format {
@@ -203,6 +252,7 @@ mod tests {
             namespace: "default".to_string(),
             elapsed_ms: 0,
             created_entities: vec![],
+            warnings: vec![],
         };
         let json = serde_json::to_value(&resp).expect("serialization must work");
         assert_eq!(json["from"], "entity-a");
@@ -228,6 +278,7 @@ mod tests {
             namespace: "test".to_string(),
             elapsed_ms: 5,
             created_entities: vec![],
+            warnings: vec![],
         };
         let json = serde_json::to_value(&resp).expect("serialization must work");
         assert!(json.get("action").is_some());
@@ -250,6 +301,7 @@ mod tests {
             namespace: "global".to_string(),
             elapsed_ms: 0,
             created_entities: vec![],
+            warnings: vec![],
         };
         let json = serde_json::to_value(&resp).expect("serialization");
         assert!(
@@ -269,11 +321,53 @@ mod tests {
             namespace: "test".to_string(),
             elapsed_ms: 1,
             created_entities: vec!["new-a".to_string(), "new-b".to_string()],
+            warnings: vec![],
         };
         let json = serde_json::to_value(&resp).expect("serialization");
         let created = json["created_entities"].as_array().expect("must be array");
         assert_eq!(created.len(), 2);
         assert_eq!(created[0], "new-a");
         assert_eq!(created[1], "new-b");
+    }
+
+    #[test]
+    fn link_response_includes_warnings_when_non_canonical() {
+        let resp = LinkResponse {
+            action: "created".to_string(),
+            from: "a".to_string(),
+            to: "b".to_string(),
+            relation: "implements".to_string(),
+            weight: 0.5,
+            namespace: "global".to_string(),
+            elapsed_ms: 0,
+            created_entities: vec![],
+            warnings: vec!["non-canonical relation 'implements'".to_string()],
+        };
+        let json = serde_json::to_value(&resp).expect("serialization");
+        let w = json["warnings"]
+            .as_array()
+            .expect("warnings must be present");
+        assert_eq!(w.len(), 1);
+        assert!(w[0].as_str().unwrap().contains("implements"));
+    }
+
+    #[test]
+    fn link_response_omits_warnings_when_empty() {
+        let resp = LinkResponse {
+            action: "created".to_string(),
+            from: "a".to_string(),
+            to: "b".to_string(),
+            relation: "uses".to_string(),
+            weight: 0.5,
+            namespace: "global".to_string(),
+            elapsed_ms: 0,
+            created_entities: vec![],
+            warnings: vec![],
+        };
+        let json = serde_json::to_value(&resp).expect("serialization");
+        assert!(
+            json.get("warnings").is_none(),
+            "empty warnings must be omitted"
+        );
     }
 }

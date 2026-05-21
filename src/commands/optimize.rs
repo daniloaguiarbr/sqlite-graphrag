@@ -19,12 +19,16 @@ pub struct OptimizeArgs {
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    #[arg(long, default_value_t = false, help = "Skip FTS5 index rebuild")]
+    pub skip_fts: bool,
 }
 
 #[derive(Serialize)]
 struct OptimizeResponse {
     db_path: String,
     status: String,
+    /// True when the FTS5 index was rebuilt during this optimize run.
+    fts_rebuilt: bool,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -38,9 +42,17 @@ pub fn run(args: OptimizeArgs) -> Result<(), AppError> {
     let conn = open_rw(&paths.db)?;
     conn.execute_batch("PRAGMA optimize;")?;
 
+    let fts_rebuilt = if !args.skip_fts {
+        conn.execute_batch("INSERT INTO fts_memories(fts_memories) VALUES('rebuild');")
+            .is_ok()
+    } else {
+        false
+    };
+
     output::emit_json(&OptimizeResponse {
         db_path: paths.db.display().to_string(),
         status: "ok".to_string(),
+        fts_rebuilt,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;
 
@@ -58,6 +70,7 @@ mod tests {
         let resp = OptimizeResponse {
             db_path: "/tmp/graphrag.sqlite".to_string(),
             status: "ok".to_string(),
+            fts_rebuilt: false,
             elapsed_ms: 5,
         };
         let json = serde_json::to_value(&resp).unwrap();
@@ -80,6 +93,7 @@ mod tests {
         let args = OptimizeArgs {
             json: false,
             db: Some(db_path.to_string_lossy().to_string()),
+            skip_fts: false,
         };
         let result = run(args);
         assert!(
@@ -103,6 +117,7 @@ mod tests {
         let resp = OptimizeResponse {
             db_path: "/qualquer/caminho".to_string(),
             status: "ok".to_string(),
+            fts_rebuilt: false,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).unwrap();

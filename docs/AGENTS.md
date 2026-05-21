@@ -15,6 +15,21 @@
 - `schema_version` JSON fields (`init`, `stats`, `migrate`, `health`) are emitted as JSON numbers since v1.0.35.
 
 
+## New Commands in v1.0.56
+### FTS5 Index Maintenance
+- `fts rebuild --json` — rebuilds the FTS5 full-text search index from scratch; use after bulk imports or suspected index corruption
+- `fts check --json` — runs FTS5 integrity-check and reports any inconsistencies; safe to run on live databases
+- `fts stats --json` — returns FTS5 index statistics including row count, token count, and segment count
+### Backup
+- `backup --output <path> --json` — creates a consistent SQLite online backup using the SQLite Backup API; safe to run while the database is in use; output path must not already exist
+### Entity Operations
+- `delete-entity --name <entity> --json` — deletes an entity node; use `--cascade` to also remove all edges connected to the entity; without `--cascade` fails with exit 4 if edges exist
+- `reclassify --name <entity> --entity-type <new-type> --json` — changes the `entity_type` of an existing entity in place without touching its edges or memory links
+- `merge-entities --names "a,b,c" --into <target> --json` — merges two or more source entities into a target entity; all edges from source nodes are redirected to the target; source nodes are deleted after merge
+- `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
+- `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
+
+
 ## The Question No Agent Framework Answers
 ### Open Loop — Why 27 AI Agents Choose This As Their Memory Layer
 - Why do 27 AI agents choose sqlite-graphrag as their persistent memory layer?
@@ -509,7 +524,9 @@ let output = Command::new("sqlite-graphrag")
 - DECLARE `--type` from `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - PREFER `--body-stdin` for long bodies
 - USE `--body-file <PATH>` to avoid shell escaping in Markdown
-- PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51)
+- PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51); `--type` and `--description` are optional with `--force-merge` — existing values are inherited when omitted
+- USE `--dry-run` to validate the payload (body size, entity/relationship schema, name uniqueness) without persisting anything; exits 0 on success, non-zero on validation failure
+- USE `--clear-body` with `--force-merge` to explicitly set the body to empty string instead of inheriting the existing body
 - NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
 - Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
@@ -632,10 +649,12 @@ let output = Command::new("sqlite-graphrag")
 - APPLY `--tz` to localize timestamps in the output
 ### REQUIRED — Enumeration with Filters (list)
 - USE `list --type <kind>` to filter by memory type
-- ADJUST `--limit <N>` with default 50 according to expected volume
+- DEFAULT limit is ALL memories when `--json` is active; default is 50 for text output
+- ADJUST `--limit <N>` to cap results when JSON default (all) is too broad
 - PAGINATE via `--offset <N>` for large datasets
 - INCLUDE soft-deleted memories via `--include-deleted`
 - EXPORT full dump with `--limit 10000 --json` before backup
+- RESPONSE includes `total_count` (total matching rows ignoring limit), `truncated` (true when limit was applied), and `body_length` per item (byte length of the stored body)
 ### REQUIRED — Streaming Export (export)
 - USE `export` to stream all memories as NDJSON for portable backup or migration
 - SUPPORTS `--namespace`, `--type`, `--include-deleted`, `--limit`, and `--offset`
@@ -697,7 +716,8 @@ let output = Command::new("sqlite-graphrag")
 - USE `unlink --from <a> --to <b> --relation <type>`
 - ACCEPT `--source`/`--target` as aliases of `--from`/`--to`
 - TREAT exit code 4 as nonexistent edge
-- ALL three arguments are mandatory without exception
+- `--relation` is now OPTIONAL; omitting it removes ALL relationships between the pair regardless of type
+- NEW MODE: `unlink --entity <name> --all` removes all edges (both directions) of a given entity in one call
 ### REQUIRED — Orphan Entity Cleanup (cleanup-orphans)
 - RUN `cleanup-orphans --dry-run` to audit
 - APPLY `--yes` in automated pipelines
@@ -849,6 +869,8 @@ let output = Command::new("sqlite-graphrag")
 - ACCESS via `jaq -r '.entities[].name'` (field is `entities`, NOT `items`)
 - FILTER by `--entity-type <type>` when needed
 - PAGINATE with `--limit` and `--offset`
+- SORT with `--sort-by degree|name|created_at` (default `name`) and `--order asc|desc` (default `asc`)
+- RESPONSE includes `degree` per entity (total number of edges, both directions)
 - USE before planning traversals or batch links
 ### REQUIRED — Statistics (graph stats)
 - USE `graph stats --json` before expensive traversals
@@ -905,8 +927,8 @@ let output = Command::new("sqlite-graphrag")
 ### REQUIRED — Critical Fields by Command
 - `recall` returns `results[].name`, `snippet`, `distance`, `score`, `source` (`"direct"`/`"graph"`), `graph_depth?`
 - `recall` response-level: `query`, `k`, `direct_matches[]`, `graph_matches[]`, `results[]`, `elapsed_ms`
-- `hybrid-search` returns `results[].name`, `combined_score`, `score`, `vec_rank`, `fts_rank`, `source`, `body`
-- `hybrid-search` response-level: `query`, `k`, `rrf_k`, `weights`, `results[]`, `graph_matches[]`, `elapsed_ms`
+- `hybrid-search` returns `results[].name`, `combined_score`, `score`, `vec_rank`, `fts_rank`, `source`, `body`, `normalized_score`, `vec_distance`, `fts_bm25`
+- `hybrid-search` response-level: `query`, `k`, `rrf_k`, `weights`, `results[]`, `graph_matches[]`, `elapsed_ms`, `fts_degraded`, `fts_error`, `fts_auto_rebuilt`
 - `hybrid-search` `graph_matches[]` uses RecallItem: `name`, `distance`, `source` ("graph"), `graph_depth`
 - `related` returns `results[].name`, `hop_distance`, `relation`, `source_entity`, `target_entity`, `weight`
 - `graph traverse` returns `hops[].entity`, `relation`, `direction`, `weight`, `depth`
@@ -914,15 +936,29 @@ let output = Command::new("sqlite-graphrag")
 - `edit` returns `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` returns `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` returns `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
-- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships
+- `list` response-level: `items[]`, `total_count`, `truncated`, `elapsed_ms`; each item includes `body_length` (byte length of stored body) in addition to existing fields
+- `link` response includes `warnings` (array of strings) for non-canonical relation types or other advisory notices
+- `graph entities` items include `degree` (total edge count for the entity, both directions)
+- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
-- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
+- `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`, `body_length?` (byte length of indexed body, present on `"indexed"` lines)
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - `export` per memory: one JSON line per memory (NDJSON); final summary line includes `exported`, `namespace`, `elapsed_ms`; supports `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
 - `restore` returns `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
 - `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
+- `daemon --ping` returns existing fields plus `model_name` (active embedding model identifier) and `model_variant` (e.g. `"fp32"` or `"int8"`)
+
+
+## JSON Error Envelope
+### REQUIRED — Machine-Readable Error Format
+- ALL errors emit a JSON object on stdout when `--json` is active: `{"error": true, "code": N, "message": "..."}`
+- `code` matches the process exit code (see Exit Codes table)
+- `message` is a stable English string suitable for logging and routing
+- Stderr continues to carry human-readable tracing output regardless of `--json`
+- Parse stdout for the `error` boolean BEFORE accessing other fields when the exit code is non-zero
+- Example: `{"error": true, "code": 4, "message": "memory not found: design-auth"}`
 
 
 ## Exit Codes and Retry Strategy

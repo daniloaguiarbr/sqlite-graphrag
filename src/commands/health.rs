@@ -55,6 +55,8 @@ struct HealthResponse {
     vec_entities_ok: bool,
     vec_chunks_ok: bool,
     fts_ok: bool,
+    /// Whether a live FTS5 MATCH query against fts_memories succeeded.
+    fts_query_ok: bool,
     model_ok: bool,
     counts: HealthCounts,
     db_path: String,
@@ -70,6 +72,8 @@ struct HealthResponse {
     wal_size_mb: f64,
     /// SQLite journaling mode (wal, delete, truncate, persist, memory, off).
     journal_mode: String,
+    /// SQLite version string, e.g. `"3.46.0"`.
+    sqlite_version: String,
     /// Fraction of relationships that use the `mentions` relation type (0.0–1.0).
     /// Omitted when there are no relationships in the database.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,6 +121,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             vec_entities_ok: false,
             vec_chunks_ok: false,
             fts_ok: false,
+            fts_query_ok: false,
             model_ok: false,
             counts: HealthCounts {
                 memories: 0,
@@ -128,6 +133,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             db_path: paths.db.display().to_string(),
             db_size_bytes,
             schema_version: 0,
+            sqlite_version: "unknown".to_string(),
             missing_entities: vec![],
             wal_size_mb: 0.0,
             journal_mode: "unknown".to_string(),
@@ -197,6 +203,23 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let vec_chunks_ok = table_exists(&conn, "vec_chunks");
     let fts_ok = table_exists(&conn, "fts_memories");
 
+    // Verifies that FTS5 can execute a MATCH query (catches index corruption distinct from table absence).
+    let fts_query_ok = if fts_ok {
+        conn.query_row(
+            "SELECT COUNT(*) FROM fts_memories WHERE fts_memories MATCH 'a' LIMIT 1",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .is_ok()
+    } else {
+        false
+    };
+
+    // Captures the SQLite runtime version for observability.
+    let sqlite_version: String = conn
+        .query_row("SELECT sqlite_version()", [], |r| r.get(0))
+        .unwrap_or_else(|_| "unknown".to_string());
+
     // Detects orphan entities referenced by memories but absent from the entities table.
     let mut missing_entities: Vec<String> = Vec::new();
     let mut stmt = conn.prepare(
@@ -228,7 +251,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let model_ok = model_dir.exists();
 
     // Builds the checks array for detailed diagnostics
-    let mut checks: Vec<HealthCheck> = Vec::with_capacity(7);
+    let mut checks: Vec<HealthCheck> = Vec::with_capacity(8);
 
     // At this point integrity_ok is always true (corrupt DB returned early above).
     checks.push(HealthCheck {
@@ -288,6 +311,16 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     });
 
     checks.push(HealthCheck {
+        name: "fts_query".to_string(),
+        ok: fts_query_ok,
+        detail: if fts_query_ok {
+            None
+        } else {
+            Some("FTS5 MATCH query failed — run 'sqlite-graphrag fts rebuild'".to_string())
+        },
+    });
+
+    checks.push(HealthCheck {
         name: "model_onnx".to_string(),
         ok: model_ok,
         detail: if model_ok {
@@ -309,6 +342,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         vec_entities_ok,
         vec_chunks_ok,
         fts_ok,
+        fts_query_ok,
         model_ok,
         counts: HealthCounts {
             memories: memories_count,
@@ -320,6 +354,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         db_path: paths.db.display().to_string(),
         db_size_bytes,
         schema_version,
+        sqlite_version,
         missing_entities,
         wal_size_mb,
         journal_mode,
@@ -340,7 +375,7 @@ mod tests {
 
     #[test]
     fn health_check_serializes_all_new_fields() {
-        let resposta = HealthResponse {
+        let response = HealthResponse {
             status: "ok".to_string(),
             integrity: "ok".to_string(),
             integrity_ok: true,
@@ -349,6 +384,7 @@ mod tests {
             vec_entities_ok: true,
             vec_chunks_ok: true,
             fts_ok: true,
+            fts_query_ok: true,
             model_ok: false,
             counts: HealthCounts {
                 memories: 5,
@@ -360,6 +396,7 @@ mod tests {
             db_path: "/tmp/test.sqlite".to_string(),
             db_size_bytes: 4096,
             schema_version: 6,
+            sqlite_version: "3.46.0".to_string(),
             elapsed_ms: 0,
             missing_entities: vec![],
             wal_size_mb: 0.0,
@@ -375,12 +412,12 @@ mod tests {
                 HealthCheck {
                     name: "model_onnx".to_string(),
                     ok: false,
-                    detail: Some("modelo ausente".to_string()),
+                    detail: Some("model missing".to_string()),
                 },
             ],
         };
 
-        let json = serde_json::to_value(&resposta).unwrap();
+        let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["status"], "ok");
         assert_eq!(json["integrity_ok"], true);
         assert_eq!(json["schema_ok"], true);
@@ -403,7 +440,7 @@ mod tests {
         let model_check = &json["checks"][1];
         assert_eq!(model_check["name"], "model_onnx");
         assert_eq!(model_check["ok"], false);
-        assert_eq!(model_check["detail"], "modelo ausente");
+        assert_eq!(model_check["detail"], "model missing");
     }
 
     #[test]
@@ -416,7 +453,7 @@ mod tests {
         let json = serde_json::to_value(&check).unwrap();
         assert!(
             json.get("detail").is_none(),
-            "campo detail deve ser omitido quando None"
+            "detail field must be omitted when None"
         );
     }
 
@@ -425,9 +462,76 @@ mod tests {
         let check = HealthCheck {
             name: "fts_memories".to_string(),
             ok: false,
-            detail: Some("tabela fts_memories ausente".to_string()),
+            detail: Some("fts_memories table missing from sqlite_master".to_string()),
         };
         let json = serde_json::to_value(&check).unwrap();
-        assert_eq!(json["detail"], "tabela fts_memories ausente");
+        assert_eq!(
+            json["detail"],
+            "fts_memories table missing from sqlite_master"
+        );
+    }
+
+    #[test]
+    fn health_response_fts_query_ok_and_sqlite_version_serialize() {
+        // Verifies that fts_query_ok and sqlite_version appear in the serialized JSON
+        // with the expected keys and values.
+        let response = HealthResponse {
+            status: "ok".to_string(),
+            integrity: "ok".to_string(),
+            integrity_ok: true,
+            schema_ok: true,
+            vec_memories_ok: true,
+            vec_entities_ok: true,
+            vec_chunks_ok: true,
+            fts_ok: true,
+            fts_query_ok: true,
+            model_ok: true,
+            counts: HealthCounts {
+                memories: 0,
+                memories_total: 0,
+                entities: 0,
+                relationships: 0,
+                vec_memories: 0,
+            },
+            db_path: "/tmp/test.sqlite".to_string(),
+            db_size_bytes: 0,
+            schema_version: 1,
+            sqlite_version: "3.45.1".to_string(),
+            elapsed_ms: 0,
+            missing_entities: vec![],
+            wal_size_mb: 0.0,
+            journal_mode: "wal".to_string(),
+            mentions_ratio: None,
+            mentions_warning: None,
+            checks: vec![],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        // fts_query_ok must appear at the top level
+        assert_eq!(
+            json["fts_query_ok"], true,
+            "fts_query_ok must be present and true in serialized JSON"
+        );
+
+        // sqlite_version must appear at the top level with the exact string
+        assert_eq!(
+            json["sqlite_version"], "3.45.1",
+            "sqlite_version must be present and match the provided string"
+        );
+
+        // Verify fts_query_ok=false path includes the expected detail message
+        let check_fail = HealthCheck {
+            name: "fts_query".to_string(),
+            ok: false,
+            detail: Some("FTS5 MATCH query failed — run 'sqlite-graphrag fts rebuild'".to_string()),
+        };
+        let check_json = serde_json::to_value(&check_fail).unwrap();
+        assert_eq!(check_json["name"], "fts_query");
+        assert_eq!(check_json["ok"], false);
+        assert_eq!(
+            check_json["detail"],
+            "FTS5 MATCH query failed — run 'sqlite-graphrag fts rebuild'"
+        );
     }
 }

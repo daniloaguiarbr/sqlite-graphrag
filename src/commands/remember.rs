@@ -53,12 +53,13 @@ pub struct RememberArgs {
     #[arg(
         long,
         value_enum,
-        long_help = "Memory kind stored in `memories.type`. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill, document, note."
+        long_help = "Memory kind stored in `memories.type`. Required when creating a new memory. Optional with --force-merge: if omitted the existing memory type is inherited. This is NOT the graph `entity_type` used in `--entities-file`. Valid values: user, feedback, project, reference, decision, incident, skill, document, note."
     )]
-    pub r#type: MemoryType,
+    pub r#type: Option<MemoryType>,
     /// Short description (≤500 chars) summarizing the memory for use in `list` and `recall` snippets.
+    /// Required when creating a new memory. Optional with --force-merge: if omitted the existing description is inherited.
     #[arg(long)]
-    pub description: String,
+    pub description: Option<String>,
     /// Inline body content. Mutually exclusive with --body-file, --body-stdin, --graph-stdin.
     /// Maximum 512000 bytes; rejected if empty without an external graph.
     #[arg(
@@ -142,6 +143,22 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     pub gliner_variant: String,
     #[arg(long, hide = true)]
     pub skip_extraction: bool,
+    /// Explicitly clear the body content (set to empty string). Required to distinguish
+    /// intentional body clearing from accidental omission during --force-merge.
+    /// Without this flag, an empty body passed to --force-merge preserves the existing body.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Explicitly clear body content during --force-merge (without this flag, an empty body is ignored and the existing body is kept)"
+    )]
+    pub clear_body: bool,
+    /// Validate input and report planned actions without persisting.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Validate input and report planned actions without persisting"
+    )]
+    pub dry_run: bool,
     /// Optional opaque session identifier for tracing memory provenance across multi-agent runs.
     #[arg(long)]
     pub session_id: Option<String>,
@@ -245,10 +262,12 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
     }
 
-    if args.description.len() > MAX_MEMORY_DESCRIPTION_LEN {
-        return Err(AppError::Validation(
-            crate::i18n::validation::description_exceeds(MAX_MEMORY_DESCRIPTION_LEN),
-        ));
+    if let Some(ref desc) = args.description {
+        if desc.len() > MAX_MEMORY_DESCRIPTION_LEN {
+            return Err(AppError::Validation(
+                crate::i18n::validation::description_exceeds(MAX_MEMORY_DESCRIPTION_LEN),
+            ));
+        }
     }
 
     let mut raw_body = if let Some(b) = args.body {
@@ -303,7 +322,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     // v1.0.22 P1: reject empty or whitespace-only body when no external graph is provided.
     // Without this check, empty embeddings would be persisted, breaking recall semantics.
-    if !entities_provided_externally && graph.entities.is_empty() && raw_body.trim().is_empty() {
+    // GAP-08: skip this guard when --force-merge without --clear-body; the existing body
+    // will be preserved from the database, so the effective body will not be empty.
+    let body_will_be_preserved = args.force_merge && raw_body.trim().is_empty() && !args.clear_body;
+    if !entities_provided_externally
+        && graph.entities.is_empty()
+        && raw_body.trim().is_empty()
+        && !body_will_be_preserved
+    {
         return Err(AppError::Validation(crate::i18n::validation::empty_body()));
     }
 
@@ -316,8 +342,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         serde_json::json!({})
     };
 
-    let body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
-    let snippet: String = raw_body.chars().take(200).collect();
+    let mut body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
+    let mut snippet: String = raw_body.chars().take(200).collect();
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
@@ -367,6 +393,23 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
     ensure_schema(&mut conn)?;
 
+    // --dry-run: emit planned action without any DB writes and return.
+    if args.dry_run {
+        let existing = memories::find_by_name(&conn, &namespace, &normalized_name)?;
+        let planned_action = if existing.is_some() && args.force_merge {
+            "would_update"
+        } else {
+            "would_create"
+        };
+        output::emit_json(&serde_json::json!({
+            "dry_run": true,
+            "name": normalized_name,
+            "namespace": namespace,
+            "planned_action": planned_action,
+        }))?;
+        return Ok(());
+    }
+
     {
         use crate::constants::MAX_NAMESPACES_ACTIVE;
         let active_count: u32 = conn.query_row(
@@ -405,6 +448,59 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             &normalized_name,
             &namespace,
         )));
+    }
+
+    // GAP-10: resolve type and description.
+    // For CREATE path (new memory): both are required.
+    // For UPDATE path (--force-merge on existing memory): inherit from existing row when omitted.
+    let (resolved_type, resolved_description) = if existing_memory.is_none() {
+        // CREATE path — both fields are mandatory.
+        let t = args.r#type.ok_or_else(|| {
+            AppError::Validation(
+                "--type and --description are required when creating a new memory".to_string(),
+            )
+        })?;
+        let d = args.description.clone().ok_or_else(|| {
+            AppError::Validation(
+                "--type and --description are required when creating a new memory".to_string(),
+            )
+        })?;
+        (t.as_str().to_string(), d)
+    } else {
+        // UPDATE path (--force-merge) — inherit missing fields from stored row.
+        let existing_row = memories::read_by_name(&conn, &namespace, &normalized_name)?
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "memory '{normalized_name}' not found in namespace '{namespace}'"
+                ))
+            })?;
+        let t = args
+            .r#type
+            .map(|v| v.as_str().to_string())
+            .unwrap_or_else(|| existing_row.memory_type.clone());
+        let d = args
+            .description
+            .clone()
+            .unwrap_or_else(|| existing_row.description.clone());
+        (t, d)
+    };
+
+    // GAP-08/GAP-09: protect existing body from accidental destruction during --force-merge.
+    // When the caller omits a body (or passes an empty one) without --clear-body, silently
+    // preserve the existing body from the database.  This prevents a common scripting mistake
+    // where a cron job updates metadata fields and inadvertently wipes the stored content.
+    if body_will_be_preserved {
+        if let Some(existing_row) = memories::read_by_name(&conn, &namespace, &normalized_name)? {
+            if !existing_row.body.is_empty() {
+                tracing::debug!(
+                    name = %normalized_name,
+                    "GAP-08: empty body with --force-merge and no --clear-body; preserving existing body"
+                );
+                raw_body = existing_row.body;
+                body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
+                snippet = raw_body.chars().take(200).collect();
+            }
+        }
     }
 
     let duplicate_hash_id = memories::find_by_hash(&conn, &namespace, &body_hash)?;
@@ -506,12 +602,12 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     };
     let body_for_storage = raw_body;
 
-    let memory_type = args.r#type.as_str();
+    let memory_type = resolved_type.as_str();
     let new_memory = NewMemory {
         namespace: namespace.clone(),
         name: normalized_name.clone(),
         memory_type: memory_type.to_string(),
-        description: args.description.clone(),
+        description: resolved_description.clone(),
         body: body_for_storage,
         body_hash: body_hash.clone(),
         session_id: args.session_id.clone(),
@@ -557,7 +653,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 next_v,
                 &normalized_name,
                 memory_type,
-                &args.description,
+                &resolved_description,
                 &new_memory.body,
                 &serde_json::to_string(&new_memory.metadata)?,
                 None,
@@ -587,7 +683,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 1,
                 &normalized_name,
                 memory_type,
-                &args.description,
+                &resolved_description,
                 &new_memory.body,
                 &serde_json::to_string(&new_memory.metadata)?,
                 None,
@@ -1030,5 +1126,54 @@ mod tests {
         };
         let json_true = serde_json::to_value(&resp_true).expect("serialization failed");
         assert_eq!(json_true["relationships_truncated"], true);
+    }
+
+    // GAP-08: body-preservation predicate tests.
+    // Verifies the decision logic that determines whether an existing body should
+    // be kept instead of overwritten with an empty incoming body during --force-merge.
+
+    /// Returns `true` when the existing body should be preserved.
+    ///
+    /// Mirrors the `body_will_be_preserved` expression in `run()` so the logic
+    /// is testable without a real database connection.
+    fn should_preserve_body(force_merge: bool, raw_body_is_empty: bool, clear_body: bool) -> bool {
+        force_merge && raw_body_is_empty && !clear_body
+    }
+
+    #[test]
+    fn gap08_empty_body_force_merge_no_clear_body_preserves() {
+        // Caller passes no body with --force-merge but without --clear-body.
+        // The existing body in the DB must be kept.
+        assert!(
+            should_preserve_body(true, true, false),
+            "empty body + force-merge + no clear-body should trigger preservation"
+        );
+    }
+
+    #[test]
+    fn gap08_empty_body_force_merge_with_clear_body_does_not_preserve() {
+        // Caller explicitly passes --clear-body; intentional wipe is honoured.
+        assert!(
+            !should_preserve_body(true, true, true),
+            "--clear-body must bypass preservation"
+        );
+    }
+
+    #[test]
+    fn gap08_non_empty_body_force_merge_does_not_preserve() {
+        // Caller provides a real body; it must overwrite the existing one.
+        assert!(
+            !should_preserve_body(true, false, false),
+            "non-empty body must overwrite, not preserve"
+        );
+    }
+
+    #[test]
+    fn gap08_empty_body_no_force_merge_does_not_preserve() {
+        // Without --force-merge the path is a fresh create; no preservation needed.
+        assert!(
+            !should_preserve_body(false, true, false),
+            "no --force-merge means no preservation logic applies"
+        );
     }
 }

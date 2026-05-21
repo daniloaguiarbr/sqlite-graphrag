@@ -188,6 +188,17 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         "rename",
     )?;
 
+    memories::sync_fts_after_update(
+        &tx,
+        memory_id,
+        &name,
+        &description,
+        &body,
+        &normalized_new_name,
+        &description,
+        &body,
+    )?;
+
     tx.commit()?;
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

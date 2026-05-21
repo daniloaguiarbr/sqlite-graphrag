@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/backup.schema.json",
+  "title": "BackupResponse",
+  "description": "Response emitted by `sqlite-graphrag backup --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "source", "destination", "size_bytes", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":      { "type": "string", "const": "backed_up", "description": "Always 'backed_up' on success." },
+    "source":      { "type": "string", "description": "Absolute path to the source SQLite database file." },
+    "destination": { "type": "string", "description": "Absolute path to the backup file that was written." },
+    "size_bytes":  { "type": "integer", "minimum": 0, "description": "Size of the backup file in bytes." },
+    "elapsed_ms":  { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

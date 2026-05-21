@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/merge-entities.schema.json",
+  "title": "MergeEntitiesResponse",
+  "description": "Response emitted by `sqlite-graphrag merge-entities --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "sources", "target", "relationships_moved", "entities_removed", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":               { "type": "string", "const": "merged", "description": "Always 'merged' on success." },
+    "sources":              { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Names of the source entities that were merged into the target." },
+    "target":               { "type": "string", "description": "Name of the surviving target entity after the merge." },
+    "relationships_moved":  { "type": "integer", "minimum": 0, "description": "Number of graph relationships re-pointed to the target entity." },
+    "entities_removed":     { "type": "integer", "minimum": 0, "description": "Number of source entities permanently removed after the merge." },
+    "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

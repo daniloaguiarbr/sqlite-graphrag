@@ -18,6 +18,11 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Entity names auto-created by --create-missing. Omitted when empty."
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Non-canonical relation warnings (empty array when relation is canonical)"
     }
   }
 }

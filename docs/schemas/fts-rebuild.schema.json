@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/fts-rebuild.schema.json",
+  "title": "FtsRebuildResponse",
+  "description": "Response emitted by `sqlite-graphrag fts rebuild --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "rows_indexed", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":      { "type": "string", "const": "rebuilt", "description": "Always 'rebuilt' on success." },
+    "rows_indexed":{ "type": "integer", "minimum": 0, "description": "Number of memory rows re-indexed into the FTS5 table." },
+    "elapsed_ms":  { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

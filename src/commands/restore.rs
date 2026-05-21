@@ -149,6 +149,14 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
 
     let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
 
+    // Read current FTS-indexed values before the UPDATE so sync_fts_after_update
+    // can issue the correct DELETE command for the external-content FTS5 table.
+    let (cur_name, cur_desc, cur_body): (String, String, String) = conn.query_row(
+        "SELECT name, description, body FROM memories WHERE id = ?1",
+        params![memory_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+
     // v1.0.21 P1-D: re-embed restored body to keep `vec_memories` synchronized
     // with `memories`. Without this, semantic queries used the post-forget version
     // vector, causing inconsistent recall (vec_memories=2 vs memories=3 after forget+restore).
@@ -213,6 +221,17 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     // v1.0.21 P1-D: ressincronizar vec_memories com o body restaurado.
     memories::upsert_vec(
         &tx, memory_id, &namespace, &old_type, &embedding, &old_name, &snippet,
+    )?;
+
+    memories::sync_fts_after_update(
+        &tx,
+        memory_id,
+        &cur_name,
+        &cur_desc,
+        &cur_body,
+        &old_name,
+        &old_description,
+        &old_body,
     )?;
 
     tx.commit()?;

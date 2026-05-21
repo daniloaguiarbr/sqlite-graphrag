@@ -767,6 +767,37 @@ pub fn fts_search(
     }
 }
 
+/// Syncs FTS5 external-content index after an UPDATE on the memories table.
+///
+/// The AFTER UPDATE trigger (`trg_fts_au`) is intentionally absent because
+/// sqlite-vec loaded via `sqlite3_auto_extension` conflicts with FTS5 inside
+/// UPDATE triggers. This function performs the equivalent sync in Rust:
+/// DELETE the old entry, then INSERT the new one (external-content FTS5
+/// tables do not support in-place UPDATE).
+#[allow(clippy::too_many_arguments)]
+pub fn sync_fts_after_update(
+    conn: &Connection,
+    memory_id: i64,
+    old_name: &str,
+    old_desc: &str,
+    old_body: &str,
+    new_name: &str,
+    new_desc: &str,
+    new_body: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO fts_memories(fts_memories, rowid, name, description, body)
+         VALUES('delete', ?1, ?2, ?3, ?4)",
+        params![memory_id, old_name, old_desc, old_body],
+    )?;
+    conn.execute(
+        "INSERT INTO fts_memories(rowid, name, description, body)
+         VALUES(?1, ?2, ?3, ?4)",
+        params![memory_id, new_name, new_desc, new_body],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

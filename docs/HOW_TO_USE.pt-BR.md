@@ -620,6 +620,24 @@ sqlite-graphrag remember --name notas-config --type project \
 
 
 ## Erros Comuns
+### Reparação do Índice FTS5
+- Verifique a saúde do FTS5: `sqlite-graphrag health --json | jaq '.fts_query_ok'`
+- Se falso, reconstrua: `sqlite-graphrag fts rebuild --json`
+- Confirme: `sqlite-graphrag fts check --json`
+- Veja estatísticas: `sqlite-graphrag fts stats --json`
+
+### Backup do Banco de Dados
+- Crie backup seguro: `sqlite-graphrag backup --output backup.sqlite --json`
+- Usa a API SQLite Online Backup — seguro com WAL e leituras concorrentes
+
+### Gerenciamento de Entidades
+- Liste entidades de uma memória: `sqlite-graphrag memory-entities --name my-mem --json`
+- Exclua entidade com cascade: `sqlite-graphrag delete-entity --name bad-entity --cascade --json`
+- Reclassifique tipo de entidade: `sqlite-graphrag reclassify --name my-entity --entity-type concept --json`
+- Reclassificação em massa: `sqlite-graphrag reclassify --from-type organization --to-type concept --batch --json`
+- Mescle duplicatas: `sqlite-graphrag merge-entities --names "auth-system,auth-jwt" --into auth --json`
+- Remova vínculos NER: `sqlite-graphrag prune-ner --entity noisy-entity --json`
+
 ### Solução de Problemas — Cinco Falhas e Suas Correções
 - Erro `exit 10` sinaliza lock do banco, execute `sqlite-graphrag vacuum` para checkpoint do WAL
 - Erro `exit 12` sinaliza falha ao carregar `sqlite-vec`, verifique se SQLite é versão 3.40 ou superior

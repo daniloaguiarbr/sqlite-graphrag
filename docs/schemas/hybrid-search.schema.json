@@ -19,8 +19,11 @@
         "score":         { "type": "number",  "description": "Alias of combined_score." },
         "rrf_score":     { "type": "number",  "description": "Raw RRF score before normalization." },
         "source":        { "type": "string",  "enum": ["hybrid"] },
-        "vec_rank":      { "type": "integer", "minimum": 1, "description": "Present when result appeared in vector search." },
-        "fts_rank":      { "type": "integer", "minimum": 1, "description": "Present when result appeared in full-text search." }
+        "vec_rank":         { "type": "integer", "minimum": 1, "description": "Present when result appeared in vector search." },
+        "fts_rank":         { "type": "integer", "minimum": 1, "description": "Present when result appeared in full-text search." },
+        "normalized_score": { "type": "number", "minimum": 0, "maximum": 1, "description": "RRF score normalized to [0,1] for cross-method comparability" },
+        "vec_distance":     { "type": ["number", "null"], "description": "Raw cosine distance from vector search, null when not in vec results" },
+        "fts_bm25":         { "type": ["number", "null"], "description": "Raw BM25 score from FTS5, null when not available" }
       }
     },
     "RecallItem": {
@@ -56,8 +59,11 @@
     "k":             { "type": "integer", "minimum": 1 },
     "rrf_k":         { "type": "integer", "minimum": 1, "description": "RRF k parameter." },
     "weights":       { "$ref": "#/$defs/Weights" },
-    "results":       { "type": "array", "items": { "$ref": "#/$defs/HybridSearchItem" } },
-    "graph_matches": { "type": "array", "items": { "$ref": "#/$defs/RecallItem" } },
-    "elapsed_ms":    { "type": "integer", "minimum": 0 }
+    "results":          { "type": "array", "items": { "$ref": "#/$defs/HybridSearchItem" } },
+    "graph_matches":    { "type": "array", "items": { "$ref": "#/$defs/RecallItem" } },
+    "fts_degraded":     { "type": "boolean", "description": "True when FTS5 query failed and results are vector-only" },
+    "fts_error":        { "type": ["string", "null"], "description": "FTS5 error message when fts_degraded is true" },
+    "fts_auto_rebuilt": { "type": "boolean", "description": "True when FTS5 was auto-rebuilt during this query" },
+    "elapsed_ms":       { "type": "integer", "minimum": 0 }
   }
 }

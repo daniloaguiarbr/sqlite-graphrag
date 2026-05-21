@@ -168,6 +168,17 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         "edit",
     )?;
 
+    memories::sync_fts_after_update(
+        &tx,
+        memory_id,
+        &row.name,
+        &row.description,
+        &row.body,
+        &row.name,
+        &new_description,
+        &new_body,
+    )?;
+
     tx.commit()?;
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

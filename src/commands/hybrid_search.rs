@@ -91,6 +91,18 @@ pub struct HybridSearchItem {
     /// Combined RRF score — explicit alias of `combined_score` for integration contracts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rrf_score: Option<f64>,
+    /// RRF score normalized to [0.0, 1.0] for cross-method comparability.
+    pub normalized_score: f64,
+    /// Raw KNN distance from the vector index (lower = more similar).
+    ///
+    /// Present when the result came from the vector search path; `None` when the
+    /// result appeared only in the FTS5 results and was not ranked by the KNN index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vec_distance: Option<f64>,
+    /// Raw BM25 score from the FTS5 index. Currently always `None`; reserved for
+    /// a future release when the FTS5 BM25 score is exposed by the storage layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fts_bm25: Option<f64>,
 }
 
 /// RRF weights used in hybrid search: vec (vector) and fts (text).
@@ -106,10 +118,25 @@ pub struct HybridSearchResponse {
     pub k: usize,
     /// RRF k parameter used in the combined ranking.
     pub rrf_k: u32,
-    /// Pesos aplicados às fontes vec e fts no RRF.
+    /// Weights applied to vec and fts sources in the RRF fusion.
     pub weights: Weights,
     pub results: Vec<HybridSearchItem>,
     pub graph_matches: Vec<RecallItem>,
+    /// True when FTS5 failed and the response is vec-only.
+    ///
+    /// Omitted from JSON when `false` to keep the happy-path envelope clean.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fts_degraded: bool,
+    /// Human-readable description of the FTS5 failure when `fts_degraded` is true.
+    ///
+    /// Omitted from JSON when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fts_error: Option<String>,
+    /// True when the FTS5 index was corrupted and successfully auto-rebuilt during this request.
+    ///
+    /// Omitted from JSON when `false` to keep the happy-path envelope clean.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fts_auto_rebuilt: bool,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
@@ -151,8 +178,49 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         .map(|(pos, (id, _))| (*id, pos + 1))
         .collect();
 
-    let fts_results =
-        memories::fts_search(&conn, &args.query, &namespace, memory_type_str, args.k * 2)?;
+    // Map raw KNN distance by memory_id for GAP-30: vec_distance field.
+    let vec_distance_map: HashMap<i64, f64> = vec_results
+        .iter()
+        .map(|(id, dist)| (*id, *dist as f64))
+        .collect();
+
+    let (fts_results, fts_degraded, fts_error, fts_auto_rebuilt) = if args.weight_fts == 0.0 {
+        (vec![], false, None, false)
+    } else {
+        match memories::fts_search(&conn, &args.query, &namespace, memory_type_str, args.k * 2) {
+            Ok(r) => (r, false, None, false),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let is_malformed = err_msg.contains("malformed") || err_msg.contains("corrupt");
+                if is_malformed {
+                    tracing::warn!("FTS5 index corrupted, attempting auto-rebuild");
+                    if conn
+                        .execute_batch("INSERT INTO fts_memories(fts_memories) VALUES('rebuild');")
+                        .is_ok()
+                    {
+                        match memories::fts_search(
+                            &conn,
+                            &args.query,
+                            &namespace,
+                            memory_type_str,
+                            args.k * 2,
+                        ) {
+                            Ok(r) => (r, false, None, true),
+                            Err(e2) => {
+                                tracing::error!("FTS5 auto-rebuild failed to recover: {e2}");
+                                (vec![], true, Some(e2.to_string()), true)
+                            }
+                        }
+                    } else {
+                        (vec![], true, Some(err_msg), false)
+                    }
+                } else {
+                    tracing::warn!("FTS5 query failed, falling back to vec-only: {e}");
+                    (vec![], true, Some(err_msg), false)
+                }
+            }
+        }
+    };
 
     // Map FTS ranking position by memory_id (1-indexed per schema)
     let fts_rank_map: HashMap<i64, usize> = fts_results
@@ -192,10 +260,18 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         }
     }
 
-    // Construir resultados finais na ordem de ranking
+    let max_possible = args.weight_vec as f64 * (1.0 / (rrf_k + 1.0))
+        + args.weight_fts as f64 * (1.0 / (rrf_k + 1.0));
+
+    // Build final results in ranking order
     let results: Vec<HybridSearchItem> = ranked
         .into_iter()
         .filter_map(|(memory_id, combined_score)| {
+            let normalized_score = if max_possible > 0.0 {
+                combined_score / max_possible
+            } else {
+                0.0
+            };
             memory_data.remove(&memory_id).map(|row| HybridSearchItem {
                 memory_id: row.id,
                 name: row.name,
@@ -209,6 +285,9 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                 vec_rank: vec_rank_map.get(&memory_id).copied(),
                 fts_rank: fts_rank_map.get(&memory_id).copied(),
                 rrf_score: Some(combined_score),
+                normalized_score,
+                vec_distance: vec_distance_map.get(&memory_id).copied(),
+                fts_bm25: None,
             })
         })
         .collect();
@@ -274,6 +353,9 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         },
         results,
         graph_matches,
+        fts_degraded,
+        fts_error,
+        fts_auto_rebuilt,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
@@ -291,7 +373,7 @@ mod tests {
         weight_fts: f32,
     ) -> HybridSearchResponse {
         HybridSearchResponse {
-            query: "busca teste".to_string(),
+            query: "test query".to_string(),
             k,
             rrf_k,
             weights: Weights {
@@ -300,6 +382,9 @@ mod tests {
             },
             results: vec![],
             graph_matches: vec![],
+            fts_degraded: false,
+            fts_error: None,
+            fts_auto_rebuilt: false,
             elapsed_ms: 0,
         }
     }
@@ -374,6 +459,9 @@ mod tests {
             vec_rank: Some(1),
             fts_rank: None,
             rrf_score: Some(0.0328),
+            normalized_score: 1.0,
+            vec_distance: Some(0.12),
+            fts_bm25: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(
@@ -401,6 +489,9 @@ mod tests {
             vec_rank: None,
             fts_rank: Some(2),
             rrf_score: Some(0.016),
+            normalized_score: 0.5,
+            vec_distance: None,
+            fts_bm25: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(
@@ -428,6 +519,9 @@ mod tests {
             vec_rank: Some(3),
             fts_rank: Some(1),
             rrf_score: Some(0.05),
+            normalized_score: 0.8,
+            vec_distance: Some(0.25),
+            fts_bm25: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"vec_rank\""), "must contain vec_rank");
@@ -464,11 +558,47 @@ mod tests {
                 source: "graph".to_string(),
                 graph_depth: Some(1),
             }],
+            fts_degraded: false,
+            fts_error: None,
+            fts_auto_rebuilt: false,
             elapsed_ms: 42,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["graph_matches"].as_array().unwrap().len(), 1);
         assert_eq!(json["graph_matches"][0]["source"], "graph");
         assert_eq!(json["graph_matches"][0]["graph_depth"], 1);
+    }
+
+    #[test]
+    fn fts_degraded_omitted_on_success_present_on_failure() {
+        // Happy path: fts_degraded=false must be absent from JSON (skip_serializing_if).
+        let ok_resp = empty_response(5, 60, 1.0, 1.0);
+        let ok_json = serde_json::to_string(&ok_resp).unwrap();
+        assert!(
+            !ok_json.contains("\"fts_degraded\""),
+            "fts_degraded must be absent when false"
+        );
+        assert!(
+            !ok_json.contains("\"fts_error\""),
+            "fts_error must be absent when None"
+        );
+
+        // Degraded path: fts_degraded=true and fts_error=Some must appear in JSON.
+        let mut degraded_resp = empty_response(5, 60, 1.0, 1.0);
+        degraded_resp.fts_degraded = true;
+        degraded_resp.fts_error = Some("FTS5 table corrupted".to_string());
+        let degraded_json = serde_json::to_string(&degraded_resp).unwrap();
+        assert!(
+            degraded_json.contains("\"fts_degraded\":true"),
+            "fts_degraded must be present and true when degraded"
+        );
+        assert!(
+            degraded_json.contains("\"fts_error\""),
+            "fts_error must be present when Some"
+        );
+        assert!(
+            degraded_json.contains("FTS5 table corrupted"),
+            "fts_error must contain the error message"
+        );
     }
 }

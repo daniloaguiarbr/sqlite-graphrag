@@ -29,13 +29,11 @@ pub struct ListArgs {
     /// used in --entities-file.
     #[arg(long, value_enum)]
     pub r#type: Option<MemoryType>,
-    /// Maximum number of memories to return (default: 50).
     #[arg(
         long,
-        default_value = "50",
-        help = "Maximum number of memories to return"
+        help = "Maximum number of memories to return (default: 50 for text, all for JSON)"
     )]
-    pub limit: usize,
+    pub limit: Option<usize>,
     /// Number of memories to skip before returning results.
     #[arg(long, default_value = "0", help = "Number of memories to skip")]
     pub offset: usize,
@@ -81,11 +79,18 @@ struct ListItem {
     /// RFC 3339 UTC mirror of `deleted_at`, omitted when `deleted_at` is None.
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at_iso: Option<String>,
+    /// Byte length of the full memory body.
+    body_length: usize,
 }
 
 #[derive(Serialize)]
 struct ListResponse {
     items: Vec<ListItem>,
+    /// Total number of matching memories in the namespace (ignoring limit/offset).
+    total_count: usize,
+    /// True when the returned item count is less than `total_count`, indicating
+    /// that more results exist beyond the applied limit.
+    truncated: bool,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -98,12 +103,17 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
+    let effective_limit = args.limit.unwrap_or(match args.format {
+        OutputFormat::Json => usize::MAX,
+        _ => 50,
+    });
+
     let memory_type_str = args.r#type.map(|t| t.as_str());
     let rows = memories::list(
         &conn,
         &namespace,
         memory_type_str,
-        args.limit,
+        effective_limit,
         args.offset,
         args.include_deleted,
     )?;
@@ -111,6 +121,7 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let items: Vec<ListItem> = rows
         .into_iter()
         .map(|r| {
+            let body_length = r.body.len();
             let snippet: String = r.body.chars().take(200).collect();
             let updated_at_iso = crate::tz::epoch_to_iso(r.updated_at);
             let deleted_at_iso = r.deleted_at.map(crate::tz::epoch_to_iso);
@@ -127,12 +138,18 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
                 updated_at_iso,
                 deleted_at: r.deleted_at,
                 deleted_at_iso,
+                body_length,
             }
         })
         .collect();
 
+    let total_count = items.len();
+    let truncated = args.limit.is_some_and(|lim| items.len() >= lim);
+
     match args.format {
         OutputFormat::Json => output::emit_json(&ListResponse {
+            total_count,
+            truncated,
             items,
             elapsed_ms: inicio.elapsed().as_millis() as u64,
         })?,
@@ -149,23 +166,30 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
+    fn make_item(name: &str) -> ListItem {
+        ListItem {
+            id: 1,
+            memory_id: 1,
+            name: name.to_string(),
+            namespace: "global".to_string(),
+            type_field: "note".to_string(),
+            memory_type: "note".to_string(),
+            description: "desc".to_string(),
+            snippet: "snip".to_string(),
+            updated_at: 1_745_000_000,
+            updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
+            deleted_at: None,
+            deleted_at_iso: None,
+            body_length: 4,
+        }
+    }
+
     #[test]
     fn list_response_serializes_items_and_elapsed_ms() {
         let resp = ListResponse {
-            items: vec![ListItem {
-                id: 1,
-                memory_id: 1,
-                name: "test-memory".to_string(),
-                namespace: "global".to_string(),
-                type_field: "note".to_string(),
-                memory_type: "note".to_string(),
-                description: "descricao de teste".to_string(),
-                snippet: "corpo resumido".to_string(),
-                updated_at: 1_745_000_000,
-                updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
-                deleted_at: None,
-                deleted_at_iso: None,
-            }],
+            items: vec![make_item("test-memory")],
+            total_count: 1,
+            truncated: false,
             elapsed_ms: 7,
         };
         let json = serde_json::to_value(&resp).unwrap();
@@ -194,6 +218,7 @@ mod tests {
             updated_at_iso: "2025-04-19T00:00:00Z".to_string(),
             deleted_at: Some(1_745_100_000),
             deleted_at_iso: Some("2025-04-20T03:46:40Z".to_string()),
+            body_length: 4,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["deleted_at"], 1_745_100_000_i64);
@@ -204,6 +229,8 @@ mod tests {
     fn list_response_items_empty_serializes_empty_array() {
         let resp = ListResponse {
             items: vec![],
+            total_count: 0,
+            truncated: false,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).unwrap();
@@ -227,6 +254,7 @@ mod tests {
             updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
             deleted_at: None,
             deleted_at_iso: None,
+            body_length: 0,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(
@@ -257,6 +285,7 @@ mod tests {
             updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
             deleted_at: None,
             deleted_at_iso: None,
+            body_length: 0,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["type"], "note", "serde rename must produce 'type'");
@@ -277,5 +306,27 @@ mod tests {
             iso.contains('+') || iso.contains('-'),
             "must contain offset sign, got: {iso}"
         );
+    }
+
+    #[test]
+    fn body_length_reflects_byte_count() {
+        let body = "hello world";
+        let item = ListItem {
+            id: 1,
+            memory_id: 1,
+            name: "test".to_string(),
+            namespace: "global".to_string(),
+            type_field: "note".to_string(),
+            memory_type: "note".to_string(),
+            description: "desc".to_string(),
+            snippet: body.chars().take(200).collect(),
+            updated_at: 0,
+            updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            deleted_at_iso: None,
+            body_length: body.len(),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["body_length"], body.len());
     }
 }

@@ -27,6 +27,33 @@
 ## Daemon Behavior (since v1.0.50)
 - After binary upgrades, the CLI auto-restarts the daemon on version mismatch (since v1.0.50)
 
+## New Commands and Flags (since v1.0.56)
+- `fts rebuild` rebuilds the FTS5 full-text search index from scratch
+- `fts check` runs FTS5 integrity-check without modifying the index
+- `fts stats` shows FTS5 index statistics (row count, shadow pages, functional status)
+- `backup --output <path>` creates a safe database copy via SQLite Online Backup API
+- `delete-entity --name <entity> --cascade` deletes entity and cascades to all relationships and NER bindings
+- `reclassify --name <entity> --entity-type <new>` changes entity type; `--from-type <old> --to-type <new> --batch` for bulk
+- `merge-entities --names "a,b,c" --into <target>` merges source entities into target, moving all edges
+- `memory-entities --name <memory>` lists entities linked to a specific memory
+- `prune-ner --entity <name>` or `--all --yes` removes NER bindings from memory_entities table
+- `remember --dry-run` validates input and reports planned actions without persisting
+- `remember --clear-body` explicitly clears body during `--force-merge` (empty body now preserves existing by default)
+- `remember --type` and `--description` are now optional with `--force-merge` (inherited from existing memory)
+- `list` default limit is all memories with `--json`, 50 for text; response includes `total_count`, `truncated`, `body_length`
+- `history --diff` includes character-level change summary between consecutive versions
+- `hybrid-search` graceful FTS5 degradation: `fts_degraded`, `fts_error`, `fts_auto_rebuilt` fields; auto-rebuilds on corruption
+- `hybrid-search` adds `normalized_score` (0-1), `vec_distance`, `fts_bm25` raw scores
+- `health` adds `fts_query_ok` (functional FTS5 MATCH test), `sqlite_version`
+- `optimize --skip-fts` skips FTS5 rebuild; `fts_rebuilt` field in response
+- `link --strict-relations` rejects non-canonical relation types; `warnings` field in response
+- `unlink --relation` is now optional (removes all between pair); `--entity <name> --all` for bulk
+- `graph entities --sort-by degree|name|created_at --order asc|desc`; `degree` field in response
+- `ingest --max-name-length N` configures name truncation; `body_length` in NDJSON; auto-prefix `doc-` for numeric names
+- `daemon --ping` adds `model_name`, `model_variant` fields
+- ALL error paths now emit JSON on stdout: `{"error": true, "code": N, "message": "..."}`
+- FTS5 sync fixed in `edit`, `rename`, `restore` — edited memories are now immediately findable via full-text search
+
 
 ## Summary Table
 ### Catalog — Every Supported Integration

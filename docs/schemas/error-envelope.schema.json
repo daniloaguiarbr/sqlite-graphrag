@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/error-envelope.schema.json",
+  "title": "ErrorEnvelope",
+  "description": "Structured error envelope emitted to stdout by any sqlite-graphrag subcommand when --json is active and a handled error occurs. The process exits with a non-zero code matching the 'code' field.",
+  "type": "object",
+  "required": ["error", "code", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "error":   { "type": "boolean", "const": true, "description": "Always true; signals to consumers that this line is an error envelope, not a success response." },
+    "code":    { "type": "integer", "description": "Exit code that the process will return, matching the sqlite-graphrag exit code table (e.g. 4 = not found, 9 = duplicate, 10 = database error)." },
+    "message": { "type": "string", "description": "Human-readable English description of the error." }
+  }
+}

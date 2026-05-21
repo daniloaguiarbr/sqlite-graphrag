@@ -107,7 +107,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`) | Save a memory with optional entity graph |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--dry-run` | Save a memory with optional entity graph; `--dry-run` previews without writing |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--type` | Search memories semantically via KNN |
 | `read` | `--name <name>` | Fetch a memory by exact kebab-case name |
 | `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |
@@ -172,7 +172,16 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | --- | --- | --- |
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
 | `cleanup-orphans` | `--dry-run`, `--yes` | Remove orphaned entities with no linked memories or edges |
-| `prune-relations` | `--min-weight <f>`, `--dry-run`, `--yes`, `--json` | Remove weak or unused relations from the graph |
+| `prune-relations` | `--relation <type>`, `--dry-run`, `--yes`, `--json` | Remove all relationships of a given type in bulk |
+| `backup` | `--output <path>`, `--json` | Create a consistent backup using SQLite Online Backup API, safe with WAL and concurrent reads |
+| `fts rebuild` | `--json` | Rebuild the FTS5 full-text index B-tree from the memories table |
+| `fts check` | `--json` | Verify FTS5 index integrity; returns `integrity_ok` boolean |
+| `fts stats` | `--json` | Show FTS5 index statistics such as token count and segment info |
+| `memory-entities` | `--name <name>`, `--json` | List all entities linked to a named memory |
+| `delete-entity` | `--name <name>`, `--cascade`, `--json` | Delete an entity node; `--cascade` also removes its relationships |
+| `reclassify` | `--name <name>` or `--from-type <t>`, `--entity-type <t>` or `--to-type <t>`, `--batch`, `--json` | Change `entity_type` of one entity or a whole category |
+| `merge-entities` | `--names <csv>`, `--into <name>`, `--json` | Merge duplicate entity nodes into a single canonical node |
+| `prune-ner` | `--entity <name>` or `--all`, `--yes`, `--json` | Remove NER-generated bindings from one or all entities |
 
 
 ## Environment Variables
@@ -510,7 +519,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.55 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.56 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

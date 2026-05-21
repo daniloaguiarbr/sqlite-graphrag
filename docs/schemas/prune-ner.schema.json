@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/prune-ner.schema.json",
+  "title": "PruneNerResponse",
+  "description": "Response emitted by `sqlite-graphrag prune-ner --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "bindings_removed", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":           { "type": "string", "enum": ["pruned", "dry_run"], "description": "'pruned' when bindings were physically removed; 'dry_run' when --dry-run was passed and no changes were made." },
+    "bindings_removed": { "type": "integer", "minimum": 0, "description": "Number of memory-entity NER binding rows removed (or that would be removed in dry_run mode)." },
+    "elapsed_ms":       { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

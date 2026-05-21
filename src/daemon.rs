@@ -64,6 +64,8 @@ pub enum DaemonResponse {
         pid: u32,
         version: String,
         handled_embed_requests: u64,
+        model_name: String,
+        model_variant: String,
     },
     PassageEmbedding {
         embedding: Vec<f32>,
@@ -344,6 +346,8 @@ fn handle_client(
                 pid: std::process::id(),
                 version: SQLITE_GRAPHRAG_VERSION.to_string(),
                 handled_embed_requests: handled_embed_requests.load(Ordering::Relaxed),
+                model_name: crate::constants::FASTEMBED_MODEL_DEFAULT.to_string(),
+                model_variant: gliner_variant_from_env(),
             },
             false,
         ),
@@ -754,6 +758,12 @@ fn save_spawn_state(models_dir: &Path, state: &DaemonSpawnState) -> Result<(), A
     std::fs::write(path, bytes).map_err(AppError::Io)
 }
 
+/// Returns the GLiNER model variant string based on the environment variable
+/// `SQLITE_GRAPHRAG_GLINER_VARIANT`, defaulting to `"fp32"`.
+fn gliner_variant_from_env() -> String {
+    std::env::var("SQLITE_GRAPHRAG_GLINER_VARIANT").unwrap_or_else(|_| "fp32".to_string())
+}
+
 fn now_epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -915,6 +925,38 @@ mod tests {
         );
         assert!(second.is_err());
         assert_eq!(state.load(Ordering::SeqCst), VERSION_RESTART_ATTEMPTED);
+    }
+
+    #[test]
+    fn ping_response_includes_model_fields() {
+        let resp = DaemonResponse::Ok {
+            pid: 42,
+            version: "1.0.0".to_string(),
+            handled_embed_requests: 7,
+            model_name: "multilingual-e5-small".to_string(),
+            model_variant: "fp32".to_string(),
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert_eq!(json["model_name"], "multilingual-e5-small");
+        assert_eq!(json["model_variant"], "fp32");
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["handled_embed_requests"], 7u64);
+    }
+
+    #[test]
+    fn gliner_variant_defaults_to_fp32() {
+        // Ensure the default is fp32 when env var is not set.
+        std::env::remove_var("SQLITE_GRAPHRAG_GLINER_VARIANT");
+        let variant = gliner_variant_from_env();
+        assert_eq!(variant, "fp32");
+    }
+
+    #[test]
+    fn gliner_variant_reads_env_var() {
+        std::env::set_var("SQLITE_GRAPHRAG_GLINER_VARIANT", "int8");
+        let variant = gliner_variant_from_env();
+        std::env::remove_var("SQLITE_GRAPHRAG_GLINER_VARIANT");
+        assert_eq!(variant, "int8");
     }
 
     #[test]

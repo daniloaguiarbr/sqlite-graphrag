@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/delete-entity.schema.json",
+  "title": "DeleteEntityResponse",
+  "description": "Response emitted by `sqlite-graphrag delete-entity --json` on stdout as a single JSON line.",
+  "type": "object",
+  "required": ["action", "entity_name", "relationships_removed", "bindings_removed", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":                { "type": "string", "const": "deleted", "description": "Always 'deleted' on success." },
+    "entity_name":           { "type": "string", "description": "Name of the entity that was permanently removed." },
+    "relationships_removed": { "type": "integer", "minimum": 0, "description": "Number of graph relationships (edges) removed along with the entity." },
+    "bindings_removed":      { "type": "integer", "minimum": 0, "description": "Number of memory-entity binding rows removed along with the entity." },
+    "elapsed_ms":            { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

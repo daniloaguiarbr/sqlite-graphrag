@@ -1465,3 +1465,99 @@ sqlite-graphrag cleanup-orphans --yes --json
 sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
 sqlite-graphrag health --json | jaq '.integrity_ok'
 ```
+
+
+## Como Reparar Um Índice FTS5 Corrompido
+### Receita: Reparar Índice FTS5 Corrompido
+- Problema: `hybrid-search` retorna exit 10 ou resultados vazios mesmo havendo memórias
+- Solução: `sqlite-graphrag fts rebuild --json`
+- Explicação: Reconstrói a B-tree do FTS5 a partir da tabela de memórias sem perda de dados
+- Verificação: `sqlite-graphrag fts check --json | jaq '.integrity_ok'`
+
+#### Passo 1 — Verificar saúde do FTS5
+```bash
+sqlite-graphrag health --json | jaq '.fts_query_ok'
+```
+
+#### Passo 2 — Reconstruir o índice FTS5
+```bash
+sqlite-graphrag fts rebuild --json
+```
+
+#### Passo 3 — Confirmar integridade
+```bash
+sqlite-graphrag fts check --json | jaq '.integrity_ok'
+```
+
+#### Passo 4 — Inspecionar estatísticas
+```bash
+sqlite-graphrag fts stats --json
+```
+
+
+## Como Criar Um Backup Seguro do Banco de Dados
+### Receita: Backup Seguro do Banco com WAL
+- Problema: Precisa de backup consistente enquanto o banco está em uso
+- Solução: `sqlite-graphrag backup --output /caminho/para/backup.sqlite --json`
+- Explicação: Usa a API SQLite Online Backup, segura com WAL e leitores concorrentes
+
+#### Passo 1 — Executar o backup
+```bash
+sqlite-graphrag backup --output backup.sqlite --json
+```
+
+#### Passo 2 — Verificar o backup
+```bash
+sqlite-graphrag health --db backup.sqlite --json | jaq '.integrity_ok'
+```
+
+
+## Como Validar Entrada do Remember Antes de Persistir
+### Receita: Validar Entrada do Remember Antes de Persistir
+- Problema: Quer visualizar o que o `remember` fará sem gravar no banco
+- Solução: Passe `--dry-run` para inspecionar o parsing e a extração do grafo sem confirmar
+
+#### Passo 1 — Dry-run de uma chamada remember
+```bash
+sqlite-graphrag remember --name test --type note --description "desc" --body "content" --dry-run --json
+```
+
+#### Passo 2 — Inspecionar a saída de preview
+```bash
+# Confirme entidades e relacionamentos parseados corretamente antes de persistir
+sqlite-graphrag remember --name test --type note --description "desc" --body-file ./content.md --dry-run --json | jaq '{name, type, entity_count: (.entities | length)}'
+```
+
+
+## Como Limpar Entidades NER de Baixa Qualidade
+### Receita: Limpar Entidades NER Ruidosas
+- Problema: O GLiNER NER criou entidades demais com baixa qualidade ou espúrias
+- Solução: `sqlite-graphrag prune-ner --entity noisy-entity --json` ou `--all --yes --json`
+- Pós-limpeza: `sqlite-graphrag cleanup-orphans --yes --json`
+
+#### Passo 1 — Auditar entidades criadas por NER
+```bash
+sqlite-graphrag graph entities --json | jaq -r '.entities[] | select(.source == "ner") | .name'
+```
+
+#### Passo 2 — Remover vínculos NER de uma entidade específica
+```bash
+sqlite-graphrag prune-ner --entity noisy-entity --json
+```
+
+#### Passo 3 — Remover todos os vínculos NER em massa (com confirmação)
+```bash
+sqlite-graphrag prune-ner --all --yes --json
+```
+
+#### Passo 4 — Limpar entidades órfãs resultantes
+```bash
+sqlite-graphrag cleanup-orphans --dry-run --json
+sqlite-graphrag cleanup-orphans --yes --json
+```
+
+#### Passo 5 — Verificar saúde do grafo
+```bash
+sqlite-graphrag health --json | jaq '.integrity_ok'
+sqlite-graphrag graph stats --json | jaq '{nodes: .node_count, edges: .edge_count}'
+```

@@ -175,7 +175,13 @@ fn hybrid_search_response_shape_tem_results() {
             vec_rank: Some(1),
             fts_rank: Some(2),
             rrf_score: Some(0.95),
+            normalized_score: 0.95,
+            vec_distance: Some(0.05),
+            fts_bm25: None,
         }],
+        fts_degraded: false,
+        fts_error: None,
+        fts_auto_rebuilt: false,
         graph_matches: vec![RecallItem {
             memory_id: 2,
             name: "mem-2".to_string(),

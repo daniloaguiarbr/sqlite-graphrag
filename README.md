@@ -407,23 +407,25 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Initialize database and download embedding model |
 | `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs`, `--db`, `--json` | Run or control the persistent embedding daemon |
-| `health` | `--json` | Show database integrity and pragma status |
+| `health` | `--json` | Show database integrity, FTS5 functional check, sqlite version |
 | `stats` | `--json` | Count memories, entities and relationships |
 | `migrate` | `--json` | Apply pending schema migrations via `refinery` |
 | `vacuum` | `--json` | Checkpoint WAL and reclaim disk space |
-| `optimize` | `--json` | Run `PRAGMA optimize` to refresh statistics |
+| `optimize` | `--json`, `--skip-fts` | Run `PRAGMA optimize` and rebuild FTS5 index (skip with `--skip-fts`) |
+| `backup` | `--output <path>` | Back up the database using the SQLite Online Backup API |
 | `sync-safe-copy` | `--dest <path>` (alias `--output`) | Checkpoint then copy a sync-safe snapshot |
 ### Memory content lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant` | Save a memory with optional entity graph |
+| `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant`, `--force-merge`, `--clear-body`, `--dry-run` | Save a memory with optional entity graph; `--type`/`--description` optional with `--force-merge` (inherited from existing); `--dry-run` validates without persisting |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit`), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Search memories semantically via KNN + graph traversal |
 | `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
-| `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at` |
+| `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at`; default limit is all with `--json`, 50 for text; response includes `total_count`, `truncated`, `body_length` |
 | `forget` | `[name]` or `--name <name>` | Soft-delete a memory preserving history |
 | `rename` | `[old]`, or `--name`/`--old`/`--from <NAME>`, `--new-name`/`--new`/`--to <NAME>` | Rename a memory while keeping versions |
 | `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
-| `history` | `[name]` or `--name <name>` | List all versions of a memory |
+| `history` | `[name]` or `--name <name>`, `--diff` | List all versions of a memory; `--diff` includes character-level change summary |
+| `memory-entities` | `[name]` or `--name <name>` | List entities linked to a specific memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
 | `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Bulk-ingest every matching file as a separate memory (NDJSON output); `--dry-run` previews name mapping without writing |
 | `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Export memories as NDJSON for backup or migration |
@@ -435,10 +437,10 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 ### Retrieval and graph
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `hybrid-search` | `<query>`, `--k`, `--rrf-k`, `--with-graph`, `--max-hops`, `--min-weight` | FTS5 plus vector fused via Reciprocal Rank Fusion; `--with-graph` adds graph traversal matches |
+| `hybrid-search` | `<query>`, `--k`, `--rrf-k`, `--with-graph`, `--max-hops`, `--min-weight`, `--weight-vec`, `--weight-fts` | FTS5 plus vector fused via Reciprocal Rank Fusion; graceful degradation when FTS5 is corrupted (`fts_degraded`, auto-rebuild); `normalized_score` for cross-method comparability |
 | `namespace-detect` | `--namespace <name>` | Resolve namespace precedence for invocation |
-| `link` | `--from`, `--to`, `--relation`, `--weight`, `--create-missing`, `--entity-type` | Create an explicit relationship between two entities; `--create-missing` auto-creates entities that do not exist (default type: `concept`) |
-| `unlink` | `--from`, `--to`, `--relation` | Remove a specific relationship between two entities |
+| `link` | `--from`, `--to`, `--relation`, `--weight`, `--create-missing`, `--entity-type`, `--strict-relations` | Create a relationship; `--strict-relations` rejects non-canonical types; warnings in JSON for non-canonical |
+| `unlink` | `--from`, `--to`, `--relation`, `--entity`, `--all` | Remove relationships; `--relation` now optional (removes all between pair); `--entity X --all` removes all edges of entity |
 | `related` | `--name`, `--limit`, `--hops` | Traverse graph-connected memories from a seed memory |
 | `graph` | `--format`, `--output` | Export a graph snapshot in `json`, `dot` or `mermaid` |
 
@@ -451,7 +453,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `graph traverse --from <ENTITY>` | Walk the entity graph from a starting node using BFS | `--depth` (default 2), `--namespace` |
 | `graph stats` | Print graph statistics (node count, edge count, degree distribution) | `--namespace` |
-| `graph entities` | List entities stored in the graph with optional filters | `--limit` (default 50), `--entity-type`, `--namespace` |
+| `graph entities` | List entities with degree count and sorting | `--limit` (default 50), `--entity-type`, `--namespace`, `--sort-by degree\|name\|created_at`, `--order asc\|desc` |
 
 ### Maintenance
 | Command | Arguments | Description |
@@ -459,6 +461,13 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `purge` | `--retention-days <n>`, `--dry-run`, `--yes` | Permanently delete soft-deleted memories |
 | `cleanup-orphans` | `--namespace`, `--dry-run`, `--yes` | Remove entities that have no memories and no relationships |
 | `prune-relations` | `--relation <type>`, `--namespace`, `--dry-run`, `--yes`, `--show-entities` | Bulk-delete all relationships of a given type; `--show-entities` lists affected entities in the dry-run preview |
+| `delete-entity` | `--name <entity>`, `--cascade` | Delete an entity and cascade-remove all its relationships and bindings |
+| `reclassify` | `--name <entity> --entity-type <new>` or `--from-type <old> --to-type <new> --batch` | Reclassify entity types individually or in bulk |
+| `merge-entities` | `--names <a,b,c> --into <target>` | Merge source entities into target, moving all edges |
+| `prune-ner` | `--entity <name>` or `--all`, `--dry-run`, `--yes` | Remove NER bindings from memory_entities table |
+| `fts rebuild` | `--json` | Rebuild the FTS5 full-text search index from scratch |
+| `fts check` | `--json` | Run FTS5 integrity-check without modifying the index |
+| `fts stats` | `--json` | Show FTS5 index statistics (row count, shadow pages) |
 
 ### `cache` subcommands
 | Subcommand | Description |

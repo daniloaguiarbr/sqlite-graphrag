@@ -28,6 +28,14 @@
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
 - `link` `unlink` `related` gerenciam relacionamentos tipados entre entidades para travessia multi-hop
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` gerenciam o banco de dados
+- `backup` cria backup consistente do banco usando a API SQLite Online Backup, seguro com WAL
+- `fts rebuild` `fts check` `fts stats` reparam, verificam e inspecionam o índice FTS5 full-text
+- `memory-entities` lista todas as entidades vinculadas a uma memória pelo nome
+- `delete-entity` remove uma entidade e opcionalmente propaga a exclusão para seus relacionamentos
+- `reclassify` muda o `entity_type` de uma entidade ou de uma categoria inteira via `--batch`
+- `merge-entities` mescla nós de entidade duplicados em um único nó canônico
+- `prune-ner` remove vínculos gerados por NER de uma entidade (`--entity`) ou de todas (`--all --yes`)
+- `remember --dry-run` faz preview do parsing e extração do grafo sem gravar no banco
 - `cleanup-orphans` `prune-relations` removem entidades órfãs e relações fracas ou não utilizadas do grafo
 - `purge` `namespace-detect` cuidam de manutenção e resolução de namespace
 
@@ -97,7 +105,7 @@
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.55 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.56 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5
