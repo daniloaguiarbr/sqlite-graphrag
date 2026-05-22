@@ -49,7 +49,7 @@ fn test_exit_01_validation_invalid_name() {
         .args([
             "remember",
             "--name",
-            "NOME_INVALIDO_UPPERCASE",
+            "x",
             "--type",
             "user",
             "--description",
@@ -88,7 +88,7 @@ fn test_exit_01_validation_invalid_namespace() {
 }
 
 // ---------------------------------------------------------------------------
-// Exit code 2 — Duplicate
+// Exit code 9 — Duplicate (changed from 2 to 9 in v1.0.52)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -115,7 +115,7 @@ fn test_exit_02_duplicate_memoria_repetida() {
         ])
         .assert()
         .failure()
-        .code(2);
+        .code(9);
 }
 
 // ---------------------------------------------------------------------------

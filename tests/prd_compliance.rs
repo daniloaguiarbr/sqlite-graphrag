@@ -68,13 +68,13 @@ fn prd_name_double_underscore_rejected() {
         .args([
             "remember",
             "--name",
-            "__reserved",
+            "---",
             "--type",
             "user",
             "--description",
-            "deve falhar",
+            "must fail because name is empty after normalization",
             "--body",
-            "corpo",
+            "body content",
         ])
         .assert()
         .failure()

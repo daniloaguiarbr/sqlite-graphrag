@@ -409,7 +409,7 @@ fn test_remember_creates_memory() {
 }
 
 #[test]
-fn test_remember_duplicate_returns_exit_2() {
+fn test_remember_duplicate_returns_exit_9() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -442,7 +442,7 @@ fn test_remember_duplicate_returns_exit_2() {
         ])
         .assert()
         .failure()
-        .code(2);
+        .code(9);
 }
 
 #[test]
@@ -911,7 +911,7 @@ fn test_stats_returns_counts() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert!(json["memories"].as_i64().unwrap() >= 1);
     assert!(json["db_size_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(json["schema_version"], 9);
+    assert_eq!(json["schema_version"], 11);
 }
 
 #[test]

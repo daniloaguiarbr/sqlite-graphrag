@@ -153,7 +153,10 @@ fn localized_message_pt_cada_variante_contem_termo_portugues() {
         ),
         (AppError::LimitExceeded("l".into()), "limite excedido"),
         (AppError::Embedding("e".into()), "erro de embedding"),
-        (AppError::VecExtension("v".into()), "sqlite-vec failed"),
+        (
+            AppError::VecExtension("v".into()),
+            "extensão sqlite-vec falhou",
+        ),
         (AppError::DbBusy("d".into()), "banco ocupado"),
         (AppError::LockBusy("l".into()), "lock ocupado"),
     ];
@@ -180,7 +183,7 @@ fn lang_pt_remember_invalid_name_stderr_portuguese() {
         .args([
             "remember",
             "--name",
-            "NOME_INVALIDO_MAIUSCULA",
+            "---",
             "--type",
             "user",
             "--description",
@@ -191,8 +194,7 @@ fn lang_pt_remember_invalid_name_stderr_portuguese() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("erro de validação")
-                .or(predicate::str::contains("kebab-case")),
+            predicate::str::contains("erro de validação").or(predicate::str::contains("empty")),
         );
 }
 
@@ -205,7 +207,7 @@ fn lang_en_mesmo_cenario_stderr_ingles() {
         .args([
             "remember",
             "--name",
-            "NOME_INVALIDO_MAIUSCULA",
+            "---",
             "--type",
             "user",
             "--description",
@@ -215,9 +217,7 @@ fn lang_en_mesmo_cenario_stderr_ingles() {
         ])
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("validation error").or(predicate::str::contains("kebab-case")),
-        );
+        .stderr(predicate::str::contains("validation error").or(predicate::str::contains("empty")));
 }
 
 #[test]

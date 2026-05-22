@@ -59,17 +59,40 @@ fn write_md(dir: &Path, basename: &str, body: &str) {
     std::fs::write(dir.join(basename), body).expect("write file must succeed");
 }
 
-/// Splits NDJSON stdout into trimmed non-empty lines.
+/// Splits NDJSON stdout into JSON values.
+///
+/// Handles both compact single-line NDJSON and pretty-printed JSON envelopes
+/// by joining raw lines and splitting on top-level object boundaries.
 fn ndjson_lines(stdout: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(String::from)
-        .collect()
+    let raw = String::from_utf8_lossy(stdout);
+    let mut results = Vec::new();
+    let mut depth = 0i32;
+    let mut current = String::new();
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if current.is_empty() && !trimmed.starts_with('{') {
+            continue;
+        }
+        current.push_str(trimmed);
+        if depth == 0 && !current.is_empty() {
+            results.push(std::mem::take(&mut current));
+        }
+    }
+    results
 }
 
-/// Parses every line as JSON and panics on the first failure.
+/// Parses every element as JSON and panics on the first failure.
 fn parse_all_lines(lines: &[String]) -> Vec<Value> {
     lines
         .iter()

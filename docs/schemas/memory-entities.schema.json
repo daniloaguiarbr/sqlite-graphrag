@@ -16,7 +16,7 @@
         "required": ["entity_id", "name", "entity_type"],
         "additionalProperties": false,
         "properties": {
-          "entity_id":   { "type": "string", "description": "UUID of the entity row." },
+          "entity_id":   { "type": "integer", "description": "Primary key of the entity row." },
           "name":        { "type": "string", "description": "Human-readable name of the entity." },
           "entity_type": { "type": "string", "description": "Type of the entity, e.g. 'concept', 'tool', 'person'." }
         }

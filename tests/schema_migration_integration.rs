@@ -91,7 +91,7 @@ fn index_exists(conn: &Connection, name: &str) -> bool {
 
 #[test]
 #[serial]
-fn init_creates_9_migrations_v001_to_v009() {
+fn init_creates_11_migrations_v001_to_v011() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -107,8 +107,8 @@ fn init_creates_9_migrations_v001_to_v009() {
 
     assert_eq!(
         versions.len(),
-        9,
-        "exactly 9 migrations must be applied, found: {versions:?}"
+        11,
+        "exactly 11 migrations must be applied, found: {versions:?}"
     );
     assert_eq!(
         versions,
@@ -363,9 +363,10 @@ fn main_indexes_exist_after_init() {
         "idx_memories_body_hash",
         "idx_entities_ns",
         "idx_me_entity",
-        "idx_relationships_source_id",
-        "idx_relationships_target_id",
-        "idx_relationships_namespace_relation",
+        "idx_relationships_source",
+        "idx_relationships_target",
+        "idx_relationships_ns",
+        "idx_relationships_ns_relation",
         "idx_entities_namespace_degree",
         "idx_memory_chunks_memory_id",
         "idx_memory_relationships_relationship_id",
@@ -416,7 +417,7 @@ fn schema_meta_required_keys_exist() {
 
 #[test]
 #[serial]
-fn schema_version_meta_equals_9() {
+fn schema_version_meta_equals_11() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -429,8 +430,8 @@ fn schema_version_meta_equals_9() {
         .expect("schema_version must exist in schema_meta");
 
     assert_eq!(
-        version, "9",
-        "schema_version in schema_meta must be '9' after V009"
+        version, "11",
+        "schema_version in schema_meta must be '11' after V011"
     );
 }
 
