@@ -1232,7 +1232,7 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
 ///
 /// Non-ASCII characters are first decomposed via NFD and then stripped of
 /// combining marks so accented letters fold to their base ASCII letter
-/// (e.g. `açaí` → `acai`, `naïve` → `naive`). Characters with no ASCII
+/// (e.g. `acai` from accented input, `naive` from diaeresis). Characters with no ASCII
 /// fallback (emoji, CJK ideographs, symbols) are dropped silently. This
 /// preserves meaningful word content rather than collapsing the basename
 /// to a few stray ASCII letters as the previous filter did.

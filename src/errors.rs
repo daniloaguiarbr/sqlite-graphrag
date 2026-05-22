@@ -173,7 +173,7 @@ impl AppError {
     /// assert!(en.contains("not found"));
     ///
     /// let pt = err.localized_message_for(Language::Portuguese);
-    /// assert!(pt.contains("não encontrado"));
+    /// assert!(pt.contains("n\u{e3}o encontrado"));
     /// ```
     pub fn localized_message_for(&self, lang: Language) -> String {
         match lang {
