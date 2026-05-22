@@ -32,6 +32,7 @@
 - `fts rebuild` `fts check` `fts stats` repair, verify, and inspect the FTS5 full-text index
 - `memory-entities` lists all entities linked to a named memory
 - `delete-entity` removes an entity and optionally cascades to its relationships
+- `rename-entity` renames a graph entity preserving all FK-based relationships and re-embeds for vector search
 - `reclassify` changes the `entity_type` of one entity or a whole category via `--batch`
 - `merge-entities` merges duplicate entity nodes into a single canonical node
 - `prune-ner` removes NER-generated bindings from one entity (`--entity`) or all (`--all --yes`)

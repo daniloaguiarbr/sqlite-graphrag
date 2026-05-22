@@ -49,6 +49,7 @@
 | `delete-entity` | `delete-entity.schema.json` |
 | `reclassify` | `reclassify.schema.json` |
 | `merge-entities` | `merge-entities.schema.json` |
+| `rename-entity` | `rename-entity.schema.json` |
 | `memory-entities` | `memory-entities.schema.json` |
 | `prune-ner` | `prune-ner.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |

@@ -9,6 +9,7 @@
   "properties": {
     "action":     { "type": "string", "const": "reclassified", "description": "Always 'reclassified' on success." },
     "count":      { "type": "integer", "minimum": 0, "description": "Number of entities whose type was updated by this operation." },
+    "description_updated": { "type": "boolean", "description": "Present and true when --description was applied in single mode." },
     "namespace":  { "type": "string", "description": "Namespace in which the reclassification was performed." },
     "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
   }

@@ -361,7 +361,7 @@ sqlite-graphrag unlink --from auth-service --to legacy-db --relation depends-on
 
 
 ### Explanation
-- Os três argumentos `--from`, `--to` e `--relation` são obrigatórios sem exceção
+- `--from` e `--to` são obrigatórios; `--relation` é opcional — omita para remover TODOS os relacionamentos entre o par
 - `--source`/`--target` são aceitos como aliases de `--from`/`--to` para consistência com `link`
 - A operação remove apenas a aresta de relacionamento; entidades e memórias permanecem intactas
 - Exit code 4 sinaliza que a aresta especificada não existe no namespace atual

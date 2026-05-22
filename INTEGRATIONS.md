@@ -35,6 +35,7 @@
 - `delete-entity --name <entity> --cascade` deletes entity and cascades to all relationships and NER bindings
 - `reclassify --name <entity> --entity-type <new>` changes entity type; `--from-type <old> --to-type <new> --batch` for bulk
 - `merge-entities --names "a,b,c" --into <target>` merges source entities into target, moving all edges
+- `rename-entity --name <old> --new-name <new>` renames a graph entity preserving all FK-based relationships and re-embeds for semantic search
 - `memory-entities --name <memory>` lists entities linked to a specific memory
 - `prune-ner --entity <name>` or `--all --yes` removes NER bindings from memory_entities table
 - `remember --dry-run` validates input and reports planned actions without persisting

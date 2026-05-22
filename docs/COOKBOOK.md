@@ -363,7 +363,7 @@ sqlite-graphrag unlink --from auth-service --to legacy-db --relation depends-on
 
 
 ### Explanation
-- All three arguments `--from`, `--to`, and `--relation` are mandatory without exception
+- `--from` and `--to` are required; `--relation` is optional — omit it to remove ALL relationships between the pair
 - `--source`/`--target` are accepted as aliases of `--from`/`--to` for consistency with `link`
 - The operation removes only the relationship edge; entities and memories remain untouched
 - Exit code 4 signals that the specified edge does not exist in the current namespace

@@ -71,6 +71,8 @@ pub struct ReclassifyArgs {
 struct ReclassifyResponse {
     action: String,
     count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description_updated: Option<bool>,
     namespace: String,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
@@ -146,6 +148,11 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
     let response = ReclassifyResponse {
         action: "reclassified".to_string(),
         count,
+        description_updated: if args.description.is_some() {
+            Some(true)
+        } else {
+            None
+        },
         namespace: namespace.clone(),
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     };
@@ -172,6 +179,7 @@ mod tests {
         let resp = ReclassifyResponse {
             action: "reclassified".to_string(),
             count: 5,
+            description_updated: None,
             namespace: "global".to_string(),
             elapsed_ms: 12,
         };
@@ -180,6 +188,7 @@ mod tests {
         assert_eq!(json["count"], 5);
         assert_eq!(json["namespace"], "global");
         assert!(json["elapsed_ms"].is_number());
+        assert!(json.get("description_updated").is_none());
     }
 
     #[test]
@@ -187,6 +196,7 @@ mod tests {
         let resp = ReclassifyResponse {
             action: "reclassified".to_string(),
             count: 0,
+            description_updated: None,
             namespace: "my-project".to_string(),
             elapsed_ms: 3,
         };
@@ -200,9 +210,23 @@ mod tests {
         let resp = ReclassifyResponse {
             action: "reclassified".to_string(),
             count: 1,
+            description_updated: None,
             namespace: "ns".to_string(),
             elapsed_ms: 1,
         };
         assert_eq!(resp.action, "reclassified");
+    }
+
+    #[test]
+    fn reclassify_response_description_updated_present_when_set() {
+        let resp = ReclassifyResponse {
+            action: "reclassified".to_string(),
+            count: 1,
+            description_updated: Some(true),
+            namespace: "global".to_string(),
+            elapsed_ms: 2,
+        };
+        let json = serde_json::to_value(&resp).expect("serialization failed");
+        assert_eq!(json["description_updated"], true);
     }
 }

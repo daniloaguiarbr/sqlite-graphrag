@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.59] - 2026-05-22
+
+### Fixed
+- `rename-entity` now validates `--new-name` via `validate_entity_name()`, rejecting names shorter than 2 characters, names with newlines, and short ALL_CAPS abbreviations
+- `unlink.schema.json` updated from stale `relationship_id` to `relationships_removed` matching the actual `UnlinkResponse` struct
+- `contract_16_unlink` test updated to match current response fields (`relationships_removed` instead of `relationship_id`, added `elapsed_ms`)
+- `health -vv` now emits `tracing::info!` for the embedding model checkpoint, completing all 4 health check trace points
+
+### Added
+- `reclassify` response includes optional `description_updated: true` when `--description` is applied in single mode
+- `contract_35_rename_entity` and `schema_35_rename_entity` tests for full contract and schema coverage of the rename-entity command
+- E2E integration tests for entity name validation via CLI (`link --create-missing` and `rename-entity` paths)
+- `rename-entity` added to `docs/schemas/README.md`, `INTEGRATIONS.md`, `llms.txt`, `llms-full.txt`, and their PT-BR counterparts
+
 ## [1.0.58] - 2026-05-21
 
 ### Fixed

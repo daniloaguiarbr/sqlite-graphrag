@@ -10,6 +10,20 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.59] - 2026-05-22
+
+### Corrigido
+- `rename-entity` agora valida `--new-name` via `validate_entity_name()`, rejeitando nomes com menos de 2 caracteres, nomes com quebras de linha e abreviações ALL_CAPS curtas
+- `unlink.schema.json` atualizado de `relationship_id` obsoleto para `relationships_removed` correspondendo ao struct `UnlinkResponse` real
+- Teste `contract_16_unlink` atualizado para campos corretos da resposta (`relationships_removed` em vez de `relationship_id`, adicionado `elapsed_ms`)
+- `health -vv` agora emite `tracing::info!` para o checkpoint do modelo de embedding, completando os 4 pontos de trace do health
+
+### Adicionado
+- Resposta do `reclassify` inclui campo opcional `description_updated: true` quando `--description` é aplicado no modo individual
+- Testes `contract_35_rename_entity` e `schema_35_rename_entity` para cobertura completa de contrato e schema do comando rename-entity
+- Testes E2E de integração para validação de nome de entidade via CLI (caminhos `link --create-missing` e `rename-entity`)
+- `rename-entity` adicionado a `docs/schemas/README.md`, `INTEGRATIONS.md`, `llms.txt`, `llms-full.txt` e contrapartes PT-BR
+
 ## [1.0.58] - 2026-05-21
 
 ### Corrigido

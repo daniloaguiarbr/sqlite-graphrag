@@ -253,6 +253,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     // Checks whether the ONNX model is present in the cache
     let model_dir = paths.models.join("models--intfloat--multilingual-e5-small");
     let model_ok = model_dir.exists();
+    tracing::info!(model_ok = %model_ok, "embedding model check complete");
 
     // Builds the checks array for detailed diagnostics
     let mut checks: Vec<HealthCheck> = Vec::with_capacity(8);

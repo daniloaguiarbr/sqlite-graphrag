@@ -35,6 +35,7 @@
 - `delete-entity --name <entidade> --cascade` remove entidade e cascateia para relacionamentos e bindings NER
 - `reclassify --name <entidade> --entity-type <novo>` altera tipo; `--from-type <antigo> --to-type <novo> --batch` para massa
 - `merge-entities --names "a,b,c" --into <destino>` funde entidades-fonte no destino, movendo todas as edges
+- `rename-entity --name <antigo> --new-name <novo>` renomeia uma entidade do grafo preservando todos os relacionamentos baseados em FK e re-gera embedding para busca semântica
 - `memory-entities --name <memória>` lista entidades vinculadas a uma memória específica
 - `prune-ner --entity <nome>` ou `--all --yes` remove bindings NER da tabela memory_entities
 - `remember --dry-run` valida input e reporta ações planejadas sem persistir

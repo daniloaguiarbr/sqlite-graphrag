@@ -32,6 +32,7 @@
 - `fts rebuild` `fts check` `fts stats` reparam, verificam e inspecionam o índice FTS5 full-text
 - `memory-entities` lista todas as entidades vinculadas a uma memória pelo nome
 - `delete-entity` remove uma entidade e opcionalmente propaga a exclusão para seus relacionamentos
+- `rename-entity` renomeia uma entidade do grafo preservando todos os relacionamentos baseados em FK e re-gera embedding para busca vetorial
 - `reclassify` muda o `entity_type` de uma entidade ou de uma categoria inteira via `--batch`
 - `merge-entities` mescla nós de entidade duplicados em um único nó canônico
 - `prune-ner` remove vínculos gerados por NER de uma entidade (`--entity`) ou de todas (`--all --yes`)

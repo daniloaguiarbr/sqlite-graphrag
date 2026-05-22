@@ -735,11 +735,12 @@ fn contract_16_unlink() {
         &json,
         &[
             "action",
-            "relationship_id",
+            "relationships_removed",
             "from_name",
             "to_name",
             "relation",
             "namespace",
+            "elapsed_ms",
         ],
     );
     assert_eq!(json["action"], "deleted");
@@ -1256,4 +1257,43 @@ fn contract_34_prune_ner() {
         &["action", "bindings_removed", "namespace", "elapsed_ms"],
     );
     assert_eq!(json["action"], "dry_run");
+}
+
+// ---------------------------------------------------------------------------
+// 35 — rename-entity
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_35_rename_entity() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) =
+        env.remember_with_entities("mem-rename-ent-contrato", "body for rename entity contract");
+    let new_name = format!("{ent_a}-renamed");
+    let out = env
+        .cmd()
+        .args(["rename-entity", "--name", &ent_a, "--new-name", &new_name])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "rename-entity failed: {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "rename-entity",
+        &json,
+        &[
+            "action",
+            "old_name",
+            "new_name",
+            "entity_id",
+            "namespace",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "renamed");
 }

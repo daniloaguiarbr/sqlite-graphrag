@@ -309,6 +309,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 
 ## Entity Management (v1.0.56)
+### REQUIRED — Entity Name Validation (v1.0.58)
+- ALL entity creation paths (`link --create-missing`, `remember --graph-stdin`, `ingest --enable-ner`, `rename-entity --new-name`) validate names via `validate_entity_name()`
+- REJECTS names shorter than 2 characters (exit 1)
+- REJECTS names containing newline characters (exit 1)
+- REJECTS ALL_CAPS abbreviations of 4 characters or fewer as NER noise (exit 1)
 ### REQUIRED — Delete Entity (delete-entity)
 - USE `delete-entity --name <entity> --json` to permanently remove an entity node
 - ADD `--cascade` to also remove all relationships and memory bindings attached to the entity
@@ -318,7 +323,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Reclassify Entity Type (reclassify)
 - USE `reclassify --name <entity> --entity-type <new> --json` to change a single entity's type
 - USE `reclassify --from-type <old> --to-type <new> --batch --json` to bulk-reclassify all entities of one type
-- JSON response: `action`, `count`, `elapsed_ms`
+- JSON response: `action`, `count`, `description_updated?`, `namespace`, `elapsed_ms`
 ### REQUIRED — Merge Entities (merge-entities)
 - USE `merge-entities --names "a,b,c" --into <target> --json` to merge multiple entities into one
 - ALL relationships from source entities are moved to `<target>`
@@ -628,10 +633,13 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `fts stats` returns `total_rows`, `shadow_pages?`, `fts_functional`, `elapsed_ms`
 - `backup` returns `action` ("backed_up"), `source`, `destination`, `size_bytes`, `elapsed_ms`
 - `delete-entity` returns `action` ("deleted"), `entity_name`, `namespace`, `relationships_removed`, `bindings_removed`, `elapsed_ms`
-- `reclassify` returns `action` ("reclassified"), `count`, `namespace`, `elapsed_ms`
+- `reclassify` returns `action` ("reclassified"), `count`, `description_updated?` (bool, present when `--description` applied), `namespace`, `elapsed_ms`
 - `merge-entities` returns `action` ("merged"), `sources[]`, `target`, `namespace`, `relationships_moved`, `entities_removed`, `elapsed_ms`
 - `memory-entities` returns `memory_name`, `entities[].{entity_id, name, entity_type}`, `count`, `elapsed_ms`
 - `prune-ner` returns `action` (`"pruned"`/`"dry_run"`/`"aborted"`), `bindings_removed`, `namespace`, `entity?`, `elapsed_ms`
+- `link` returns `action` ("linked"), `from`, `to`, `relation`, `weight`, `namespace`, `elapsed_ms`, `created_entities?` (array, when `--create-missing`), `warnings?` (array, when non-canonical relation)
+- `unlink` returns `action` ("deleted"), `from_name`, `to_name`, `relation`, `relationships_removed`, `namespace`, `elapsed_ms`
+- `rename-entity` returns `action` ("renamed"), `old_name`, `new_name`, `entity_id`, `namespace`, `elapsed_ms`
 
 
 ## Exit Codes and Retry Strategy
@@ -708,14 +716,14 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `rename-entity --name <old> --new-name <new> --json` to rename an entity preserving all relationships and memory bindings
 - RE-EMBEDS the entity vector with the new name for semantic search accuracy
 - JSON response: `{action: "renamed", old_name, new_name, entity_id, namespace, elapsed_ms}`
-- TREAT exit code 4 as entity not found; exit 1 if new name already exists
+- TREAT exit code 4 as entity not found; exit 1 if new name already exists or fails validation (shorter than 2 chars, contains newlines, or short ALL_CAPS abbreviation)
 - ALL relationships and memory_entities bindings use integer FK and are unaffected by the name change
 ### REQUIRED — reclassify
 - USE `reclassify --name <entity> --new-type <type> --json` for single entity type change
 - USE `reclassify --from-type <old> --to-type <new> --batch --json` for bulk reclassification
 - USE `reclassify --name <entity> --description "text" --json` to update entity description in single mode (v1.0.58)
 - COMBINE `--new-type` with `--description` to change both type and description in one operation
-- JSON response: `{action, count, namespace, elapsed_ms}`
+- JSON response: `{action, count, description_updated?, namespace, elapsed_ms}`
 - TREAT count 0 in batch mode as indication that --from-type may be a typo
 ### REQUIRED — merge-entities
 - USE `merge-entities --names "a,b" --into <target> --json` to merge source entities into a target

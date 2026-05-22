@@ -71,6 +71,8 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     let (entity_id, entity_type) = row
         .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.name, &namespace)))?;
 
+    entities::validate_entity_name(&args.new_name)?;
+
     // Ensure new name is not already taken in this namespace.
     if entities::find_entity_id(&conn, &namespace, &args.new_name)?.is_some() {
         return Err(AppError::Validation(format!(

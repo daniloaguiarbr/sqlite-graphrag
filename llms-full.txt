@@ -179,6 +179,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | `fts stats` | `--json` | Show FTS5 index statistics such as token count and segment info |
 | `memory-entities` | `--name <name>`, `--json` | List all entities linked to a named memory |
 | `delete-entity` | `--name <name>`, `--cascade`, `--json` | Delete an entity node; `--cascade` also removes its relationships |
+| `rename-entity` | `--name <name>`, `--new-name <name>`, `--json` | Rename a graph entity preserving all FK-based relationships; re-embeds for search |
 | `reclassify` | `--name <name>` or `--from-type <t>`, `--entity-type <t>` or `--to-type <t>`, `--batch`, `--json` | Change `entity_type` of one entity or a whole category |
 | `merge-entities` | `--names <csv>`, `--into <name>`, `--json` | Merge duplicate entity nodes into a single canonical node |
 | `prune-ner` | `--entity <name>` or `--all`, `--yes`, `--json` | Remove NER-generated bindings from one or all entities |
@@ -519,7 +520,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.56 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.59 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

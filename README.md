@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.59**: rename-entity name validation, unlink schema fix, reclassify `description_updated` field, contract+schema tests for rename-entity, E2E entity validation tests, doc audit (6 files)
 - **v1.0.58**: FTS5 sync fix (CRITICAL: remember --force-merge was silently corrupting FTS5 index), merge-entities UNIQUE fix for memory_entities, new `rename-entity` command, entity name validation, `memory-entities --entity` reverse lookup, `reclassify --description`, purge response `action` field, fts help EXAMPLES, health tracing
 - **v1.0.57**: 16 fixes — merge-entities UNIQUE constraint, memory-entities column name, --clear-body validation, WAL checkpoint for fts rebuild/check, degree recalculation for delete-entity/merge-entities adjacents, atomic backup via tempfile-rename, 18 new contract+schema tests
 - **v1.0.56**: 9 new commands (fts, backup, delete-entity, reclassify, merge-entities, memory-entities, prune-ner), 7 new flags, 19 new JSON fields, FTS5 graceful degradation, JSON error envelope

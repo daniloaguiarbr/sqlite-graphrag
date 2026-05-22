@@ -1096,3 +1096,32 @@ fn schema_34_prune_ner() {
         &instancia,
     );
 }
+
+// ---------------------------------------------------------------------------
+// 35 — rename-entity
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_35_rename_entity() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("rename-ent-schema");
+    let new_name = format!("{ent_a}-renamed");
+    let saida = env
+        .cmd()
+        .args(["rename-entity", "--name", &ent_a, "--new-name", &new_name])
+        .output()
+        .expect("rename-entity failed");
+    assert!(
+        saida.status.success(),
+        "rename-entity: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "rename-entity");
+    validar_schema(
+        "rename-entity",
+        include_str!("../docs/schemas/rename-entity.schema.json"),
+        &instancia,
+    );
+}
