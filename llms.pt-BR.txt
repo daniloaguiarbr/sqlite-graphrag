@@ -73,7 +73,7 @@
 - `--skip-extraction` está depreciado desde v1.0.45; use `--enable-ner` em vez disso
 - `--max-rss-mb <MiB>` em `remember` e `ingest` aborta embedding quando o RSS do processo excede o limite (padrão 8192 MiB)
 
-## Modos de Ingestão (v1.0.60)
+## Modos de Ingestão (v1.0.61)
 ### Três modos de extração para ingestão em massa
 - `--mode none` (padrão): ingestão apenas do body, sem extração de entidades/relações
 - `--mode gliner`: extração NER com GLiNER (requer `--enable-ner`, modelo ONNX local)
@@ -81,6 +81,7 @@
 - Modo Claude Code spawna `claude -p` headless com `--json-schema` para saída estruturada
 - Requer Claude Code >= 2.1.0 instalado na máquina com assinatura Pro/Max ativa
 - Resumível via flag `--resume` com queue DB SQLite rastreando progresso por arquivo
+- Timeout por arquivo via `--claude-timeout <S>` (padrão 300s); mata processos `claude -p` travados
 - Controle de orçamento via `--max-cost-usd <N>` para limitar gasto acumulado
 - Rate limit com backoff exponencial automático (60s → 120s → 300s → 900s)
 

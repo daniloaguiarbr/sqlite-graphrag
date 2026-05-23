@@ -1633,7 +1633,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 - The target entity must already exist (exit 4 if not found)
 - Use `memory-entities --entity jwt-auth --json` afterwards to verify the consolidated bindings
 
-## How To Ingest Documents With LLM-Curated Entities (v1.0.60)
+## How To Ingest Documents With LLM-Curated Entities (v1.0.61)
 ### Problem
 - Default `ingest` creates body-only memories with zero entities and zero relationships
 - GLiNER NER produces noisy entities (ALL_CAPS generics, stop words) and low-quality `mentions` relationships
@@ -1649,3 +1649,43 @@ sqlite-graphrag ingest ./docs --mode claude-code --recursive --json
 - Requires Claude Code >= 2.1.0 installed locally with active Pro/Max subscription
 - Resume interrupted ingestion with `--resume`; retry failures with `--retry-failed`
 - Set `--max-cost-usd 5.00` to limit spend; track cost per file in NDJSON output
+- --claude-timeout <S> sets per-file subprocess timeout (default 300s) to prevent hung processes
+
+### Recipe: Preview Claude Code Ingest with Dry Run
+### Problem
+- You want to see which files will be processed and what names will be derived before spending LLM tokens
+### Solution
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --dry-run --json
+```
+### Explanation
+- `--dry-run` with `--mode claude-code` emits preview events without spawning any Claude processes
+- Each file shows its derived kebab-case name in the NDJSON output with `status: "preview"`
+- Zero tokens consumed, zero API calls made
+- Verify file-to-name mapping before committing to a full extraction run
+
+### Recipe: Resume Interrupted Claude Code Ingest
+### Problem
+- A large ingest was interrupted (network failure, budget exceeded, manual abort) and you want to continue from where it stopped
+### Solution
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --resume --keep-queue --json
+```
+### Explanation
+- `--resume` resets files stuck in `processing` status back to `pending` for re-extraction
+- Files already marked `done` in the queue DB are skipped — zero duplicate work
+- `--keep-queue` retains the queue DB for inspection or further retries
+- Combine with `--max-cost-usd` to set incremental budget caps across multiple resume runs
+
+### Recipe: Retry Only Failed Files from Claude Code Ingest
+### Problem
+- Some files failed during extraction (rate limits, malformed content, timeouts) and you want to retry only those failures
+### Solution
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --retry-failed --claude-timeout 600 --json
+```
+### Explanation
+- `--retry-failed` resets only `failed` files to `pending`, skipping all `done` files
+- `--claude-timeout 600` increases per-file timeout to 10 minutes for large documents that timed out
+- Previously successful files are untouched — no duplicate token spend
+- Combine with `--keep-queue` to preserve queue for further inspection

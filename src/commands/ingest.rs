@@ -67,6 +67,12 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
     # Preview file-to-name mapping without ingesting\n  \
     sqlite-graphrag ingest ./docs --dry-run\n\n  \
+    # LLM-curated extraction via Claude Code CLI\n  \
+    sqlite-graphrag ingest ./docs --mode claude-code --recursive --json\n\n  \
+    # Resume interrupted claude-code ingest\n  \
+    sqlite-graphrag ingest ./docs --mode claude-code --resume --json\n\n  \
+    # Claude Code with budget cap and custom timeout\n  \
+    sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --claude-timeout 600 --json\n\n  \
 NOTES:\n  \
     Each file becomes a separate memory. Names derive from file basenames\n  \
     (kebab-case, lowercase, ASCII). Output is NDJSON: one JSON object per file,\n  \
@@ -214,6 +220,14 @@ pub struct IngestArgs {
     /// Maximum cumulative cost in USD before aborting (only with --mode claude-code).
     #[arg(long)]
     pub max_cost_usd: Option<f64>,
+
+    /// Timeout in seconds for each claude -p invocation (only with --mode claude-code).
+    #[arg(
+        long,
+        default_value_t = 300,
+        help = "Timeout in seconds for each claude -p invocation (default: 300)"
+    )]
+    pub claude_timeout: u64,
 }
 
 /// Extraction mode for the ingest pipeline.
@@ -1287,7 +1301,7 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
 /// fallback (emoji, CJK ideographs, symbols) are dropped silently. This
 /// preserves meaningful word content rather than collapsing the basename
 /// to a few stray ASCII letters as the previous filter did.
-fn derive_kebab_name(path: &Path, max_len: usize) -> (String, bool, Option<String>) {
+pub(crate) fn derive_kebab_name(path: &Path, max_len: usize) -> (String, bool, Option<String>) {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let lowered: String = stem
         .nfd()

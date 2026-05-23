@@ -316,7 +316,7 @@ sqlite-graphrag ingest ./docs --type document --pattern '*.md' --low-memory
 # Ou via variável de ambiente (a flag CLI tem precedência):
 SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
 ```
-### Ingestão em massa com entidades curadas por LLM via Claude Code (v1.0.60)
+### Ingestão em massa com entidades curadas por LLM via Claude Code (v1.0.61)
 <!-- skip-test: requer Claude Code instalado com assinatura Pro/Max. -->
 ```bash
 # Extrai entidades e relações usando Claude Code CLI instalado localmente
@@ -442,7 +442,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `history` | `[nome]` ou `--name <nome>`, `--diff` | Lista versões da memória; `--diff` inclui resumo de mudanças por caractere |
 | `memory-entities` | `[nome]` ou `--name <nome>`, `--entity <nome>` | Lista entidades de uma memória, ou memórias vinculadas a uma entidade (busca reversa via `--entity`) |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--mode` (`none`/`gliner`/`claude-code`), `--ingest-parallelism N`, `--low-memory`, `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--max-cost-usd`, `--keep-queue` | Ingere em massa cada arquivo como memória separada (NDJSON); `--mode claude-code` usa Claude Code CLI local para extração de entidades/relações curada por LLM; `--dry-run` pré-visualiza mapeamento |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--mode` (`none`/`gliner`/`claude-code`), `--ingest-parallelism N`, `--low-memory`, `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--max-cost-usd`, `--claude-timeout`, `--rate-limit-wait`, `--keep-queue`, `--queue-db` | Ingere em massa cada arquivo como memória separada (NDJSON); `--mode claude-code` usa Claude Code CLI local para extração curada por LLM; `--dry-run` pré-visualiza mapeamento; `--claude-timeout` define timeout por arquivo (padrão 300s) |
 | `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Exporta memórias como NDJSON para backup ou migração |
 | `cache clear-models` | `--yes` | Remove arquivos de modelo de embedding/GLiNER do diretório XDG cache |
 
@@ -513,6 +513,8 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Budget de tokens para extração de entidades/relações por memória; valores fora de [512, 100.000] utilizam o padrão | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão. Nota: o pipeline de extração limita internamente os candidatos a 30 antes da deduplicação, portanto o cap de persistência (padrão 50) funciona como teto de segurança e só é atingido se o extrator for estendido ou substituído. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
+| `SQLITE_GRAPHRAG_LOW_MEMORY` | Força ingest single-threaded para reduzir RSS. Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (multi-thread) | `1` |
+| `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Caminho explícito para o binário Claude Code para `ingest --mode claude-code` | busca no PATH | `/usr/local/bin/claude` |
 | `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 

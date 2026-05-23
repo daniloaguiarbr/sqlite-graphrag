@@ -41,6 +41,9 @@
 | `prune-relations` | `prune-relations.schema.json` |
 | `ingest` (per-file event) | `ingest-file-event.schema.json` |
 | `ingest` (summary) | `ingest-summary.schema.json` |
+| `ingest --mode claude-code` (phase event) | `ingest-claude-phase.schema.json` |
+| `ingest --mode claude-code` (per-file event) | `ingest-claude-file-event.schema.json` |
+| `ingest --mode claude-code` (summary) | `ingest-claude-summary.schema.json` |
 | `__debug_schema` | `debug-schema.schema.json` |
 | `fts rebuild` | `fts-rebuild.schema.json` |
 | `fts check` | `fts-check.schema.json` |
@@ -56,6 +59,11 @@
 | `export` (per-memory line) | `export-memory-line.schema.json` |
 | `export` (summary) | `export-summary.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
+### Ingest Mode Schema Selection
+- `--mode none` and `--mode gliner` use `ingest-file-event.schema.json` and `ingest-summary.schema.json`
+- `--mode claude-code` uses `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, and `ingest-claude-summary.schema.json`
+- Claude-code mode emits additional phase events (validate, scan) before per-file events
+- Per-file events in claude-code mode include `entities`, `rels`, and `cost_usd` fields not present in normal ingest
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
@@ -85,6 +93,11 @@
 - Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
 ### Arquivos de Schema
 - Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
+### Seleção de Schema por Modo de Ingestão
+- `--mode none` e `--mode gliner` usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
+- `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`
+- Modo claude-code emite eventos de fase adicionais (validate, scan) antes dos eventos por arquivo
+- Eventos por arquivo no modo claude-code incluem campos `entities`, `rels` e `cost_usd` não presentes na ingestão normal
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
 - `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`

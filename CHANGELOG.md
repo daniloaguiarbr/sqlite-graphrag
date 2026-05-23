@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.61] - 2026-05-23
+
+### Fixed
+- **B00 CRITICAL**: `ingest --mode claude-code` now uses `--dangerously-skip-permissions` instead of `--bare` — fixes OAuth authentication failure for Pro/Max subscription users
+- **B00a**: `--max-turns` increased from 1 to 3 — Claude needs >1 turn for structured extraction
+- **B07a**: memory source field changed from `"claude-code"` to `"agent"` — fixes CHECK constraint violation on insert
+- **B01**: `--resume` flag now resets stuck `processing` files to `pending` for re-processing
+- **B02**: `--retry-failed` flag now resets `failed` files to `pending` for retry
+- **B03**: `--dry-run` now works with `--mode claude-code` — emits preview events without spawning Claude
+- **B04**: subprocess timeout via `wait-timeout` crate — kills `claude -p` after `--claude-timeout` seconds (default 300)
+- **B05**: error messages from `claude -p` now parsed from stdout JSON instead of empty stderr
+- **B06**: re-ingesting same directory updates existing memories instead of UNIQUE constraint failure
+- **B07**: cold-start `--json-schema` failure automatically retried once (workaround for Claude Code Issue #23265)
+- **B08**: `claude -p` subprocess now runs with `env_clear()` + selective environment injection (security hardening)
+- **B10**: fallback parsing of `result` field when `structured_output` absent (workaround for Claude Code Issue #18536)
+- **B11**: FileEvent `index` field now uses consistent 0-based indexing across success and failure paths
+- **B12**: invalid `entity_type` from Claude now emits `tracing::warn!` instead of silent discard
+- **B13**: non-canonical relationship types now validated via `warn_if_non_canonical()` before insertion
+
+### Added
+- `--claude-timeout` flag for `ingest --mode claude-code` (default: 300 seconds per file)
+
+### Changed
+- `ingest --mode claude-code` uses `--bare` when `ANTHROPIC_API_KEY` is set (faster startup, no plugins), `--dangerously-skip-permissions` for OAuth users
+
 ## [1.0.60] - 2026-05-23
 
 ### Added

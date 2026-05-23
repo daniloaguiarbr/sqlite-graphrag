@@ -104,8 +104,9 @@
 - Minimum version requires Claude Code 1.0 or later for stable `.claude/hooks/` directory support
 - Official docs live at https://docs.anthropic.com/claude-code describing hook lifecycle events
 - Golden tip is to capture exit code `75` as retry-later and keep the agent alive gracefully
-- Since v1.0.60, `ingest --mode claude-code` uses the Claude Code binary for LLM-curated entity/relationship extraction during bulk ingestion
+- Since v1.0.61, `ingest --mode claude-code` uses the Claude Code binary for LLM-curated entity/relationship extraction during bulk ingestion
 - The ingest mode spawns `claude -p` headless per file — requires Claude Code >= 2.1.0 with active Pro/Max subscription
+- Use `--claude-timeout <S>` (default 300s) to prevent hung subprocesses in CI/cron pipelines
 
 
 ## Codex CLI

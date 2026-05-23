@@ -73,7 +73,7 @@
 - `--skip-extraction` is deprecated since v1.0.45; use `--enable-ner` instead
 - `--max-rss-mb <MiB>` on `remember` and `ingest` aborts embedding when process RSS exceeds the threshold (default 8192 MiB)
 
-## Ingest Modes (v1.0.60)
+## Ingest Modes (v1.0.61)
 ### Three extraction modes for bulk ingestion
 - `--mode none` (default): body-only ingestion, no entity/relationship extraction
 - `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
@@ -81,6 +81,7 @@
 - Claude Code mode spawns `claude -p` headless with `--json-schema` for structured entity/relationship output
 - Requires Claude Code >= 2.1.0 installed on the user's machine with active Pro/Max subscription
 - Resumable via `--resume` flag with SQLite queue DB tracking per-file progress
+- Per-file subprocess timeout via `--claude-timeout <S>` (default 300s); kills hung `claude -p` processes
 - Budget control via `--max-cost-usd <N>` to limit cumulative API spend
 - Rate limit handling with automatic exponential backoff (60s → 120s → 300s → 900s)
 - Output is NDJSON: per-file events with `entities`, `rels`, `cost_usd` fields, followed by summary

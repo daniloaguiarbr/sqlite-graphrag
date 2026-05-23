@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.60"
+version = "1.0.61"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -95,6 +95,7 @@ huggingface-hub = { package = "hf-hub", version = "0.4", default-features = fals
 unicode-normalization = "0.1.25"
 ndarray = "0.16"
 tempfile = "3"
+wait-timeout = "0.2"
 
 # ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
 # pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/ingest-claude-phase.schema.json",
+  "title": "IngestClaudePhaseEvent",
+  "description": "Phase event emitted by `ingest --mode claude-code` on stdout. Two events: validate (with claude_path, version) and scan (with dir, files_total, files_new, files_existing).",
+  "type": "object",
+  "required": ["phase"],
+  "additionalProperties": false,
+  "properties": {
+    "phase":          { "type": "string",           "enum": ["validate", "scan"], "description": "Phase name: validate (checks claude-code environment) or scan (discovers files in the target directory)." },
+    "claude_path":    { "type": ["string", "null"],  "description": "Path to the claude-code configuration. Present in validate phase." },
+    "version":        { "type": ["string", "null"],  "description": "Detected claude-code version. Present in validate phase." },
+    "dir":            { "type": ["string", "null"],  "description": "Directory path being scanned. Present in scan phase." },
+    "files_total":    { "type": ["integer", "null"], "description": "Total files matched by the scan. Present in scan phase." },
+    "files_new":      { "type": ["integer", "null"], "description": "Files not yet ingested. Present in scan phase." },
+    "files_existing": { "type": ["integer", "null"], "description": "Files already ingested (will be skipped or updated). Present in scan phase." }
+  }
+}

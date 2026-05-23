@@ -212,7 +212,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NER extraction events go to stderr, NOT stdout
 - USE `--max-name-length N` to override the default 60-character truncation threshold for memory names
 - NUMERIC basenames (e.g. `123.md`) are automatically prefixed with `doc-` to produce valid kebab-case names (e.g. `doc-123`)
-### REQUIRED — Ingest Modes (v1.0.60)
+### REQUIRED — Ingest Modes (v1.0.61)
 - `--mode none` (default): body-only ingestion without entity/relationship extraction
 - `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
@@ -222,15 +222,23 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `--resume` continues interrupted ingest from queue DB; `--retry-failed` retries only failed files
 - `--max-cost-usd <N>` stops when cumulative LLM cost exceeds the budget
 - `--claude-binary <PATH>` overrides PATH lookup; `--claude-model <MODEL>` selects model
+- --claude-timeout <S> sets per-file subprocess timeout (default 300s); kills hung processes
 - Queue DB `.ingest-queue.sqlite` tracks per-file progress; `--keep-queue` retains after completion
 - Rate limit handling: automatic exponential backoff (60s → 120s → 300s → 900s)
+- `--dry-run` with `--mode claude-code` emits `status: "preview"` events without spawning Claude — zero tokens consumed
+- Re-ingesting the same directory UPDATES existing memories (force-merge) instead of failing with UNIQUE constraint
+- Cold-start `--json-schema` failure automatically retried once after 2s delay (workaround for Claude Code Issue #23265)
+- Subprocess runs with `env_clear()` + selective injection for security hardening
+- Uses `--bare` when `ANTHROPIC_API_KEY` is set (faster startup, no plugins); `--dangerously-skip-permissions` for OAuth users
 - NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields
 - Summary includes `entities_total`, `rels_total`, `cost_usd` totals
+- Schemas: `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, `ingest-claude-summary.schema.json`
 ### Correct Pattern — Claude Code Ingest Examples
 - `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --resume --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --claude-model claude-sonnet-4-6 --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --claude-timeout 600 --max-cost-usd 10.00 --json`
 
 
 ## CRUD — Read with read and list
@@ -647,6 +655,9 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`
 - `ingest` summary: `summary` (true), `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
+- `ingest --mode claude-code` phase: `phase` (`"validate"`/`"scan"`), `claude_path?`, `version?`, `dir?`, `files_total?`, `files_new?`, `files_existing?`
+- `ingest --mode claude-code` per file: `file`, `name`, `status` (`"done"`/`"failed"`/`"preview"`), `memory_id?`, `entities?`, `rels?`, `cost_usd?`, `elapsed_ms?`, `error?`, `index`, `total`
+- `ingest --mode claude-code` summary: `summary` (true), `files_total`, `completed`, `failed`, `skipped`, `entities_total`, `rels_total`, `cost_usd`, `elapsed_ms`
 - `cache list` returns models with size in bytes and total disk usage
 - `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `fts rebuild` returns `action` ("rebuilt"), `rows_indexed`, `elapsed_ms`

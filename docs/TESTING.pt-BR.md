@@ -49,6 +49,11 @@
 - Executar com: `/usr/bin/timeout 1800 cargo bench` ou `/usr/bin/timeout 1800 cargo criterion`
 - Escopo: baselines de latência para remember, recall, hybrid-search, stats, graph
 - Gate: nunca incluído em `cargo nextest run`
+### Testes de Ingestão Claude Code
+- Testes unitários em `src/commands/ingest_claude.rs` cobrem: parsing JSON, fallback de structured_output, tratamento de erros, detecção de rate limit, validação de entity_type, conformidade do schema
+- 9 testes unitários protegem invariantes de parsing de extração sem requerer o binário Claude Code
+- Testes de integração requerem Claude Code >= 2.1.0 instalado localmente — executar manualmente, não no CI
+- Nomes de testes seguem convenções `test_parse_claude_output_*` e `test_extraction_schema_*`
 
 
 ## Como Executar

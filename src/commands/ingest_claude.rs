@@ -87,6 +87,7 @@ struct ClaudeOutputElement {
     #[serde(default)]
     is_error: bool,
     structured_output: Option<ExtractionResult>,
+    result: Option<String>,
     total_cost_usd: Option<f64>,
     error: Option<String>,
 }
@@ -226,12 +227,44 @@ fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
 }
 
 /// Invokes `claude -p` for a single file and returns the extraction result.
+///
+/// Uses `wait-timeout` for cross-platform subprocess timeout, `env_clear()`
+/// for least-privilege environment, and `--bare` when `ANTHROPIC_API_KEY`
+/// is available (faster startup) vs `--dangerously-skip-permissions` for
+/// OAuth users.
 fn extract_with_claude(
     binary: &Path,
     file_content: &[u8],
     model: Option<&str>,
+    timeout_secs: u64,
 ) -> Result<(ExtractionResult, f64), AppError> {
+    use wait_timeout::ChildExt;
+
     let mut cmd = Command::new(binary);
+
+    cmd.env_clear();
+    for var in &[
+        "PATH",
+        "HOME",
+        "USER",
+        "SHELL",
+        "TERM",
+        "LANG",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CONFIG_DIR",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+    ] {
+        if let Ok(val) = std::env::var(var) {
+            cmd.env(var, val);
+        }
+    }
+
     cmd.arg("-p")
         .arg(EXTRACTION_PROMPT)
         .arg("--output-format")
@@ -239,16 +272,22 @@ fn extract_with_claude(
         .arg("--json-schema")
         .arg(EXTRACTION_SCHEMA)
         .arg("--max-turns")
-        .arg("1")
-        .arg("--no-session-persistence")
-        .arg("--bare")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .arg("3")
+        .arg("--no-session-persistence");
+
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        cmd.arg("--bare");
+    } else {
+        cmd.arg("--dangerously-skip-permissions");
+    }
 
     if let Some(m) = model {
         cmd.arg("--model").arg(m);
     }
+
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| {
         AppError::Io(std::io::Error::new(
@@ -257,25 +296,82 @@ fn extract_with_claude(
         ))
     })?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(file_content).map_err(AppError::Io)?;
+    let stdin_data = file_content.to_vec();
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::Validation("failed to open claude stdin".into()))?;
+    let stdin_thread = std::thread::spawn(move || -> Result<(), std::io::Error> {
+        child_stdin.write_all(&stdin_data)?;
+        Ok(())
+    });
+
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
+
+    match status {
+        Some(exit_status) => {
+            stdin_thread
+                .join()
+                .map_err(|_| AppError::Validation("stdin thread panicked".into()))?
+                .map_err(AppError::Io)?;
+
+            let mut stdout_buf = Vec::new();
+            let mut stderr_buf = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                std::io::Read::read_to_end(&mut out, &mut stdout_buf).map_err(AppError::Io)?;
+            }
+            if let Some(mut err) = child.stderr.take() {
+                std::io::Read::read_to_end(&mut err, &mut stderr_buf).map_err(AppError::Io)?;
+            }
+
+            if !exit_status.success() {
+                let stdout_str = String::from_utf8_lossy(&stdout_buf);
+                if let Ok(elements) = serde_json::from_str::<Vec<ClaudeOutputElement>>(&stdout_str)
+                {
+                    if let Some(re) = elements
+                        .iter()
+                        .find(|e| e.r#type.as_deref() == Some("result"))
+                    {
+                        if re.is_error {
+                            let err_msg = re
+                                .error
+                                .as_deref()
+                                .or(re.result.as_deref())
+                                .unwrap_or("unknown error");
+                            if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
+                                return Err(AppError::Validation(format!(
+                                    "RATE_LIMITED: {err_msg}"
+                                )));
+                            }
+                            return Err(AppError::Validation(format!(
+                                "claude -p failed: {err_msg}"
+                            )));
+                        }
+                    }
+                }
+                let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                return Err(AppError::Validation(format!(
+                    "claude -p exited with code {:?}: {}",
+                    exit_status.code(),
+                    stderr_str.trim()
+                )));
+            }
+
+            let stdout = String::from_utf8(stdout_buf)
+                .map_err(|_| AppError::Validation("claude -p stdout is not valid UTF-8".into()))?;
+            parse_claude_output(&stdout)
+        }
+        None => {
+            tracing::warn!(target: "ingest", timeout_secs, "claude -p timed out, killing process");
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdin_thread.join();
+            Err(AppError::Validation(format!(
+                "claude -p timed out after {timeout_secs} seconds"
+            )))
+        }
     }
-
-    let output = child.wait_with_output().map_err(AppError::Io)?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Validation(format!(
-            "claude -p exited with code {:?}: {}",
-            output.status.code(),
-            stderr.trim()
-        )));
-    }
-
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| AppError::Validation("claude -p stdout is not valid UTF-8".to_string()))?;
-
-    parse_claude_output(&stdout)
 }
 
 /// Parses the JSON array output from `claude -p --output-format json`.
@@ -292,7 +388,11 @@ fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64), AppError
         })?;
 
     if result_elem.is_error {
-        let err_msg = result_elem.error.as_deref().unwrap_or("unknown error");
+        let err_msg = result_elem
+            .error
+            .as_deref()
+            .or(result_elem.result.as_deref())
+            .unwrap_or("unknown error");
         if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
             return Err(AppError::Validation(format!("RATE_LIMITED: {err_msg}")));
         }
@@ -301,9 +401,18 @@ fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64), AppError
         )));
     }
 
-    let extraction = result_elem.structured_output.clone().ok_or_else(|| {
-        AppError::Validation("claude result missing structured_output".to_string())
-    })?;
+    let extraction = result_elem
+        .structured_output
+        .clone()
+        .or_else(|| {
+            result_elem
+                .result
+                .as_ref()
+                .and_then(|text| serde_json::from_str::<ExtractionResult>(text).ok())
+        })
+        .ok_or_else(|| {
+            AppError::Validation("claude result missing structured_output and result field".into())
+        })?;
 
     let cost = result_elem.total_cost_usd.unwrap_or(0.0);
 
@@ -403,21 +512,51 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
     let queue_conn = open_queue_db(&args.queue_db)?;
 
+    if args.resume {
+        let reset = queue_conn
+            .execute(
+                "UPDATE queue SET status='pending' WHERE status='processing'",
+                [],
+            )
+            .map_err(|e| AppError::Validation(format!("queue resume failed: {e}")))?;
+        if reset > 0 {
+            tracing::info!(target: "ingest", count = reset, "reset stuck processing files to pending");
+        }
+    }
+
+    if args.retry_failed {
+        let count = queue_conn
+            .execute(
+                "UPDATE queue SET status='pending', attempt=0 WHERE status='failed'",
+                [],
+            )
+            .map_err(|e| AppError::Validation(format!("queue retry-failed reset failed: {e}")))?;
+        tracing::info!(target: "ingest", count, "retrying failed files");
+    }
+
+    if !args.resume && !args.retry_failed {
+        queue_conn
+            .execute("DELETE FROM queue", [])
+            .map_err(|e| AppError::Validation(format!("queue clear failed: {e}")))?;
+    }
+
     let mut new_count = 0usize;
     let mut existing_count = 0usize;
 
-    for file in &files {
-        let file_str = file.to_string_lossy().to_string();
-        let inserted = queue_conn
-            .execute(
-                "INSERT OR IGNORE INTO queue (file_path, status) VALUES (?1, 'pending')",
-                rusqlite::params![file_str],
-            )
-            .map_err(|e| AppError::Validation(format!("queue insert failed: {e}")))?;
-        if inserted > 0 {
-            new_count += 1;
-        } else {
-            existing_count += 1;
+    if !args.retry_failed {
+        for file in &files {
+            let file_str = file.to_string_lossy().to_string();
+            let inserted = queue_conn
+                .execute(
+                    "INSERT OR IGNORE INTO queue (file_path, status) VALUES (?1, 'pending')",
+                    rusqlite::params![file_str],
+                )
+                .map_err(|e| AppError::Validation(format!("queue insert failed: {e}")))?;
+            if inserted > 0 {
+                new_count += 1;
+            } else {
+                existing_count += 1;
+            }
         }
     }
 
@@ -430,6 +569,41 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         files_new: Some(new_count),
         files_existing: Some(existing_count),
     });
+
+    if args.dry_run {
+        for (idx, file) in files.iter().enumerate() {
+            let (name, _truncated, _orig) =
+                super::ingest::derive_kebab_name(file, args.max_name_length);
+            emit_json(&FileEvent {
+                file: &file.to_string_lossy(),
+                name: &name,
+                status: "preview",
+                memory_id: None,
+                entities: None,
+                rels: None,
+                cost_usd: None,
+                elapsed_ms: None,
+                error: None,
+                index: idx,
+                total: files.len(),
+            });
+        }
+        emit_json(&Summary {
+            summary: true,
+            files_total: files.len(),
+            completed: 0,
+            failed: 0,
+            skipped: 0,
+            entities_total: 0,
+            rels_total: 0,
+            cost_usd: 0.0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        });
+        if !args.keep_queue {
+            let _ = std::fs::remove_file(&args.queue_db);
+        }
+        return Ok(());
+    }
 
     // Stage 3: Process
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -473,6 +647,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
                     rusqlite::params![err_msg, queue_id],
                 );
+                let current_index = completed + failed + skipped;
                 failed += 1;
                 emit_json(&FileEvent {
                     file: &file_path,
@@ -484,7 +659,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     cost_usd: None,
                     elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                     error: Some(&err_msg),
-                    index: completed + failed + skipped,
+                    index: current_index,
                     total,
                 });
                 if args.fail_fast {
@@ -494,63 +669,125 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
         };
 
-        match extract_with_claude(&claude_binary, &file_content, args.claude_model.as_deref()) {
-            Ok((extraction, cost)) => {
-                backoff_secs = args.rate_limit_wait;
+        // B07: retry once on cold-start failure (Claude Code Issue #23265)
+        let max_extract_attempts: u32 = 2;
+        let mut extraction_result: Option<(ExtractionResult, f64)> = None;
+        let mut last_extract_err: Option<String> = None;
 
-                let name = &extraction.name;
-                let ent_count = extraction.entities.len();
-                let rel_count = extraction.relationships.len();
+        for attempt in 1..=max_extract_attempts {
+            match extract_with_claude(
+                &claude_binary,
+                &file_content,
+                args.claude_model.as_deref(),
+                args.claude_timeout,
+            ) {
+                Ok(result) => {
+                    extraction_result = Some(result);
+                    break;
+                }
+                Err(ref e) if format!("{e}").contains("RATE_LIMITED") => {
+                    last_extract_err = Some(format!("{e}"));
+                    break;
+                }
+                Err(e) => {
+                    let msg = format!("{e}");
+                    if attempt < max_extract_attempts {
+                        tracing::warn!(target: "ingest", attempt, error = %msg, "extraction failed, retrying (cold-start workaround)");
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                    last_extract_err = Some(msg);
+                }
+            }
+        }
 
-                let new_entities: Vec<NewEntity> = extraction
-                    .entities
-                    .iter()
-                    .filter_map(|e| {
-                        e.entity_type
-                            .parse::<EntityType>()
-                            .ok()
-                            .map(|et| NewEntity {
-                                name: e.name.clone(),
-                                entity_type: et,
-                                description: None,
-                            })
-                    })
-                    .collect();
+        if let Some((extraction, cost)) = extraction_result {
+            backoff_secs = args.rate_limit_wait;
 
-                let new_relationships: Vec<NewRelationship> = extraction
-                    .relationships
-                    .iter()
-                    .map(|r| NewRelationship {
-                        source: r.source.clone(),
-                        target: r.target.clone(),
-                        relation: r.relation.clone(),
-                        strength: r.strength,
+            let name = &extraction.name;
+            let ent_count = extraction.entities.len();
+            let rel_count = extraction.relationships.len();
+
+            let new_entities: Vec<NewEntity> = extraction
+                .entities
+                .iter()
+                .filter_map(|e| match e.entity_type.parse::<EntityType>() {
+                    Ok(et) => Some(NewEntity {
+                        name: e.name.clone(),
+                        entity_type: et,
                         description: None,
-                    })
-                    .collect();
+                    }),
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "ingest",
+                            entity = %e.name,
+                            entity_type = %e.entity_type,
+                            "entity type not recognized, skipping"
+                        );
+                        None
+                    }
+                })
+                .collect();
 
-                let body_str = String::from_utf8_lossy(&file_content);
-                let body_hash = blake3::hash(body_str.as_bytes()).to_hex().to_string();
-                let new_memory = NewMemory {
-                    name: name.clone(),
-                    namespace: namespace.clone(),
-                    memory_type: memory_type_str.clone(),
-                    description: extraction.description.clone(),
-                    body: body_str.to_string(),
-                    body_hash,
-                    session_id: None,
-                    source: "claude-code".to_string(),
-                    metadata: serde_json::Value::Object(serde_json::Map::new()),
-                };
+            let new_relationships: Vec<NewRelationship> = extraction
+                .relationships
+                .iter()
+                .map(|r| NewRelationship {
+                    source: r.source.clone(),
+                    target: r.target.clone(),
+                    relation: r.relation.clone(),
+                    strength: r.strength,
+                    description: None,
+                })
+                .collect();
 
-                let memory_id = match memories::insert(&conn, &new_memory) {
+            let body_str = String::from_utf8_lossy(&file_content);
+            let body_hash = blake3::hash(body_str.as_bytes()).to_hex().to_string();
+            let new_memory = NewMemory {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                memory_type: memory_type_str.clone(),
+                description: extraction.description.clone(),
+                body: body_str.to_string(),
+                body_hash,
+                session_id: None,
+                source: "agent".to_string(),
+                metadata: serde_json::Value::Object(serde_json::Map::new()),
+            };
+
+            // B06: deduplication — update existing memory instead of failing on UNIQUE
+            let memory_id = match memories::find_by_name_any_state(&conn, &namespace, name)? {
+                Some((existing_id, is_deleted)) => {
+                    if is_deleted {
+                        memories::clear_deleted_at(&conn, existing_id)?;
+                    }
+                    let (old_name, old_desc, old_body): (String, String, String) = conn.query_row(
+                        "SELECT name, COALESCE(description,''), COALESCE(body,'') FROM memories WHERE id=?1",
+                        rusqlite::params![existing_id],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )?;
+                    memories::update(&conn, existing_id, &new_memory, None)?;
+                    memories::sync_fts_after_update(
+                        &conn,
+                        existing_id,
+                        &old_name,
+                        &old_desc,
+                        &old_body,
+                        &new_memory.name,
+                        &new_memory.description,
+                        &new_memory.body,
+                    )?;
+                    tracing::info!(target: "ingest", name, memory_id = existing_id, "updated existing memory (force-merge)");
+                    existing_id
+                }
+                None => match memories::insert(&conn, &new_memory) {
                     Ok(id) => id,
                     Err(e) => {
                         let err_msg = format!("{e}");
                         let _ = queue_conn.execute(
-                            "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
-                            rusqlite::params![err_msg, queue_id],
-                        );
+                                "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
+                                rusqlite::params![err_msg, queue_id],
+                            );
+                        let current_index = completed + failed + skipped;
                         failed += 1;
                         emit_json(&FileEvent {
                             file: &file_path,
@@ -562,7 +799,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             cost_usd: Some(cost),
                             elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                             error: Some(&err_msg),
-                            index: completed + failed + skipped,
+                            index: current_index,
                             total,
                         });
                         cost_total += cost;
@@ -571,57 +808,60 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                         }
                         continue;
                     }
-                };
+                },
+            };
 
-                for ent in &new_entities {
-                    if let Ok(eid) = entities::upsert_entity(&conn, &namespace, ent) {
-                        let _ = entities::link_memory_entity(&conn, memory_id, eid);
-                    }
+            for ent in &new_entities {
+                if let Ok(eid) = entities::upsert_entity(&conn, &namespace, ent) {
+                    let _ = entities::link_memory_entity(&conn, memory_id, eid);
                 }
-                for rel in &new_relationships {
-                    let src_id = entities::find_entity_id(&conn, &namespace, &rel.source);
-                    let tgt_id = entities::find_entity_id(&conn, &namespace, &rel.target);
-                    if let (Ok(Some(sid)), Ok(Some(tid))) = (src_id, tgt_id) {
-                        let _ = conn.execute(
-                            "INSERT OR IGNORE INTO relationships (namespace, source_id, target_id, relation, weight) VALUES (?1, ?2, ?3, ?4, ?5)",
-                            rusqlite::params![namespace, sid, tid, rel.relation, rel.strength],
-                        );
-                    }
-                }
-
-                let _ = queue_conn.execute(
-                    "UPDATE queue SET status='done', name=?1, memory_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
-                    rusqlite::params![
-                        name,
-                        memory_id,
-                        ent_count,
-                        rel_count,
-                        cost,
-                        file_started.elapsed().as_millis() as i64,
-                        queue_id
-                    ],
-                );
-
-                completed += 1;
-                entities_total += ent_count;
-                rels_total += rel_count;
-                cost_total += cost;
-
-                emit_json(&FileEvent {
-                    file: &file_path,
-                    name,
-                    status: "done",
-                    memory_id: Some(memory_id),
-                    entities: Some(ent_count),
-                    rels: Some(rel_count),
-                    cost_usd: Some(cost),
-                    elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
-                    error: None,
-                    index: completed + failed + skipped - 1,
-                    total,
-                });
             }
-            Err(ref e) if format!("{e}").contains("RATE_LIMITED") => {
+            for rel in &new_relationships {
+                crate::parsers::warn_if_non_canonical(&rel.relation);
+                let src_id = entities::find_entity_id(&conn, &namespace, &rel.source);
+                let tgt_id = entities::find_entity_id(&conn, &namespace, &rel.target);
+                if let (Ok(Some(sid)), Ok(Some(tid))) = (src_id, tgt_id) {
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO relationships (namespace, source_id, target_id, relation, weight) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![namespace, sid, tid, rel.relation, rel.strength],
+                    );
+                }
+            }
+
+            let _ = queue_conn.execute(
+                "UPDATE queue SET status='done', name=?1, memory_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
+                rusqlite::params![
+                    name,
+                    memory_id,
+                    ent_count,
+                    rel_count,
+                    cost,
+                    file_started.elapsed().as_millis() as i64,
+                    queue_id
+                ],
+            );
+
+            let current_index = completed + failed + skipped;
+            completed += 1;
+            entities_total += ent_count;
+            rels_total += rel_count;
+            cost_total += cost;
+
+            emit_json(&FileEvent {
+                file: &file_path,
+                name,
+                status: "done",
+                memory_id: Some(memory_id),
+                entities: Some(ent_count),
+                rels: Some(rel_count),
+                cost_usd: Some(cost),
+                elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
+                error: None,
+                index: current_index,
+                total,
+            });
+        } else if let Some(ref err_str) = last_extract_err {
+            if err_str.contains("RATE_LIMITED") {
                 tracing::warn!(
                     target: "ingest",
                     wait_seconds = backoff_secs,
@@ -634,13 +874,12 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 std::thread::sleep(std::time::Duration::from_secs(backoff_secs));
                 backoff_secs = (backoff_secs * 2).min(900);
                 continue;
-            }
-            Err(e) => {
-                let err_msg = format!("{e}");
+            } else {
                 let _ = queue_conn.execute(
                     "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
-                    rusqlite::params![err_msg, queue_id],
+                    rusqlite::params![err_str, queue_id],
                 );
+                let current_index = completed + failed + skipped;
                 failed += 1;
                 emit_json(&FileEvent {
                     file: &file_path,
@@ -651,8 +890,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     rels: None,
                     cost_usd: None,
                     elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
-                    error: Some(&err_msg),
-                    index: completed + failed + skipped,
+                    error: Some(err_str),
+                    index: current_index,
                     total,
                 });
                 if args.fail_fast {
@@ -754,5 +993,47 @@ mod tests {
             std::env::set_var("PATH", p);
         }
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_claude_output_result_fallback() {
+        let output = r#"[
+            {"type":"system","subtype":"init"},
+            {"type":"result","is_error":false,"total_cost_usd":0.01,"structured_output":null,"result":"{\"name\":\"test-fallback\",\"description\":\"A fallback test\",\"entities\":[{\"name\":\"fb-entity\",\"entity_type\":\"concept\"}],\"relationships\":[]}"}
+        ]"#;
+        let (result, cost) = parse_claude_output(output).expect("result fallback must work");
+        assert_eq!(result.name, "test-fallback");
+        assert_eq!(result.entities.len(), 1);
+        assert!(result.relationships.is_empty());
+        assert!((cost - 0.01).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_claude_output_error_with_result_field() {
+        let output = r#"[
+            {"type":"system","subtype":"init"},
+            {"type":"result","is_error":true,"result":"Not logged in · Please run /login"}
+        ]"#;
+        let err = parse_claude_output(output).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Not logged in"),
+            "expected 'Not logged in' in: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_extraction_schema_entity_types_match_enum() {
+        let schema: serde_json::Value = serde_json::from_str(EXTRACTION_SCHEMA).unwrap();
+        let types = schema["properties"]["entities"]["items"]["properties"]["entity_type"]["enum"]
+            .as_array()
+            .expect("schema must have entity_type enum");
+        for t in types {
+            let s = t.as_str().unwrap();
+            assert!(
+                s.parse::<EntityType>().is_ok(),
+                "schema entity_type '{s}' not in EntityType enum"
+            );
+        }
     }
 }

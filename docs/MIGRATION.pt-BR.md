@@ -73,6 +73,25 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.61 — 15 correções de bugs no ingest --mode claude-code
+
+#### Correções críticas
+- `--bare` substituído por `--dangerously-skip-permissions` — corrige falha de autenticação OAuth para usuários Pro/Max
+- `--max-turns` aumentado de 1 para 3 — Claude precisa de >1 turno para extração estruturada
+- campo source da memória alterado de `"claude-code"` para `"agent"` — corrige violação de CHECK constraint
+
+#### Novas funcionalidades
+- Flag `--claude-timeout <S>` (padrão 300s) — timeout por arquivo via crate `wait-timeout`
+- `--resume` agora reseta arquivos travados em `processing`; `--retry-failed` reseta arquivos `failed`
+- `--dry-run` agora funciona com `--mode claude-code` — pré-visualiza mapeamento sem spawnar Claude
+- Re-ingestão do mesmo diretório atualiza memórias existentes em vez de falhar com UNIQUE constraint
+- Falha de cold-start `--json-schema` automaticamente retentada uma vez
+- `env_clear()` + injeção seletiva para hardening de segurança do subprocesso
+- `--bare` condicional quando `ANTHROPIC_API_KEY` está definido (startup mais rápido para API key)
+
+#### Sem migração necessária
+- Sem alterações de schema; substituição direta da v1.0.60
+
 ### v1.0.60 — ingest --mode claude-code, correções CI, schema reverso
 
 #### Nova feature: ingest --mode claude-code

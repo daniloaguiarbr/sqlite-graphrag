@@ -10,6 +10,31 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.61] - 2026-05-23
+
+### Corrigido
+- **B00 CRÍTICO**: `ingest --mode claude-code` agora usa `--dangerously-skip-permissions` em vez de `--bare` — corrige falha de autenticação OAuth para usuários Pro/Max
+- **B00a**: `--max-turns` aumentado de 1 para 3 — Claude precisa de >1 turno para extração estruturada
+- **B07a**: campo source da memória alterado de `"claude-code"` para `"agent"` — corrige violação de CHECK constraint no insert
+- **B01**: flag `--resume` agora reseta arquivos travados em `processing` para `pending` para reprocessamento
+- **B02**: flag `--retry-failed` agora reseta arquivos `failed` para `pending` para retry
+- **B03**: `--dry-run` agora funciona com `--mode claude-code` — emite eventos de preview sem spawnar Claude
+- **B04**: timeout de subprocesso via crate `wait-timeout` — mata `claude -p` após `--claude-timeout` segundos (padrão 300)
+- **B05**: mensagens de erro do `claude -p` agora parseadas do stdout JSON em vez de stderr vazio
+- **B06**: re-ingestão do mesmo diretório atualiza memórias existentes em vez de falhar com UNIQUE constraint
+- **B07**: falha de cold-start `--json-schema` automaticamente retentada uma vez (workaround para Claude Code Issue #23265)
+- **B08**: subprocesso `claude -p` agora roda com `env_clear()` + injeção seletiva de ambiente (hardening de segurança)
+- **B10**: parsing fallback do campo `result` quando `structured_output` ausente (workaround para Claude Code Issue #18536)
+- **B11**: campo `index` do FileEvent agora usa indexação 0-based consistente em caminhos de sucesso e falha
+- **B12**: `entity_type` inválido do Claude agora emite `tracing::warn!` em vez de descarte silencioso
+- **B13**: tipos de relacionamento não-canônicos agora validados via `warn_if_non_canonical()` antes da inserção
+
+### Adicionado
+- Flag `--claude-timeout` para `ingest --mode claude-code` (padrão: 300 segundos por arquivo)
+
+### Alterado
+- `ingest --mode claude-code` usa `--bare` quando `ANTHROPIC_API_KEY` está definido (startup mais rápido, sem plugins), `--dangerously-skip-permissions` para usuários OAuth
+
 ## [1.0.60] - 2026-05-23
 
 ### Adicionado

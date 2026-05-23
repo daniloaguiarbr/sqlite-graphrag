@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/ingest-claude-summary.schema.json",
+  "title": "IngestClaudeSummary",
+  "description": "Final summary NDJSON line emitted by `ingest --mode claude-code`. Always the last line. Includes entity/relationship totals and cumulative LLM cost.",
+  "type": "object",
+  "required": ["summary", "files_total", "completed", "failed", "skipped", "entities_total", "rels_total", "cost_usd", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "summary":        { "const": true,    "description": "Sentinel field; always true. Distinguishes this line from per-file events." },
+    "files_total":    { "type": "integer", "minimum": 0, "description": "Total files in the batch." },
+    "completed":      { "type": "integer", "minimum": 0, "description": "Files successfully processed." },
+    "failed":         { "type": "integer", "minimum": 0, "description": "Files that failed processing." },
+    "skipped":        { "type": "integer", "minimum": 0, "description": "Files skipped (duplicates or filtered out)." },
+    "entities_total": { "type": "integer", "minimum": 0, "description": "Total entities extracted across all files." },
+    "rels_total":     { "type": "integer", "minimum": 0, "description": "Total relationships extracted across all files." },
+    "cost_usd":       { "type": "number",  "minimum": 0, "description": "Cumulative LLM cost in USD for the entire batch." },
+    "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+  }
+}

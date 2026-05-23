@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/ingest-claude-file-event.schema.json",
+  "title": "IngestClaudeFileEvent",
+  "description": "Per-file NDJSON line emitted by `ingest --mode claude-code`. Status is `done` (success), `failed` (error), or `preview` (dry-run). Includes `entities` count, `rels` count, and `cost_usd` per file.",
+  "type": "object",
+  "required": ["file", "name", "status", "index", "total"],
+  "additionalProperties": false,
+  "properties": {
+    "file":       { "type": "string",            "description": "Filesystem path of the ingested file." },
+    "name":       { "type": "string",            "description": "Derived kebab-case memory name." },
+    "status":     { "type": "string",            "enum": ["done", "failed", "preview"], "description": "Outcome: done (success), failed (error), or preview (dry-run)." },
+    "memory_id":  { "type": ["integer", "null"], "description": "Row ID of the created or updated memory. Present when status is done." },
+    "entities":   { "type": ["integer", "null"], "minimum": 0, "description": "Number of entities extracted from the file. Present when status is done or preview." },
+    "rels":       { "type": ["integer", "null"], "minimum": 0, "description": "Number of relationships extracted from the file. Present when status is done or preview." },
+    "cost_usd":   { "type": ["number", "null"],  "minimum": 0, "description": "LLM cost in USD for processing this file. Present when status is done or preview." },
+    "elapsed_ms": { "type": ["integer", "null"], "minimum": 0, "description": "Wall-clock time in milliseconds for this file. Present when status is done." },
+    "error":      { "type": ["string", "null"],  "description": "Error message. Present when status is failed." },
+    "index":      { "type": "integer",           "minimum": 0, "description": "Zero-based index of this file in the batch." },
+    "total":      { "type": "integer",           "minimum": 1, "description": "Total number of files in the batch." }
+  }
+}

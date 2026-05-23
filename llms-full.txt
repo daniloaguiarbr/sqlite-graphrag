@@ -149,11 +149,11 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Ingest NDJSON per-file status values: `indexed` (created), `skipped` (duplicate), `failed` (error)
 - Duplicate memories on re-ingest emit `status: "skipped"` with `action: "duplicate"` and do not count as failures
 
-### Ingest Modes (v1.0.60)
+### Ingest Modes (v1.0.61)
 - `--mode none` (default): body-only ingestion, no entity/relationship extraction
 - `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
-- Claude Code flags: `--claude-binary <PATH>`, `--claude-model <MODEL>`, `--resume`, `--retry-failed`, `--max-cost-usd <N>`, `--rate-limit-wait <S>`, `--keep-queue`, `--queue-db <PATH>`
+- Claude Code flags: `--claude-binary <PATH>`, `--claude-model <MODEL>`, `--resume`, `--retry-failed`, `--max-cost-usd <N>`, `--rate-limit-wait <S>`, `--keep-queue`, `--queue-db <PATH>`, `--claude-timeout <S>` (default 300s per file)
 - Requires Claude Code >= 2.1.0 with active Pro/Max subscription — uses the user's existing billing
 - Per-file NDJSON events include `entities` (count), `rels` (count), `cost_usd` fields
 - Queue DB (`.ingest-queue.sqlite`) tracks per-file progress for resume/retry support

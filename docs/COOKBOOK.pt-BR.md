@@ -1631,7 +1631,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 - A entidade alvo deve existir previamente (exit 4 se não encontrada)
 - Use `memory-entities --entity jwt-auth --json` depois para verificar os bindings consolidados
 
-## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.60)
+## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.61)
 ### Problema
 - `ingest` padrão cria memórias com apenas body, zero entidades e zero relacionamentos
 - NER via GLiNER produz entidades ruidosas (ALL_CAPS genéricos, stop words) e relações `mentions` de baixa qualidade
@@ -1647,3 +1647,43 @@ sqlite-graphrag ingest ./docs --mode claude-code --recursive --json
 - Requer Claude Code >= 2.1.0 instalado localmente com assinatura Pro/Max ativa
 - Retomar ingestão interrompida com `--resume`; retentar falhas com `--retry-failed`
 - Definir `--max-cost-usd 5.00` para limitar gastos; custo por arquivo no output NDJSON
+- --claude-timeout <S> define timeout por arquivo (padrão 300s) para prevenir processos travados
+
+### Receita: Pré-visualizar Ingestão Claude Code com Dry Run
+### Problema
+- Você quer ver quais arquivos serão processados e quais nomes serão derivados antes de gastar tokens LLM
+### Solução
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --dry-run --json
+```
+### Explicação
+- `--dry-run` com `--mode claude-code` emite eventos de preview sem spawnar processos Claude
+- Cada arquivo mostra seu nome kebab-case derivado no NDJSON com `status: "preview"`
+- Zero tokens consumidos, zero chamadas de API
+- Verifique o mapeamento arquivo-nome antes de comprometer-se com uma extração completa
+
+### Receita: Retomar Ingestão Claude Code Interrompida
+### Problema
+- Uma ingestão grande foi interrompida (falha de rede, orçamento excedido, abort manual) e você quer continuar de onde parou
+### Solução
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --resume --keep-queue --json
+```
+### Explicação
+- `--resume` reseta arquivos travados em status `processing` para `pending` para re-extração
+- Arquivos já marcados `done` no queue DB são pulados — zero trabalho duplicado
+- `--keep-queue` retém o queue DB para inspeção ou retries adicionais
+- Combine com `--max-cost-usd` para caps de orçamento incrementais entre runs de resume
+
+### Receita: Retentar Apenas Arquivos com Falha da Ingestão Claude Code
+### Problema
+- Alguns arquivos falharam durante extração (rate limits, conteúdo malformado, timeouts) e você quer retentar apenas as falhas
+### Solução
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --retry-failed --claude-timeout 600 --json
+```
+### Explicação
+- `--retry-failed` reseta apenas arquivos `failed` para `pending`, pulando todos os `done`
+- `--claude-timeout 600` aumenta timeout por arquivo para 10 minutos para documentos grandes que tiveram timeout
+- Arquivos previamente bem-sucedidos ficam intactos — sem gasto duplicado de tokens
+- Combine com `--keep-queue` para preservar queue para inspeção posterior
