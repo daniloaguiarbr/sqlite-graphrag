@@ -520,6 +520,9 @@ sqlite-graphrag prune-relations --relation mentions --yes --json
 - `ingest --dry-run` visualiza o mapeamento arquivo→nome sem carregar o modelo ONNX nem persistir nada
 - A saída NDJSON de `--dry-run` usa `status: "preview"` por arquivo; use para detectar truncamentos e colisões antes de confirmar
 - Quando o basename de um arquivo difere do nome kebab-case derivado (espaços, acentos, caracteres especiais), a linha NDJSON inclui `original_filename` com o basename original
+- Três modos de extração via `--mode`: `none` (padrão, body-only), `gliner` (NER local), `claude-code` (curado por LLM via Claude Code CLI)
+- `--mode claude-code` requer Claude Code >= 2.1.0 instalado localmente com assinatura Pro/Max; spawna `claude -p` headless por arquivo
+- Use `--resume` para continuar ingestão interrompida; `--max-cost-usd <N>` para limitar gasto acumulado
 
 ### Nota sobre link
 - Pré-requisito: as entidades devem existir no grafo antes de criar links explícitos

@@ -655,6 +655,24 @@ let output = Command::new("sqlite-graphrag")
 - `original_filename` preserves the file basename before kebab-case normalization; present when the basename differs from the derived name (e.g., spaces, accents, special characters)
 - Final summary line: `summary` (true), `dir`, `pattern`, `recursive`, `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - NER extraction events go to stderr, NOT stdout
+### REQUIRED — Ingest Modes (v1.0.60)
+- USE `--mode none` (default) for body-only ingestion without extraction
+- USE `--mode gliner` for local GLiNER NER extraction (requires `--enable-ner`)
+- USE `--mode claude-code` for LLM-curated extraction via locally installed Claude Code CLI
+- Claude Code mode requires `claude` binary >= 2.1.0 in PATH with active Pro/Max subscription
+- USE `--resume` to continue a previously interrupted claude-code ingest from the queue DB
+- USE `--retry-failed` to retry only failed files from a previous run
+- USE `--max-cost-usd <N>` to set a budget cap — ingestion stops when cumulative cost exceeds the limit
+- USE `--claude-binary <PATH>` to specify an explicit path to the Claude Code binary
+- USE `--claude-model <MODEL>` to override the model (e.g. `claude-sonnet-4-6`)
+- NDJSON per-file events in claude-code mode include `entities`, `rels`, `cost_usd` fields
+- Queue DB `.ingest-queue.sqlite` tracks per-file progress; use `--keep-queue` to retain after completion
+- Rate limit handling: automatic exponential backoff (60s → 120s → 300s → 900s)
+### Correct Pattern — Claude Code Ingest Examples
+- `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --resume --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --claude-model claude-sonnet-4-6 --json`
 
 
 ## CRUD — Read with read and list

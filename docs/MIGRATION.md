@@ -73,6 +73,25 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.60 — ingest --mode claude-code, CI fixes, reverse schema
+
+#### New feature: ingest --mode claude-code
+- `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json` uses the locally installed Claude Code CLI for LLM-curated entity/relationship extraction
+- Spawns `claude -p` headless per file with `--json-schema` for guaranteed structured output
+- Requires Claude Code >= 2.1.0 with active Pro/Max subscription — zero API keys needed
+- Resumable via `--resume`; budget control via `--max-cost-usd <N>`; rate limit with automatic exponential backoff
+- Queue DB (`.ingest-queue.sqlite`) tracks per-file progress; NDJSON events include `entities`, `rels`, `cost_usd` per file
+- Existing `--mode none` (default) and `--mode gliner` continue working unchanged
+
+#### New schema: memory-entities-reverse.schema.json
+- `memory-entities --entity <name> --json` reverse lookup now has a dedicated JSON Schema
+- Forward (`--name`) uses `memory-entities.schema.json`; reverse (`--entity`) uses `memory-entities-reverse.schema.json`
+- Agents validating reverse responses against the forward schema should update to use the reverse schema
+
+#### CI test fixes
+- 8 test failures fixed across exit codes, i18n, ingest fail-fast, migration count, and Windows bash examples
+- No runtime behavior changes — all fixes are in test code only
+
 ### v1.0.58 — FTS5 force-merge sync fix (CRITICAL), merge-entities UNIQUE fix, rename-entity, entity validation
 
 #### CRITICAL: FTS5 index corruption via remember --force-merge fixed

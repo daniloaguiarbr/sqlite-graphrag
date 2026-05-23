@@ -352,12 +352,14 @@ fn run_all_blocks(readme_label: &str, content: &str, min_blocks_expected: usize)
 
 #[test]
 #[serial]
+#[cfg_attr(windows, ignore)]
 fn readme_en_bash_examples_all_run() {
     run_all_blocks("README.md", README_EN, 10);
 }
 
 #[test]
 #[serial]
+#[cfg_attr(windows, ignore)]
 fn readme_pt_bash_examples_all_run() {
     run_all_blocks("README.pt-BR.md", README_PT, 10);
 }

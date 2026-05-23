@@ -50,8 +50,11 @@
 | `reclassify` | `reclassify.schema.json` |
 | `merge-entities` | `merge-entities.schema.json` |
 | `rename-entity` | `rename-entity.schema.json` |
-| `memory-entities` | `memory-entities.schema.json` |
+| `memory-entities` (forward: `--name`) | `memory-entities.schema.json` |
+| `memory-entities` (reverse: `--entity`) | `memory-entities-reverse.schema.json` |
 | `prune-ner` | `prune-ner.schema.json` |
+| `export` (per-memory line) | `export-memory-line.schema.json` |
+| `export` (summary) | `export-summary.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`

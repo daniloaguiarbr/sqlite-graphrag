@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/memory-entities-reverse.schema.json",
+  "title": "EntityMemoriesResponse",
+  "description": "Response emitted by `sqlite-graphrag memory-entities --entity <name> --json` on stdout as a single JSON line, listing all memories bound to a given entity.",
+  "type": "object",
+  "required": ["entity_name", "memories", "count", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "entity_name": { "type": "string", "description": "Name of the entity whose bound memories are listed." },
+    "memories": {
+      "type": "array",
+      "description": "Memories bound to this entity.",
+      "items": {
+        "type": "object",
+        "required": ["memory_id", "name", "description", "memory_type"],
+        "additionalProperties": false,
+        "properties": {
+          "memory_id":   { "type": "integer", "description": "Primary key of the memory row." },
+          "name":        { "type": "string", "description": "Kebab-case name of the memory." },
+          "description": { "type": "string", "description": "One-line description of the memory." },
+          "memory_type": { "type": "string", "description": "Type of the memory, e.g. 'decision', 'project', 'note'." }
+        }
+      }
+    },
+    "count":      { "type": "integer", "minimum": 0, "description": "Total number of memories in the response array." },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+  }
+}

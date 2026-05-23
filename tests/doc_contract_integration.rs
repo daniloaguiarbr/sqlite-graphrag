@@ -1233,6 +1233,40 @@ fn contract_33_memory_entities() {
 }
 
 // ---------------------------------------------------------------------------
+// 33b — memory-entities reverse lookup (--entity)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_33b_memory_entities_reverse() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("mem-ent-reverse", "body for reverse lookup");
+
+    let out = env
+        .cmd()
+        .args(["memory-entities", "--entity", &ent_a])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "memory-entities --entity (reverse)",
+        &json,
+        &["entity_name", "memories", "count", "elapsed_ms"],
+    );
+    assert!(json["memories"].is_array());
+    let mems = json["memories"].as_array().unwrap();
+    if !mems.is_empty() {
+        assert_array_items_have_keys(
+            "memory-entities --entity (reverse)",
+            &json["memories"],
+            &["memory_id", "name", "description", "memory_type"],
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 34 — prune-ner
 // ---------------------------------------------------------------------------
 

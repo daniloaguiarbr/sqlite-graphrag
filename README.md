@@ -317,6 +317,18 @@ sqlite-graphrag ingest ./docs --type document --pattern '*.md' --low-memory
 # Or via env var (CLI flag takes precedence):
 SQLITE_GRAPHRAG_LOW_MEMORY=1 sqlite-graphrag ingest ./docs --type document
 ```
+### Bulk-ingest with LLM-curated entities via Claude Code (v1.0.60)
+<!-- skip-test: requires Claude Code installed with Pro/Max subscription. -->
+```bash
+# Extract entities and relationships using locally installed Claude Code CLI
+sqlite-graphrag ingest ./docs --mode claude-code --recursive --json
+
+# Resume interrupted ingestion
+sqlite-graphrag ingest ./docs --mode claude-code --resume --json
+
+# Set budget limit
+sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json
+```
 > `ingest` emits NDJSON on stdout: one JSON line per file, then a summary line.
 > Per-file `status` values: `indexed` (created), `skipped` (duplicate or invalid name), `failed` (error).
 > Duplicates emit `status: "skipped"` with `action: "duplicate"` and do not count as failures.
@@ -431,7 +443,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `history` | `[name]` or `--name <name>`, `--diff` | List all versions of a memory; `--diff` includes character-level change summary |
 | `memory-entities` | `[name]` or `--name <name>`, `--entity <name>` | List entities linked to a memory, or memories linked to an entity (reverse lookup via `--entity`) |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--ingest-parallelism N`, `--low-memory` (env `SQLITE_GRAPHRAG_LOW_MEMORY=1`), `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run` | Bulk-ingest every matching file as a separate memory (NDJSON output); `--dry-run` previews name mapping without writing |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (default `*.md`), `--recursive`, `--mode` (`none`/`gliner`/`claude-code`), `--ingest-parallelism N`, `--low-memory`, `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--max-cost-usd`, `--keep-queue` | Bulk-ingest every matching file as a separate memory (NDJSON output); `--mode claude-code` uses locally installed Claude Code CLI for LLM-curated entity/relationship extraction; `--dry-run` previews name mapping without writing |
 | `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Export memories as NDJSON for backup or migration |
 | `cache clear-models` | `--yes` | Remove cached embedding/GLiNER model files from the XDG cache directory |
 

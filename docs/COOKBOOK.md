@@ -1604,3 +1604,48 @@ sqlite-graphrag reclassify --name rust-lang --description "The Rust programming 
 - `--description` flag on `reclassify` updates the entity description in single mode
 - Can be combined with `--new-type` to change both type and description in one operation
 - Batch mode (`--batch`) ignores `--description`
+
+## How To Delete An Entity And Its Relationships (v1.0.56)
+### Problem
+- An entity was created by mistake or is obsolete
+- Removing it manually requires deleting relationships, memory bindings and the entity row
+### Solution
+```bash
+sqlite-graphrag delete-entity --name obsolete-concept --cascade --json
+```
+### Explanation
+- `--cascade` removes the entity, all its relationships, and all memory_entities bindings in one atomic operation
+- Without `--cascade` the command refuses to delete an entity that still has relationships (exit 1)
+- Run `cleanup-orphans --dry-run --json` afterwards to audit any newly orphaned entities
+
+## How To Merge Duplicate Entities (v1.0.56)
+### Problem
+- The same concept exists under multiple names (e.g. `jwt-auth` and `jwt-authentication`)
+- Relationships are split across duplicates, weakening graph traversal
+### Solution
+```bash
+sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jwt-auth --json
+```
+### Explanation
+- All relationships from source entities are redirected to the target entity
+- Duplicate relationships after redirection are removed automatically (UPDATE OR IGNORE)
+- Source entities are deleted after the merge
+- The target entity must already exist (exit 4 if not found)
+- Use `memory-entities --entity jwt-auth --json` afterwards to verify the consolidated bindings
+
+## How To Ingest Documents With LLM-Curated Entities (v1.0.60)
+### Problem
+- Default `ingest` creates body-only memories with zero entities and zero relationships
+- GLiNER NER produces noisy entities (ALL_CAPS generics, stop words) and low-quality `mentions` relationships
+- Manual `remember --graph-stdin` per file is time-consuming for large document sets
+### Solution
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --recursive --json
+```
+### Explanation
+- `--mode claude-code` spawns `claude -p` headless for each file with `--json-schema` for guaranteed structured output
+- Extracts domain-specific entities (concepts, tools, decisions) and typed relationships with strength scores
+- Entity types and relationship types are constrained to canonical enums — impossible to generate noise
+- Requires Claude Code >= 2.1.0 installed locally with active Pro/Max subscription
+- Resume interrupted ingestion with `--resume`; retry failures with `--retry-failed`
+- Set `--max-cost-usd 5.00` to limit spend; track cost per file in NDJSON output

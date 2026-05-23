@@ -112,8 +112,8 @@ fn init_creates_11_migrations_v001_to_v011() {
     );
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9],
-        "expected versions V001-V009"
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "expected versions V001-V011"
     );
 }
 

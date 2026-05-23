@@ -178,6 +178,53 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = crate::constants::DERIVED_NAME_MAX_LEN,
           help = "Maximum length for derived memory names (default: 60)")]
     pub max_name_length: usize,
+
+    /// Extraction mode: `none` (body-only, default), `gliner` (NER), or `claude-code` (LLM-curated via Claude Code CLI).
+    #[arg(long, value_enum, default_value_t = IngestMode::None)]
+    pub mode: IngestMode,
+
+    /// Explicit path to the Claude Code binary (only with --mode claude-code).
+    #[arg(long, env = "SQLITE_GRAPHRAG_CLAUDE_BINARY")]
+    pub claude_binary: Option<std::path::PathBuf>,
+
+    /// Model override for Claude Code extraction (e.g. claude-sonnet-4-6).
+    #[arg(long)]
+    pub claude_model: Option<String>,
+
+    /// Resume a previously interrupted claude-code ingest from the queue DB.
+    #[arg(long, default_value_t = false)]
+    pub resume: bool,
+
+    /// Retry only failed files from a previous claude-code ingest.
+    #[arg(long, default_value_t = false)]
+    pub retry_failed: bool,
+
+    /// Keep the queue DB (.ingest-queue.sqlite) after completion.
+    #[arg(long, default_value_t = false)]
+    pub keep_queue: bool,
+
+    /// Custom path for the claude-code ingest queue database.
+    #[arg(long, default_value = ".ingest-queue.sqlite")]
+    pub queue_db: String,
+
+    /// Initial wait time in seconds when rate-limited (only with --mode claude-code).
+    #[arg(long, default_value_t = 60)]
+    pub rate_limit_wait: u64,
+
+    /// Maximum cumulative cost in USD before aborting (only with --mode claude-code).
+    #[arg(long)]
+    pub max_cost_usd: Option<f64>,
+}
+
+/// Extraction mode for the ingest pipeline.
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum IngestMode {
+    /// Body-only ingestion without entity/relationship extraction (default).
+    None,
+    /// GLiNER zero-shot NER extraction (requires --enable-ner).
+    Gliner,
+    /// LLM-curated extraction via locally installed Claude Code CLI.
+    ClaudeCode,
 }
 
 /// Returns true when the `SQLITE_GRAPHRAG_LOW_MEMORY` env var is set to a
@@ -651,6 +698,10 @@ fn persist_staged(
 }
 
 pub fn run(args: IngestArgs) -> Result<(), AppError> {
+    if args.mode == IngestMode::ClaudeCode {
+        return super::ingest_claude::run_claude_ingest(&args);
+    }
+
     let started = std::time::Instant::now();
 
     if !args.dir.exists() {
@@ -1192,7 +1243,7 @@ fn init_storage(paths: &AppPaths) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
-fn collect_files(
+pub(crate) fn collect_files(
     dir: &Path,
     pattern: &str,
     recursive: bool,

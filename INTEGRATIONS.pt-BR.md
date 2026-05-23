@@ -38,6 +38,8 @@
 - `rename-entity --name <antigo> --new-name <novo>` renomeia uma entidade do grafo preservando todos os relacionamentos baseados em FK e re-gera embedding para busca semântica
 - `memory-entities --name <memória>` lista entidades vinculadas a uma memória específica
 - `prune-ner --entity <nome>` ou `--all --yes` remove bindings NER da tabela memory_entities
+- `cleanup-orphans --dry-run --json` audita entidades com zero memórias e zero relacionamentos; `--yes` remove
+- `prune-relations --relation <tipo> --dry-run --json` visualiza remoção em massa de todos relacionamentos de um tipo; `--yes` executa
 - `remember --dry-run` valida input e reporta ações planejadas sem persistir
 - `remember --clear-body` limpa explicitamente o body durante `--force-merge` (body vazio agora preserva existente por padrão)
 - `remember --type` e `--description` agora opcionais com `--force-merge` (herdados da memória existente)
@@ -102,6 +104,8 @@
 - Versão mínima exige Claude Code 1.0 ou posterior para suporte estável ao diretório `.claude/hooks/`
 - Docs oficiais em https://docs.anthropic.com/claude-code descrevendo o ciclo de vida dos hooks
 - Dica de ouro é capturar exit code `75` como retry-later mantendo o agente vivo graciosamente
+- Desde v1.0.60, `ingest --mode claude-code` usa o binário Claude Code para extração curada por LLM de entidades/relações durante ingestão em massa
+- O modo de ingestão spawna `claude -p` headless por arquivo — requer Claude Code >= 2.1.0 com assinatura Pro/Max ativa
 
 
 ## Codex CLI

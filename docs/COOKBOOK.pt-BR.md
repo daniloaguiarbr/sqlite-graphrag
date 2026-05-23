@@ -1602,3 +1602,48 @@ sqlite-graphrag reclassify --name rust-lang --description "The Rust programming 
 - Flag `--description` no `reclassify` atualiza a descrição da entidade no modo individual
 - Pode ser combinada com `--new-type` para alterar tipo e descrição em uma operação
 - Modo batch (`--batch`) ignora `--description`
+
+## Como Deletar Uma Entidade e Seus Relacionamentos (v1.0.56)
+### Problema
+- Uma entidade foi criada por engano ou está obsoleta
+- Removê-la manualmente exige deletar relacionamentos, bindings de memória e a linha da entidade
+### Solução
+```bash
+sqlite-graphrag delete-entity --name conceito-obsoleto --cascade --json
+```
+### Explicação
+- `--cascade` remove a entidade, todos seus relacionamentos e todos os bindings memory_entities em uma operação atômica
+- Sem `--cascade` o comando recusa deletar entidade que ainda possui relacionamentos (exit 1)
+- Execute `cleanup-orphans --dry-run --json` depois para auditar entidades recém-órfãs
+
+## Como Mesclar Entidades Duplicadas (v1.0.56)
+### Problema
+- O mesmo conceito existe com múltiplos nomes (ex.: `jwt-auth` e `jwt-authentication`)
+- Relacionamentos estão divididos entre duplicatas, enfraquecendo a travessia de grafo
+### Solução
+```bash
+sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jwt-auth --json
+```
+### Explicação
+- Todos os relacionamentos das entidades de origem são redirecionados para a entidade alvo
+- Relacionamentos duplicados após redirecionamento são removidos automaticamente (UPDATE OR IGNORE)
+- Entidades de origem são deletadas após a mesclagem
+- A entidade alvo deve existir previamente (exit 4 se não encontrada)
+- Use `memory-entities --entity jwt-auth --json` depois para verificar os bindings consolidados
+
+## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.60)
+### Problema
+- `ingest` padrão cria memórias com apenas body, zero entidades e zero relacionamentos
+- NER via GLiNER produz entidades ruidosas (ALL_CAPS genéricos, stop words) e relações `mentions` de baixa qualidade
+- `remember --graph-stdin` manual por arquivo é demorado para grandes volumes
+### Solução
+```bash
+sqlite-graphrag ingest ./docs --mode claude-code --recursive --json
+```
+### Explicação
+- `--mode claude-code` spawna `claude -p` headless para cada arquivo com `--json-schema` para saída estruturada garantida
+- Extrai entidades do domínio (conceitos, ferramentas, decisões) e relações tipadas com scores de força
+- Tipos de entidade e relação são restritos a enums canônicos — impossível gerar ruído
+- Requer Claude Code >= 2.1.0 instalado localmente com assinatura Pro/Max ativa
+- Retomar ingestão interrompida com `--resume`; retentar falhas com `--retry-failed`
+- Definir `--max-cost-usd 5.00` para limitar gastos; custo por arquivo no output NDJSON

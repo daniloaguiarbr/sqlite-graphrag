@@ -372,6 +372,7 @@ fn test_ingest_max_files_cap() {
 
 #[test]
 #[serial]
+#[cfg(unix)]
 fn test_ingest_fail_fast_aborts_on_first_error() {
     let tmp = TempDir::new().expect("TempDir");
     init_db(&tmp);
@@ -382,10 +383,17 @@ fn test_ingest_fail_fast_aborts_on_first_error() {
     write_md(&docs, "b.md", "b");
     write_md(&docs, "c.md", "c");
 
-    // An unwritable absolute path — `/proc` is read-only on Linux, so any DB
-    // file requested under it cannot be created. Each child `remember` will
-    // fail with an I/O error.
-    let bad_db = "/proc/sqlite-graphrag-must-not-create.sqlite";
+    // Make files UNREADABLE so each per-file read fails individually.
+    // The DB itself is valid (init_db created it); the errors happen when
+    // ingest tries to read file content, not when opening the DB.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in ["a.md", "b.md", "c.md"] {
+            std::fs::set_permissions(docs.join(name), std::fs::Permissions::from_mode(0o000))
+                .expect("set unreadable");
+        }
+    }
 
     // Without --fail-fast: every file fails but the run reaches the summary.
     let output = ingest_cmd(&tmp)
@@ -394,8 +402,6 @@ fn test_ingest_fail_fast_aborts_on_first_error() {
             docs.to_str().expect("utf-8"),
             "--type",
             "document",
-            "--db",
-            bad_db,
             "--skip-extraction",
         ])
         .output()
@@ -414,8 +420,6 @@ fn test_ingest_fail_fast_aborts_on_first_error() {
             docs.to_str().expect("utf-8"),
             "--type",
             "document",
-            "--db",
-            bad_db,
             "--fail-fast",
             "--skip-extraction",
         ])
@@ -427,7 +431,13 @@ fn test_ingest_fail_fast_aborts_on_first_error() {
         "fail-fast must surface a non-zero exit code"
     );
     let values = parse_all_lines(&ndjson_lines(&output.stdout));
-    let (events, summary) = split_events_and_summary(values);
+    // fail-fast emits: 1 file-event + 1 summary + 1 error envelope.
+    // Filter out the error envelope (has "error": true) before splitting.
+    let non_error: Vec<Value> = values
+        .into_iter()
+        .filter(|v| v.get("error") != Some(&Value::Bool(true)))
+        .collect();
+    let (events, summary) = split_events_and_summary(non_error);
     assert_eq!(events.len(), 1, "only the first file should be attempted");
     assert_eq!(summary["files_failed"], 1);
     assert_eq!(summary["files_succeeded"], 0);

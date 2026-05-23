@@ -212,6 +212,25 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NER extraction events go to stderr, NOT stdout
 - USE `--max-name-length N` to override the default 60-character truncation threshold for memory names
 - NUMERIC basenames (e.g. `123.md`) are automatically prefixed with `doc-` to produce valid kebab-case names (e.g. `doc-123`)
+### REQUIRED — Ingest Modes (v1.0.60)
+- `--mode none` (default): body-only ingestion without entity/relationship extraction
+- `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
+- `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
+- Claude Code mode spawns `claude -p` per file with `--json-schema` for guaranteed structured output
+- Requires Claude Code >= 2.1.0 installed on user's machine with active Pro/Max subscription
+- Extracts domain-specific entities and typed relationships constrained to canonical enums
+- `--resume` continues interrupted ingest from queue DB; `--retry-failed` retries only failed files
+- `--max-cost-usd <N>` stops when cumulative LLM cost exceeds the budget
+- `--claude-binary <PATH>` overrides PATH lookup; `--claude-model <MODEL>` selects model
+- Queue DB `.ingest-queue.sqlite` tracks per-file progress; `--keep-queue` retains after completion
+- Rate limit handling: automatic exponential backoff (60s → 120s → 300s → 900s)
+- NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields
+- Summary includes `entities_total`, `rels_total`, `cost_usd` totals
+### Correct Pattern — Claude Code Ingest Examples
+- `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --resume --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json`
+- `sqlite-graphrag ingest ./docs --mode claude-code --claude-model claude-sonnet-4-6 --json`
 
 
 ## CRUD — Read with read and list
@@ -332,8 +351,10 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - TREAT exit code 4 as any named entity not found
 ### REQUIRED — List Memory Entities (memory-entities)
 - USE `memory-entities --name <memory> --json` to list all entities linked to a specific memory
-- JSON response: `memory_name`, `entities: [{entity_id, name, entity_type}]`, `count`, `elapsed_ms`
-- TREAT exit code 4 as memory not found
+- USE `memory-entities --entity <entity-name> --json` to list all memories bound to an entity (reverse lookup, v1.0.58)
+- Forward JSON response: `memory_name`, `entities: [{entity_id, name, entity_type}]`, `count`, `elapsed_ms`
+- Reverse JSON response: `entity_name`, `memories: [{memory_id, name, description, memory_type}]`, `count`, `elapsed_ms`
+- TREAT exit code 4 as memory or entity not found; exit 0 with count 0 means it exists but has no bindings
 ### REQUIRED — Remove NER Bindings (prune-ner)
 - USE `prune-ner --entity <name> --json` to remove NER bindings for a specific entity
 - USE `prune-ner --all --yes --json` to remove ALL NER bindings in the namespace
@@ -635,7 +656,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `delete-entity` returns `action` ("deleted"), `entity_name`, `namespace`, `relationships_removed`, `bindings_removed`, `elapsed_ms`
 - `reclassify` returns `action` ("reclassified"), `count`, `description_updated?` (bool, present when `--description` applied), `namespace`, `elapsed_ms`
 - `merge-entities` returns `action` ("merged"), `sources[]`, `target`, `namespace`, `relationships_moved`, `entities_removed`, `elapsed_ms`
-- `memory-entities` returns `memory_name`, `entities[].{entity_id, name, entity_type}`, `count`, `elapsed_ms`
+- `memory-entities` forward returns `memory_name`, `entities[].{entity_id, name, entity_type}`, `count`, `elapsed_ms`
+- `memory-entities` reverse (`--entity`) returns `entity_name`, `memories[].{memory_id, name, description, memory_type}`, `count`, `elapsed_ms`
 - `prune-ner` returns `action` (`"pruned"`/`"dry_run"`/`"aborted"`), `bindings_removed`, `namespace`, `entity?`, `elapsed_ms`
 - `link` returns `action` ("linked"), `from`, `to`, `relation`, `weight`, `namespace`, `elapsed_ms`, `created_entities?` (array, when `--create-missing`), `warnings?` (array, when non-canonical relation)
 - `unlink` returns `action` ("deleted"), `from_name`, `to_name`, `relation`, `relationships_removed`, `namespace`, `elapsed_ms`

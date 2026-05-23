@@ -68,7 +68,7 @@ fn prd_name_double_underscore_rejected() {
         .args([
             "remember",
             "--name",
-            "---",
+            "___",
             "--type",
             "user",
             "--description",

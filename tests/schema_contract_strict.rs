@@ -1070,6 +1070,34 @@ fn schema_33_memory_entities() {
 }
 
 // ---------------------------------------------------------------------------
+// 33b — memory-entities reverse lookup (--entity)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_33b_memory_entities_reverse() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, _ent_b) = env.remember_with_entities("mem-ent-rev-schema");
+    let saida = env
+        .cmd()
+        .args(["memory-entities", "--entity", &ent_a])
+        .output()
+        .expect("memory-entities --entity failed");
+    assert!(
+        saida.status.success(),
+        "memory-entities --entity: exit {:?}",
+        saida.status.code()
+    );
+    let instancia = Env::parse_stdout(&saida, "memory-entities --entity");
+    validar_schema(
+        "memory-entities-reverse",
+        include_str!("../docs/schemas/memory-entities-reverse.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 34 — prune-ner
 // ---------------------------------------------------------------------------
 

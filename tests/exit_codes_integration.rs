@@ -49,7 +49,7 @@ fn test_exit_01_validation_invalid_name() {
         .args([
             "remember",
             "--name",
-            "x",
+            "___",
             "--type",
             "user",
             "--description",

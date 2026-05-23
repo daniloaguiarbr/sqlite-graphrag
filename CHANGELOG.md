@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.60] - 2026-05-23
+
+### Added
+- `ingest --mode claude-code` for LLM-curated entity/relationship extraction via locally installed Claude Code CLI (`claude -p` headless with `--json-schema`)
+- New ingest flags: `--mode`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--keep-queue`, `--queue-db`, `--rate-limit-wait`, `--max-cost-usd`
+- `IngestMode` enum: `none` (default body-only), `gliner` (NER), `claude-code` (LLM-curated)
+- Queue DB (`.ingest-queue.sqlite`) for resumable claude-code ingestion with per-file tracking
+- `memory-entities-reverse.schema.json` for `--entity` reverse lookup response validation
+- `contract_33b_memory_entities_reverse` and `schema_33b_memory_entities_reverse` tests
+- `delete-entity` and `merge-entities` recipes in COOKBOOK.md (EN/PT)
+- `cleanup-orphans` and `prune-relations` entries in INTEGRATIONS.md (EN/PT)
+- Ingest modes documentation in llms.txt, llms-full.txt, llms.pt-BR.txt, AGENTS.md, SKILL.md (EN/PT)
+
+### Fixed
+- D1: `test_exit_01_validation_invalid_name` — changed `"x"` to `"___"` (1-char names are valid memory names)
+- D2-D3: i18n bilingual tests — changed `"---"` to `"___"` (`"---"` is a Clap flag separator, not a value)
+- D4: `test_ingest_fail_fast_aborts_on_first_error` — use unreadable files (chmod 000) instead of `/proc` path; filter error envelope in NDJSON; `#[cfg(unix)]`
+- D5: `prd_name_double_underscore_rejected` — changed `"---"` to `"___"`
+- D6: `init_creates_11_migrations_v001_to_v011` — fixed vec literal from `[1..9]` to `[1..11]` matching actual 11 migrations
+- D7: `readme_en_bash_examples_all_run` — added `#[cfg_attr(windows, ignore)]` for bash-only tests
+
 ## [1.0.59] - 2026-05-22
 
 ### Fixed

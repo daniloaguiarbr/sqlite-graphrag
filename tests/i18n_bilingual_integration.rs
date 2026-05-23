@@ -183,7 +183,7 @@ fn lang_pt_remember_invalid_name_stderr_portuguese() {
         .args([
             "remember",
             "--name",
-            "---",
+            "___",
             "--type",
             "user",
             "--description",
@@ -207,7 +207,7 @@ fn lang_en_mesmo_cenario_stderr_ingles() {
         .args([
             "remember",
             "--name",
-            "---",
+            "___",
             "--type",
             "user",
             "--description",
