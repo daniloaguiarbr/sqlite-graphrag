@@ -196,3 +196,10 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - Augment Code assistente foca em ambientes de engenharia macOS e Linux predominantemente
 - JetBrains AI Assistant roda sqlite-graphrag ao lado do IntelliJ IDEA nos três desktops suportados
 - OpenRouter camada proxy executa o binário Linux em clusters Kubernetes e hosts Docker
+
+
+### Codex CLI (v1.0.62)
+- Codex CLI (`codex exec`) está disponível em macOS, Linux e Windows
+- Descoberta do binário segue: flag `--codex-binary`, variável de ambiente `SQLITE_GRAPHRAG_CODEX_BINARY`, depois busca no PATH
+- No Windows, busca `codex.exe` no PATH com resolução de extensões via `PATHEXT`
+- Subprocesso usa `env_clear()` com whitelist de variáveis específica por plataforma incluindo vars do Windows via `#[cfg(windows)]`

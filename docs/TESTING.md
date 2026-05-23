@@ -54,6 +54,11 @@
 - 9 unit tests protect extraction parsing invariants without requiring the Claude Code binary
 - Integration tests require Claude Code >= 2.1.0 installed locally — run manually, not in CI
 - Test names follow `test_parse_claude_output_*` and `test_extraction_schema_*` conventions
+### Codex Ingest Tests (v1.0.62)
+- 7 unit tests protect Codex JSONL parser in `src/commands/ingest_codex.rs`
+- Tests cover: valid extraction, turn.failed errors, rate limit detection, schema validation, binary discovery
+- Parser validates "last agent_message wins" pattern for multiple item.completed events
+- Integration tests require Codex CLI installed; skip gracefully if unavailable
 
 
 ## How to Run

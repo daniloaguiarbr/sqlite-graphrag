@@ -1,14 +1,15 @@
-//! Handler for `ingest --mode claude-code`.
+//! Handler for `ingest --mode codex`.
 //!
-//! Orchestrates the locally installed Claude Code CLI binary (`claude -p`)
+//! Orchestrates the locally installed OpenAI Codex CLI binary (`codex exec`)
 //! to extract domain-specific entities and relationships from each file,
-//! then persists them via the same pipeline as `remember --graph-stdin`.
+//! then persists them with full embedding pipeline for recall/hybrid-search.
 //!
 //! Architecture: P1 One-Shot per file — each file spawns a separate
-//! `claude -p` process with `--json-schema` for guaranteed structured output.
+//! `codex exec` process with `--output-schema` for guaranteed structured output.
 //! A SQLite queue DB tracks progress for resume/retry support.
 
 use crate::commands::ingest::IngestArgs;
+use crate::commands::ingest_claude::ExtractionResult;
 use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::paths::AppPaths;
@@ -23,9 +24,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-const MIN_CLAUDE_VERSION: &str = "2.1.0";
+const MIN_CODEX_VERSION: &str = "0.120.0";
 
-const EXTRACTION_SCHEMA: &str = r#"{
+/// OpenAI structured output schema with `additionalProperties: false` at all nested levels.
+const EXTRACTION_SCHEMA_CODEX: &str = r#"{
   "type": "object",
   "properties": {
     "name": { "type": "string" },
@@ -81,46 +83,22 @@ Rules:\n\
 - Prefer fewer high-quality entities over many low-quality ones\n\
 - Description must answer: What is this about and WHY does it matter?";
 
-#[derive(Debug, Deserialize)]
-struct ClaudeOutputElement {
-    r#type: Option<String>,
-    #[allow(dead_code)]
-    subtype: Option<String>,
+/// Token usage reported by Codex CLI on `turn.completed` events.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CodexUsage {
+    input_tokens: u64,
     #[serde(default)]
-    is_error: bool,
-    structured_output: Option<ExtractionResult>,
-    result: Option<String>,
-    total_cost_usd: Option<f64>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ExtractionResult {
-    pub name: String,
-    pub description: String,
-    pub entities: Vec<ExtractedEntity>,
-    pub relationships: Vec<ExtractedRelationship>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ExtractedEntity {
-    pub name: String,
-    pub entity_type: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ExtractedRelationship {
-    pub source: String,
-    pub target: String,
-    pub relation: String,
-    pub strength: f64,
+    cached_input_tokens: u64,
+    output_tokens: u64,
+    #[serde(default)]
+    reasoning_output_tokens: u64,
 }
 
 #[derive(Debug, Serialize)]
 struct PhaseEvent<'a> {
     phase: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    claude_path: Option<&'a str>,
+    codex_path: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,8 +122,13 @@ struct FileEvent<'a> {
     entities: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rels: Option<usize>,
+    /// Always None for Codex (no cost_usd in Codex API responses).
     #[serde(skip_serializing_if = "Option::is_none")]
     cost_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     elapsed_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,34 +146,36 @@ struct Summary {
     skipped: usize,
     entities_total: usize,
     rels_total: usize,
-    cost_usd: f64,
+    input_tokens_total: u64,
+    output_tokens_total: u64,
     elapsed_ms: u64,
 }
 
-/// Locates the Claude Code binary on the system.
-pub fn find_claude_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> {
+/// Locates the Codex CLI binary on the system.
+///
+/// Search order:
+/// 1. Explicit `--codex-binary` CLI flag.
+/// 2. `SQLITE_GRAPHRAG_CODEX_BINARY` env var.
+/// 3. PATH search for `codex` (or `codex.exe` on Windows).
+pub fn find_codex_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> {
     if let Some(p) = explicit {
         if p.exists() {
             return Ok(p.to_path_buf());
         }
         return Err(AppError::Validation(format!(
-            "Claude Code binary not found at explicit path: {}",
+            "Codex CLI binary not found at explicit path: {}",
             p.display()
         )));
     }
 
-    if let Ok(env_path) = std::env::var("SQLITE_GRAPHRAG_CLAUDE_BINARY") {
+    if let Ok(env_path) = std::env::var("SQLITE_GRAPHRAG_CODEX_BINARY") {
         let p = PathBuf::from(&env_path);
         if p.exists() {
             return Ok(p);
         }
     }
 
-    let name = if cfg!(windows) {
-        "claude.exe"
-    } else {
-        "claude"
-    };
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
             let candidate = dir.join(name);
@@ -201,12 +186,17 @@ pub fn find_claude_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> 
     }
 
     Err(AppError::Validation(
-        "Claude Code binary not found in PATH. Install it from https://docs.anthropic.com/claude-code or specify --claude-binary".to_string(),
+        "Codex CLI binary not found in PATH. Install it from https://github.com/openai/codex or specify --codex-binary".to_string(),
     ))
 }
 
-/// Validates that the Claude Code binary meets the minimum version.
-fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
+/// Validates that the Codex CLI binary meets the minimum version requirement.
+///
+/// # Errors
+///
+/// Returns `AppError::Validation` when the binary cannot be executed or the
+/// version is below `MIN_CODEX_VERSION`.
+fn validate_codex_version(binary: &Path) -> Result<String, AppError> {
     let output = Command::new(binary)
         .arg("--version")
         .stdin(Stdio::null())
@@ -215,18 +205,13 @@ fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
         .output()
         .map_err(AppError::Io)?;
 
-    if !output.status.success() {
-        return Err(AppError::Validation(
-            "failed to run 'claude --version'".to_string(),
-        ));
-    }
+    let raw = String::from_utf8(output.stdout)
+        .map_err(|_| AppError::Validation("codex --version output is not UTF-8".to_string()))?;
 
-    let version_str = String::from_utf8(output.stdout)
-        .map_err(|_| AppError::Validation("claude --version output is not UTF-8".to_string()))?;
-    let version = version_str.trim().to_string();
+    let version_str = raw.trim().to_string();
 
-    // Extract the numeric version part before first space or paren, e.g. "2.1.149 (Claude Code)" -> "2.1.149"
-    let numeric = version.split([' ', '(']).next().unwrap_or("").trim();
+    // Codex CLI outputs: "codex-cli 0.133.0" or just "0.133.0"
+    let numeric = version_str.split_whitespace().last().unwrap_or("").trim();
 
     fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
         let parts: Vec<&str> = s.splitn(3, '.').collect();
@@ -242,29 +227,46 @@ fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
         Some((major, minor, patch))
     }
 
-    if let (Some(actual), Some(min)) = (parse_semver(numeric), parse_semver(MIN_CLAUDE_VERSION)) {
+    if let (Some(actual), Some(min)) = (parse_semver(numeric), parse_semver(MIN_CODEX_VERSION)) {
         if actual < min {
             return Err(AppError::Validation(format!(
-                "Claude Code version {numeric} is below minimum required {MIN_CLAUDE_VERSION}"
+                "Codex CLI version {numeric} is below minimum required {MIN_CODEX_VERSION}"
             )));
         }
     }
 
-    Ok(version)
+    Ok(version_str)
 }
 
-/// Invokes `claude -p` for a single file and returns the extraction result.
+/// Writes the extraction schema to a named temp file for `--output-schema`.
+///
+/// # Errors
+///
+/// Returns `AppError::Io` when the temp file cannot be created or written.
+fn write_schema_tempfile() -> Result<tempfile::NamedTempFile, AppError> {
+    let mut f = tempfile::NamedTempFile::new().map_err(AppError::Io)?;
+    std::io::Write::write_all(&mut f, EXTRACTION_SCHEMA_CODEX.as_bytes()).map_err(AppError::Io)?;
+    std::io::Write::flush(&mut f).map_err(AppError::Io)?;
+    Ok(f)
+}
+
+/// Invokes `codex exec` for a single file and returns the extraction result.
 ///
 /// Uses `wait-timeout` for cross-platform subprocess timeout, `env_clear()`
-/// for least-privilege environment, and `--bare` when `ANTHROPIC_API_KEY`
-/// is available (faster startup) vs `--dangerously-skip-permissions` for
-/// OAuth users.
-fn extract_with_claude(
+/// for least-privilege environment, and reads prompt + file content from
+/// stdin using the `-` argument (Codex Paperclip pattern).
+///
+/// # Errors
+///
+/// Returns `AppError::Validation` on extraction failure, rate limiting, or
+/// schema errors. Returns `AppError::Io` on process spawn/IO failures.
+fn extract_with_codex(
     binary: &Path,
     file_content: &[u8],
     model: Option<&str>,
     timeout_secs: u64,
-) -> Result<(ExtractionResult, f64), AppError> {
+    schema_file: &Path,
+) -> Result<(ExtractionResult, Option<CodexUsage>), AppError> {
     use wait_timeout::ChildExt;
 
     let mut cmd = Command::new(binary);
@@ -280,8 +282,10 @@ fn extract_with_claude(
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
         "XDG_RUNTIME_DIR",
-        "ANTHROPIC_API_KEY",
-        "CLAUDE_CONFIG_DIR",
+        "XDG_CACHE_HOME",
+        "OPENAI_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "CODEX_HOME",
         "TMPDIR",
         "TMP",
         "TEMP",
@@ -300,33 +304,29 @@ fn extract_with_claude(
         "SystemRoot",
         "COMSPEC",
         "PATHEXT",
-        "HOMEPATH",
-        "HOMEDRIVE",
     ] {
         if let Ok(val) = std::env::var(var) {
             cmd.env(var, val);
         }
     }
 
-    cmd.arg("-p")
-        .arg(EXTRACTION_PROMPT)
-        .arg("--output-format")
-        .arg("json")
-        .arg("--json-schema")
-        .arg(EXTRACTION_SCHEMA)
-        .arg("--max-turns")
-        .arg("3")
-        .arg("--no-session-persistence");
-
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        cmd.arg("--bare");
-    } else {
-        cmd.arg("--dangerously-skip-permissions");
-    }
+    cmd.arg("exec")
+        .arg("--json")
+        .arg("--output-schema")
+        .arg(schema_file)
+        .arg("--ephemeral")
+        .arg("--skip-git-repo-check")
+        .arg("--sandbox")
+        .arg("read-only")
+        .arg("--ignore-user-config")
+        .arg("--ignore-rules");
 
     if let Some(m) = model {
-        cmd.arg("--model").arg(m);
+        cmd.arg("-m").arg(m);
     }
+
+    // `-` means: read the prompt from stdin (Paperclip pattern)
+    cmd.arg("-");
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -335,17 +335,21 @@ fn extract_with_claude(
     let mut child = cmd.spawn().map_err(|e| {
         AppError::Io(std::io::Error::new(
             e.kind(),
-            format!("failed to spawn claude: {e}"),
+            format!("failed to spawn codex: {e}"),
         ))
     })?;
 
-    let stdin_data = file_content.to_vec();
+    // Build stdin: prompt + document content
+    let file_utf8 = String::from_utf8_lossy(file_content);
+    let stdin_payload = format!("{EXTRACTION_PROMPT}\n\n---\n\nDocument content:\n\n{file_utf8}");
+    let stdin_bytes = stdin_payload.into_bytes();
+
     let mut child_stdin = child
         .stdin
         .take()
-        .ok_or_else(|| AppError::Validation("failed to open claude stdin".into()))?;
+        .ok_or_else(|| AppError::Validation("failed to open codex stdin".into()))?;
     let stdin_thread = std::thread::spawn(move || -> Result<(), std::io::Error> {
-        child_stdin.write_all(&stdin_data)?;
+        child_stdin.write_all(&stdin_bytes)?;
         Ok(())
     });
 
@@ -369,97 +373,153 @@ fn extract_with_claude(
             }
 
             if !exit_status.success() {
-                let stdout_str = String::from_utf8_lossy(&stdout_buf);
-                if let Ok(elements) = serde_json::from_str::<Vec<ClaudeOutputElement>>(&stdout_str)
-                {
-                    if let Some(re) = elements
-                        .iter()
-                        .find(|e| e.r#type.as_deref() == Some("result"))
-                    {
-                        if re.is_error {
-                            let err_msg = re
-                                .error
-                                .as_deref()
-                                .or(re.result.as_deref())
-                                .unwrap_or("unknown error");
-                            if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-                                return Err(AppError::Validation(format!(
-                                    "RATE_LIMITED: {err_msg}"
-                                )));
-                            }
-                            return Err(AppError::Validation(format!(
-                                "claude -p failed: {err_msg}"
-                            )));
-                        }
-                    }
-                }
                 let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                let stdout_str = String::from_utf8_lossy(&stdout_buf);
+                // Check if stdout has JSONL with an error event before falling back
+                if let Ok((result, usage)) = parse_codex_output(&stdout_str) {
+                    return Ok((result, usage));
+                }
                 return Err(AppError::Validation(format!(
-                    "claude -p exited with code {:?}: {}",
+                    "codex exec exited with code {:?}: {}",
                     exit_status.code(),
                     stderr_str.trim()
                 )));
             }
 
             let stdout = String::from_utf8(stdout_buf)
-                .map_err(|_| AppError::Validation("claude -p stdout is not valid UTF-8".into()))?;
-            parse_claude_output(&stdout)
+                .map_err(|_| AppError::Validation("codex exec stdout is not valid UTF-8".into()))?;
+            parse_codex_output(&stdout)
         }
         None => {
-            tracing::warn!(target: "ingest", timeout_secs, "claude -p timed out, killing process");
+            tracing::warn!(target: "ingest", timeout_secs, "codex exec timed out, killing process");
             let _ = child.kill();
             let _ = child.wait();
             let _ = stdin_thread.join();
             Err(AppError::Validation(format!(
-                "claude -p timed out after {timeout_secs} seconds"
+                "codex exec timed out after {timeout_secs} seconds"
             )))
         }
     }
 }
 
-/// Parses the JSON array output from `claude -p --output-format json`.
-fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64), AppError> {
-    let elements: Vec<ClaudeOutputElement> = serde_json::from_str(stdout).map_err(|e| {
-        AppError::Validation(format!("failed to parse claude output as JSON array: {e}"))
-    })?;
+/// Parses JSONL output from `codex exec --json`.
+///
+/// Event format (DOTS notation):
+/// - `thread.started` — session init
+/// - `turn.started` — model turn begins
+/// - `item.completed` — message or tool call; last `agent_message` wins
+/// - `turn.completed` — includes usage stats
+/// - `turn.failed` — error with optional rate-limit indicator
+/// - `error` — schema or validation error
+///
+/// # Errors
+///
+/// Returns `AppError::Validation` when no agent_message is found, when the
+/// turn failed, or when the extracted JSON cannot be parsed as `ExtractionResult`.
+fn parse_codex_output(stdout: &str) -> Result<(ExtractionResult, Option<CodexUsage>), AppError> {
+    let mut last_agent_text: Option<String> = None;
+    let mut usage: Option<CodexUsage> = None;
+    let mut rate_limited = false;
+    let mut schema_error = false;
+    let mut turn_failed = false;
+    let mut failed_message = String::new();
 
-    let result_elem = elements
-        .iter()
-        .find(|e| e.r#type.as_deref() == Some("result"))
-        .ok_or_else(|| {
-            AppError::Validation("claude output missing 'result' element".to_string())
-        })?;
-
-    if result_elem.is_error {
-        let err_msg = result_elem
-            .error
-            .as_deref()
-            .or(result_elem.result.as_deref())
-            .unwrap_or("unknown error");
-        if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-            return Err(AppError::Validation(format!("RATE_LIMITED: {err_msg}")));
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
         }
+
+        let event: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(target: "ingest", line, "codex output: skipping malformed JSONL line");
+                continue;
+            }
+        };
+
+        let event_type = match event.get("type").and_then(|t| t.as_str()) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        match event_type {
+            "item.completed" => {
+                // Last agent_message wins (reasoning / tool calls may appear before)
+                if let Some(item) = event.get("item") {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("agent_message") {
+                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                            last_agent_text = Some(text.to_string());
+                        }
+                    }
+                }
+            }
+            "turn.completed" => {
+                if let Some(u) = event.get("usage") {
+                    if let Ok(parsed) = serde_json::from_value::<CodexUsage>(u.clone()) {
+                        usage = Some(parsed);
+                    }
+                }
+            }
+            "turn.failed" => {
+                turn_failed = true;
+                if let Some(err) = event.get("error") {
+                    let msg = err
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("unknown error");
+                    failed_message = msg.to_string();
+                    if msg.contains("rate_limit")
+                        || msg.contains("429")
+                        || msg.contains("Too Many Requests")
+                    {
+                        rate_limited = true;
+                    }
+                }
+            }
+            "error" => {
+                if let Some(msg) = event.get("message").and_then(|m| m.as_str()) {
+                    if msg.contains("invalid_json_schema") || msg.contains("schema") {
+                        schema_error = true;
+                    }
+                    tracing::warn!(target: "ingest", error_msg = msg, "codex error event received");
+                }
+            }
+            _ => {
+                // Gracefully skip unknown event types (thread.started, turn.started, etc.)
+            }
+        }
+    }
+
+    if rate_limited {
         return Err(AppError::Validation(format!(
-            "claude extraction failed: {err_msg}"
+            "RATE_LIMITED: {failed_message}"
         )));
     }
 
-    let extraction = result_elem
-        .structured_output
-        .clone()
-        .or_else(|| {
-            result_elem
-                .result
-                .as_ref()
-                .and_then(|text| serde_json::from_str::<ExtractionResult>(text).ok())
-        })
-        .ok_or_else(|| {
-            AppError::Validation("claude result missing structured_output and result field".into())
-        })?;
+    if schema_error {
+        return Err(AppError::Validation(
+            "codex rejected the output schema (invalid_json_schema)".to_string(),
+        ));
+    }
 
-    let cost = result_elem.total_cost_usd.unwrap_or(0.0);
+    if turn_failed {
+        return Err(AppError::Validation(format!(
+            "codex turn failed: {failed_message}"
+        )));
+    }
 
-    Ok((extraction, cost))
+    let text = last_agent_text.ok_or_else(|| {
+        AppError::Validation("codex output contained no agent_message item".to_string())
+    })?;
+
+    let extraction: ExtractionResult = serde_json::from_str(&text).map_err(|e| {
+        AppError::Validation(format!(
+            "failed to parse codex agent_message as ExtractionResult: {e}. text={text}"
+        ))
+    })?;
+
+    Ok((extraction, usage))
 }
 
 fn emit_json<T: Serialize>(value: &T) {
@@ -497,10 +557,9 @@ fn collect_matching_files(
 fn open_queue_db(path: &str) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;
 
-    conn.pragma_update(None, "journal_mode", "wal")?;
-
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS queue (
+        "PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS queue (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path   TEXT NOT NULL UNIQUE,
             name        TEXT,
@@ -509,7 +568,8 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
             entities    INTEGER DEFAULT 0,
             rels        INTEGER DEFAULT 0,
             error       TEXT,
-            cost_usd    REAL DEFAULT 0.0,
+            input_tokens  INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
             attempt     INTEGER DEFAULT 0,
             elapsed_ms  INTEGER,
             created_at  TEXT DEFAULT (datetime('now')),
@@ -521,8 +581,12 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
-/// Main entry point for `ingest --mode claude-code`.
-pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
+/// Main entry point for `ingest --mode codex`.
+///
+/// # Errors
+///
+/// Returns `AppError` on directory/DB access failures or fatal extraction errors.
+pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let started = Instant::now();
 
     if !args.dir.exists() {
@@ -532,19 +596,19 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         )));
     }
 
-    // Stage 1: Validate
-    let claude_binary = find_claude_binary(args.claude_binary.as_deref())?;
-    let version = validate_claude_version(&claude_binary)?;
+    // Stage 1: Validate binary
+    let codex_binary = find_codex_binary(args.codex_binary.as_deref())?;
+    let version = validate_codex_version(&codex_binary)?;
     tracing::info!(
         target: "ingest",
-        binary = %claude_binary.display(),
+        binary = %codex_binary.display(),
         version = %version,
-        "Claude Code binary validated"
+        "Codex CLI binary validated"
     );
 
     emit_json(&PhaseEvent {
         phase: "validate",
-        claude_path: claude_binary.to_str(),
+        codex_path: codex_binary.to_str(),
         version: Some(&version),
         dir: None,
         files_total: None,
@@ -552,7 +616,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         files_existing: None,
     });
 
-    // Stage 2: Scan
+    // Stage 2: Scan files
     let files = collect_matching_files(&args.dir, &args.pattern, args.recursive, args.max_files)?;
 
     let queue_conn = open_queue_db(&args.queue_db)?;
@@ -607,7 +671,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
     emit_json(&PhaseEvent {
         phase: "scan",
-        claude_path: None,
+        codex_path: None,
         version: None,
         dir: args.dir.to_str(),
         files_total: Some(files.len()),
@@ -627,6 +691,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 entities: None,
                 rels: None,
                 cost_usd: None,
+                input_tokens: None,
+                output_tokens: None,
                 elapsed_ms: None,
                 error: None,
                 index: idx,
@@ -641,7 +707,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             skipped: 0,
             entities_total: 0,
             rels_total: 0,
-            cost_usd: 0.0,
+            input_tokens_total: 0,
+            output_tokens_total: 0,
             elapsed_ms: started.elapsed().as_millis() as u64,
         });
         if !args.keep_queue {
@@ -650,13 +717,16 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // Stage 3: Process
+    // Stage 3: Process files
     let paths = AppPaths::resolve(args.db.as_deref())?;
     ensure_db_ready(&paths)?;
     let conn = open_rw(&paths.db)?;
-    let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let memory_type_str = args.r#type.as_str().to_string();
+
+    // Write schema to temp file once (reused across all files)
+    let schema_tempfile = write_schema_tempfile()?;
+    let schema_path = schema_tempfile.path().to_path_buf();
 
     let mut completed = 0usize;
     let mut failed = 0usize;
@@ -668,7 +738,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let skipped = skipped_initial;
     let mut entities_total = 0usize;
     let mut rels_total = 0usize;
-    let mut cost_total = 0.0f64;
+    let mut input_tokens_total = 0u64;
+    let mut output_tokens_total = 0u64;
     let total = files.len();
 
     let mut backoff_secs = args.rate_limit_wait;
@@ -691,7 +762,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
         let file_started = Instant::now();
 
-        // G05: reject files that exceed the 10 MB stdin limit
+        // Reject files that exceed the 10 MB stdin limit
         const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
         if let Ok(meta) = std::fs::metadata(&file_path) {
             if meta.len() > MAX_FILE_SIZE {
@@ -710,6 +781,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     entities: None,
                     rels: None,
                     cost_usd: None,
+                    input_tokens: None,
+                    output_tokens: None,
                     elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                     error: Some(&err_msg),
                     index: current_index,
@@ -740,6 +813,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     entities: None,
                     rels: None,
                     cost_usd: None,
+                    input_tokens: None,
+                    output_tokens: None,
                     elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                     error: Some(&err_msg),
                     index: current_index,
@@ -752,17 +827,18 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
         };
 
-        // B07: retry once on cold-start failure (Claude Code Issue #23265)
+        // Retry once on cold-start failure
         let max_extract_attempts: u32 = 2;
-        let mut extraction_result: Option<(ExtractionResult, f64)> = None;
+        let mut extraction_result: Option<(ExtractionResult, Option<CodexUsage>)> = None;
         let mut last_extract_err: Option<String> = None;
 
         for attempt in 1..=max_extract_attempts {
-            match extract_with_claude(
-                &claude_binary,
+            match extract_with_codex(
+                &codex_binary,
                 &file_content,
-                args.claude_model.as_deref(),
-                args.claude_timeout,
+                args.codex_model.as_deref(),
+                args.codex_timeout,
+                &schema_path,
             ) {
                 Ok(result) => {
                     extraction_result = Some(result);
@@ -775,7 +851,12 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 Err(e) => {
                     let msg = format!("{e}");
                     if attempt < max_extract_attempts {
-                        tracing::warn!(target: "ingest", attempt, error = %msg, "extraction failed, retrying (cold-start workaround)");
+                        tracing::warn!(
+                            target: "ingest",
+                            attempt,
+                            error = %msg,
+                            "codex extraction failed, retrying"
+                        );
                         std::thread::sleep(std::time::Duration::from_secs(2));
                     }
                     last_extract_err = Some(msg);
@@ -783,14 +864,13 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
         }
 
-        if let Some((extraction, cost)) = extraction_result {
+        if let Some((extraction, usage)) = extraction_result {
             backoff_secs = args.rate_limit_wait;
 
-            let (normalized_name, _truncated, _orig) = crate::commands::ingest::derive_kebab_name(
-                std::path::Path::new(&extraction.name),
-                args.max_name_length,
-            );
-            let name = &normalized_name;
+            let in_tok = usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
+            let out_tok = usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+
+            let name = &extraction.name;
             let ent_count = extraction.entities.len();
             let rel_count = extraction.relationships.len();
 
@@ -841,7 +921,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 metadata: serde_json::Value::Object(serde_json::Map::new()),
             };
 
-            // B06: deduplication — update existing memory instead of failing on UNIQUE
+            // Deduplication: update existing memory instead of failing on UNIQUE
             let memory_id = match memories::find_by_name_any_state(&conn, &namespace, name)? {
                 Some((existing_id, is_deleted)) => {
                     if is_deleted {
@@ -871,9 +951,9 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     Err(e) => {
                         let err_msg = format!("{e}");
                         let _ = queue_conn.execute(
-                                "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
-                                rusqlite::params![err_msg, queue_id],
-                            );
+                            "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
+                            rusqlite::params![err_msg, queue_id],
+                        );
                         let current_index = completed + failed + skipped;
                         failed += 1;
                         emit_json(&FileEvent {
@@ -883,13 +963,16 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             memory_id: None,
                             entities: None,
                             rels: None,
-                            cost_usd: Some(cost),
+                            cost_usd: None,
+                            input_tokens: Some(in_tok),
+                            output_tokens: Some(out_tok),
                             elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                             error: Some(&err_msg),
                             index: current_index,
                             total,
                         });
-                        cost_total += cost;
+                        input_tokens_total += in_tok;
+                        output_tokens_total += out_tok;
                         if args.fail_fast {
                             break;
                         }
@@ -899,18 +982,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             };
 
             for ent in &new_entities {
-                match entities::upsert_entity(&conn, &namespace, ent) {
-                    Ok(eid) => {
-                        let _ = entities::link_memory_entity(&conn, memory_id, eid);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "ingest",
-                            entity = %ent.name,
-                            error = %e,
-                            "entity skipped due to validation error"
-                        );
-                    }
+                if let Ok(eid) = entities::upsert_entity(&conn, &namespace, ent) {
+                    let _ = entities::link_memory_entity(&conn, memory_id, eid);
                 }
             }
             for rel in &new_relationships {
@@ -925,143 +998,16 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 }
             }
 
-            // G01: embedding pipeline — enables recall to find memories created via --mode claude-code
-            let body_text = String::from_utf8_lossy(&file_content).into_owned();
-            let snippet: String = body_text.chars().take(200).collect();
-            let chunks_info =
-                crate::chunking::split_into_chunks_hierarchical(&body_text, tokenizer);
-
-            let embedding_result = if chunks_info.len() <= 1 {
-                crate::daemon::embed_passage_or_local(&paths.models, &body_text)
-            } else {
-                let mut chunk_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_info.len());
-                let mut multi_ok = true;
-                for chunk in &chunks_info {
-                    let chunk_text = crate::chunking::chunk_text(&body_text, chunk);
-                    match crate::daemon::embed_passage_or_local(&paths.models, chunk_text) {
-                        Ok(emb) => chunk_embeddings.push(emb),
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "ingest",
-                                file = %file_path,
-                                error = %e,
-                                "chunk embedding failed, skipping vector index for this file"
-                            );
-                            multi_ok = false;
-                            break;
-                        }
-                    }
-                }
-                if multi_ok {
-                    let aggregated = crate::chunking::aggregate_embeddings(&chunk_embeddings);
-                    // persist per-chunk vectors
-                    if let Err(e) = crate::storage::chunks::insert_chunk_slices(
-                        &conn,
-                        memory_id,
-                        &body_text,
-                        &chunks_info,
-                    ) {
-                        tracing::warn!(
-                            target: "ingest",
-                            file = %file_path,
-                            error = %e,
-                            "chunk slice insert failed"
-                        );
-                    } else {
-                        for (i, emb) in chunk_embeddings.iter().enumerate() {
-                            if let Err(e) = crate::storage::chunks::upsert_chunk_vec(
-                                &conn, i as i64, memory_id, i as i32, emb,
-                            ) {
-                                tracing::warn!(
-                                    target: "ingest",
-                                    file = %file_path,
-                                    chunk = i,
-                                    error = %e,
-                                    "chunk vec upsert failed"
-                                );
-                            }
-                        }
-                    }
-                    Ok(aggregated)
-                } else {
-                    // fallback: embed whole body for the memory-level vector
-                    crate::daemon::embed_passage_or_local(&paths.models, &body_text)
-                }
-            };
-
-            match embedding_result {
-                Ok(embedding) => {
-                    if let Err(e) = memories::upsert_vec(
-                        &conn,
-                        memory_id,
-                        &namespace,
-                        &memory_type_str,
-                        &embedding,
-                        name,
-                        &snippet,
-                    ) {
-                        tracing::warn!(
-                            target: "ingest",
-                            file = %file_path,
-                            error = %e,
-                            "memory vec upsert failed; recall may not find this memory"
-                        );
-                    }
-                    // embed each entity that was successfully upserted
-                    for ent in &new_entities {
-                        if let Ok(Some(eid)) =
-                            entities::find_entity_id(&conn, &namespace, &ent.name)
-                        {
-                            let entity_text = ent.name.clone();
-                            match crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
-                            {
-                                Ok(emb) => {
-                                    if let Err(e) = entities::upsert_entity_vec(
-                                        &conn,
-                                        eid,
-                                        &namespace,
-                                        ent.entity_type,
-                                        &emb,
-                                        &ent.name,
-                                    ) {
-                                        tracing::warn!(
-                                            target: "ingest",
-                                            entity = %ent.name,
-                                            error = %e,
-                                            "entity vec upsert failed"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        target: "ingest",
-                                        entity = %ent.name,
-                                        error = %e,
-                                        "entity embedding failed"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "ingest",
-                        file = %file_path,
-                        error = %e,
-                        "memory embedding failed; recall will not find this memory"
-                    );
-                }
-            }
-
             let _ = queue_conn.execute(
-                "UPDATE queue SET status='done', name=?1, memory_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
+                "UPDATE queue SET status='done', name=?1, memory_id=?2, entities=?3, rels=?4, \
+                 input_tokens=?5, output_tokens=?6, elapsed_ms=?7, done_at=datetime('now') WHERE id=?8",
                 rusqlite::params![
                     name,
                     memory_id,
                     ent_count,
                     rel_count,
-                    cost,
+                    in_tok,
+                    out_tok,
                     file_started.elapsed().as_millis() as i64,
                     queue_id
                 ],
@@ -1071,7 +1017,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             completed += 1;
             entities_total += ent_count;
             rels_total += rel_count;
-            cost_total += cost;
+            input_tokens_total += in_tok;
+            output_tokens_total += out_tok;
 
             emit_json(&FileEvent {
                 file: &file_path,
@@ -1080,7 +1027,9 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 memory_id: Some(memory_id),
                 entities: Some(ent_count),
                 rels: Some(rel_count),
-                cost_usd: Some(cost),
+                cost_usd: None,
+                input_tokens: Some(in_tok),
+                output_tokens: Some(out_tok),
                 elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                 error: None,
                 index: current_index,
@@ -1091,7 +1040,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 tracing::warn!(
                     target: "ingest",
                     wait_seconds = backoff_secs,
-                    "rate limited, waiting before retry"
+                    "rate limited by Codex API, waiting before retry"
                 );
                 let _ = queue_conn.execute(
                     "UPDATE queue SET status='pending' WHERE id=?1",
@@ -1115,6 +1064,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     entities: None,
                     rels: None,
                     cost_usd: None,
+                    input_tokens: None,
+                    output_tokens: None,
                     elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                     error: Some(err_str),
                     index: current_index,
@@ -1125,24 +1076,12 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 }
             }
         }
-
-        if let Some(budget) = args.max_cost_usd {
-            if cost_total >= budget {
-                tracing::warn!(
-                    target: "ingest",
-                    spent = cost_total,
-                    budget = budget,
-                    "budget exceeded, stopping"
-                );
-                break;
-            }
-        }
     }
 
-    // Stage 4: Summary
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-    let _ = queue_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    // WAL checkpoint before summary
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
+    // Stage 4: Summary
     emit_json(&Summary {
         summary: true,
         files_total: total,
@@ -1151,7 +1090,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         skipped,
         entities_total,
         rels_total,
-        cost_usd: cost_total,
+        input_tokens_total,
+        output_tokens_total,
         elapsed_ms: started.elapsed().as_millis() as u64,
     });
 
@@ -1166,103 +1106,144 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_extraction_schema_valid_json() {
-        let _: serde_json::Value =
-            serde_json::from_str(EXTRACTION_SCHEMA).expect("schema must be valid JSON");
+    fn make_agent_message_event(text: &str) -> String {
+        format!(
+            r#"{{"type":"item.completed","item":{{"id":"item_0","type":"agent_message","text":{}}}}}"#,
+            serde_json::to_string(text).unwrap()
+        )
+    }
+
+    fn make_usage_event(input: u64, output: u64) -> String {
+        format!(
+            r#"{{"type":"turn.completed","usage":{{"input_tokens":{input},"output_tokens":{output}}}}}"#
+        )
+    }
+
+    fn valid_extraction_json() -> String {
+        r#"{"name":"test-module","description":"A test module for unit testing purposes","entities":[{"name":"test-entity","entity_type":"concept"}],"relationships":[{"source":"test-entity","target":"test-module","relation":"applies-to","strength":0.8}]}"#.to_string()
     }
 
     #[test]
-    fn test_parse_claude_output_valid() {
-        let output = r#"[
-            {"type":"system","subtype":"init"},
-            {"type":"assistant"},
-            {"type":"result","is_error":false,"total_cost_usd":0.02,"structured_output":{"name":"test-doc","description":"A test document","entities":[{"name":"test-entity","entity_type":"concept"}],"relationships":[{"source":"test-entity","target":"test-doc","relation":"applies-to","strength":0.8}]}}
-        ]"#;
-        let (result, cost) = parse_claude_output(output).expect("parse must succeed");
-        assert_eq!(result.name, "test-doc");
+    fn test_parse_codex_output_valid() {
+        let jsonl = format!(
+            "{}\n{}\n{}",
+            r#"{"type":"thread.started","thread_id":"t1"}"#,
+            make_agent_message_event(&valid_extraction_json()),
+            make_usage_event(100, 50),
+        );
+
+        let (result, usage) = parse_codex_output(&jsonl).expect("parse must succeed");
+        assert_eq!(result.name, "test-module");
         assert_eq!(result.entities.len(), 1);
         assert_eq!(result.relationships.len(), 1);
-        assert!((cost - 0.02).abs() < f64::EPSILON);
+        let u = usage.expect("usage must be present");
+        assert_eq!(u.input_tokens, 100);
+        assert_eq!(u.output_tokens, 50);
     }
 
     #[test]
-    fn test_parse_claude_output_error() {
-        let output = r#"[
-            {"type":"system","subtype":"init"},
-            {"type":"result","is_error":true,"error":"authentication failed"}
-        ]"#;
-        let err = parse_claude_output(output).unwrap_err();
-        assert!(format!("{err}").contains("authentication failed"));
-    }
+    fn test_parse_codex_output_turn_failed() {
+        let jsonl = format!(
+            "{}\n{}",
+            r#"{"type":"thread.started","thread_id":"t1"}"#,
+            r#"{"type":"turn.failed","error":{"message":"model error occurred"}}"#,
+        );
 
-    #[test]
-    fn test_parse_claude_output_rate_limit() {
-        let output = r#"[
-            {"type":"system","subtype":"init"},
-            {"type":"result","is_error":true,"error":"rate_limit exceeded"}
-        ]"#;
-        let err = parse_claude_output(output).unwrap_err();
-        assert!(format!("{err}").contains("RATE_LIMITED"));
-    }
-
-    #[test]
-    fn test_parse_claude_output_malformed() {
-        let output = "not json at all";
-        assert!(parse_claude_output(output).is_err());
-    }
-
-    #[test]
-    fn test_find_claude_binary_not_found() {
-        let original_path = std::env::var_os("PATH");
-        std::env::set_var("PATH", "/nonexistent");
-        std::env::remove_var("SQLITE_GRAPHRAG_CLAUDE_BINARY");
-        let result = find_claude_binary(None);
-        if let Some(p) = original_path {
-            std::env::set_var("PATH", p);
-        }
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_claude_output_result_fallback() {
-        let output = r#"[
-            {"type":"system","subtype":"init"},
-            {"type":"result","is_error":false,"total_cost_usd":0.01,"structured_output":null,"result":"{\"name\":\"test-fallback\",\"description\":\"A fallback test\",\"entities\":[{\"name\":\"fb-entity\",\"entity_type\":\"concept\"}],\"relationships\":[]}"}
-        ]"#;
-        let (result, cost) = parse_claude_output(output).expect("result fallback must work");
-        assert_eq!(result.name, "test-fallback");
-        assert_eq!(result.entities.len(), 1);
-        assert!(result.relationships.is_empty());
-        assert!((cost - 0.01).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_parse_claude_output_error_with_result_field() {
-        let output = r#"[
-            {"type":"system","subtype":"init"},
-            {"type":"result","is_error":true,"result":"Not logged in · Please run /login"}
-        ]"#;
-        let err = parse_claude_output(output).unwrap_err();
+        let err = parse_codex_output(&jsonl).unwrap_err();
         let msg = format!("{err}");
         assert!(
-            msg.contains("Not logged in"),
-            "expected 'Not logged in' in: {msg}"
+            msg.contains("turn failed"),
+            "expected 'turn failed' in: {msg}"
+        );
+        assert!(msg.contains("model error occurred"));
+    }
+
+    #[test]
+    fn test_parse_codex_output_rate_limit() {
+        let jsonl = r#"{"type":"turn.failed","error":{"message":"rate_limit exceeded, 429 Too Many Requests"}}"#;
+
+        let err = parse_codex_output(jsonl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("RATE_LIMITED"),
+            "expected 'RATE_LIMITED' in: {msg}"
         );
     }
 
     #[test]
-    fn test_extraction_schema_entity_types_match_enum() {
-        let schema: serde_json::Value = serde_json::from_str(EXTRACTION_SCHEMA).unwrap();
-        let types = schema["properties"]["entities"]["items"]["properties"]["entity_type"]["enum"]
-            .as_array()
-            .expect("schema must have entity_type enum");
-        for t in types {
-            let s = t.as_str().unwrap();
-            assert!(
-                s.parse::<EntityType>().is_ok(),
-                "schema entity_type '{s}' not in EntityType enum"
-            );
-        }
+    fn test_parse_codex_output_schema_error() {
+        let jsonl = r#"{"type":"error","message":"invalid_json_schema: additional properties not allowed"}"#;
+
+        let err = parse_codex_output(jsonl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid_json_schema") || msg.contains("schema"),
+            "expected schema error in: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_extraction_schema_codex_valid_json() {
+        let _: serde_json::Value =
+            serde_json::from_str(EXTRACTION_SCHEMA_CODEX).expect("schema must be valid JSON");
+    }
+
+    #[test]
+    fn test_extraction_schema_codex_has_additional_properties_false() {
+        let schema: serde_json::Value =
+            serde_json::from_str(EXTRACTION_SCHEMA_CODEX).expect("schema must be valid JSON");
+
+        // Root level
+        assert_eq!(
+            schema["additionalProperties"].as_bool(),
+            Some(false),
+            "root must have additionalProperties: false"
+        );
+
+        // Entity items level
+        assert_eq!(
+            schema["properties"]["entities"]["items"]["additionalProperties"].as_bool(),
+            Some(false),
+            "entity items must have additionalProperties: false"
+        );
+
+        // Relationship items level
+        assert_eq!(
+            schema["properties"]["relationships"]["items"]["additionalProperties"].as_bool(),
+            Some(false),
+            "relationship items must have additionalProperties: false"
+        );
+    }
+
+    #[test]
+    fn test_parse_codex_output_last_agent_message_wins() {
+        // Multiple agent_message items — last one should win
+        let first_text = r#"{"name":"first-result","description":"First result should be ignored","entities":[],"relationships":[]}"#;
+        let second_text = r#"{"name":"final-result","description":"Final result wins over earlier ones","entities":[{"name":"final-entity","entity_type":"concept"}],"relationships":[]}"#;
+
+        let jsonl = format!(
+            "{}\n{}\n{}\n{}",
+            r#"{"type":"thread.started","thread_id":"t1"}"#,
+            make_agent_message_event(first_text),
+            make_agent_message_event(second_text),
+            make_usage_event(200, 80),
+        );
+
+        let (result, _) = parse_codex_output(&jsonl).expect("parse must succeed");
+        assert_eq!(result.name, "final-result", "last agent_message should win");
+        assert_eq!(result.entities.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_codex_output_skips_malformed_lines() {
+        let jsonl = format!(
+            "not json at all\n{}\n{{broken\n{}",
+            make_agent_message_event(&valid_extraction_json()),
+            make_usage_event(10, 5),
+        );
+
+        // Should succeed despite malformed lines
+        let (result, _) = parse_codex_output(&jsonl).expect("malformed lines must be skipped");
+        assert_eq!(result.name, "test-module");
     }
 }

@@ -64,6 +64,8 @@
 - `--mode claude-code` uses `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, and `ingest-claude-summary.schema.json`
 - Claude-code mode emits additional phase events (validate, scan) before per-file events
 - Per-file events in claude-code mode include `entities`, `rels`, and `cost_usd` fields not present in normal ingest
+- `--mode codex` (added in v1.0.62) reuses the same NDJSON schema format as `--mode claude-code` — no separate codex schemas needed
+- Codex mode emits the same PhaseEvent, FileEvent, and Summary shapes; agents validating claude-code output can reuse those schemas unchanged
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
@@ -98,6 +100,8 @@
 - `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`
 - Modo claude-code emite eventos de fase adicionais (validate, scan) antes dos eventos por arquivo
 - Eventos por arquivo no modo claude-code incluem campos `entities`, `rels` e `cost_usd` não presentes na ingestão normal
+- `--mode codex` (adicionado na v1.0.62) reutiliza o mesmo formato NDJSON do `--mode claude-code` — nenhum schema codex separado é necessário
+- Modo Codex emite os mesmos shapes de PhaseEvent, FileEvent e Summary; agentes que validam saída claude-code podem reutilizar esses schemas sem alteração
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
 - `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`

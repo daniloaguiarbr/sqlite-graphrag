@@ -149,7 +149,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Ingest NDJSON per-file status values: `indexed` (created), `skipped` (duplicate), `failed` (error)
 - Duplicate memories on re-ingest emit `status: "skipped"` with `action: "duplicate"` and do not count as failures
 
-### Ingest Modes (v1.0.61)
+### Ingest Modes (v1.0.62)
 - `--mode none` (default): body-only ingestion, no entity/relationship extraction
 - `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
@@ -159,6 +159,12 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Queue DB (`.ingest-queue.sqlite`) tracks per-file progress for resume/retry support
 - Rate limit: automatic exponential backoff (60s → 120s → 300s → 900s)
 - Budget: `--max-cost-usd` stops ingestion when cumulative cost exceeds the limit, preserving queue for `--resume`
+- `--mode codex` spawns `codex exec --json` per file for LLM-curated extraction via OpenAI Codex CLI
+- Requires Codex CLI installed locally; uses `--output-schema` for structured JSON output
+- Codex-specific flags: `--codex-binary <PATH>`, `--codex-model <MODEL>`, `--codex-timeout <S>` (default 300)
+- Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
+- Token usage tracking via `input_tokens` and `output_tokens` fields (cost_usd unavailable from Codex CLI)
+- Full embedding pipeline applied to Codex-ingested memories for recall and hybrid-search
 
 ```json
 [
@@ -205,6 +211,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override respected by all commands (fixed v1.0.51) | none | `project-foo` |
+| `SQLITE_GRAPHRAG_CODEX_BINARY` | Path to the Codex CLI binary, overrides PATH lookup for `--mode codex` | PATH lookup | `/usr/local/bin/codex` |
 
 
 ## Integration Patterns
@@ -531,7 +538,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.59 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.62 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

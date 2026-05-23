@@ -212,7 +212,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NER extraction events go to stderr, NOT stdout
 - USE `--max-name-length N` to override the default 60-character truncation threshold for memory names
 - NUMERIC basenames (e.g. `123.md`) are automatically prefixed with `doc-` to produce valid kebab-case names (e.g. `doc-123`)
-### REQUIRED — Ingest Modes (v1.0.61)
+### REQUIRED — Ingest Modes (v1.0.62)
 - `--mode none` (default): body-only ingestion without entity/relationship extraction
 - `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
@@ -233,12 +233,23 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields
 - Summary includes `entities_total`, `rels_total`, `cost_usd` totals
 - Schemas: `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, `ingest-claude-summary.schema.json`
+- `--mode codex`: LLM-curated extraction via OpenAI Codex CLI (`codex exec --json` headless per file)
+- Codex mode requires Codex CLI >= 0.120.0 with active OpenAI API key; uses `--output-schema` for structured JSON
+- `--codex-binary <PATH>` overrides PATH lookup; `--codex-model <MODEL>` selects model; `--codex-timeout <S>` (default 300s)
+- Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
+- Full embedding pipeline applied — memories are fully searchable via `recall` and `hybrid-search`
+- Codex mode reuses the same NDJSON schema format as claude-code: `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, `ingest-claude-summary.schema.json`
 ### Correct Pattern — Claude Code Ingest Examples
 - `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --resume --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --claude-timeout 600 --max-cost-usd 10.00 --json`
+### Correct Pattern — Codex Ingest Examples
+- `sqlite-graphrag ingest ./docs --mode codex --recursive --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-model o4-mini --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-timeout 600 --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-binary /usr/local/bin/codex --json`
 
 
 ## CRUD — Read with read and list

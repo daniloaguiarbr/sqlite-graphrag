@@ -118,6 +118,9 @@
 - Versão mínima exige Codex CLI 0.5 ou posterior para regras determinísticas de parsing do AGENTS.md
 - Docs oficiais em https://github.com/openai/codex cobrindo a ordem de descoberta do AGENTS.md
 - Dica de ouro é incluir um exemplo de invocação funcional sob cada comando listado para Codex
+- Desde v1.0.62, `ingest --mode codex` usa o binário Codex CLI para extração curada por LLM de entidades/relações durante ingestão em massa
+- O modo de ingestão spawna `codex exec --json` headless por arquivo — requer Codex CLI >= 0.120.0 com API key OpenAI ativa
+- Usar `--codex-timeout <S>` (padrão 300s) para prevenir subprocessos travados em pipelines CI/cron
 
 
 ## Gemini CLI

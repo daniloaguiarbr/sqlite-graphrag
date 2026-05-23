@@ -533,10 +533,14 @@ sqlite-graphrag prune-relations --relation mentions --yes --json
 - `ingest --dry-run` previews the file-to-name mapping without loading the ONNX model or persisting anything
 - `--dry-run` NDJSON output uses `status: "preview"` per file; use it to detect name truncations and collisions before committing
 - When a file basename differs from the derived kebab-case name (spaces, accents, special characters), the NDJSON line includes `original_filename` with the original basename
-- Three extraction modes via `--mode`: `none` (default, body-only), `gliner` (local NER), `claude-code` (LLM-curated via Claude Code CLI)
+- Four extraction modes via `--mode`: `none` (default, body-only), `gliner` (local NER), `claude-code` (LLM-curated via Claude Code CLI), `codex` (LLM-curated via OpenAI Codex CLI)
 - `--mode claude-code` requires Claude Code >= 2.1.0 installed locally with Pro/Max subscription; spawns `claude -p` headless per file
 - Use `--resume` to continue interrupted claude-code ingestion; `--max-cost-usd <N>` to cap cumulative LLM spend
 - Use --claude-timeout <S> to set per-file timeout (default 300s); prevents hung processes in automated pipelines
+- `--mode codex`: LLM-curated extraction via OpenAI Codex CLI (`codex exec --json` per file)
+- Requires Codex CLI >= 0.120.0 with active OpenAI API key
+- Codex-specific flags: `--codex-binary`, `--codex-model`, `--codex-timeout` (default 300s)
+- Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
 
 ### Note on link
 - Prerequisite: entities must exist in the graph before creating explicit links

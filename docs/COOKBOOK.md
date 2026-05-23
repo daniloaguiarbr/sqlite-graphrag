@@ -1633,7 +1633,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 - The target entity must already exist (exit 4 if not found)
 - Use `memory-entities --entity jwt-auth --json` afterwards to verify the consolidated bindings
 
-## How To Ingest Documents With LLM-Curated Entities (v1.0.61)
+## How To Ingest Documents With LLM-Curated Entities (v1.0.62)
 ### Problem
 - Default `ingest` creates body-only memories with zero entities and zero relationships
 - GLiNER NER produces noisy entities (ALL_CAPS generics, stop words) and low-quality `mentions` relationships
@@ -1689,3 +1689,38 @@ sqlite-graphrag ingest ./docs --mode claude-code --retry-failed --claude-timeout
 - `--claude-timeout 600` increases per-file timeout to 10 minutes for large documents that timed out
 - Previously successful files are untouched — no duplicate token spend
 - Combine with `--keep-queue` to preserve queue for further inspection
+
+## How To Ingest Documents With OpenAI Codex CLI (v1.0.62)
+
+### Problem
+- You want LLM-curated entity and relationship extraction during bulk ingestion
+- You have an OpenAI API key and Codex CLI installed instead of Claude Code
+- You want vendor choice between Anthropic and OpenAI for extraction workloads
+
+### Solution
+- Use `ingest --mode codex` to spawn `codex exec --json` per file with structured output
+- Codex CLI extracts domain-specific entities and typed relationships from each document
+- Full embedding pipeline ensures memories are searchable via `recall` and `hybrid-search`
+
+### Recipe
+
+<!-- skip-test -->
+```bash
+sqlite-graphrag ingest ./docs --mode codex --recursive --json
+```
+
+### Variations
+- Use `--codex-model o4-mini` for lower cost extraction
+- Use `--codex-binary /usr/local/bin/codex` to specify binary path
+- Use `--codex-timeout 600` to increase per-file timeout from default 300s
+- Use `--dry-run` to preview file-to-name mapping without spawning Codex
+- Use `--resume` to continue interrupted ingest from queue DB
+- Use `--max-cost-usd 5.00` to cap cumulative extraction cost (token-based estimation)
+- Set `SQLITE_GRAPHRAG_CODEX_BINARY` env var to override PATH lookup permanently
+
+### Notes
+- Requires Codex CLI >= 0.120.0 installed locally with active OpenAI API key
+- Codex reports token usage (input_tokens, output_tokens) instead of cost_usd
+- Uses same NDJSON output format as `--mode claude-code` (PhaseEvent, FileEvent, Summary)
+- Queue DB `.ingest-queue.sqlite` enables resume/retry across sessions
+- Subprocess runs with `env_clear()` + selective injection for security hardening

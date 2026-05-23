@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.62] - 2026-05-23
+
+### Fixed
+- G01 CRITICAL: `ingest --mode claude-code` now computes and persists vector embeddings — `recall` and `hybrid-search` find claude-code ingested memories (was creating memories with zero vec_memories/vec_chunks entries)
+- G02: `validate_claude_version()` now compares against `MIN_CLAUDE_VERSION` (2.1.0) — rejects incompatible Claude Code versions with actionable error
+- G03: `env_clear()` whitelist for `claude -p` subprocess now includes Windows-critical variables (`LOCALAPPDATA`, `APPDATA`, `USERPROFILE`, `SystemRoot`, `COMSPEC`, `PATHEXT`) via `#[cfg(windows)]`
+- G04: `skipped` counter in claude-code ingest summary now counts pre-existing `done` entries in queue DB instead of always reporting 0
+- G05: files exceeding 10MB stdin limit are rejected with specific error before spawning `claude -p`, preventing wasted API credits
+- G06: memory names from Claude extraction are normalized via `derive_kebab_name()` — prevents non-kebab-case names from entering the database
+- G07: invalid entity names from Claude extraction now emit `tracing::warn!` instead of being silently discarded
+- G08: claude-code queue database (`.ingest-queue.sqlite`) now uses WAL journal mode for crash resilience
+- G09: WAL checkpoint runs after claude-code ingest processing loop completes
+- G10: `EXTRACTION_SCHEMA` now includes `additionalProperties: false` at root, entity, and relationship levels — compatible with both Claude Code and Codex structured output
+
+### Added
+- `ingest --mode codex` for LLM-curated entity/relationship extraction via locally installed OpenAI Codex CLI (`codex exec --json`)
+- New ingest flags: `--codex-binary`, `--codex-model`, `--codex-timeout` for Codex CLI configuration
+- `IngestMode::Codex` variant — users can choose between `--mode claude-code` (Anthropic) and `--mode codex` (OpenAI) per ingest
+- JSONL parser for Codex CLI output with "last agent_message wins" pattern (verified against Paperclip production adapter)
+- Token usage tracking for Codex ingest (input_tokens, output_tokens) — cost_usd unavailable from Codex CLI
+- Full embedding pipeline for Codex-ingested memories (chunking, vec_memories, vec_chunks, vec_entities)
+- 7 unit tests for Codex JSONL parser and schema validation
+
 ## [1.0.61] - 2026-05-23
 
 ### Fixed

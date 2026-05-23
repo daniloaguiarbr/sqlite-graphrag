@@ -73,7 +73,7 @@
 - `--skip-extraction` está depreciado desde v1.0.45; use `--enable-ner` em vez disso
 - `--max-rss-mb <MiB>` em `remember` e `ingest` aborta embedding quando o RSS do processo excede o limite (padrão 8192 MiB)
 
-## Modos de Ingestão (v1.0.61)
+## Modos de Ingestão (v1.0.62)
 ### Três modos de extração para ingestão em massa
 - `--mode none` (padrão): ingestão apenas do body, sem extração de entidades/relações
 - `--mode gliner`: extração NER com GLiNER (requer `--enable-ner`, modelo ONNX local)
@@ -84,6 +84,12 @@
 - Timeout por arquivo via `--claude-timeout <S>` (padrão 300s); mata processos `claude -p` travados
 - Controle de orçamento via `--max-cost-usd <N>` para limitar gasto acumulado
 - Rate limit com backoff exponencial automático (60s → 120s → 300s → 900s)
+- `--mode codex` spawna `codex exec --json` por arquivo para extração curada por LLM via OpenAI Codex CLI
+- Requer Codex CLI instalado localmente; usa `--output-schema` para saída JSON estruturada
+- Flags específicas do Codex: `--codex-binary <PATH>`, `--codex-model <MODEL>`, `--codex-timeout <S>` (padrão 300)
+- Variável de ambiente `SQLITE_GRAPHRAG_CODEX_BINARY` substitui a busca no PATH
+- Rastreamento de uso de tokens via campos `input_tokens` e `output_tokens` (cost_usd não disponível no Codex CLI)
+- Pipeline completo de embeddings aplicado às memórias ingeridas via Codex para recall e hybrid-search
 
 
 ## Exit Codes
@@ -118,7 +124,7 @@
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.56 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.62 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5

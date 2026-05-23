@@ -655,7 +655,7 @@ let output = Command::new("sqlite-graphrag")
 - `original_filename` preserva o basename do arquivo antes da normalização kebab-case; presente quando o basename difere do nome derivado (ex.: espaços, acentos, caracteres especiais)
 - Linha summary final: `summary` (true), `dir`, `pattern`, `recursive`, `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - Eventos de extração NER vão para stderr, NÃO stdout
-### OBRIGATÓRIO — Modos de Ingestão (v1.0.61)
+### OBRIGATÓRIO — Modos de Ingestão (v1.0.62)
 - USAR `--mode none` (padrão) para ingestão body-only sem extração
 - USAR `--mode gliner` para extração NER local com GLiNER (requer `--enable-ner`)
 - USAR `--mode claude-code` para extração curada por LLM via Claude Code CLI instalado localmente
@@ -669,12 +669,22 @@ let output = Command::new("sqlite-graphrag")
 - Eventos NDJSON por arquivo no modo claude-code incluem campos `entities`, `rels`, `cost_usd`
 - Queue DB `.ingest-queue.sqlite` rastreia progresso por arquivo; usar `--keep-queue` para reter após conclusão
 - Rate limit: backoff exponencial automático (60s → 120s → 300s → 900s)
+- `--mode codex` spawna `codex exec --json` por arquivo para extração curada via OpenAI Codex CLI
+- Requer Codex CLI instalado; usa `--output-schema` para saída JSON estruturada
+- Flags Codex: `--codex-binary`, `--codex-model`, `--codex-timeout` (padrão 300s)
+- Variável de ambiente `SQLITE_GRAPHRAG_CODEX_BINARY` sobrescreve busca no PATH
+- Pipeline completo de embedding aplicado para recall e hybrid-search
 ### Padrão Correto — Exemplos de Ingestão Claude Code
 - `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --resume --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - `sqlite-graphrag ingest ./docs --mode claude-code --claude-timeout 600 --max-cost-usd 10.00 --json`
+### Padrão Correto — Exemplos de Ingestão Codex
+- `sqlite-graphrag ingest ./docs --mode codex --recursive --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-model o4-mini --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-timeout 600 --json`
+- `sqlite-graphrag ingest ./docs --mode codex --codex-binary /usr/local/bin/codex --json`
 
 
 ## CRUD — Read com read e list

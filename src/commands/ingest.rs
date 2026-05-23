@@ -228,6 +228,29 @@ pub struct IngestArgs {
         help = "Timeout in seconds for each claude -p invocation (default: 300)"
     )]
     pub claude_timeout: u64,
+
+    /// Explicit path to the Codex CLI binary (only with --mode codex).
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_CODEX_BINARY",
+        help = "Explicit path to the Codex CLI binary (only with --mode codex)"
+    )]
+    pub codex_binary: Option<PathBuf>,
+
+    /// Model override for Codex extraction (e.g. o4-mini, gpt-5.1-codex).
+    #[arg(
+        long,
+        help = "Model override for Codex extraction (e.g. o4-mini, gpt-5.1-codex)"
+    )]
+    pub codex_model: Option<String>,
+
+    /// Timeout in seconds for each codex exec invocation.
+    #[arg(
+        long,
+        default_value_t = 300,
+        help = "Timeout in seconds for each codex exec invocation (default: 300)"
+    )]
+    pub codex_timeout: u64,
 }
 
 /// Extraction mode for the ingest pipeline.
@@ -239,6 +262,8 @@ pub enum IngestMode {
     Gliner,
     /// LLM-curated extraction via locally installed Claude Code CLI.
     ClaudeCode,
+    /// LLM-curated extraction via locally installed OpenAI Codex CLI.
+    Codex,
 }
 
 /// Returns true when the `SQLITE_GRAPHRAG_LOW_MEMORY` env var is set to a
@@ -714,6 +739,9 @@ fn persist_staged(
 pub fn run(args: IngestArgs) -> Result<(), AppError> {
     if args.mode == IngestMode::ClaudeCode {
         return super::ingest_claude::run_claude_ingest(&args);
+    }
+    if args.mode == IngestMode::Codex {
+        return super::ingest_codex::run_codex_ingest(&args);
     }
 
     let started = std::time::Instant::now();

@@ -127,6 +127,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.62**: 10 correções para ingest --mode claude-code (G01 CRÍTICO: recall agora funciona), NOVO --mode codex para extração via OpenAI Codex CLI, novas flags --codex-binary/--codex-model/--codex-timeout
+- **v1.0.61**: 15 correções para ingest --mode claude-code (B00-B13), nova flag --claude-timeout, gerenciamento de subprocessos com wait-timeout
+- **v1.0.60**: NOVO ingest --mode claude-code para extração curada por LLM via Claude Code CLI, banco de fila para resume/retry, 7 novas flags de ingest
 - **v1.0.59**: validação de nome no rename-entity, correção schema unlink, campo `description_updated` no reclassify, testes contract+schema para rename-entity, testes E2E de validação de entidade, audit de docs (6 arquivos)
 - **v1.0.58**: Correção FTS5 (CRÍTICO: remember --force-merge corrompia silenciosamente o índice FTS5), correção UNIQUE no merge-entities para memory_entities, novo comando `rename-entity`, validação de nomes de entidades, `memory-entities --entity` busca reversa, `reclassify --description`, campo `action` no purge, EXAMPLES no fts, tracing no health
 - **v1.0.57**: 16 correções — UNIQUE constraint no merge-entities, coluna errada no memory-entities, validação --clear-body, WAL checkpoint para fts rebuild/check, recálculo de degree para delete-entity/merge-entities adjacentes, backup atômico via tempfile-rename, 18 novos testes de contrato+schema
@@ -327,6 +330,9 @@ sqlite-graphrag ingest ./docs --mode claude-code --resume --json
 
 # Definir limite de orçamento
 sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json
+
+# Extrair entidades e relações usando OpenAI Codex CLI instalado localmente
+sqlite-graphrag ingest ./docs --mode codex --recursive --json
 ```
 > `ingest` emite NDJSON no stdout: uma linha JSON por arquivo, seguida de uma linha de resumo.
 > Valores de `status` por arquivo: `indexed` (criado), `skipped` (duplicata ou nome inválido), `failed` (erro).
@@ -515,6 +521,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
 | `SQLITE_GRAPHRAG_LOW_MEMORY` | Força ingest single-threaded para reduzir RSS. Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (multi-thread) | `1` |
 | `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Caminho explícito para o binário Claude Code para `ingest --mode claude-code` | busca no PATH | `/usr/local/bin/claude` |
+| `SQLITE_GRAPHRAG_CODEX_BINARY` | Caminho explícito para o binário Codex CLI para `ingest --mode codex` | busca no PATH | `/usr/local/bin/codex` |
 | `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
 
 

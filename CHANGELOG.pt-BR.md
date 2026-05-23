@@ -10,6 +10,29 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.62] - 2026-05-23
+
+### Corrigido
+- G01 CRÍTICO: `ingest --mode claude-code` agora computa e persiste embeddings vetoriais — `recall` e `hybrid-search` encontram memórias ingeridas via claude-code (antes criava memórias com zero vec_memories/vec_chunks)
+- G02: `validate_claude_version()` agora compara contra `MIN_CLAUDE_VERSION` (2.1.0) — rejeita versões incompatíveis do Claude Code com erro acionável
+- G03: whitelist de `env_clear()` para o subprocesso `claude -p` agora inclui variáveis críticas do Windows (`LOCALAPPDATA`, `APPDATA`, `USERPROFILE`, `SystemRoot`, `COMSPEC`, `PATHEXT`) via `#[cfg(windows)]`
+- G04: contador `skipped` no resumo de ingest claude-code agora conta entradas `done` pré-existentes no queue DB em vez de sempre reportar 0
+- G05: arquivos acima do limite de 10MB para stdin são rejeitados com erro específico antes de spawnar `claude -p`, evitando desperdício de créditos de API
+- G06: nomes de memória extraídos pelo Claude são normalizados via `derive_kebab_name()` — impede nomes não-kebab-case de entrar no banco de dados
+- G07: nomes de entidade inválidos extraídos pelo Claude agora emitem `tracing::warn!` em vez de serem descartados silenciosamente
+- G08: banco de dados de fila claude-code (`.ingest-queue.sqlite`) agora usa modo WAL para resiliência a crashes
+- G09: WAL checkpoint executado após a conclusão do loop de processamento do ingest claude-code
+- G10: `EXTRACTION_SCHEMA` agora inclui `additionalProperties: false` no nível raiz, de entidade e de relacionamento — compatível com saída estruturada do Claude Code e do Codex
+
+### Adicionado
+- `ingest --mode codex` para extração curada por LLM de entidades/relações via OpenAI Codex CLI instalado localmente (`codex exec --json`)
+- Novas flags de ingest: `--codex-binary`, `--codex-model`, `--codex-timeout` para configuração do Codex CLI
+- Variante `IngestMode::Codex` — usuários podem escolher entre `--mode claude-code` (Anthropic) e `--mode codex` (OpenAI) por ingest
+- Parser JSONL para saída do Codex CLI com padrão "last agent_message wins" (verificado contra o adaptador Paperclip de produção)
+- Rastreamento de uso de tokens para ingest Codex (input_tokens, output_tokens) — cost_usd indisponível via Codex CLI
+- Pipeline completo de embedding para memórias ingeridas via Codex (chunking, vec_memories, vec_chunks, vec_entities)
+- 7 testes unitários para parser JSONL do Codex e validação de schema
+
 ## [1.0.61] - 2026-05-23
 
 ### Corrigido

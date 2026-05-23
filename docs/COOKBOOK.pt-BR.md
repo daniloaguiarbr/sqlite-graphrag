@@ -1631,7 +1631,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 - A entidade alvo deve existir previamente (exit 4 se não encontrada)
 - Use `memory-entities --entity jwt-auth --json` depois para verificar os bindings consolidados
 
-## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.61)
+## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.62)
 ### Problema
 - `ingest` padrão cria memórias com apenas body, zero entidades e zero relacionamentos
 - NER via GLiNER produz entidades ruidosas (ALL_CAPS genéricos, stop words) e relações `mentions` de baixa qualidade
@@ -1687,3 +1687,38 @@ sqlite-graphrag ingest ./docs --mode claude-code --retry-failed --claude-timeout
 - `--claude-timeout 600` aumenta timeout por arquivo para 10 minutos para documentos grandes que tiveram timeout
 - Arquivos previamente bem-sucedidos ficam intactos — sem gasto duplicado de tokens
 - Combine com `--keep-queue` para preservar queue para inspeção posterior
+
+## Como Ingestar Documentos Com OpenAI Codex CLI (v1.0.62)
+
+### Problema
+- Você quer extração de entidades e relacionamentos curada por LLM durante ingestão em lote
+- Você tem uma chave OpenAI API e o Codex CLI instalado em vez do Claude Code
+- Você quer escolha de vendor entre Anthropic e OpenAI para cargas de extração
+
+### Solução
+- Use `ingest --mode codex` para spawnar `codex exec --json` por arquivo com saída estruturada
+- Codex CLI extrai entidades do domínio e relacionamentos tipados de cada documento
+- Pipeline completo de embedding garante que memórias sejam localizáveis via `recall` e `hybrid-search`
+
+### Receita
+
+<!-- skip-test -->
+```bash
+sqlite-graphrag ingest ./docs --mode codex --recursive --json
+```
+
+### Variações
+- Use `--codex-model o4-mini` para extração com menor custo
+- Use `--codex-binary /usr/local/bin/codex` para especificar o caminho do binário
+- Use `--codex-timeout 600` para aumentar o timeout por arquivo do padrão de 300s
+- Use `--dry-run` para pré-visualizar o mapeamento arquivo-nome sem spawnar o Codex
+- Use `--resume` para continuar ingestão interrompida a partir do queue DB
+- Use `--max-cost-usd 5.00` para limitar o custo acumulado de extração (estimativa baseada em tokens)
+- Defina `SQLITE_GRAPHRAG_CODEX_BINARY` para sobrescrever a busca no PATH permanentemente
+
+### Notas
+- Requer Codex CLI >= 0.120.0 instalado localmente com chave OpenAI API ativa
+- Codex reporta uso de tokens (input_tokens, output_tokens) em vez de cost_usd
+- Usa o mesmo formato NDJSON que `--mode claude-code` (PhaseEvent, FileEvent, Summary)
+- Queue DB `.ingest-queue.sqlite` habilita resume/retry entre sessões
+- Subprocesso executa com `env_clear()` + injeção seletiva para hardening de segurança

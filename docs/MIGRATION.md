@@ -73,6 +73,15 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.62 — Embedding fix for claude-code, NEW codex mode
+
+- G01 CRITICAL fix: `ingest --mode claude-code` now persists vector embeddings — `recall` finds claude-code ingested memories
+- NEW `--mode codex` for OpenAI Codex CLI extraction — alternative to `--mode claude-code`
+- New flags: `--codex-binary`, `--codex-model`, `--codex-timeout`
+- New env var: `SQLITE_GRAPHRAG_CODEX_BINARY`
+- G02-G10: version validation, Windows env vars, skipped counter, 10MB cap, name normalization, entity warnings, WAL queue, WAL checkpoint, schema additionalProperties
+- No schema migration needed — compatible with existing databases
+
 ### v1.0.61 — 15 bug fixes for ingest --mode claude-code
 
 #### Critical fixes
