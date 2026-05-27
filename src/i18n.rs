@@ -565,6 +565,10 @@ pub mod validation {
         pub fn restore_recomputing_embedding() -> &'static str {
             "Recalculando embedding da memória restaurada..."
         }
+
+        pub fn edit_recomputing_embedding() -> &'static str {
+            "Recalculando embedding da memória editada..."
+        }
     }
 }
 

@@ -13,18 +13,36 @@ use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
 
+fn system_cache_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR") {
+        return std::path::PathBuf::from(d);
+    }
+    directories::ProjectDirs::from("", "", "sqlite-graphrag")
+        .map(|p| p.cache_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from(".cache"))
+}
+
 fn cmd(temp: &TempDir) -> Command {
+    let cache = system_cache_dir();
     let mut c = Command::cargo_bin("sqlite-graphrag").expect("binary present in target/");
     c.env_clear()
         .env("HOME", temp.path())
         .env("SQLITE_GRAPHRAG_HOME", temp.path())
-        .env(
-            "SQLITE_GRAPHRAG_CACHE_DIR",
-            temp.path().join("cache").to_string_lossy().to_string(),
-        )
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache)
         .env("SQLITE_GRAPHRAG_LANG", "en")
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "warn")
         .current_dir(temp.path());
+    for var in &[
+        "LOCALAPPDATA",
+        "APPDATA",
+        "USERPROFILE",
+        "PATH",
+        "SystemRoot",
+    ] {
+        if let Ok(v) = std::env::var(var) {
+            c.env(var, v);
+        }
+    }
     c
 }
 
@@ -35,27 +53,20 @@ fn cmd(temp: &TempDir) -> Command {
 fn v008_entity_types_organization_location_date_round_trip() {
     let temp = TempDir::new().expect("tempdir");
 
-    // Skip the test gracefully if the embedding model is unavailable in the
-    // CI cache; the suite would otherwise download ~460 MB on every run.
-    let model_cache = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok().or_else(|| {
-        directories::ProjectDirs::from("", "", "sqlite-graphrag")
-            .map(|p| p.cache_dir().to_string_lossy().to_string())
-    });
-    let has_model = model_cache
-        .as_ref()
-        .map(|p| std::path::Path::new(p).join("models").exists())
-        .unwrap_or(false);
-    if !has_model && std::env::var("SQLITE_GRAPHRAG_FORCE_DOWNLOAD").is_err() {
-        eprintln!(
-            "skipping v008_entity_types_e2e: embedding model not cached. \
-             Set SQLITE_GRAPHRAG_FORCE_DOWNLOAD=1 to download (~460 MB)."
-        );
-        return;
-    }
-
     // Step 1: init the database in the tempdir CWD.
+    // Skip gracefully if the embedding model is unavailable (exit 11).
     let init = cmd(&temp).arg("init").output().expect("init runs");
-    assert!(init.status.success(), "init failed: {init:?}");
+    if !init.status.success() {
+        let code = init.status.code().unwrap_or(-1);
+        if code == 11 {
+            eprintln!(
+                "skipping v008_entity_types_e2e: embedding model unavailable (exit 11). \
+                 Pre-download the model or set SQLITE_GRAPHRAG_FORCE_DOWNLOAD=1."
+            );
+            return;
+        }
+        panic!("init failed with unexpected code {code}: {init:?}");
+    }
 
     // Step 2: create an entities-file payload that exercises all three V008 types.
     let entities_path = temp.path().join("entities.json");

@@ -1722,3 +1722,8 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 - Usa o mesmo formato NDJSON que `--mode claude-code` (PhaseEvent, FileEvent, Summary)
 - Queue DB `.ingest-queue.sqlite` habilita resume/retry entre sessões
 - Subprocesso executa com `env_clear()` + injeção seletiva para hardening de segurança
+
+> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
+> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.

@@ -334,6 +334,7 @@ sqlite-graphrag export --include-deleted --json
 
 ### Using edit
 - Alters the body or description of an existing memory in-place creating a new version
+- Re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate scores after edit (since v1.0.63; description-only edits skip re-embedding)
 - Use `--expected-updated-at` for optimistic locking in concurrent agent pipelines
 ```bash
 sqlite-graphrag edit --name auth-design --body "Updated rationale after RFC review"
@@ -492,6 +493,7 @@ sqlite-graphrag restore --name auth-design --version 2
 ```
 - Prerequisites: the memory must exist and the target version number must be valid
 - Restore does NOT overwrite history — it appends a new version with the old body
+- Restore preserves the current memory name — if the memory was renamed after the target version, the name stays as-is (since v1.0.63)
 - `--expected-updated-at` enables optimistic locking for concurrent pipeline safety
 - JSON response includes `action: "restored"` field, consistent with other CRUD commands
 - Exit code 0: restore succeeded and the new version is indexed
@@ -541,6 +543,10 @@ sqlite-graphrag prune-relations --relation mentions --yes --json
 - Requires Codex CLI >= 0.120.0 with active OpenAI API key
 - Codex-specific flags: `--codex-binary`, `--codex-model`, `--codex-timeout` (default 300s)
 - Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
+- **Authentication:** OAuth works out of the box for both modes — no API key needed.
+  `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+  `--mode codex` reads device auth from `codex auth login` (OpenAI).
+  API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
 
 ### Note on link
 - Prerequisite: entities must exist in the graph before creating explicit links

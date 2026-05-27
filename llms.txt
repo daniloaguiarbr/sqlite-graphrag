@@ -92,6 +92,11 @@
 - Token usage tracking via `input_tokens` and `output_tokens` fields (cost_usd unavailable from Codex CLI)
 - Full embedding pipeline applied to Codex-ingested memories for recall and hybrid-search
 
+Authentication: OAuth works out of the box for both modes — no API key needed.
+--mode claude-code reads OAuth from ~/.claude/.credentials.json (Claude Pro/Max/Team).
+--mode codex reads device auth from codex auth login (OpenAI).
+API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster subprocess startup.
+
 
 ## Exit Codes
 ### Deterministic status for pipeline routing
@@ -125,7 +130,7 @@
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.62 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.63 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

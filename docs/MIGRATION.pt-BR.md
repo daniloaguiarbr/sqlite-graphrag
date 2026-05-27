@@ -73,6 +73,15 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.63 — Preservação de nome no restore, normalização de relações no ingest, re-embed no edit
+
+- `restore` preserva o nome atual da memória após rename — não reverte mais para o nome original da versão; elimina crash UNIQUE constraint (exit 10) quando nome antigo está ocupado
+- `ingest --mode claude-code` e `--mode codex` normalizam strings de relação antes de inserir no DB (`depends-on` → `depends_on`) — elimina falsos avisos `non-canonical relation` e previne inconsistência de formato no DB
+- `edit` regenera embedding vetorial quando body muda — `recall` e `hybrid-search` retornam scores precisos após edit
+- Seção AUTHENTICATION adicionada ao `ingest --help` documentando princípio OAuth-first
+- Detecção de falha de autenticação: `tracing::warn!` acionável quando autenticação do Claude Code ou Codex CLI falha
+- Sem migração de schema necessária — compatível com bancos existentes
+
 ### v1.0.62 — Correção de embedding no claude-code, NOVO modo codex
 
 - G01 CRITICAL fix: `ingest --mode claude-code` agora persiste embeddings vetoriais — `recall` encontra memórias ingeridas via claude-code
@@ -81,6 +90,11 @@ sqlite-graphrag namespace-detect
 - Nova variável de ambiente: `SQLITE_GRAPHRAG_CODEX_BINARY`
 - G02-G10: validação de versão, variáveis de ambiente no Windows, contador de skipped, cap de 10MB, normalização de nomes, warnings de entidade, WAL queue, WAL checkpoint, schema additionalProperties
 - Sem migração de schema necessária — compatível com bancos existentes
+
+> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
+> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.
 
 ### v1.0.61 — 15 correções de bugs no ingest --mode claude-code
 

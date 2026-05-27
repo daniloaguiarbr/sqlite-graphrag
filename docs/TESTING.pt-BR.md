@@ -59,6 +59,11 @@
 - Testes cobrem: extração válida, erros turn.failed, detecção de rate limit, validação de schema, descoberta de binário
 - Parser valida o padrão "último agent_message vence" para múltiplos eventos item.completed
 - Testes de integração requerem Codex CLI instalado; pulam graciosamente se indisponível
+### Testes de Regressão v1.0.63
+- 3 testes de integração em `tests/v1063_features.rs` protegem as correções da v1.0.63
+- `restore_preserves_name_after_rename`: remember → edit → rename → restore; asserta que nome permanece renomeado
+- `restore_does_not_crash_when_old_name_occupied`: remember A → rename para B → remember novo A → restore B; asserta exit 0 (era exit 10 UNIQUE crash antes da correção)
+- `edit_reembeds_when_body_changes`: remember → edit body → recall novo conteúdo; asserta que recall encontra a memória editada com score preciso
 
 
 ## Como Executar

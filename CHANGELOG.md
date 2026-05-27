@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.63] - 2026-05-27
+
+### Fixed
+- BUG-1 HIGH: `restore` no longer reverts memory name to version's original — preserves current name after rename, eliminates UNIQUE constraint crash (exit 10) when old name is occupied
+- BUG-2 HIGH: `ingest --mode claude-code` and `--mode codex` now normalize relation strings via `normalize_relation()` before canonical check and DB insertion — eliminates false `non-canonical relation` warnings for kebab-case canonical values (`depends-on` → `depends_on`) and prevents mixed-format DB inconsistency
+- FINDING-1: `edit` now re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate similarity scores after edit (parity with `restore` which already re-embeds)
+
+### Added
+- AUTHENTICATION section in `ingest --help` documenting OAuth-first principle for both `--mode claude-code` and `--mode codex`
+- Auth failure detection: actionable `tracing::warn!` when Claude Code or Codex CLI authentication fails during ingest
+
 ## [1.0.62] - 2026-05-23
 
 ### Fixed

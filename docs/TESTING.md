@@ -59,6 +59,11 @@
 - Tests cover: valid extraction, turn.failed errors, rate limit detection, schema validation, binary discovery
 - Parser validates "last agent_message wins" pattern for multiple item.completed events
 - Integration tests require Codex CLI installed; skip gracefully if unavailable
+### v1.0.63 Regression Tests
+- 3 integration tests in `tests/v1063_features.rs` protect the v1.0.63 fixes
+- `restore_preserves_name_after_rename`: remember → edit → rename → restore; asserts name stays renamed
+- `restore_does_not_crash_when_old_name_occupied`: remember A → rename to B → remember new A → restore B; asserts exit 0 (was exit 10 UNIQUE crash before fix)
+- `edit_reembeds_when_body_changes`: remember → edit body → recall new content; asserts recall finds the edited memory with accurate score
 
 
 ## How to Run

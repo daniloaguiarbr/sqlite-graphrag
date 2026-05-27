@@ -6,18 +6,36 @@ use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
+fn system_cache_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR") {
+        return std::path::PathBuf::from(d);
+    }
+    directories::ProjectDirs::from("", "", "sqlite-graphrag")
+        .map(|p| p.cache_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from(".cache"))
+}
+
 fn cmd(temp: &TempDir) -> Command {
+    let cache = system_cache_dir();
     let mut c = Command::cargo_bin("sqlite-graphrag").expect("binary present in target/");
     c.env_clear()
         .env("HOME", temp.path())
         .env("SQLITE_GRAPHRAG_HOME", temp.path())
-        .env(
-            "SQLITE_GRAPHRAG_CACHE_DIR",
-            temp.path().join("cache").to_string_lossy().to_string(),
-        )
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache)
         .env("SQLITE_GRAPHRAG_LANG", "en")
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "warn")
         .current_dir(temp.path());
+    for var in &[
+        "LOCALAPPDATA",
+        "APPDATA",
+        "USERPROFILE",
+        "PATH",
+        "SystemRoot",
+    ] {
+        if let Ok(v) = std::env::var(var) {
+            c.env(var, v);
+        }
+    }
     c
 }
 

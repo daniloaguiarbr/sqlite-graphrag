@@ -685,6 +685,11 @@ let output = Command::new("sqlite-graphrag")
 - `sqlite-graphrag ingest ./docs --mode codex --codex-model o4-mini --json`
 - `sqlite-graphrag ingest ./docs --mode codex --codex-timeout 600 --json`
 - `sqlite-graphrag ingest ./docs --mode codex --codex-binary /usr/local/bin/codex --json`
+### Nota de Autenticação
+> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
+> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.
 
 
 ## CRUD — Read com read e list
@@ -719,6 +724,7 @@ let output = Command::new("sqlite-graphrag")
 - PREFERIR `--body-file` ou `--body-stdin` para corpos longos
 - ALTERAR descrição via `--description <texto>`
 - CADA edit cria nova versão imutável preservando histórico
+- EDIT regenera embedding vetorial quando body muda — `recall` e `hybrid-search` retornam scores precisos após edit (desde v1.0.63; edições somente de descrição não re-embdam)
 - VALIDAR exit code 3 como conflito de locking otimista
 - JSON response: `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 ### OBRIGATÓRIO — Renomeação Preservando Histórico (rename)
@@ -732,6 +738,7 @@ let output = Command::new("sqlite-graphrag")
 - USAR `restore --name <nome> --version <N>` para versão específica
 - OMITIR `--version` seleciona última versão não-restore automaticamente
 - RESTORE cria nova versão sem sobrescrever histórico anterior
+- RESTORE preserva o nome atual da memória — se a memória foi renomeada após a versão alvo ser criada, o nome permanece como está (corrigido em v1.0.63; antes revertia para o nome original da versão)
 - RE-EMBED ocorre automaticamente para recall vetorial voltar a encontrar
 - JSON response inclui campo `action: "restored"`, consistente com os demais comandos CRUD
 ### OBRIGATÓRIO — Locking Otimista

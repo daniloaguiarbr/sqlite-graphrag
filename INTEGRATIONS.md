@@ -122,6 +122,10 @@
 - The ingest mode spawns `codex exec --json` headless per file — requires Codex CLI >= 0.120.0 with active OpenAI API key
 - Use `--codex-timeout <S>` (default 300s) to prevent hung subprocesses in CI/cron pipelines
 
+> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` reads device auth from `codex auth login` (OpenAI).
+> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
 
 ## Gemini CLI
 ### Google Agent — Subprocess With JSON Contract

@@ -379,6 +379,15 @@ fn extract_with_codex(
                 if let Ok((result, usage)) = parse_codex_output(&stdout_str) {
                     return Ok((result, usage));
                 }
+                if stderr_str.contains("401")
+                    || stderr_str.contains("Unauthorized")
+                    || stderr_str.contains("auth")
+                {
+                    tracing::warn!(
+                        target: "ingest",
+                        "Codex CLI authentication expired. Re-authenticate with: codex auth login"
+                    );
+                }
                 return Err(AppError::Validation(format!(
                     "codex exec exited with code {:?}: {}",
                     exit_status.code(),
@@ -901,7 +910,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 .map(|r| NewRelationship {
                     source: r.source.clone(),
                     target: r.target.clone(),
-                    relation: r.relation.clone(),
+                    relation: crate::parsers::normalize_relation(&r.relation),
                     strength: r.strength,
                     description: None,
                 })

@@ -147,7 +147,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         .map_err(|_| AppError::NotFound(errors_msg::version_not_found(target_version, &name)))?
     };
 
-    let (old_name, old_type, old_description, old_body, old_metadata) = version_row;
+    let (_old_name, old_type, old_description, old_body, old_metadata) = version_row;
 
     // Read current FTS-indexed values before the UPDATE so sync_fts_after_update
     // can issue the correct DELETE command for the external-content FTS5 table.
@@ -172,11 +172,10 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     // deleted_at = NULL reactivates soft-deleted memories; no deleted_at filter in the WHERE
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
-            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6, deleted_at=NULL
-             WHERE id=?1 AND updated_at=?7",
+            "UPDATE memories SET type=?2, description=?3, body=?4, body_hash=?5, deleted_at=NULL
+             WHERE id=?1 AND updated_at=?6",
             rusqlite::params![
                 memory_id,
-                old_name,
                 old_type,
                 old_description,
                 old_body,
@@ -186,11 +185,10 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         )?
     } else {
         tx.execute(
-            "UPDATE memories SET name=?2, type=?3, description=?4, body=?5, body_hash=?6, deleted_at=NULL
+            "UPDATE memories SET type=?2, description=?3, body=?4, body_hash=?5, deleted_at=NULL
              WHERE id=?1",
             rusqlite::params![
                 memory_id,
-                old_name,
                 old_type,
                 old_description,
                 old_body,
@@ -209,7 +207,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         &tx,
         memory_id,
         next_v,
-        &old_name,
+        &cur_name,
         &old_type,
         &old_description,
         &old_body,
@@ -218,9 +216,8 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         "restore",
     )?;
 
-    // v1.0.21 P1-D: ressincronizar vec_memories com o body restaurado.
     memories::upsert_vec(
-        &tx, memory_id, &namespace, &old_type, &embedding, &old_name, &snippet,
+        &tx, memory_id, &namespace, &old_type, &embedding, &cur_name, &snippet,
     )?;
 
     memories::sync_fts_after_update(
@@ -229,7 +226,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         &cur_name,
         &cur_desc,
         &cur_body,
-        &old_name,
+        &cur_name,
         &old_description,
         &old_body,
     )?;
@@ -241,7 +238,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     output::emit_json(&RestoreResponse {
         action: "restored".to_string(),
         memory_id,
-        name: old_name,
+        name: cur_name.clone(),
         version: next_v,
         restored_from: target_version,
         elapsed_ms: start.elapsed().as_millis() as u64,

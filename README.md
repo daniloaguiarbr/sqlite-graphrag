@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.63**: restore preserves current name after rename (was reverting to version's original name), ingest claude-code/codex normalizes relation strings before DB insertion, edit re-generates vector embeddings when body changes, OAuth-first auth docs
 - **v1.0.62**: 10 bug fixes for ingest --mode claude-code (G01 CRITICAL: recall now works), NEW --mode codex for OpenAI Codex CLI extraction, new flags --codex-binary/--codex-model/--codex-timeout
 - **v1.0.61**: 15 bug fixes for ingest --mode claude-code (B00-B13), new --claude-timeout flag, wait-timeout subprocess management
 - **v1.0.60**: NEW ingest --mode claude-code for LLM-curated extraction via Claude Code CLI, queue DB for resume/retry, 7 new ingest flags
@@ -335,6 +336,10 @@ sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --json
 # Extract entities and relationships using locally installed OpenAI Codex CLI
 sqlite-graphrag ingest ./docs --mode codex --recursive --json
 ```
+> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` reads device auth from `codex auth login` (OpenAI).
+> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
 > `ingest` emits NDJSON on stdout: one JSON line per file, then a summary line.
 > Per-file `status` values: `indexed` (created), `skipped` (duplicate or invalid name), `failed` (error).
 > Duplicates emit `status: "skipped"` with `action: "duplicate"` and do not count as failures.

@@ -73,6 +73,15 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.63 — restore name preservation, ingest relation normalization, edit re-embed
+
+- `restore` preserves the current memory name after rename — no longer reverts to the version's original name; eliminates UNIQUE constraint crash (exit 10) when old name is occupied
+- `ingest --mode claude-code` and `--mode codex` normalize relation strings before DB insertion (`depends-on` → `depends_on`) — eliminates false `non-canonical relation` warnings and prevents mixed-format DB inconsistency
+- `edit` re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate similarity scores after edit
+- AUTHENTICATION section added to `ingest --help` documenting OAuth-first principle
+- Auth failure detection: actionable `tracing::warn!` when Claude Code or Codex CLI authentication fails
+- No schema migration needed — compatible with existing databases
+
 ### v1.0.62 — Embedding fix for claude-code, NEW codex mode
 
 - G01 CRITICAL fix: `ingest --mode claude-code` now persists vector embeddings — `recall` finds claude-code ingested memories
@@ -81,6 +90,11 @@ sqlite-graphrag namespace-detect
 - New env var: `SQLITE_GRAPHRAG_CODEX_BINARY`
 - G02-G10: version validation, Windows env vars, skipped counter, 10MB cap, name normalization, entity warnings, WAL queue, WAL checkpoint, schema additionalProperties
 - No schema migration needed — compatible with existing databases
+
+> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` reads device auth from `codex auth login` (OpenAI).
+> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
 
 ### v1.0.61 — 15 bug fixes for ingest --mode claude-code
 

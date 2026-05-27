@@ -122,6 +122,10 @@
 - O modo de ingestão spawna `codex exec --json` headless por arquivo — requer Codex CLI >= 0.120.0 com API key OpenAI ativa
 - Usar `--codex-timeout <S>` (padrão 300s) para prevenir subprocessos travados em pipelines CI/cron
 
+> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
+> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.
 
 ## Gemini CLI
 ### Agente Google — Subprocess Com Contrato JSON

@@ -685,6 +685,11 @@ let output = Command::new("sqlite-graphrag")
 - `sqlite-graphrag ingest ./docs --mode codex --codex-model o4-mini --json`
 - `sqlite-graphrag ingest ./docs --mode codex --codex-timeout 600 --json`
 - `sqlite-graphrag ingest ./docs --mode codex --codex-binary /usr/local/bin/codex --json`
+### Authentication Note
+> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
+> `--mode codex` reads device auth from `codex auth login` (OpenAI).
+> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
 
 
 ## CRUD — Read with read and list
@@ -719,6 +724,7 @@ let output = Command::new("sqlite-graphrag")
 - PREFER `--body-file` or `--body-stdin` for long bodies
 - CHANGE description via `--description <text>`
 - EACH edit creates a new immutable version preserving history
+- EDIT re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate scores after edit (since v1.0.63; description-only edits skip re-embedding)
 - VALIDATE exit code 3 as an optimistic locking conflict
 - JSON response: `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 ### REQUIRED — History-Preserving Rename (rename)
@@ -732,6 +738,7 @@ let output = Command::new("sqlite-graphrag")
 - USE `restore --name <name> --version <N>` for a specific version
 - OMIT `--version` to select the last non-restore version automatically
 - RESTORE creates a new version without overwriting prior history
+- RESTORE preserves the current memory name — if a memory was renamed after the target version was created, the name stays as-is (fixed in v1.0.63; previously reverted to the version's original name)
 - RE-EMBED occurs automatically so vector recall can find it again
 - JSON response includes `action: "restored"` field, consistent with other CRUD commands
 ### REQUIRED — Optimistic Locking

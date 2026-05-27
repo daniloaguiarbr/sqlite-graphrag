@@ -165,6 +165,12 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
 - Token usage tracking via `input_tokens` and `output_tokens` fields (cost_usd unavailable from Codex CLI)
 - Full embedding pipeline applied to Codex-ingested memories for recall and hybrid-search
+- Since v1.0.63: relation strings from LLM extraction are normalized before DB insertion (depends-on → depends_on) — consistent with remember command
+
+Authentication: OAuth works out of the box for both modes — no API key needed.
+--mode claude-code reads OAuth from ~/.claude/.credentials.json (Claude Pro/Max/Team).
+--mode codex reads device auth from codex auth login (OpenAI).
+API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster subprocess startup.
 
 ```json
 [
@@ -332,8 +338,8 @@ RUN cargo install --locked sqlite-graphrag
 ### Write Commands — Optimistic Locking Protects Concurrency
 - `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `9`
 - `rename` requires `--expected-updated-at` to detect stale writes via exit `3`
-- `edit` creates a new row in `memory_versions` preserving immutable history
-- `restore` rewinds content while appending a new version instead of overwriting
+- `edit` creates a new row in `memory_versions` preserving immutable history; since v1.0.63 re-generates vector embedding when body changes
+- `restore` rewinds content while appending a new version instead of overwriting; since v1.0.63 preserves the current name after rename
 - `forget` is soft-delete so re-running it is safe and idempotent by design
 
 
@@ -538,7 +544,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.62 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.63 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

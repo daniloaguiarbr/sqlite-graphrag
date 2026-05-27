@@ -73,6 +73,13 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./docs --mode claude-code --resume --json\n\n  \
     # Claude Code with budget cap and custom timeout\n  \
     sqlite-graphrag ingest ./docs --mode claude-code --max-cost-usd 5.00 --claude-timeout 600 --json\n\n  \
+AUTHENTICATION:\n  \
+    --mode claude-code: Uses existing Claude Code authentication.\n  \
+      OAuth (Pro/Max/Team): works automatically from ~/.claude/.credentials.json\n  \
+      API key: set ANTHROPIC_API_KEY for faster startup (optional)\n\n  \
+    --mode codex: Uses existing Codex CLI authentication.\n  \
+      Device auth: run `codex auth login` first\n  \
+      API key: set OPENAI_API_KEY (optional)\n\n  \
 NOTES:\n  \
     Each file becomes a separate memory. Names derive from file basenames\n  \
     (kebab-case, lowercase, ASCII). Output is NDJSON: one JSON object per file,\n  \

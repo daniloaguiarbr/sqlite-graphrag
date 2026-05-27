@@ -125,6 +125,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let row = memories::read_by_name(&conn, &namespace, &name)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("memory row not found after check")))?;
 
+    let body_changed = raw_body.is_some();
     let new_body = raw_body.unwrap_or(row.body.clone());
     let new_description = args.description.unwrap_or(row.description.clone());
     let new_hash = blake3::hash(new_body.as_bytes()).to_hex().to_string();
@@ -151,6 +152,24 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         return Err(AppError::Conflict(
             "optimistic lock conflict: memory was modified by another process".to_string(),
         ));
+    }
+
+    if body_changed {
+        output::emit_progress_i18n(
+            "Re-computing embedding for edited body...",
+            crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),
+        );
+        let embedding = crate::daemon::embed_passage_or_local(&paths.models, &new_body)?;
+        let snippet: String = new_body.chars().take(300).collect();
+        memories::upsert_vec(
+            &tx,
+            memory_id,
+            &namespace,
+            &memory_type,
+            &embedding,
+            &name,
+            &snippet,
+        )?;
     }
 
     let next_v = versions::next_version(&tx, memory_id)?;

@@ -238,6 +238,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `--codex-binary <PATH>` sobrescreve busca no PATH; `--codex-model <MODEL>` seleciona modelo; `--codex-timeout <S>` (padrão 300s)
 - Variável de ambiente `SQLITE_GRAPHRAG_CODEX_BINARY` sobrescreve busca no PATH
 - Pipeline completo de embedding aplicado — memórias ficam pesquisáveis via `recall` e `hybrid-search`
+- Desde v1.0.63: strings de relação da extração LLM são normalizadas antes da inserção no DB (`depends-on` → `depends_on`) — consistente com o comando `remember`
 - Modo Codex reutiliza o mesmo formato NDJSON do claude-code: `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, `ingest-claude-summary.schema.json`
 ### Padrão Correto — Exemplos de Ingestão Claude Code
 - `sqlite-graphrag ingest ./docs --mode claude-code --recursive --json`
@@ -277,6 +278,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - PREFERIR `--body-file` ou `--body-stdin` para corpos longos
 - ALTERAR descrição via `--description <texto>`
 - CADA edit cria nova versão imutável preservando histórico
+- EDIT regenera embedding vetorial quando body muda — `recall` e `hybrid-search` retornam scores precisos após edit (desde v1.0.63; edições somente de descrição não re-embdam)
 - VALIDAR exit code 3 como conflito de locking otimista
 - JSON response: `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - v1.0.56: bug de dessincronização do FTS5 corrigido — memórias editadas ficam imediatamente localizáveis via busca full-text
@@ -292,6 +294,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - USAR `restore --name <nome> --version <N>` para versão específica
 - OMITIR `--version` seleciona última versão não-restore automaticamente
 - RESTORE cria nova versão sem sobrescrever histórico anterior
+- RESTORE preserva o nome atual da memória — se a memória foi renomeada após a versão alvo ser criada, o nome permanece como está (corrigido em v1.0.63; antes revertia para o nome original da versão)
 - RE-EMBED ocorre automaticamente para recall vetorial voltar a encontrar
 - JSON response inclui `action: "restored"`, `memory_id`, `name`, `version`, `restored_from`, `elapsed_ms`
 - v1.0.56: bug de dessincronização do FTS5 corrigido — memórias restauradas ficam imediatamente localizáveis via busca full-text

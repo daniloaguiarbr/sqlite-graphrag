@@ -387,6 +387,14 @@ fn extract_with_claude(
                                     "RATE_LIMITED: {err_msg}"
                                 )));
                             }
+                            if err_msg.contains("Not logged in")
+                                || err_msg.contains("authentication")
+                            {
+                                tracing::warn!(
+                                    target: "ingest",
+                                    "Claude Code authentication failed. Re-authenticate interactively with: claude"
+                                );
+                            }
                             return Err(AppError::Validation(format!(
                                 "claude -p failed: {err_msg}"
                             )));
@@ -394,6 +402,12 @@ fn extract_with_claude(
                     }
                 }
                 let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                if stderr_str.contains("auth") || stderr_str.contains("login") {
+                    tracing::warn!(
+                        target: "ingest",
+                        "Claude Code authentication may have failed. Re-authenticate with: claude"
+                    );
+                }
                 return Err(AppError::Validation(format!(
                     "claude -p exited with code {:?}: {}",
                     exit_status.code(),
@@ -821,7 +835,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 .map(|r| NewRelationship {
                     source: r.source.clone(),
                     target: r.target.clone(),
-                    relation: r.relation.clone(),
+                    relation: crate::parsers::normalize_relation(&r.relation),
                     strength: r.strength,
                     description: None,
                 })
