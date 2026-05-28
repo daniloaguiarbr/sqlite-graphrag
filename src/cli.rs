@@ -239,7 +239,11 @@ impl Commands {
     pub fn is_embedding_heavy(&self) -> bool {
         matches!(
             self,
-            Self::Init(_) | Self::Remember(_) | Self::Recall(_) | Self::HybridSearch(_)
+            Self::Init(_)
+                | Self::Remember(_)
+                | Self::Recall(_)
+                | Self::HybridSearch(_)
+                | Self::DeepResearch(_)
         )
     }
 
@@ -331,6 +335,9 @@ pub enum Commands {
     Link(link::LinkArgs),
     /// Remove a specific relationship between two entities
     Unlink(unlink::UnlinkArgs),
+    /// Deep parallel multi-hop GraphRAG research
+    #[command(name = "deep-research")]
+    DeepResearch(deep_research::DeepResearchArgs),
     /// List memories connected via the entity graph
     Related(related::RelatedArgs),
     /// Export a graph snapshot in json, dot or mermaid

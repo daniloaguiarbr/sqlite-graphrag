@@ -744,7 +744,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
             r.get::<_, usize>(0)
         })
         .unwrap_or(0);
-    let skipped = skipped_initial;
+    let mut skipped = skipped_initial;
     let mut entities_total = 0usize;
     let mut rels_total = 0usize;
     let mut input_tokens_total = 0u64;
@@ -835,6 +835,38 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 continue;
             }
         };
+
+        // Skip files exceeding body cap BEFORE sending to LLM to avoid wasting tokens
+        if file_content.len() > crate::constants::MAX_MEMORY_BODY_LEN {
+            let err_msg = format!(
+                "file body exceeds {} byte limit ({} bytes) — skipping to avoid wasting LLM tokens",
+                crate::constants::MAX_MEMORY_BODY_LEN,
+                file_content.len()
+            );
+            tracing::warn!(target: "ingest", file = %file_path, size = file_content.len(), "body exceeds limit, skipping LLM extraction");
+            let _ = queue_conn.execute(
+                "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                rusqlite::params![err_msg, queue_id],
+            );
+            let current_index = completed + failed + skipped;
+            skipped += 1;
+            emit_json(&FileEvent {
+                file: &file_path,
+                name: "",
+                status: "skipped",
+                memory_id: None,
+                entities: None,
+                rels: None,
+                cost_usd: None,
+                input_tokens: None,
+                output_tokens: None,
+                elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
+                error: Some(&err_msg),
+                index: current_index,
+                total,
+            });
+            continue;
+        }
 
         // Retry once on cold-start failure
         let max_extract_attempts: u32 = 2;

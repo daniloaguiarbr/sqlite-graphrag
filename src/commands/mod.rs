@@ -3,6 +3,7 @@ pub mod cache;
 pub mod cleanup_orphans;
 pub mod daemon;
 pub mod debug_schema;
+pub mod deep_research;
 pub mod delete_entity;
 pub mod edit;
 pub mod export;

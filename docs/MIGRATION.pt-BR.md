@@ -73,6 +73,14 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.64 — Comando deep-research, correção de hooks no ingest, detecção OAuth de custo, pré-validação de body cap, rejeição de rename mesmo nome
+- NOVO subcomando `deep-research` para pesquisa profunda multi-hop paralela via decomposição de query e fan-out bounded
+- `ingest --mode claude-code` desabilita hooks via `--settings '{"hooks":{}}'` para usuários OAuth — previne que hooks Stop consumam turns de extração
+- `ingest --mode claude-code` detecta OAuth via `apiKeySource` e omite `cost_usd` enganoso do NDJSON — `--max-cost-usd` ignorado para assinantes
+- `ingest --mode claude-code` e `--mode codex` validam tamanho do body ANTES de enviar ao LLM — arquivos excedendo 512 KB ignorados com warning
+- `rename` e `rename-entity` rejeitam renomeações para o mesmo nome com exit 1
+- Nenhuma migração de schema necessária; nenhuma breaking change nos contratos JSON existentes
+
 ### v1.0.63 — Preservação de nome no restore, normalização de relações no ingest, re-embed no edit
 
 - `restore` preserva o nome atual da memória após rename — não reverte mais para o nome original da versão; elimina crash UNIQUE constraint (exit 10) quando nome antigo está ocupado

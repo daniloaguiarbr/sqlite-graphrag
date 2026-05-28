@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.64] - 2026-05-28
+
+### Fixed
+- BUG-1 HIGH: `ingest --mode claude-code` now disables hooks via `--settings '{"hooks":{}}'` for OAuth users and detects `terminal_reason: "max_turns"` — prevents Stop hooks from consuming extraction turns (was failing 65% of files for users with hooks configured)
+- BUG-2 HIGH: `ingest --mode claude-code` now detects OAuth via `apiKeySource` from Claude Code init JSON and omits misleading `cost_usd` from NDJSON output — `--max-cost-usd` budget cap is ignored with warning for subscription users who are not billed per API call
+- BUG-3 HIGH: `ingest --mode claude-code` and `--mode codex` now validate body size BEFORE sending to LLM subprocess — files exceeding 512 KB body cap are skipped with actionable warning instead of wasting LLM tokens on extraction that will be discarded
+- `rename` and `rename-entity` now reject same-name renames with exit 1 (Validation) — prevents version inflation, unnecessary FTS5 sync, and wasted re-embedding
+
+### Added
+- `deep-research` command for parallel multi-hop GraphRAG research via heuristic query decomposition (up to 7 sub-queries), bounded fan-out with `tokio::task::JoinSet` and `Arc<Semaphore>`, 3-hop graph traversal, evidence chain assembly, and per-sub-query timeout — defaults calibrated against NovelHopQA, StepChain, HopRAG, and GraphRAG-Bench benchmarks (k=20, max-hops=3, max-sub-queries=7)
+
 ## [1.0.63] - 2026-05-27
 
 ### Fixed

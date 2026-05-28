@@ -188,6 +188,18 @@ sqlite-graphrag reclassify --name authentication --description "JWT-based authen
 - All relationships and memory bindings use integer FK and are unaffected by the name change
 - Combine with `reclassify --description` to enrich the entity metadata in the same session
 
+### Deep research with parallel multi-hop queries (v1.0.64)
+- Run `sqlite-graphrag deep-research "query" --k 20 --json` for parallel decomposed search
+- The command splits the query into up to 7 sub-queries, runs them concurrently via bounded JoinSet + Semaphore, deduplicates results, and assembles evidence chains from graph traversal
+- Use `--max-sub-queries N` to cap decomposition (default: 7, calibrated against MuSiQue/StepChain benchmarks)
+- Use `--max-hops N` to set graph traversal depth (default: 3, sweet spot per NovelHopQA benchmark)
+- Use `--min-weight F` to filter weak edges during traversal (default: 0.3)
+- Use `--max-results N` to cap deduplicated output (default: 50)
+- Use `--with-bodies` to include full memory bodies in the output
+- Use `--max-concurrency N` to limit parallel sub-queries (default: min(cpus, 8))
+- Use `--timeout N` to set per-sub-query timeout in seconds (default: 30)
+- Use instead of the manual 3-layer pipeline (hybrid-search → read → related) for comprehensive research in a single invocation
+
 
 ## Configuration and Namespace Notes
 ### Namespace Default

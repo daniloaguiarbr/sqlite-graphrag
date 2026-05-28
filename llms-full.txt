@@ -120,6 +120,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
+| `deep-research` | `<query>`, `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50) | Parallel multi-hop GraphRAG research via heuristic query decomposition with evidence chain assembly |
 | `link` | `--source`, `--target`, `--relation` | Create an explicit relationship between two entities |
 | `unlink` | `--source`, `--target`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
@@ -165,7 +166,9 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
 - Token usage tracking via `input_tokens` and `output_tokens` fields (cost_usd unavailable from Codex CLI)
 - Full embedding pipeline applied to Codex-ingested memories for recall and hybrid-search
-- Since v1.0.63: relation strings from LLM extraction are normalized before DB insertion (depends-on → depends_on) — consistent with remember command
+- Since v1.0.64: relation strings from LLM extraction are normalized before DB insertion (depends-on → depends_on) — consistent with remember command
+- Since v1.0.64: `ingest --mode claude-code` disables hooks via `--settings '{"hooks":{}}'` for OAuth users and detects `terminal_reason: "max_turns"`; detects OAuth via `apiKeySource` and omits misleading `cost_usd`; validates body size BEFORE sending to LLM subprocess (files exceeding 512 KB are skipped); `rename` and `rename-entity` reject same-name renames with exit 1
+- Since v1.0.64: `deep-research` command added for parallel multi-hop GraphRAG research via heuristic query decomposition
 
 Authentication: OAuth works out of the box for both modes — no API key needed.
 --mode claude-code reads OAuth from ~/.claude/.credentials.json (Claude Pro/Max/Team).
@@ -338,8 +341,8 @@ RUN cargo install --locked sqlite-graphrag
 ### Write Commands — Optimistic Locking Protects Concurrency
 - `remember` uses `ON CONFLICT(name)` so duplicate calls return exit code `9`
 - `rename` requires `--expected-updated-at` to detect stale writes via exit `3`
-- `edit` creates a new row in `memory_versions` preserving immutable history; since v1.0.63 re-generates vector embedding when body changes
-- `restore` rewinds content while appending a new version instead of overwriting; since v1.0.63 preserves the current name after rename
+- `edit` creates a new row in `memory_versions` preserving immutable history; since v1.0.64 re-generates vector embedding when body changes
+- `restore` rewinds content while appending a new version instead of overwriting; since v1.0.64 preserves the current name after rename
 - `forget` is soft-delete so re-running it is safe and idempotent by design
 
 
@@ -544,7 +547,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.63 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.64 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

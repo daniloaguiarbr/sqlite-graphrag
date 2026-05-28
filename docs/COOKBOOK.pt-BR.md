@@ -244,6 +244,35 @@ sqlite-graphrag hybrid-search "authentication architecture" \
 - Receita "Como Explorar O Grafo De Entidades Com Stats, Entities E Traverse"
 
 
+## Pesquisa Profunda Para Análise Multi-Hop Abrangente
+### Problem
+- Você precisa pesquisar um tópico complexo que abrange múltiplas memórias e conexões do grafo
+- Rodar o pipeline manual de 3 camadas (hybrid-search, read, related) para cada sub-tópico é tedioso e lento
+
+
+### Solution
+```bash
+sqlite-graphrag deep-research "decisões de arquitetura de autenticação e incidentes de segurança" --k 20 --max-hops 3 --json
+```
+
+
+### Explanation
+- Decompõe a query em sub-queries ("decisões de arquitetura de autenticação", "incidentes de segurança", "autenticação segurança") e executa em paralelo com travessia do grafo
+- Retorna resultados deduplicados de todas sub-queries mais cadeias de evidência mostrando caminhos entity-relation-entity
+- Uma única invocação substitui o pipeline manual de 3 camadas de hybrid-search, read e related
+
+
+### Variants
+- Adicione `--with-bodies` para conteúdo completo das memórias na resposta
+- Adicione `--max-concurrency 4` para limitar paralelismo em hosts com recursos limitados
+
+
+### See Also
+- Receita "Como Combinar Busca Vetorial E FTS Com Pesos Ajustáveis"
+- Receita "Como Expandir Hybrid Search Com Contexto De Grafo"
+- Receita "Como Percorrer O Grafo De Entidades Para Recall Multi-Hop"
+
+
 ## Como Percorrer O Grafo De Entidades Para Recall Multi-Hop
 ### Problem
 - Sua query acerta uma memória mas perde notas conectadas que compartilham o mesmo grafo

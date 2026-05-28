@@ -84,7 +84,6 @@ Rules:\n\
 #[derive(Debug, Deserialize)]
 struct ClaudeOutputElement {
     r#type: Option<String>,
-    #[allow(dead_code)]
     subtype: Option<String>,
     #[serde(default)]
     is_error: bool,
@@ -92,6 +91,9 @@ struct ClaudeOutputElement {
     result: Option<String>,
     total_cost_usd: Option<f64>,
     error: Option<String>,
+    terminal_reason: Option<String>,
+    #[serde(rename = "apiKeySource")]
+    api_key_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -264,7 +266,7 @@ fn extract_with_claude(
     file_content: &[u8],
     model: Option<&str>,
     timeout_secs: u64,
-) -> Result<(ExtractionResult, f64), AppError> {
+) -> Result<(ExtractionResult, f64, bool), AppError> {
     use wait_timeout::ChildExt;
 
     let mut cmd = Command::new(binary);
@@ -321,7 +323,9 @@ fn extract_with_claude(
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         cmd.arg("--bare");
     } else {
-        cmd.arg("--dangerously-skip-permissions");
+        cmd.arg("--dangerously-skip-permissions")
+            .arg("--settings")
+            .arg(r#"{"hooks":{}}"#);
     }
 
     if let Some(m) = model {
@@ -376,6 +380,15 @@ fn extract_with_claude(
                         .iter()
                         .find(|e| e.r#type.as_deref() == Some("result"))
                     {
+                        if re.terminal_reason.as_deref() == Some("max_turns") {
+                            tracing::warn!(
+                                target: "ingest",
+                                "extraction hit max_turns limit — hooks may have consumed turns"
+                            );
+                            return Err(AppError::Validation(
+                                "claude -p hit max_turns: hooks may be consuming turns".into(),
+                            ));
+                        }
                         if re.is_error {
                             let err_msg = re
                                 .error
@@ -432,10 +445,20 @@ fn extract_with_claude(
 }
 
 /// Parses the JSON array output from `claude -p --output-format json`.
-fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64), AppError> {
+///
+/// Returns `(extraction, cost_usd, is_oauth)` where `is_oauth` is true when
+/// the init element reports `apiKeySource: "none"` (OAuth subscription).
+fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64, bool), AppError> {
     let elements: Vec<ClaudeOutputElement> = serde_json::from_str(stdout).map_err(|e| {
         AppError::Validation(format!("failed to parse claude output as JSON array: {e}"))
     })?;
+
+    let is_oauth = elements
+        .iter()
+        .find(|e| e.r#type.as_deref() == Some("system") && e.subtype.as_deref() == Some("init"))
+        .and_then(|e| e.api_key_source.as_deref())
+        .map(|s| s == "none")
+        .unwrap_or(false);
 
     let result_elem = elements
         .iter()
@@ -473,7 +496,7 @@ fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64), AppError
 
     let cost = result_elem.total_cost_usd.unwrap_or(0.0);
 
-    Ok((extraction, cost))
+    Ok((extraction, cost, is_oauth))
 }
 
 fn emit_json<T: Serialize>(value: &T) {
@@ -679,10 +702,11 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             r.get::<_, usize>(0)
         })
         .unwrap_or(0);
-    let skipped = skipped_initial;
+    let mut skipped = skipped_initial;
     let mut entities_total = 0usize;
     let mut rels_total = 0usize;
     let mut cost_total = 0.0f64;
+    let mut oauth_detected = false;
     let total = files.len();
 
     let mut backoff_secs = args.rate_limit_wait;
@@ -766,9 +790,39 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
         };
 
+        // B08: skip files exceeding body cap BEFORE sending to LLM to avoid wasting tokens
+        if file_content.len() > crate::constants::MAX_MEMORY_BODY_LEN {
+            let err_msg = format!(
+                "file body exceeds {} byte limit ({} bytes) — skipping to avoid wasting LLM tokens",
+                crate::constants::MAX_MEMORY_BODY_LEN,
+                file_content.len()
+            );
+            tracing::warn!(target: "ingest", file = %file_path, size = file_content.len(), "body exceeds limit, skipping LLM extraction");
+            let _ = queue_conn.execute(
+                "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                rusqlite::params![err_msg, queue_id],
+            );
+            let current_index = completed + failed + skipped;
+            skipped += 1;
+            emit_json(&FileEvent {
+                file: &file_path,
+                name: "",
+                status: "skipped",
+                memory_id: None,
+                entities: None,
+                rels: None,
+                cost_usd: None,
+                elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
+                error: Some(&err_msg),
+                index: current_index,
+                total,
+            });
+            continue;
+        }
+
         // B07: retry once on cold-start failure (Claude Code Issue #23265)
         let max_extract_attempts: u32 = 2;
-        let mut extraction_result: Option<(ExtractionResult, f64)> = None;
+        let mut extraction_result: Option<(ExtractionResult, f64, bool)> = None;
         let mut last_extract_err: Option<String> = None;
 
         for attempt in 1..=max_extract_attempts {
@@ -797,7 +851,11 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
         }
 
-        if let Some((extraction, cost)) = extraction_result {
+        if let Some((extraction, cost, is_oauth)) = extraction_result {
+            if is_oauth && !oauth_detected {
+                oauth_detected = true;
+                tracing::info!(target: "ingest", "OAuth subscription detected — cost_usd omitted from output");
+            }
             backoff_secs = args.rate_limit_wait;
 
             let (normalized_name, _truncated, _orig) = crate::commands::ingest::derive_kebab_name(
@@ -897,13 +955,15 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             memory_id: None,
                             entities: None,
                             rels: None,
-                            cost_usd: Some(cost),
+                            cost_usd: if is_oauth { None } else { Some(cost) },
                             elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                             error: Some(&err_msg),
                             index: current_index,
                             total,
                         });
-                        cost_total += cost;
+                        if !is_oauth {
+                            cost_total += cost;
+                        }
                         if args.fail_fast {
                             break;
                         }
@@ -1085,7 +1145,9 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             completed += 1;
             entities_total += ent_count;
             rels_total += rel_count;
-            cost_total += cost;
+            if !is_oauth {
+                cost_total += cost;
+            }
 
             emit_json(&FileEvent {
                 file: &file_path,
@@ -1094,7 +1156,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 memory_id: Some(memory_id),
                 entities: Some(ent_count),
                 rels: Some(rel_count),
-                cost_usd: Some(cost),
+                cost_usd: if is_oauth { None } else { Some(cost) },
                 elapsed_ms: Some(file_started.elapsed().as_millis() as u64),
                 error: None,
                 index: current_index,
@@ -1141,7 +1203,9 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         }
 
         if let Some(budget) = args.max_cost_usd {
-            if cost_total >= budget {
+            if oauth_detected {
+                tracing::debug!(target: "ingest", "--max-cost-usd ignored: OAuth subscription detected");
+            } else if cost_total >= budget {
                 tracing::warn!(
                     target: "ingest",
                     spent = cost_total,
@@ -1193,7 +1257,7 @@ mod tests {
             {"type":"assistant"},
             {"type":"result","is_error":false,"total_cost_usd":0.02,"structured_output":{"name":"test-doc","description":"A test document","entities":[{"name":"test-entity","entity_type":"concept"}],"relationships":[{"source":"test-entity","target":"test-doc","relation":"applies-to","strength":0.8}]}}
         ]"#;
-        let (result, cost) = parse_claude_output(output).expect("parse must succeed");
+        let (result, cost, _is_oauth) = parse_claude_output(output).expect("parse must succeed");
         assert_eq!(result.name, "test-doc");
         assert_eq!(result.entities.len(), 1);
         assert_eq!(result.relationships.len(), 1);
@@ -1244,7 +1308,8 @@ mod tests {
             {"type":"system","subtype":"init"},
             {"type":"result","is_error":false,"total_cost_usd":0.01,"structured_output":null,"result":"{\"name\":\"test-fallback\",\"description\":\"A fallback test\",\"entities\":[{\"name\":\"fb-entity\",\"entity_type\":\"concept\"}],\"relationships\":[]}"}
         ]"#;
-        let (result, cost) = parse_claude_output(output).expect("result fallback must work");
+        let (result, cost, _is_oauth) =
+            parse_claude_output(output).expect("result fallback must work");
         assert_eq!(result.name, "test-fallback");
         assert_eq!(result.entities.len(), 1);
         assert!(result.relationships.is_empty());
@@ -1263,6 +1328,50 @@ mod tests {
             msg.contains("Not logged in"),
             "expected 'Not logged in' in: {msg}"
         );
+    }
+
+    #[test]
+    fn test_terminal_reason_max_turns_detected() {
+        let output = r#"[
+            {"type":"system","subtype":"init"},
+            {"type":"result","is_error":false,"terminal_reason":"max_turns","structured_output":{"name":"t","description":"d","entities":[],"relationships":[]}}
+        ]"#;
+        let err_or_ok = parse_claude_output(output);
+        assert!(
+            err_or_ok.is_ok(),
+            "max_turns in result without is_error should still parse"
+        );
+    }
+
+    #[test]
+    fn test_detect_oauth_from_init_json() {
+        let output = r#"[
+            {"type":"system","subtype":"init","apiKeySource":"none"},
+            {"type":"result","is_error":false,"total_cost_usd":0.50,"structured_output":{"name":"test-oauth","description":"oauth test","entities":[],"relationships":[]}}
+        ]"#;
+        let (_result, cost, is_oauth) = parse_claude_output(output).expect("parse must succeed");
+        assert!(is_oauth, "apiKeySource=none must be detected as OAuth");
+        assert!((cost - 0.50).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_api_key_source_not_oauth() {
+        let output = r#"[
+            {"type":"system","subtype":"init","apiKeySource":"env"},
+            {"type":"result","is_error":false,"total_cost_usd":0.10,"structured_output":{"name":"test-api","description":"api test","entities":[],"relationships":[]}}
+        ]"#;
+        let (_result, _cost, is_oauth) = parse_claude_output(output).expect("parse must succeed");
+        assert!(!is_oauth, "apiKeySource=env must NOT be detected as OAuth");
+    }
+
+    #[test]
+    fn test_missing_api_key_source_defaults_not_oauth() {
+        let output = r#"[
+            {"type":"system","subtype":"init"},
+            {"type":"result","is_error":false,"total_cost_usd":0.05,"structured_output":{"name":"test-missing","description":"missing test","entities":[],"relationships":[]}}
+        ]"#;
+        let (_result, _cost, is_oauth) = parse_claude_output(output).expect("parse must succeed");
+        assert!(!is_oauth, "missing apiKeySource must default to not OAuth");
     }
 
     #[test]

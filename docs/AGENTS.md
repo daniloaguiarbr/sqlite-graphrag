@@ -804,12 +804,19 @@ let output = Command::new("sqlite-graphrag")
 
 
 ## GraphRAG Search
-### REQUIRED — Four Search Commands
+### REQUIRED — Five Search Commands
 - USE `recall` for KNN vector search with automatic graph expansion
 - USE `hybrid-search` for FTS5 and vector fusion via RRF
 - USE `related` for multi-hop traversal from a known memory
 - USE `graph traverse` for traversal from a typed entity
-- COMBINE all four in the canonical three-layer pattern
+- USE `deep-research` for parallel multi-hop research with query decomposition
+- COMBINE all five in the canonical three-layer pattern or use `deep-research` as a single-command alternative
+### Deep Research (v1.0.64)
+- `sqlite-graphrag deep-research "<query>" --k 20 --json` for parallel multi-hop research
+- Decomposes query into up to 7 sub-queries via heuristic split (conjunctions, relational prepositions, explicit entities)
+- Runs all sub-queries in parallel with bounded concurrency (JoinSet + Semaphore, max 8 permits)
+- Returns `sub_queries[]`, `results[]` (deduplicated), `evidence_chains[]` (entity→relation→entity paths), and `stats`
+- Use instead of manual 3-layer pipeline (hybrid-search → read → related) for comprehensive research in a single invocation
 ### REQUIRED — Canonical Three-Layer Pattern
 - LAYER 1 — `hybrid-search` to find seed memories by name
 - LAYER 2 — `read --name` to expand the full memory body

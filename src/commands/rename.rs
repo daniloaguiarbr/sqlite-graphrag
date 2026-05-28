@@ -107,6 +107,12 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         trimmed
     };
 
+    if normalized_new_name == name {
+        return Err(AppError::Validation(
+            "source and target names are identical".to_string(),
+        ));
+    }
+
     if normalized_new_name.starts_with("__") {
         return Err(AppError::Validation(
             crate::i18n::validation::reserved_name(),
@@ -254,6 +260,14 @@ mod tests {
         );
         assert!(err.to_string().contains("__"));
         assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn rejects_rename_to_same_name() {
+        use crate::errors::AppError;
+        let err = AppError::Validation("source and target names are identical".to_string());
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("identical"));
     }
 
     #[test]

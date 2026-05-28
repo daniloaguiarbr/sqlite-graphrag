@@ -25,6 +25,7 @@
 - `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional; use `--max-rss-mb` para limitar o RSS do processo durante embedding (padrão 8192 MiB)
 - `recall` realiza busca por similaridade vetorial KNN sobre as memórias armazenadas
 - `hybrid-search` funde FTS5 full-text e KNN vetorial via Reciprocal Rank Fusion
+- `deep-research` decompõe uma query em até 7 sub-queries, executa busca vetorial paralela mais travessia de grafo de 3 hops por sub-query, deduplica e monta cadeias de evidência; flags: `--k` (padrão 20), `--max-sub-queries` (padrão 7), `--max-hops` (padrão 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (padrão 50)
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
 - `link` `unlink` `related` gerenciam relacionamentos tipados entre entidades para travessia multi-hop
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` gerenciam o banco de dados
@@ -129,7 +130,7 @@ Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) são opcionais e aceleram o st
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.63 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.64 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5

@@ -64,6 +64,10 @@
 - `restore_preserves_name_after_rename`: remember → edit → rename → restore; asserts name stays renamed
 - `restore_does_not_crash_when_old_name_occupied`: remember A → rename to B → remember new A → restore B; asserts exit 0 (was exit 10 UNIQUE crash before fix)
 - `edit_reembeds_when_body_changes`: remember → edit body → recall new content; asserts recall finds the edited memory with accurate score
+### v1.0.64 Regression Tests
+- 14 unit tests in `src/commands/deep_research.rs` protect query decomposition, bounded concurrency, dedup, evidence chain assembly, and edge cases
+- Unit tests in `src/commands/ingest_claude.rs` cover terminal_reason parsing, OAuth detection via apiKeySource, and body size pre-validation
+- Unit tests in `src/commands/rename.rs` and `src/commands/rename_entity.rs` cover same-name rejection with exit 1
 
 
 ## How to Run
@@ -150,17 +154,17 @@
 ## CI Profiles
 ### Profile — default
 - Activates: always, unless overridden
-- `test-threads`: number of logical CPUs
+- `test-threads`: 2
 - `RUST_TEST_THREADS`: not set, inherits system default
 - Retries: 0
-- Timeout per test: 60 seconds
+- Slow-timeout: 60s period, terminate after 2 periods (120s effective kill)
 - Excludes: loom tests, slow-tests feature
 ### Profile — ci
 - Activates: `/usr/bin/timeout 600 cargo nextest run --profile ci`
 - `test-threads`: 2
 - `RUST_TEST_THREADS`: 2 (explicit, prevents thermal overload on shared runners)
 - Retries: 2 for flaky tests
-- Timeout per test: 120 seconds
+- Slow-timeout: 180s period, terminate after 3 periods (540s effective kill)
 - Excludes: loom tests, slow-tests feature
 - Dedicated CI job `slow-contracts` covers `doc_contract_integration` and `prd_compliance` with `/usr/bin/timeout 1200 cargo test --features slow-tests`
 ### Profile — heavy
@@ -168,7 +172,7 @@
 - `test-threads`: 1
 - `RUST_TEST_THREADS`: 1
 - Retries: 0
-- Timeout per test: 600 seconds
+- Slow-timeout: 900s period, terminate after 2 periods (1800s effective kill)
 - Includes: slow-tests feature gated tests
 - Excludes: loom tests (always separate)
 ### Loom CI Job — Separate Workflow Step

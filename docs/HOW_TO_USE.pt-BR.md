@@ -175,6 +175,18 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Recall retorna snippets em vez de corpos completos, o que ajuda a manter prompts menores
 - A latência fim a fim depende da CLI local e do runtime do modelo downstream
 
+### Pesquisa profunda com queries multi-hop paralelas (v1.0.64)
+- Execute `sqlite-graphrag deep-research "query" --k 20 --json` para busca paralela decomposta
+- O comando divide a query em até 7 sub-queries, executa concorrentemente via JoinSet + Semaphore bounded, deduplica resultados e monta cadeias de evidência da travessia do grafo
+- Use `--max-sub-queries N` para limitar decomposição (padrão: 7, calibrado contra benchmarks MuSiQue/StepChain)
+- Use `--max-hops N` para definir profundidade de travessia do grafo (padrão: 3, sweet spot segundo benchmark NovelHopQA)
+- Use `--min-weight F` para filtrar edges fracos na travessia (padrão: 0.3)
+- Use `--max-results N` para limitar output deduplicado (padrão: 50)
+- Use `--with-bodies` para incluir corpos completos das memórias no output
+- Use `--max-concurrency N` para limitar sub-queries paralelas (padrão: min(cpus, 8))
+- Use `--timeout N` para definir timeout por sub-query em segundos (padrão: 30)
+- Use ao invés do pipeline manual de 3 camadas (hybrid-search → read → related) para pesquisa completa em uma única invocação
+
 
 ## Configuração e Notas de Namespace
 ### Namespace Padrão

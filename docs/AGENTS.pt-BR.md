@@ -804,12 +804,19 @@ let output = Command::new("sqlite-graphrag")
 
 
 ## Pesquisa GraphRAG
-### OBRIGATÓRIO — Quatro Comandos de Busca
+### OBRIGATÓRIO — Cinco Comandos de Busca
 - USAR `recall` para busca KNN vetorial com expansão automática de grafo
 - USAR `hybrid-search` para fusão de FTS5 e vetorial via RRF
 - USAR `related` para travessia multi-hop a partir de memória conhecida
 - USAR `graph traverse` para travessia a partir de entidade tipada
-- COMBINAR os quatro no padrão de três camadas canônico
+- USAR `deep-research` para pesquisa profunda multi-hop paralela com decomposição de query
+- COMBINAR os cinco no padrão de três camadas canônico ou usar `deep-research` como alternativa de comando único
+### Deep Research (v1.0.64)
+- `sqlite-graphrag deep-research "<query>" --k 20 --json` para pesquisa profunda multi-hop paralela
+- Decompõe a query em até 7 sub-queries via split heurístico (conjunções, preposições relacionais, entidades explícitas)
+- Executa todas sub-queries em paralelo com concorrência bounded (JoinSet + Semaphore, máximo 8 permits)
+- Retorna `sub_queries[]`, `results[]` (deduplicados), `evidence_chains[]` (caminhos entity→relation→entity) e `stats`
+- Use ao invés do pipeline manual de 3 camadas (hybrid-search → read → related) para pesquisa completa em uma única invocação
 ### OBRIGATÓRIO — Padrão de Três Camadas Canônico
 - CAMADA 1 — `hybrid-search` para encontrar memórias seed por nome
 - CAMADA 2 — `read --name` para expandir corpo completo da memória

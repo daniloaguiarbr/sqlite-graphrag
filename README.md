@@ -127,6 +127,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.64**: NEW `deep-research` command for parallel multi-hop GraphRAG research via query decomposition (up to 7 sub-queries) with bounded JoinSet + Semaphore fan-out and evidence chain assembly; ingest claude-code disables hooks via `--settings` for OAuth (was failing 65% of files), detects OAuth and omits misleading `cost_usd`, validates body size BEFORE LLM extraction (files >512 KB skipped); rename/rename-entity reject same-name with exit 1
 - **v1.0.63**: restore preserves current name after rename (was reverting to version's original name), ingest claude-code/codex normalizes relation strings before DB insertion, edit re-generates vector embeddings when body changes, OAuth-first auth docs
 - **v1.0.62**: 10 bug fixes for ingest --mode claude-code (G01 CRITICAL: recall now works), NEW --mode codex for OpenAI Codex CLI extraction, new flags --codex-binary/--codex-model/--codex-timeout
 - **v1.0.61**: 15 bug fixes for ingest --mode claude-code (B00-B13), new --claude-timeout flag, wait-timeout subprocess management
@@ -255,6 +256,12 @@ sqlite-graphrag recall "postgres integration tests" --k 3 --json
 ```bash
 sqlite-graphrag hybrid-search "postgres migration rollback" --k 10 --json
 ```
+### Deep research with parallel multi-hop query decomposition (v1.0.64)
+```bash
+sqlite-graphrag deep-research "auth architecture decisions and incidents" --k 20 --json
+```
+- Decomposes the query into up to 7 sub-queries, runs them in parallel via bounded `JoinSet` + `Semaphore`, merges results with cross-query deduplication, and assembles evidence chains from graph traversal
+- Defaults calibrated against NovelHopQA, StepChain, HopRAG benchmarks: `--k 20`, `--max-sub-queries 7`, `--max-hops 3`
 ### Inspect database health and stats
 ```bash
 sqlite-graphrag health --json

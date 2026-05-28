@@ -73,6 +73,12 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
 
     entities::validate_entity_name(&args.new_name)?;
 
+    if args.name == args.new_name {
+        return Err(AppError::Validation(
+            "source and target entity names are identical".to_string(),
+        ));
+    }
+
     // Ensure new name is not already taken in this namespace.
     if entities::find_entity_id(&conn, &namespace, &args.new_name)?.is_some() {
         return Err(AppError::Validation(format!(
@@ -180,6 +186,14 @@ mod tests {
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["entity_id"], 999);
+    }
+
+    #[test]
+    fn rejects_rename_entity_to_same_name() {
+        use crate::errors::AppError;
+        let err = AppError::Validation("source and target entity names are identical".to_string());
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("identical"));
     }
 
     #[test]

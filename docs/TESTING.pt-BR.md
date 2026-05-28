@@ -64,6 +64,10 @@
 - `restore_preserves_name_after_rename`: remember → edit → rename → restore; asserta que nome permanece renomeado
 - `restore_does_not_crash_when_old_name_occupied`: remember A → rename para B → remember novo A → restore B; asserta exit 0 (era exit 10 UNIQUE crash antes da correção)
 - `edit_reembeds_when_body_changes`: remember → edit body → recall novo conteúdo; asserta que recall encontra a memória editada com score preciso
+### Testes de Regressão v1.0.64
+- 14 testes unitários em `src/commands/deep_research.rs` protegem decomposição de query, concorrência bounded, dedup, montagem de cadeias de evidência e edge cases
+- Testes unitários em `src/commands/ingest_claude.rs` cobrem parsing de terminal_reason, detecção OAuth via apiKeySource e pré-validação de tamanho do body
+- Testes unitários em `src/commands/rename.rs` e `src/commands/rename_entity.rs` cobrem rejeição de mesmo nome com exit 1
 
 
 ## Como Executar
@@ -150,17 +154,17 @@
 ## Profiles do CI
 ### Profile — default
 - Ativa: sempre, a menos que seja sobrescrito
-- `test-threads`: número de CPUs lógicas
+- `test-threads`: 2
 - `RUST_TEST_THREADS`: não definido, herda o padrão do sistema
 - Tentativas: 0
-- Timeout por teste: 60 segundos
+- Slow-timeout: período 60s, termina após 2 períodos (120s kill efetivo)
 - Exclui: testes loom, feature slow-tests
 ### Profile — ci
 - Ativa: `/usr/bin/timeout 600 cargo nextest run --profile ci`
 - `test-threads`: 2
 - `RUST_TEST_THREADS`: 2 (explícito, previne sobrecarga térmica em runners compartilhados)
 - Tentativas: 2 para testes instáveis
-- Timeout por teste: 120 segundos
+- Slow-timeout: período 180s, termina após 3 períodos (540s kill efetivo)
 - Exclui: testes loom, feature slow-tests
 - Job dedicado `slow-contracts` cobre `doc_contract_integration` e `prd_compliance` com `/usr/bin/timeout 1200 cargo test --features slow-tests`
 ### Profile — heavy
@@ -168,7 +172,7 @@
 - `test-threads`: 1
 - `RUST_TEST_THREADS`: 1
 - Tentativas: 0
-- Timeout por teste: 600 segundos
+- Slow-timeout: período 900s, termina após 2 períodos (1800s kill efetivo)
 - Inclui: testes com gate da feature slow-tests
 - Exclui: testes loom (sempre separados)
 ### Job CI Loom — Etapa Separada no Workflow

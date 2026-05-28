@@ -229,9 +229,10 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Re-ingesting the same directory UPDATES existing memories (force-merge) instead of failing with UNIQUE constraint
 - Cold-start `--json-schema` failure automatically retried once after 2s delay (workaround for Claude Code Issue #23265)
 - Subprocess runs with `env_clear()` + selective injection for security hardening
-- Uses `--bare` when `ANTHROPIC_API_KEY` is set (faster startup, no plugins); `--dangerously-skip-permissions` for OAuth users
-- NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields
-- Summary includes `entities_total`, `rels_total`, `cost_usd` totals
+- Uses `--bare` when `ANTHROPIC_API_KEY` is set (faster startup, no plugins); `--dangerously-skip-permissions` + `--settings '{"hooks":{}}'` for OAuth users (since v1.0.64: hooks disabled to prevent turn consumption)
+- NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields; since v1.0.64 `cost_usd` is omitted for OAuth users (subscription, not billed per API call)
+- Summary includes `entities_total`, `rels_total`, `cost_usd` totals; `--max-cost-usd` is ignored with warning for OAuth users (since v1.0.64)
+- Since v1.0.64: files exceeding 512 KB body cap are skipped BEFORE LLM extraction with `status: "skipped"` to avoid wasting tokens
 - Schemas: `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, `ingest-claude-summary.schema.json`
 - `--mode codex`: LLM-curated extraction via OpenAI Codex CLI (`codex exec --json` headless per file)
 - Codex mode requires Codex CLI >= 0.120.0 with active OpenAI API key; uses `--output-schema` for structured JSON
@@ -287,6 +288,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - ACCEPT `--old`/`--new` and `--from`/`--to` as aliases since v1.0.35
 - PRESERVE all versions and graph connections
 - TREAT exit code 4 as missing source memory
+- Since v1.0.64: rejects rename to the same name with exit 1 (Validation) — prevents version inflation
 - JSON response: `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
 - v1.0.56: FTS5 desync bug fixed — renamed memories are immediately findable via full-text search
 ### REQUIRED — Old Version Restore (restore)
@@ -402,12 +404,27 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 
 ## GraphRAG Search
-### REQUIRED — Four Search Commands
+### REQUIRED — Five Search Commands
 - USE `recall` for KNN vector search with automatic graph expansion
 - USE `hybrid-search` for FTS5 and vector fusion via RRF
 - USE `related` for multi-hop traversal from a known memory
 - USE `graph traverse` for traversal from a typed entity
-- COMBINE all four in the canonical three-layer pattern
+- USE `deep-research` for parallel multi-hop research with query decomposition
+- COMBINE all five in the canonical three-layer pattern or use `deep-research` as a single-command alternative
+### Deep Research (v1.0.64)
+- `sqlite-graphrag deep-research "<query>" --k 20 --json` — parallel multi-hop research with query decomposition
+- Splits query into up to 7 sub-queries, runs in parallel via bounded JoinSet + Semaphore
+- Output: `sub_queries[]`, `results[]`, `evidence_chains[]`, `stats`
+- Replaces manual 3-layer pipeline for comprehensive research in a single invocation
+- `--k 20` results per sub-query (default, Recall@20 captures 95%+ relevant hits)
+- `--max-sub-queries 7` caps decomposition (default, calibrated against MuSiQue/StepChain benchmarks)
+- `--max-hops 3` graph traversal depth (default, sweet spot per NovelHopQA benchmark)
+- `--min-weight 0.3` filters weak edges during traversal (default)
+- `--max-results 50` caps deduplicated output (default)
+- `--with-bodies` includes full memory bodies in results (opt-in)
+- `--max-concurrency N` limits parallel sub-queries (default: min(cpus, 8))
+- `--timeout 30` per-sub-query timeout in seconds (default)
+- Since v1.0.64: `ingest --mode claude-code` disables hooks for OAuth via `--settings '{"hooks":{}}'`, detects OAuth to omit misleading `cost_usd`, validates body size before LLM extraction (files >512 KB skipped), and `rename`/`rename-entity` reject same-name with exit 1
 ### REQUIRED — Canonical Three-Layer Pattern
 - LAYER 1 — `hybrid-search` to find seed memories by name
 - LAYER 2 — `read --name` to expand the full memory body

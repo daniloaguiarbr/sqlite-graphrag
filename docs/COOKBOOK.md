@@ -244,6 +244,35 @@ sqlite-graphrag hybrid-search "authentication architecture" \
 - Recipe "How to explore the entity graph with stats, entities, and traverse"
 
 
+## How To Run Deep Research For Comprehensive Multi-Hop Analysis
+### Problem
+- You need to research a complex topic that spans multiple memories and graph connections
+- Running the manual 3-layer pipeline (hybrid-search, read, related) for each sub-topic is tedious and slow
+
+
+### Solution
+```bash
+sqlite-graphrag deep-research "authentication architecture decisions and security incidents" --k 20 --max-hops 3 --json
+```
+
+
+### Explanation
+- Decomposes "authentication architecture decisions and security incidents" into sub-queries ("authentication architecture decisions", "security incidents", "authentication security") and runs them in parallel with graph traversal
+- Returns deduplicated results across all sub-queries plus evidence chains showing entity-relation-entity paths
+- Single invocation replaces the manual 3-layer pipeline of hybrid-search, read, and related
+
+
+### Variants
+- Add `--with-bodies` for full memory content in the response
+- Add `--max-concurrency 4` to limit parallelism on constrained hosts
+
+
+### See Also
+- Recipe "How to combine vector and FTS search with tunable weights"
+- Recipe "How to expand hybrid search with graph context"
+- Recipe "How to traverse entity graph for multi-hop recall"
+
+
 ## How To Traverse Entity Graph For Multi-Hop Recall
 ### Problem
 - Your query hits one memory but misses connected notes sharing the same entity graph
