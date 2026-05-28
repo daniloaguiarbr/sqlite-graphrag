@@ -312,6 +312,13 @@ fn main() {
         sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
         sqlite_graphrag::cli::Commands::RenameEntity(args) => commands::rename_entity::run(args),
         sqlite_graphrag::cli::Commands::MergeEntities(args) => commands::merge_entities::run(args),
+        sqlite_graphrag::cli::Commands::Enrich(args) => commands::enrich::run(&args),
+        sqlite_graphrag::cli::Commands::ReclassifyRelation(args) => {
+            commands::reclassify_relation::run(args)
+        }
+        sqlite_graphrag::cli::Commands::NormalizeEntities(args) => {
+            commands::normalize_entities::run(args)
+        }
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };
 

@@ -120,7 +120,10 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
-| `deep-research` | `<query>`, `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50) | Parallel multi-hop GraphRAG research via heuristic query decomposition with evidence chain assembly |
+| `deep-research` | `<query>`, `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.2), `--max-neighbors-per-hop` | Parallel multi-hop GraphRAG research with per-sub-query embeddings, RRF fusion for KNN+FTS5, directed evidence chains |
+| `reclassify-relation` | `--from-relation`, `--to-relation`, `--batch`, `--source`, `--target`, `--filter-source-type`, `--filter-target-type`, `--dry-run` | Bulk or single reclassification of relationship types with UNIQUE collision handling |
+| `normalize-entities` | `--dry-run`, `--yes` | Normalize entity names to lowercase kebab-case ASCII, auto-merge collisions |
+| `enrich` | `--operation` (memory-bindings, entity-descriptions, body-enrich), `--mode` (claude-code, codex), `--limit`, `--dry-run`, `--max-cost-usd`, `--resume`, `--retry-failed` | LLM-augmented graph quality pipeline with scan-judge-persist pattern |
 | `link` | `--source`, `--target`, `--relation` | Create an explicit relationship between two entities |
 | `unlink` | `--source`, `--target`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
@@ -547,7 +550,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.64 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.65 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

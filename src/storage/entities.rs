@@ -7,6 +7,7 @@
 use crate::embedder::f32_to_bytes;
 use crate::entity_type::EntityType;
 use crate::errors::AppError;
+use crate::parsers::normalize_entity_name;
 use crate::storage::utils::with_busy_retry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -80,7 +81,19 @@ pub fn validate_entity_name(name: &str) -> Result<(), AppError> {
 ///
 /// Returns `Err(AppError::Database)` on any `rusqlite` failure.
 pub fn upsert_entity(conn: &Connection, namespace: &str, e: &NewEntity) -> Result<i64, AppError> {
+    // Step 1: validate the original name — catches ALL_CAPS short noise (NER artefacts),
+    // newlines, and names shorter than 2 characters before any transformation.
     validate_entity_name(&e.name)?;
+    // Step 2: normalize to kebab-case ASCII (NFKD, lowercase, spaces/underscores → hyphens).
+    let normalized_name = normalize_entity_name(&e.name);
+    // Step 3: guard post-normalization length — a valid original could collapse to < 2 chars
+    // (e.g. a single accented character that strips entirely).
+    if normalized_name.chars().count() < 2 {
+        return Err(AppError::Validation(format!(
+            "entity name '{}' normalizes to '{}' which is too short (minimum 2 characters)",
+            e.name, normalized_name
+        )));
+    }
     conn.execute(
         "INSERT INTO entities (namespace, name, type, description)
          VALUES (?1, ?2, ?3, ?4)
@@ -88,11 +101,11 @@ pub fn upsert_entity(conn: &Connection, namespace: &str, e: &NewEntity) -> Resul
            type        = excluded.type,
            description = COALESCE(excluded.description, entities.description),
            updated_at  = unixepoch()",
-        params![namespace, e.name, e.entity_type, e.description],
+        params![namespace, normalized_name, e.entity_type, e.description],
     )?;
     let id: i64 = conn.query_row(
         "SELECT id FROM entities WHERE namespace = ?1 AND name = ?2",
-        params![namespace, e.name],
+        params![namespace, normalized_name],
         |r| r.get(0),
     )?;
     Ok(id)
@@ -210,9 +223,15 @@ pub fn find_entity_id(
     namespace: &str,
     name: &str,
 ) -> Result<Option<i64>, AppError> {
+    // Normalize the lookup name so it matches the normalized names written by
+    // `upsert_entity`. Without this, an entity written through normalization
+    // (e.g. "Foo Bar" -> "foo-bar") would be unreachable by its original
+    // spelling, breaking delete-entity, reclassify, merge-entities, rename and
+    // memory-entities lookups.
+    let name = normalize_entity_name(name);
     let mut stmt =
         conn.prepare_cached("SELECT id FROM entities WHERE namespace = ?1 AND name = ?2")?;
-    match stmt.query_row(params![namespace, name], |r| r.get::<_, i64>(0)) {
+    match stmt.query_row(params![namespace, &name], |r| r.get::<_, i64>(0)) {
         Ok(id) => Ok(Some(id)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(AppError::Database(e)),

@@ -9,6 +9,7 @@ use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
 use crate::storage::entities;
 use crate::storage::entities::NewEntity;
+use rusqlite::params;
 use serde::Serialize;
 
 #[derive(clap::Args)]
@@ -71,6 +72,10 @@ pub struct LinkArgs {
         help = "Reject non-canonical relation types with exit 1"
     )]
     pub strict_relations: bool,
+    /// Emit a warning (but do not reject) when creating an edge would push either endpoint
+    /// entity above this degree. Default 50. Set 0 to disable the check.
+    #[arg(long, default_value_t = 50, value_name = "N")]
+    pub max_entity_degree: u32,
 }
 
 #[derive(Serialize)]
@@ -200,6 +205,26 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     if was_created {
         entities::recalculate_degree(&tx, source_id)?;
         entities::recalculate_degree(&tx, target_id)?;
+
+        // GAP-17: warn when an entity's degree exceeds the configured cap.
+        if args.max_entity_degree > 0 {
+            let cap = args.max_entity_degree as i64;
+            for (entity_id, entity_name) in [(source_id, &args.from), (target_id, &args.to)] {
+                let degree: i64 = tx.query_row(
+                    "SELECT degree FROM entities WHERE id = ?1",
+                    params![entity_id],
+                    |r| r.get(0),
+                )?;
+                if degree > cap {
+                    tracing::warn!(
+                        entity = %entity_name,
+                        degree = degree,
+                        cap = cap,
+                        "entity degree cap exceeded"
+                    );
+                }
+            }
+        }
     }
     tx.commit()?;
 

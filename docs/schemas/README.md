@@ -23,6 +23,7 @@
 | `history` | `history.schema.json` |
 | `restore` | `restore.schema.json` |
 | `hybrid-search` | `hybrid-search.schema.json` |
+| `deep-research` | `deep-research.schema.json` |
 | `health` | `health.schema.json` |
 | `migrate` | `migrate.schema.json` |
 | `namespace-detect` | `namespace-detect.schema.json` |
@@ -39,6 +40,11 @@
 | `graph entities` | `graph-entities.schema.json` |
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
 | `prune-relations` | `prune-relations.schema.json` |
+| `reclassify-relation` | `reclassify-relation.schema.json` |
+| `normalize-entities` | `normalize-entities.schema.json` |
+| `enrich` (phase event) | `enrich-phase.schema.json` |
+| `enrich` (per-item event) | `enrich-item-event.schema.json` |
+| `enrich` (summary) | `enrich-summary.schema.json` |
 | `ingest` (per-file event) | `ingest-file-event.schema.json` |
 | `ingest` (summary) | `ingest-summary.schema.json` |
 | `ingest --mode claude-code` (phase event) | `ingest-claude-phase.schema.json` |

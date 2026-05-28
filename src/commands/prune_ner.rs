@@ -145,6 +145,8 @@ pub fn run(args: PruneNerArgs) -> Result<(), AppError> {
 
     // Destructive path: COUNT + DELETE in same transaction for consistency.
     let removed: usize = if let Some(ref entity_name) = args.entity {
+        // Normalize to match the normalized stored entity names.
+        let entity_name = crate::parsers::normalize_entity_name(entity_name);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let n = tx.execute(
             "DELETE FROM memory_entities WHERE entity_id IN (

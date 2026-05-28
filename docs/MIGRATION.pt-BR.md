@@ -73,6 +73,21 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.65 — 3 NOVOS comandos, correções deep-research, normalização de entidades, pipeline enrich
+
+- NOVO comando `reclassify-relation` para reclassificação em massa ou individual de tipos de relacionamento com tratamento de colisões UNIQUE
+- NOVO comando `normalize-entities` para normalizar nomes de entidade para kebab-case minúsculo e mesclar duplicatas automaticamente
+- NOVO comando `enrich` para qualidade do grafo aumentada por LLM via `--mode claude-code` ou `--mode codex`; 3 operações: memory-bindings, entity-descriptions, body-enrich
+- Correção CRITICAL: `deep-research` agora computa embedding separado por sub-query — decomposição era cosmética na v1.0.64
+- Correção CRITICAL: `deep-research` funde KNN + FTS5 via RRF em vez de score fixo 0.5 para resultados FTS
+- Correção HIGH: cadeias de evidência do `deep-research` agora são caminhos direcionados seed-para-target em vez de dumps globais
+- Nomes de entidade normalizados para kebab-case em todo path de escrita (remember, ingest, link, rename-entity)
+- `health` agora reporta concentração de relações: `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`
+- Novas flags do deep-research: `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`
+- Flag de warning `--max-entity-degree` em `link` e `remember`
+- Novos schemas JSON: `deep-research`, `reclassify-relation`, `normalize-entities`, `enrich-phase`, `enrich-item-event`, `enrich-summary`
+- Nenhuma migração de schema necessária; nenhuma breaking change nos contratos JSON existentes
+
 ### v1.0.64 — Comando deep-research, correção de hooks no ingest, detecção OAuth de custo, pré-validação de body cap, rejeição de rename mesmo nome
 - NOVO subcomando `deep-research` para pesquisa profunda multi-hop paralela via decomposição de query e fan-out bounded
 - `ingest --mode claude-code` desabilita hooks via `--settings '{"hooks":{}}'` para usuários OAuth — previne que hooks Stop consumam turns de extração

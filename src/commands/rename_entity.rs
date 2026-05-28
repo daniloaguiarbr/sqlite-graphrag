@@ -57,10 +57,12 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     let mut conn = open_rw(&paths.db)?;
 
     // Verify source entity exists and fetch its id and type.
+    // Normalize the lookup name to match the normalized stored names.
+    let lookup_name = crate::parsers::normalize_entity_name(&args.name);
     let row: Option<(i64, EntityType)> = {
         let mut stmt = conn
             .prepare_cached("SELECT id, type FROM entities WHERE namespace = ?1 AND name = ?2")?;
-        match stmt.query_row(params![namespace, args.name], |r| {
+        match stmt.query_row(params![namespace, lookup_name], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, EntityType>(1)?))
         }) {
             Ok(row) => Some(row),
@@ -71,29 +73,31 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     let (entity_id, entity_type) = row
         .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.name, &namespace)))?;
 
+    // Validate the raw new name first (catches short ALL_CAPS NER noise),
+    // then normalize it for storage to preserve the normalized-name invariant.
     entities::validate_entity_name(&args.new_name)?;
+    let new_name = crate::parsers::normalize_entity_name(&args.new_name);
 
-    if args.name == args.new_name {
+    if lookup_name == new_name {
         return Err(AppError::Validation(
             "source and target entity names are identical".to_string(),
         ));
     }
 
     // Ensure new name is not already taken in this namespace.
-    if entities::find_entity_id(&conn, &namespace, &args.new_name)?.is_some() {
+    if entities::find_entity_id(&conn, &namespace, &new_name)?.is_some() {
         return Err(AppError::Validation(format!(
-            "entity with name '{}' already exists in namespace '{}'",
-            args.new_name, namespace
+            "entity with name '{new_name}' already exists in namespace '{namespace}'"
         )));
     }
 
-    // Embed new name for vec_entities replacement.
-    let embedding = crate::daemon::embed_passage_or_local(&paths.models, &args.new_name)?;
+    // Embed the normalized new name for vec_entities replacement.
+    let embedding = crate::daemon::embed_passage_or_local(&paths.models, &new_name)?;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute(
         "UPDATE entities SET name = ?1, updated_at = unixepoch() WHERE id = ?2",
-        params![args.new_name, entity_id],
+        params![new_name, entity_id],
     )?;
     // vec0 does not support UPDATE — delete then insert.
     tx.execute(
@@ -109,7 +113,7 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
             namespace,
             entity_type,
             &embedding_bytes,
-            args.new_name
+            new_name
         ],
     )?;
     tx.commit()?;
@@ -119,7 +123,7 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     let response = RenameEntityResponse {
         action: "renamed".to_string(),
         old_name: args.name,
-        new_name: args.new_name,
+        new_name,
         entity_id,
         namespace: namespace.clone(),
         elapsed_ms: start.elapsed().as_millis() as u64,

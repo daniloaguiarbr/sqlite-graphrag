@@ -1,6 +1,7 @@
 //! Input format parsers (timestamp, range validators).
 
 use chrono::DateTime;
+use unicode_normalization::UnicodeNormalization;
 
 /// Accepts a Unix epoch (integer >= 0) or RFC 3339 timestamp and returns the Unix epoch.
 pub fn parse_expected_updated_at(s: &str) -> Result<i64, String> {
@@ -175,6 +176,45 @@ pub fn normalize_relation(s: &str) -> String {
     s.to_lowercase().replace('-', "_")
 }
 
+/// Normalizes an entity name to kebab-case ASCII.
+///
+/// Applies NFKD decomposition, filters to ASCII (transliterating by dropping
+/// diacritical combining marks), lowercases, converts spaces and underscores
+/// to hyphens, collapses consecutive hyphens, and trims leading/trailing hyphens.
+///
+/// # Examples
+///
+/// ```
+/// use sqlite_graphrag::parsers::normalize_entity_name;
+///
+/// assert_eq!(normalize_entity_name("Danilo Aguiar"), "danilo-aguiar");
+/// assert_eq!(normalize_entity_name("CANONICAL_RELATIONS"), "canonical-relations");
+/// assert_eq!(normalize_entity_name("  hello  world  "), "hello-world");
+/// assert_eq!(normalize_entity_name("danilo-aguiar"), "danilo-aguiar"); // idempotent
+/// ```
+pub fn normalize_entity_name(s: &str) -> String {
+    // NFKD: decompose precomposed characters into base + combining marks.
+    // Then keep only ASCII characters, effectively stripping diacritics.
+    let ascii: String = s.nfkd().filter(|c| c.is_ascii()).collect();
+    // Lowercase, then replace spaces and underscores with hyphens.
+    let hyphenated = ascii.to_lowercase().replace([' ', '_'], "-");
+    // Collapse consecutive hyphens and trim from both ends.
+    let mut result = String::with_capacity(hyphenated.len());
+    let mut prev_was_hyphen = false;
+    for ch in hyphenated.chars() {
+        if ch == '-' {
+            if !prev_was_hyphen {
+                result.push('-');
+            }
+            prev_was_hyphen = true;
+        } else {
+            result.push(ch);
+            prev_was_hyphen = false;
+        }
+    }
+    result.trim_matches('-').to_string()
+}
+
 /// Validates that a normalized relation matches `^[a-z][a-z0-9_]*$`.
 pub fn validate_relation_format(s: &str) -> Result<(), String> {
     if s.is_empty() {
@@ -273,5 +313,72 @@ mod relation_tests {
         assert!(is_canonical_relation("applies_to"));
         assert!(!is_canonical_relation("implements"));
         assert!(!is_canonical_relation("blocks"));
+    }
+}
+
+#[cfg(test)]
+mod entity_name_tests {
+    use super::*;
+
+    #[test]
+    fn strips_diacritics_from_accented_name() {
+        assert_eq!(normalize_entity_name("Danilo Aguiar"), "danilo-aguiar");
+    }
+
+    #[test]
+    fn strips_diacritics_unicode_accents() {
+        // é → e, ã → a, ç → c
+        assert_eq!(normalize_entity_name("São Paulo"), "sao-paulo");
+        assert_eq!(normalize_entity_name("Ünit Tëst"), "unit-test");
+    }
+
+    #[test]
+    fn converts_spaces_to_hyphens() {
+        assert_eq!(normalize_entity_name("hello world"), "hello-world");
+        assert_eq!(normalize_entity_name("  hello  world  "), "hello-world");
+    }
+
+    #[test]
+    fn converts_underscores_to_hyphens() {
+        assert_eq!(normalize_entity_name("hello_world"), "hello-world");
+        assert_eq!(
+            normalize_entity_name("CANONICAL_RELATIONS"),
+            "canonical-relations"
+        );
+    }
+
+    #[test]
+    fn all_caps_becomes_lowercase_kebab() {
+        assert_eq!(
+            normalize_entity_name("CANONICAL_RELATIONS"),
+            "canonical-relations"
+        );
+        assert_eq!(normalize_entity_name("MY_ENTITY_NAME"), "my-entity-name");
+    }
+
+    #[test]
+    fn idempotent_on_already_normalized() {
+        let name = "danilo-aguiar";
+        assert_eq!(normalize_entity_name(name), name);
+        let name2 = "canonical-relations";
+        assert_eq!(normalize_entity_name(name2), name2);
+    }
+
+    #[test]
+    fn collapses_consecutive_hyphens() {
+        assert_eq!(normalize_entity_name("foo--bar"), "foo-bar");
+        assert_eq!(normalize_entity_name("foo - bar"), "foo-bar");
+    }
+
+    #[test]
+    fn trims_leading_trailing_hyphens() {
+        assert_eq!(normalize_entity_name("-foo-"), "foo");
+        assert_eq!(normalize_entity_name("--hello--"), "hello");
+    }
+
+    #[test]
+    fn empty_or_only_separators_returns_empty() {
+        assert_eq!(normalize_entity_name(""), "");
+        assert_eq!(normalize_entity_name("---"), "");
     }
 }

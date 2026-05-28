@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/deep-research.schema.json",
+  "title": "DeepResearchResponse",
+  "description": "Response emitted by `sqlite-graphrag deep-research` on stdout as a single JSON line. Orchestrates parallel multi-hop GraphRAG search via query decomposition.",
+  "$defs": {
+    "SubQuery": {
+      "type": "object",
+      "required": ["id", "text", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id":     { "type": "integer", "minimum": 0, "description": "Zero-based sub-query index." },
+        "text":   { "type": "string",  "description": "Sub-query text derived from the original query." },
+        "source": { "type": "string",  "enum": ["original", "decomposed"], "description": "Whether this sub-query is the original or a decomposed fragment." }
+      }
+    },
+    "DeepResult": {
+      "type": "object",
+      "required": ["name", "score", "source", "sub_query_ids", "snippet"],
+      "additionalProperties": false,
+      "properties": {
+        "name":          { "type": "string",  "description": "Kebab-case memory name." },
+        "score":         { "type": "number",  "minimum": 0, "description": "Aggregated relevance score (higher is better)." },
+        "source":        { "type": "string",  "description": "Origin of the result: 'direct' (KNN), 'graph' (traversal), or combined label." },
+        "sub_query_ids": { "type": "array",   "items": { "type": "integer", "minimum": 0 }, "description": "IDs of sub-queries that contributed this result." },
+        "snippet":       { "type": "string",  "description": "Short excerpt from the memory body." },
+        "body":          { "type": "string",  "description": "Full memory body. Present only when --with-bodies is set; absent otherwise (skip_serializing_if)." },
+        "hop_distance":  { "type": ["integer", "null"], "minimum": 0, "description": "Graph hop depth for graph-traversal results. Null for direct KNN results." }
+      }
+    },
+    "EvidenceNode": {
+      "type": "object",
+      "required": ["entity"],
+      "additionalProperties": false,
+      "properties": {
+        "entity":   { "type": "string",  "description": "Entity name at this node." },
+        "relation": { "type": "string",  "description": "Relation type on the edge leading to this node. Absent for the first node in a path." },
+        "weight":   { "type": "number",  "minimum": 0, "maximum": 1, "description": "Edge weight leading to this node. Absent for the first node." }
+      }
+    },
+    "EvidenceChain": {
+      "type": "object",
+      "required": ["from", "to", "path", "total_weight", "depth", "sub_query_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "from":          { "type": "string",  "description": "Name of the seed (source) entity." },
+        "to":            { "type": "string",  "description": "Name of the terminal (target) entity." },
+        "path":          { "type": "array",   "items": { "$ref": "#/$defs/EvidenceNode" }, "description": "Ordered list of intermediate nodes from 'from' to 'to'." },
+        "total_weight":  { "type": "number",  "minimum": 0, "description": "Product of edge weights along the path." },
+        "depth":         { "type": "integer", "minimum": 2, "description": "Number of hops in this chain (always >= 2; trivial single-hop chains are discarded)." },
+        "sub_query_ids": { "type": "array",   "items": { "type": "integer", "minimum": 0 }, "description": "IDs of sub-queries that discovered this chain." }
+      }
+    },
+    "ResearchStats": {
+      "type": "object",
+      "required": [
+        "sub_queries_total", "sub_queries_completed", "sub_queries_failed",
+        "sub_queries_timed_out", "unique_memories_found", "evidence_chains_found", "elapsed_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sub_queries_total":      { "type": "integer", "minimum": 0, "description": "Total number of sub-queries generated." },
+        "sub_queries_completed":  { "type": "integer", "minimum": 0, "description": "Sub-queries that returned results successfully." },
+        "sub_queries_failed":     { "type": "integer", "minimum": 0, "description": "Sub-queries that failed with an error." },
+        "sub_queries_timed_out":  { "type": "integer", "minimum": 0, "description": "Sub-queries that exceeded the per-query timeout." },
+        "unique_memories_found":  { "type": "integer", "minimum": 0, "description": "Distinct memories after deduplication." },
+        "evidence_chains_found":  { "type": "integer", "minimum": 0, "description": "Multi-hop evidence chains retained after filtering." },
+        "elapsed_ms":             { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+      }
+    }
+  },
+  "type": "object",
+  "required": ["query", "sub_queries", "results", "evidence_chains", "stats"],
+  "additionalProperties": false,
+  "properties": {
+    "query":           { "type": "string",  "description": "Original research query." },
+    "sub_queries":     { "type": "array",   "items": { "$ref": "#/$defs/SubQuery" }, "description": "Sub-queries derived from the original query." },
+    "results":         { "type": "array",   "items": { "$ref": "#/$defs/DeepResult" }, "description": "Deduplicated, ranked memory results." },
+    "evidence_chains": { "type": "array",   "items": { "$ref": "#/$defs/EvidenceChain" }, "description": "Multi-hop evidence chains (depth >= 2)." },
+    "stats":           { "$ref": "#/$defs/ResearchStats", "description": "Execution statistics." }
+  }
+}

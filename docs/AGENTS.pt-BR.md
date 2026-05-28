@@ -29,6 +29,22 @@
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
 
+## Novidades na v1.0.65
+### Novos Comandos
+- `reclassify-relation --from-relation <antigo> --to-relation <novo> --batch --json` — renomeia tipos de relacionamento em massa no grafo; modo individual via `--source A --target B`; filtros opcionais `--filter-source-type` e `--filter-target-type`; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` faz preview
+- `normalize-entities --yes --json` — normaliza todos os nomes de entidade para kebab-case ASCII minúsculo, mesclando colisões automaticamente (ex.: `Claude Code` + `claude-code` viram um nó); `--dry-run` faz preview
+- `enrich --operation <op> --mode claude-code --json` — pipeline de qualidade do grafo aumentada por LLM; 3 operações: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (gera descrições), `body-enrich` (expande corpos curtos); queue DB para resume/retry; `--dry-run` faz preview sem spawnar LLM; saída é NDJSON
+### Melhorias no Deep Research
+- `deep-research` agora computa embedding separado por sub-query — decomposição era cosmética na v1.0.64
+- `deep-research` funde pools KNN + FTS5 + grafo via RRF em vez de score fixo 0.5 para resultados FTS
+- Cadeias de evidência agora são caminhos direcionados seed-para-target em vez de dump flat das top-20 relações globais
+- Novas flags: `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.2), `--max-neighbors-per-hop`
+### Normalização de Entidades
+- Nomes de entidade agora são normalizados para kebab-case minúsculo em todo path de escrita (remember, ingest, link, rename-entity)
+- Flag de warning `--max-entity-degree N` em `link` e `remember` — emite `tracing::warn!` quando entidade excede N arestas
+### Adições ao Comando Health
+- `health` agora reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio` e `relation_concentration_warning` quando qualquer tipo de relação excede 40% do total de arestas
+
 ## Novidades na v1.0.58
 ### Correções de Bugs
 - `remember --force-merge` agora sincroniza o índice FTS5 após atualização — anteriormente cada force-merge corrompia silenciosamente o índice de busca textual (correção CRÍTICA)
@@ -485,6 +501,7 @@ let output = Command::new("sqlite-graphrag")
 - RODAR `optimize --json` para refrescar estatísticas do planner
 - DETECTAR deriva de schema via `__debug_schema` em troubleshooting
 - VERIFICAR `mentions_ratio` (float) e `mentions_warning` (string) no `health --json` quando relacionamentos `mentions` dominam o grafo acima de 50%
+- VERIFICAR `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float) e `relation_concentration_warning` (string) quando qualquer tipo de relação excede 40% das arestas (v1.0.65)
 ### Padrão Correto — Sequência de Bootstrap
 - `sqlite-graphrag init --namespace meu-projeto`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -999,7 +1016,7 @@ let output = Command::new("sqlite-graphrag")
 - `list` response-level: `items[]`, `total_count`, `truncated`, `elapsed_ms`; cada item inclui `body_length` (tamanho em bytes do body armazenado) além dos campos existentes
 - `link` response inclui `warnings` (array de strings) para tipos de relação não canônicos ou outros avisos
 - `graph entities` itens incluem `degree` (total de arestas da entidade, ambas as direções)
-- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos
+- `health` retorna `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; também emite `mentions_ratio` (float) e `mentions_warning` (string) quando arestas `mentions` ultrapassam 50% de todos os relacionamentos; desde v1.0.65 também emite `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?) e `relation_concentration_warning` (string?) quando qualquer relação excede 40%
 - `health.counts` contém: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` retorna dados GLOBAIS (sem filtro por namespace): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; também inclui aliases legados `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` por arquivo: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`, `body_length?` (tamanho em bytes do body indexado, presente em linhas `"indexed"`)

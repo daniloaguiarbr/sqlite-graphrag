@@ -42,7 +42,7 @@ pub struct ReadArgs {
 struct ReadResponse {
     /// Canonical storage field. Preserved for compatibility with v2.0.0 clients.
     id: i64,
-    /// Semantic alias of `id` for the contract documented in SKILL.md and AGENT_PROTOCOL.md.
+    /// Semantic alias of `id` for the contract documented in SKILL.md.
     memory_id: i64,
     namespace: String,
     name: String,

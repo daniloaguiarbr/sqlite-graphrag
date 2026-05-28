@@ -134,6 +134,10 @@ pub fn traverse_from_memories(
 /// instead of bare IDs. `hop_count` is the BFS depth at which the entity was first
 /// discovered, starting from 1 for direct neighbours of the seed entities.
 ///
+/// When `max_neighbors_per_hop` is `Some(k)`, only the top-`k` neighbours by
+/// `weight DESC` are followed at each entity expansion.  Pass `None` to retain
+/// the original behaviour (all neighbours above `min_weight` are followed).
+///
 /// # Errors
 ///
 /// Propagates [`AppError::Database`] (exit 10) on SQLite query failures.
@@ -143,6 +147,52 @@ pub fn traverse_from_memories_with_hops(
     namespace: &str,
     min_weight: f64,
     max_hops: u32,
+) -> Result<Vec<(i64, u32)>, AppError> {
+    traverse_from_memories_with_hops_inner(
+        conn,
+        seed_memory_ids,
+        namespace,
+        min_weight,
+        max_hops,
+        None,
+    )
+}
+
+/// Extended variant that accepts an optional neighbour cap per hop.
+///
+/// Pass `max_neighbors_per_hop = Some(k)` to prune each entity's expansion to
+/// its top-`k` neighbours by edge weight, limiting combinatorial blow-up in
+/// dense graphs.  `None` is equivalent to the public
+/// [`traverse_from_memories_with_hops`] function.
+///
+/// # Errors
+///
+/// Propagates [`AppError::Database`] (exit 10) on SQLite query failures.
+pub fn traverse_from_memories_with_hops_capped(
+    conn: &Connection,
+    seed_memory_ids: &[i64],
+    namespace: &str,
+    min_weight: f64,
+    max_hops: u32,
+    max_neighbors_per_hop: Option<usize>,
+) -> Result<Vec<(i64, u32)>, AppError> {
+    traverse_from_memories_with_hops_inner(
+        conn,
+        seed_memory_ids,
+        namespace,
+        min_weight,
+        max_hops,
+        max_neighbors_per_hop,
+    )
+}
+
+fn traverse_from_memories_with_hops_inner(
+    conn: &Connection,
+    seed_memory_ids: &[i64],
+    namespace: &str,
+    min_weight: f64,
+    max_hops: u32,
+    max_neighbors_per_hop: Option<usize>,
 ) -> Result<Vec<(i64, u32)>, AppError> {
     if seed_memory_ids.is_empty() || max_hops == 0 {
         return Ok(vec![]);
@@ -178,15 +228,25 @@ pub fn traverse_from_memories_with_hops(
         let mut next_frontier = Vec::with_capacity(frontier.len() * 2);
 
         for &entity_id in &frontier {
+            // Fetch neighbours ordered by weight DESC to support capping.
             let mut stmt = conn.prepare_cached(
-                "SELECT target_id FROM relationships
-                 WHERE source_id = ?1 AND weight >= ?2 AND namespace = ?3",
+                "SELECT target_id, weight FROM relationships
+                 WHERE source_id = ?1 AND weight >= ?2 AND namespace = ?3
+                 ORDER BY weight DESC",
             )?;
-            let neighbors: Vec<i64> = stmt
-                .query_map(params![entity_id, min_weight, namespace], |r| r.get(0))?
+            let mut neighbors: Vec<i64> = stmt
+                .query_map(params![entity_id, min_weight, namespace], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                })?
                 .filter_map(|r| r.ok())
-                .filter(|id| !entity_depth.contains_key(id))
+                .filter(|(id, _)| !entity_depth.contains_key(id))
+                .map(|(id, _)| id)
                 .collect();
+
+            // Apply optional per-hop neighbour cap.
+            if let Some(cap) = max_neighbors_per_hop {
+                neighbors.truncate(cap);
+            }
 
             for id in neighbors {
                 entity_depth.insert(id, hop);
@@ -227,6 +287,80 @@ pub fn traverse_from_memories_with_hops(
 
     result.sort_unstable_by_key(|&(id, _)| id);
     Ok(result)
+}
+
+/// Depth map from BFS: entity_id → hop distance from seeds.
+pub type EntityDepthMap = std::collections::HashMap<i64, u32>;
+
+/// Predecessor map from BFS: entity_id → (parent_entity_id, relation_type, edge_weight).
+///
+/// Enables path reconstruction from any discovered entity back to a seed.
+pub type PredecessorMap = std::collections::HashMap<i64, (i64, String, f64)>;
+
+/// BFS that also returns a predecessor map for path reconstruction.
+///
+/// Used by `deep-research` to reconstruct directed evidence chains from
+/// discovered entities back to their seeds.
+///
+/// Returns `(entity_depth, predecessor)` where:
+/// - `entity_depth`: depth of each reached entity (0 = seed).
+/// - `predecessor`: the BFS tree edge that first reached each non-seed entity.
+///
+/// # Errors
+///
+/// Propagates [`AppError::Database`] (exit 10) on SQLite query failures.
+pub fn bfs_with_predecessors(
+    conn: &Connection,
+    seed_entity_ids: &[i64],
+    namespace: &str,
+    min_weight: f64,
+    max_hops: u32,
+    max_neighbors_per_hop: Option<usize>,
+) -> Result<(EntityDepthMap, PredecessorMap), AppError> {
+    use std::collections::HashMap;
+
+    let mut entity_depth: HashMap<i64, u32> = seed_entity_ids.iter().map(|&id| (id, 0)).collect();
+    let mut predecessor: HashMap<i64, (i64, String, f64)> = HashMap::new();
+    let mut frontier: Vec<i64> = seed_entity_ids.to_vec();
+
+    for hop in 1..=max_hops {
+        if frontier.is_empty() {
+            break;
+        }
+        let mut next_frontier = Vec::with_capacity(frontier.len() * 2);
+
+        for &entity_id in &frontier {
+            let mut stmt = conn.prepare_cached(
+                "SELECT target_id, relation, weight FROM relationships
+                 WHERE source_id = ?1 AND weight >= ?2 AND namespace = ?3
+                 ORDER BY weight DESC",
+            )?;
+            let mut neighbors: Vec<(i64, String, f64)> = stmt
+                .query_map(params![entity_id, min_weight, namespace], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, f64>(2)?,
+                    ))
+                })?
+                .filter_map(|r| r.ok())
+                .filter(|(id, _, _)| !entity_depth.contains_key(id))
+                .collect();
+
+            if let Some(cap) = max_neighbors_per_hop {
+                neighbors.truncate(cap);
+            }
+
+            for (id, relation, weight) in neighbors {
+                entity_depth.insert(id, hop);
+                predecessor.insert(id, (entity_id, relation, weight));
+                next_frontier.push(id);
+            }
+        }
+        frontier = next_frontier;
+    }
+
+    Ok((entity_depth, predecessor))
 }
 
 #[cfg(test)]

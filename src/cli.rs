@@ -368,6 +368,14 @@ pub enum Commands {
     /// Merge multiple source entities into a single target entity
     #[command(name = "merge-entities")]
     MergeEntities(merge_entities::MergeEntitiesArgs),
+    /// Enrich graph memories and entities using an LLM provider
+    Enrich(enrich::EnrichArgs),
+    /// Reclassify relationship types across the graph using rules or LLM judgment
+    #[command(name = "reclassify-relation")]
+    ReclassifyRelation(reclassify_relation::ReclassifyRelationArgs),
+    /// Normalize entity names (deduplicate, kebab-case, merge near-duplicates)
+    #[command(name = "normalize-entities")]
+    NormalizeEntities(normalize_entities::NormalizeEntitiesArgs),
     #[command(name = "__debug_schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
 }

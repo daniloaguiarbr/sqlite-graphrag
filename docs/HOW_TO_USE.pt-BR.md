@@ -185,7 +185,36 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Use `--with-bodies` para incluir corpos completos das memórias no output
 - Use `--max-concurrency N` para limitar sub-queries paralelas (padrão: min(cpus, 8))
 - Use `--timeout N` para definir timeout por sub-query em segundos (padrão: 30)
+- Use `--rrf-k N` para ajustar a constante de fusão RRF (padrão: 60, igual ao hybrid-search)
+- Use `--graph-decay F` para definir o fator de decaimento do score por hop (padrão: 0.7)
+- Use `--graph-min-score F` para filtrar ruído dos resultados expandidos por grafo (padrão: 0.2)
+- Use `--max-neighbors-per-hop N` para limitar o fan-out do BFS por entidade por hop (padrão: ilimitado)
 - Use ao invés do pipeline manual de 3 camadas (hybrid-search → read → related) para pesquisa completa em uma única invocação
+
+### Reclassificando tipos de relacionamento (v1.0.65)
+- Execute `sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --dry-run --json` para preview de quantas edges mudariam
+- Execute `sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --json` para aplicar a mudança
+- Modo individual: `sqlite-graphrag reclassify-relation --source entity-a --target entity-b --from-relation applies-to --to-relation uses --json`
+- Use `--filter-source-type concept` e `--filter-target-type tool` para restringir escopo do batch
+- Trata colisões UNIQUE automaticamente via padrão `UPDATE OR IGNORE` + `DELETE`
+- Resposta JSON: `action`, `from_relation`, `to_relation`, `count`, `merged_duplicates`, `namespace`, `elapsed_ms`
+
+### Normalizando nomes de entidade (v1.0.65)
+- Execute `sqlite-graphrag normalize-entities --dry-run --json` para preview de quais entidades seriam renomeadas ou mescladas
+- Execute `sqlite-graphrag normalize-entities --yes --json` para aplicar a normalização
+- Normaliza para kebab-case ASCII minúsculo: `"Claude Code"` vira `claude-code`, `"CANONICAL_RELATIONS"` vira `canonical-relations`
+- Quando a normalização cria colisão (ex.: `Claude Code` e `claude-code` existem), mescla automaticamente os relacionamentos no alvo e deleta a entidade de origem
+- Resposta JSON: `action`, `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
+
+### Enriquecendo qualidade do grafo com LLM (v1.0.65)
+- Execute `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50 --json` para extrair entidades de memórias órfãs
+- Execute `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --limit 100 --json` para gerar descrições para entidades sem descrição
+- Execute `sqlite-graphrag enrich --operation body-enrich --mode claude-code --limit 20 --json` para expandir corpos curtos de memória
+- Use `--dry-run` para preview de quais itens seriam enriquecidos sem spawnar o LLM
+- Use `--max-cost-usd N` para limitar gasto acumulado da API (ignorado para usuários OAuth)
+- Use `--resume` e `--retry-failed` para resiliência via queue DB
+- Saída é NDJSON: eventos de fase, eventos por item (status: `done`/`failed`/`skipped`/`preview`) e linha de resumo
+- Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 
 
 ## Configuração e Notas de Namespace
@@ -245,6 +274,10 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 | `namespace-detect` | sim | não | json |
 | `daemon` | sim | não | json |
 | `export` | sim | não | ndjson |
+| `deep-research` | sim | não | json |
+| `reclassify-relation` | sim | não | json |
+| `normalize-entities` | sim | não | json |
+| `enrich` | sim | não | ndjson |
 
 ```bash
 # Forma curta — preferida em pipelines
@@ -426,6 +459,7 @@ sqlite-graphrag health --json
 - `checks` é um array de objetos diagnósticos com `name` e `ok`
 - `integrity_ok` é `true` quando `integrity_check` retorna `"ok"` e `false` caso contrário
 - Quando relacionamentos `mentions` ultrapassam 50% de todos os relacionamentos do grafo, a resposta também inclui `mentions_ratio` (float) e `mentions_warning` (string)
+- Desde v1.0.65: também reporta `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float) e `relation_concentration_warning` (string) quando qualquer tipo de relação excede 40% das arestas
 - Exit code 0: banco está íntegro
 - Exit code 10: verificação de integridade falhou — trate como banco corrompido
 
@@ -528,6 +562,8 @@ sqlite-graphrag prune-relations --relation mentions --yes --json
 - Exit code 0: relacionamentos removidos (ou contagem dry-run retornada)
 - Exit code 1: formato de relação inválido
 
+**Nota sobre formato de relação:** relações são aceitas em kebab-case (`depends-on`) e snake_case (`depends_on`); a camada de persistência e toda saída JSON usam sempre snake_case. Valores não canônicos são aceitos com `tracing::warn!` e armazenados em snake_case.
+
 
 ## Notas Adicionais Sobre Comandos Essenciais
 ### Nota sobre ingest
@@ -553,6 +589,7 @@ sqlite-graphrag prune-relations --relation mentions --yes --json
 - Use `--from`/`--source` e `--to`/`--target` de forma intercambiável; aliases legados continuam suportados
 - Ambas as entidades `--from` e `--to` devem ser nós tipados do grafo; tipos válidos: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - Tentar vincular entidades cujos nomes não correspondam a nó tipado retorna exit code 4
+- Use `--max-entity-degree N` para emitir `tracing::warn!` quando uma entidade exceder N conexões (v1.0.65, também disponível no `remember`)
 - Saída JSON: `{action, from, source, to, target, relation, weight, namespace}`
 ```bash
 sqlite-graphrag remember --name design-auth --type decision --description "..." --body "Usa JWT e OAuth2."

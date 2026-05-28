@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/enrich-phase.schema.json",
+  "title": "EnrichPhaseEvent",
+  "description": "Phase event emitted by `sqlite-graphrag enrich` on stdout (NDJSON). Two events per run: 'validate' (checks LLM provider binary) and 'scan' (discovers items to enrich). Fields beyond 'phase' are present only when relevant to the phase.",
+  "type": "object",
+  "required": ["phase"],
+  "additionalProperties": false,
+  "properties": {
+    "phase":         { "type": "string",           "enum": ["validate", "scan"], "description": "Phase name: validate (checks LLM provider) or scan (counts pending items)." },
+    "binary_path":   { "type": ["string", "null"], "description": "Filesystem path of the detected LLM provider binary. Present in validate phase." },
+    "version":       { "type": ["string", "null"], "description": "Detected LLM provider version string. Present in validate phase for Claude Code; null for Codex." },
+    "items_total":   { "type": ["integer", "null"], "minimum": 0, "description": "Total items found by the scan. Present in scan phase." },
+    "items_pending": { "type": ["integer", "null"], "minimum": 0, "description": "Items still pending processing. Present in scan phase." }
+  }
+}

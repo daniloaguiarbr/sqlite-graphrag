@@ -352,11 +352,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 
 ## Entity Management (v1.0.56)
-### REQUIRED — Entity Name Validation (v1.0.58)
+### REQUIRED — Entity Name Validation and Normalization (v1.0.58, improved in v1.0.65)
 - ALL entity creation paths (`link --create-missing`, `remember --graph-stdin`, `ingest --enable-ner`, `rename-entity --new-name`) validate names via `validate_entity_name()`
 - REJECTS names shorter than 2 characters (exit 1)
 - REJECTS names containing newline characters (exit 1)
 - REJECTS ALL_CAPS abbreviations of 4 characters or fewer as NER noise (exit 1)
+- Since v1.0.65: after validation, names are NORMALIZED to lowercase kebab-case ASCII via `normalize_entity_name()` before storage — `"Claude Code"` becomes `claude-code`, `"CANONICAL_RELATIONS"` becomes `canonical-relations`
 ### REQUIRED — Delete Entity (delete-entity)
 - USE `delete-entity --name <entity> --json` to permanently remove an entity node
 - ADD `--cascade` to also remove all relationships and memory bindings attached to the entity
@@ -411,9 +412,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `graph traverse` for traversal from a typed entity
 - USE `deep-research` for parallel multi-hop research with query decomposition
 - COMBINE all five in the canonical three-layer pattern or use `deep-research` as a single-command alternative
-### Deep Research (v1.0.64)
+### Deep Research (v1.0.64, improved in v1.0.65)
 - `sqlite-graphrag deep-research "<query>" --k 20 --json` — parallel multi-hop research with query decomposition
-- Splits query into up to 7 sub-queries, runs in parallel via bounded JoinSet + Semaphore
+- Splits query into up to 7 sub-queries, computes a SEPARATE embedding per sub-query (v1.0.65 fix — was sharing one embedding), runs in parallel via bounded JoinSet + Semaphore
+- Fuses KNN + FTS5 results via RRF per sub-query (v1.0.65 fix — FTS was hardcoded at 0.5)
+- Evidence chains are directed seed-to-target paths (v1.0.65 fix — was flat global dump of top-20 relationships)
+- Graph scores incorporate seed score, hop decay, and edge weight (v1.0.65 fix)
 - Output: `sub_queries[]`, `results[]`, `evidence_chains[]`, `stats`
 - Replaces manual 3-layer pipeline for comprehensive research in a single invocation
 - `--k 20` results per sub-query (default, Recall@20 captures 95%+ relevant hits)
@@ -424,7 +428,33 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `--with-bodies` includes full memory bodies in results (opt-in)
 - `--max-concurrency N` limits parallel sub-queries (default: min(cpus, 8))
 - `--timeout 30` per-sub-query timeout in seconds (default)
-- Since v1.0.64: `ingest --mode claude-code` disables hooks for OAuth via `--settings '{"hooks":{}}'`, detects OAuth to omit misleading `cost_usd`, validates body size before LLM extraction (files >512 KB skipped), and `rename`/`rename-entity` reject same-name with exit 1
+- `--rrf-k 60` RRF fusion constant (v1.0.65, same as hybrid-search)
+- `--graph-decay 0.7` graph score decay factor per hop (v1.0.65)
+- `--graph-min-score 0.2` minimum score threshold for graph-expanded results (v1.0.65)
+- `--max-neighbors-per-hop N` caps BFS fan-out per entity per hop (v1.0.65, default unlimited)
+### Reclassify Relationship Types (v1.0.65)
+- `sqlite-graphrag reclassify-relation --from-relation <old> --to-relation <new> --batch --json` — bulk renames relationship types
+- Single mode: `--source A --target B --from-relation old --to-relation new`
+- Batch mode: `--from-relation old --to-relation new --batch`
+- Optional filters: `--filter-source-type`, `--filter-target-type`
+- Handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge
+- `--dry-run` previews count without modifying the database
+- JSON response: `action`, `from_relation`, `to_relation`, `count`, `merged_duplicates`, `namespace`, `elapsed_ms`
+### Normalize Entity Names (v1.0.65)
+- `sqlite-graphrag normalize-entities --yes --json` — normalizes all entity names to lowercase kebab-case ASCII
+- Auto-merges collisions: `Claude Code` + `claude-code` become one node with combined relationships
+- `--dry-run` previews which entities would be renamed or merged
+- Normalization: NFKD decomposition → ASCII filter → lowercase → spaces/underscores to hyphens → collapse consecutive hyphens
+- Entity names are also normalized on every write path since v1.0.65 (remember, ingest, link, rename-entity)
+- JSON response: `action`, `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
+### Enrich Graph Quality With LLM (v1.0.65)
+- `sqlite-graphrag enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline
+- 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions for entities with none), `body-enrich` (expand short memory bodies)
+- `--dry-run` previews without spawning LLM (zero tokens)
+- `--max-cost-usd N` caps cumulative API spend (ignored for OAuth users)
+- `--resume` and `--retry-failed` for crash resilience via queue DB
+- Output is NDJSON: phase events, per-item events (status: `done`/`failed`/`skipped`/`preview`), summary line
+- Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 ### REQUIRED — Canonical Three-Layer Pattern
 - LAYER 1 — `hybrid-search` to find seed memories by name
 - LAYER 2 — `read --name` to expand the full memory body
@@ -530,6 +560,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - SET `--weight` optional for relation weight (default 0.5)
 - TREAT exit code 4 as nonexistent entity (without `--create-missing`)
 - USE `--strict-relations` to fail with exit 1 when a non-canonical relation type is used; response includes `warnings` field listing any non-canonical relations when not strict
+- USE `--max-entity-degree N` to emit `tracing::warn!` when creating an edge that would push an entity above N connections (v1.0.65, also available on `remember`)
 ### REQUIRED — Export with graph
 - EXPORT snapshot via `graph --format json`
 - USE `--format dot` for offline Graphviz
@@ -704,6 +735,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `link` returns `action` ("linked"), `from`, `to`, `relation`, `weight`, `namespace`, `elapsed_ms`, `created_entities?` (array, when `--create-missing`), `warnings?` (array, when non-canonical relation)
 - `unlink` returns `action` ("deleted"), `from_name`, `to_name`, `relation`, `relationships_removed`, `namespace`, `elapsed_ms`
 - `rename-entity` returns `action` ("renamed"), `old_name`, `new_name`, `entity_id`, `namespace`, `elapsed_ms`
+- `deep-research` returns `query`, `sub_queries[]` (`id`, `text`, `source`), `results[]` (`name`, `score`, `source`, `sub_query_ids`, `snippet`, `body?`, `hop_distance?`), `evidence_chains[]` (`from`, `to`, `path[]`, `total_weight`, `depth`, `sub_query_ids`), `stats` (`sub_queries_total`, `sub_queries_completed`, `sub_queries_failed`, `sub_queries_timed_out`, `unique_memories_found`, `evidence_chains_found`, `elapsed_ms`)
+- `reclassify-relation` returns `action` ("reclassified"/"dry_run"), `from_relation`, `to_relation`, `count`, `merged_duplicates`, `namespace`, `elapsed_ms`
+- `normalize-entities` returns `action` ("normalized"/"dry_run"), `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
+- `enrich` emits NDJSON: phase events (`phase`, `operation`), item events (`name`, `status`, `entities?`, `rels?`, `cost_usd?`, `elapsed_ms?`), summary (`operation`, `completed`, `failed`, `skipped`, `cost_usd`, `elapsed_ms`)
+- `health` also returns `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), `relation_concentration_warning` (string?) when any single relation exceeds 40% of edges (v1.0.65)
 
 
 ## Exit Codes and Retry Strategy

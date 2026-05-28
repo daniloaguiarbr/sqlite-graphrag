@@ -184,7 +184,7 @@ pub struct RememberResponse {
     pub name: String,
     pub namespace: String,
     pub action: String,
-    /// Semantic alias of `action` for compatibility with the contract documented in SKILL.md and AGENT_PROTOCOL.md.
+    /// Semantic alias of `action` for compatibility with the contract documented in SKILL.md.
     pub operation: String,
     pub version: i64,
     pub entities_persisted: usize,

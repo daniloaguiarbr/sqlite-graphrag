@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/normalize-entities.schema.json",
+  "title": "NormalizeEntitiesResponse",
+  "description": "Response emitted by `sqlite-graphrag normalize-entities` on stdout as a single JSON line. Normalizes entity names to kebab-case ASCII; merges colliding names. Exit codes: 0 success, 1 validation error.",
+  "type": "object",
+  "required": ["action", "normalized_count", "merged_count", "namespace", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":            { "type": "string",  "enum": ["normalized", "dry_run"], "description": "'normalized' when changes were applied, 'dry_run' when only previewed." },
+    "normalized_count":  { "type": "integer", "minimum": 0, "description": "Number of entities whose names were updated in place." },
+    "merged_count":      { "type": "integer", "minimum": 0, "description": "Number of entities that collided with an existing normalized name and were merged into the target." },
+    "namespace":         { "type": "string",  "description": "Namespace the operation was applied to." },
+    "elapsed_ms":        { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+  }
+}

@@ -1331,3 +1331,311 @@ fn contract_35_rename_entity() {
     );
     assert_eq!(json["action"], "renamed");
 }
+
+// ---------------------------------------------------------------------------
+// 36 — deep-research
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_36_deep_research() {
+    let env = Env::new();
+    env.init();
+    // Seed two memories so the DB is non-empty; deep-research still works on empty DBs
+    // (returns zero results) but the JSON contract must be complete either way.
+    env.remember(
+        "mem-deep-a",
+        "auth uses JWT tokens with 15 minute expiry and refresh flow",
+    );
+    env.remember(
+        "mem-deep-b",
+        "deploy pipeline stages: build, test, staging, production",
+    );
+
+    let out = env
+        .cmd()
+        .args([
+            "deep-research",
+            "auth and deploy",
+            "--max-sub-queries",
+            "2",
+            "--k",
+            "5",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "deep-research failed: {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = Env::parse_stdout(&out);
+
+    // Top-level required keys
+    assert_has_keys(
+        "deep-research",
+        &json,
+        &[
+            "query",
+            "sub_queries",
+            "results",
+            "evidence_chains",
+            "stats",
+        ],
+    );
+    assert_eq!(json["query"], "auth and deploy");
+
+    // sub_queries must be an array
+    let sub_queries = json["sub_queries"]
+        .as_array()
+        .expect("sub_queries must be array");
+    assert!(!sub_queries.is_empty(), "at least one sub-query expected");
+    for sq in sub_queries {
+        assert_has_keys("deep-research.sub_queries[]", sq, &["id", "text", "source"]);
+        let source = sq["source"].as_str().expect("source must be string");
+        assert!(
+            source == "original" || source == "decomposed",
+            "unexpected source: {source}"
+        );
+    }
+
+    // results must be an array
+    assert!(json["results"].is_array(), "results must be array");
+
+    // evidence_chains must be an array
+    assert!(
+        json["evidence_chains"].is_array(),
+        "evidence_chains must be array"
+    );
+
+    // stats required keys
+    assert_has_keys(
+        "deep-research.stats",
+        &json["stats"],
+        &[
+            "sub_queries_total",
+            "sub_queries_completed",
+            "sub_queries_failed",
+            "sub_queries_timed_out",
+            "unique_memories_found",
+            "evidence_chains_found",
+            "elapsed_ms",
+        ],
+    );
+    assert!(json["stats"]["elapsed_ms"].as_u64().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// 37 — reclassify-relation
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_37_reclassify_relation() {
+    let env = Env::new();
+    env.init();
+    // Create two entities with a relationship between them.
+    let (ent_a, ent_b) = env.remember_with_entities(
+        "mem-reclassify-rel",
+        "body for reclassify-relation contract",
+    );
+
+    // Link them with a 'mentions' relation so we have something to reclassify.
+    let _ = env
+        .cmd()
+        .args([
+            "link",
+            "--from",
+            &ent_a,
+            "--to",
+            &ent_b,
+            "--relation",
+            "mentions",
+        ])
+        .output()
+        .unwrap();
+
+    // Dry-run: should report count without committing.
+    let out = env
+        .cmd()
+        .args([
+            "reclassify-relation",
+            "--from-relation",
+            "mentions",
+            "--to-relation",
+            "related",
+            "--batch",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "reclassify-relation dry-run failed: {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "reclassify-relation",
+        &json,
+        &[
+            "action",
+            "from_relation",
+            "to_relation",
+            "count",
+            "merged_duplicates",
+            "namespace",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "dry_run");
+    assert_eq!(json["from_relation"], "mentions");
+    assert_eq!(json["to_relation"], "related");
+    assert!(json["count"].as_u64().is_some());
+    assert!(json["merged_duplicates"].as_u64().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// 38 — normalize-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_38_normalize_entities() {
+    let env = Env::new();
+    env.init();
+    // Seed a memory; normalize-entities works even with no un-normalized names.
+    env.remember(
+        "mem-normalize-ent",
+        "body for normalize-entities contract test",
+    );
+
+    // Dry-run: safe to run without --yes.
+    let out = env
+        .cmd()
+        .args(["normalize-entities", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "normalize-entities dry-run failed: {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = Env::parse_stdout(&out);
+    assert_has_keys(
+        "normalize-entities",
+        &json,
+        &[
+            "action",
+            "normalized_count",
+            "merged_count",
+            "namespace",
+            "elapsed_ms",
+        ],
+    );
+    assert_eq!(json["action"], "dry_run");
+    assert!(json["normalized_count"].as_u64().is_some());
+    assert!(json["merged_count"].as_u64().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// 39 — enrich (dry-run, no LLM spawned)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_39_enrich() {
+    let env = Env::new();
+    env.init();
+    // Seed one memory without entity bindings so the scan finds it.
+    env.remember(
+        "mem-enrich-contract",
+        "auth uses JWT with short expiry and refresh tokens",
+    );
+
+    // dry-run mode: emits phase events + preview item events + summary without calling LLM.
+    let out = env
+        .cmd()
+        .args(["enrich", "--operation", "memory-bindings", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "enrich dry-run failed: {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Output is NDJSON: one line per event.
+    let stdout_str = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout_str
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    assert!(
+        !lines.is_empty(),
+        "enrich must emit at least one NDJSON line"
+    );
+
+    // Parse each line and find the summary (last non-empty line typically).
+    let mut summary_found = false;
+    let mut phase_validate_found = false;
+    let mut phase_scan_found = false;
+
+    for line in &lines {
+        let val: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("invalid NDJSON line: {e}\n{line}"));
+
+        if val["summary"] == true {
+            // Summary line
+            assert_has_keys(
+                "enrich-summary",
+                &val,
+                &[
+                    "summary",
+                    "operation",
+                    "items_total",
+                    "completed",
+                    "failed",
+                    "skipped",
+                    "cost_usd",
+                    "elapsed_ms",
+                ],
+            );
+            assert_eq!(val["summary"], true);
+            summary_found = true;
+        } else if val.get("phase").is_some() {
+            // Phase event
+            let phase = val["phase"].as_str().unwrap_or("");
+            match phase {
+                "validate" => {
+                    assert_has_keys("enrich-phase(validate)", &val, &["phase"]);
+                    phase_validate_found = true;
+                }
+                "scan" => {
+                    assert_has_keys("enrich-phase(scan)", &val, &["phase"]);
+                    phase_scan_found = true;
+                }
+                _ => panic!("unexpected phase value: {phase}"),
+            }
+        } else if val.get("item").is_some() {
+            // Item event (preview in dry-run)
+            assert_has_keys("enrich-item", &val, &["item", "status", "index", "total"]);
+            let status = val["status"].as_str().unwrap_or("");
+            assert_eq!(
+                status, "preview",
+                "dry-run items must have status='preview'"
+            );
+        }
+    }
+
+    assert!(
+        phase_validate_found,
+        "enrich must emit a 'validate' phase event"
+    );
+    assert!(phase_scan_found, "enrich must emit a 'scan' phase event");
+    assert!(summary_found, "enrich must emit a summary line");
+}

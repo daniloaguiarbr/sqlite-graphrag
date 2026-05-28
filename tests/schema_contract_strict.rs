@@ -1153,3 +1153,183 @@ fn schema_35_rename_entity() {
         &instancia,
     );
 }
+
+// ---------------------------------------------------------------------------
+// 36 — deep-research
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_36_deep_research() {
+    let env = Env::new();
+    env.init();
+    env.remember_simples("schema36-mem-a");
+    env.remember_simples("schema36-mem-b");
+
+    let saida = env
+        .cmd()
+        .args([
+            "deep-research",
+            "auth and deploy",
+            "--max-sub-queries",
+            "2",
+            "--k",
+            "5",
+        ])
+        .output()
+        .expect("deep-research failed");
+    assert!(
+        saida.status.success(),
+        "deep-research: exit {:?}\nstderr: {}",
+        saida.status.code(),
+        String::from_utf8_lossy(&saida.stderr)
+    );
+    let instancia = Env::parse_stdout(&saida, "deep-research");
+    validar_schema(
+        "deep-research",
+        include_str!("../docs/schemas/deep-research.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 37 — reclassify-relation
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_37_reclassify_relation() {
+    let env = Env::new();
+    env.init();
+    let (ent_a, ent_b) = env.remember_with_entities("schema37-reclassify-rel");
+
+    // Link entities with a 'mentions' relation to give the command something to work with.
+    let _ = env
+        .cmd()
+        .args([
+            "link",
+            "--from",
+            &ent_a,
+            "--to",
+            &ent_b,
+            "--relation",
+            "mentions",
+        ])
+        .output()
+        .expect("link failed");
+
+    // Dry-run: safe, validates JSON contract without committing.
+    let saida = env
+        .cmd()
+        .args([
+            "reclassify-relation",
+            "--from-relation",
+            "mentions",
+            "--to-relation",
+            "related",
+            "--batch",
+            "--dry-run",
+        ])
+        .output()
+        .expect("reclassify-relation failed");
+    assert!(
+        saida.status.success(),
+        "reclassify-relation: exit {:?}\nstderr: {}",
+        saida.status.code(),
+        String::from_utf8_lossy(&saida.stderr)
+    );
+    let instancia = Env::parse_stdout(&saida, "reclassify-relation");
+    validar_schema(
+        "reclassify-relation",
+        include_str!("../docs/schemas/reclassify-relation.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 38 — normalize-entities
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_38_normalize_entities() {
+    let env = Env::new();
+    env.init();
+    env.remember_simples("schema38-normalize-ent");
+
+    // Dry-run: validates JSON contract without modifying data.
+    let saida = env
+        .cmd()
+        .args(["normalize-entities", "--dry-run"])
+        .output()
+        .expect("normalize-entities failed");
+    assert!(
+        saida.status.success(),
+        "normalize-entities: exit {:?}\nstderr: {}",
+        saida.status.code(),
+        String::from_utf8_lossy(&saida.stderr)
+    );
+    let instancia = Env::parse_stdout(&saida, "normalize-entities");
+    validar_schema(
+        "normalize-entities",
+        include_str!("../docs/schemas/normalize-entities.schema.json"),
+        &instancia,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 39 — enrich (dry-run, NDJSON: validate each line type against its schema)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn schema_39_enrich() {
+    let env = Env::new();
+    env.init();
+    env.remember_simples("schema39-enrich-mem");
+
+    let saida = env
+        .cmd()
+        .args(["enrich", "--operation", "memory-bindings", "--dry-run"])
+        .output()
+        .expect("enrich failed");
+    assert!(
+        saida.status.success(),
+        "enrich: exit {:?}\nstderr: {}",
+        saida.status.code(),
+        String::from_utf8_lossy(&saida.stderr)
+    );
+
+    let stdout_str = String::from_utf8_lossy(&saida.stdout);
+    let lines: Vec<&str> = stdout_str
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    assert!(
+        !lines.is_empty(),
+        "enrich must emit at least one NDJSON line"
+    );
+
+    let phase_schema_str = include_str!("../docs/schemas/enrich-phase.schema.json");
+    let item_schema_str = include_str!("../docs/schemas/enrich-item-event.schema.json");
+    let summary_schema_str = include_str!("../docs/schemas/enrich-summary.schema.json");
+
+    let mut summary_found = false;
+
+    for line in &lines {
+        let val: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("enrich NDJSON line not valid JSON: {e}\n{line}"));
+
+        if val["summary"] == true {
+            validar_schema("enrich-summary", summary_schema_str, &val);
+            summary_found = true;
+        } else if val.get("phase").is_some() {
+            validar_schema("enrich-phase", phase_schema_str, &val);
+        } else if val.get("item").is_some() {
+            validar_schema("enrich-item", item_schema_str, &val);
+        }
+        // Lines from non-implemented operations include "operation" key — skip gracefully.
+    }
+
+    assert!(summary_found, "enrich must emit a summary line");
+}

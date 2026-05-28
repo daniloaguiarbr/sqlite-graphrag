@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/enrich-item-event.schema.json",
+  "title": "EnrichItemEvent",
+  "description": "Per-item NDJSON line emitted by `sqlite-graphrag enrich`. Emitted for each memory or entity processed. Status is 'done' (success), 'failed' (error), 'skipped' (item filtered out), 'preview' (dry-run), or 'not_yet_implemented' (operation not fully implemented). Index and total are always present.",
+  "type": "object",
+  "required": ["item", "status", "index", "total"],
+  "additionalProperties": false,
+  "properties": {
+    "item":         { "type": "string",            "description": "Memory name or entity name being processed." },
+    "status":       { "type": "string",            "enum": ["done", "failed", "skipped", "preview", "not_yet_implemented"], "description": "Processing outcome." },
+    "memory_id":    { "type": ["integer", "null"], "minimum": 0, "description": "Row ID of the memory. Present when status is done and operation targets memories." },
+    "entity_id":    { "type": ["integer", "null"], "minimum": 0, "description": "Row ID of the entity. Present when status is done and operation targets entities." },
+    "entities":     { "type": ["integer", "null"], "minimum": 0, "description": "Number of entities extracted or updated. Present when status is done." },
+    "rels":         { "type": ["integer", "null"], "minimum": 0, "description": "Number of relationships extracted or updated. Present when status is done." },
+    "chars_before": { "type": ["integer", "null"], "minimum": 0, "description": "Character count of the original body. Present for body-enrich operation." },
+    "chars_after":  { "type": ["integer", "null"], "minimum": 0, "description": "Character count of the enriched body. Present for body-enrich operation." },
+    "cost_usd":     { "type": ["number", "null"],  "minimum": 0, "description": "LLM cost in USD for this item. Absent for OAuth subscriptions and dry-run." },
+    "elapsed_ms":   { "type": ["integer", "null"], "minimum": 0, "description": "Wall-clock time in milliseconds for this item." },
+    "error":        { "type": ["string", "null"],  "description": "Error message. Present when status is failed." },
+    "index":        { "type": "integer",            "minimum": 0, "description": "Zero-based position of this item in the batch." },
+    "total":        { "type": "integer",            "minimum": 0, "description": "Total number of items in the batch." }
+  }
+}

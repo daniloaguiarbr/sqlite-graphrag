@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/reclassify-relation.schema.json",
+  "title": "ReclassifyRelationResponse",
+  "description": "Response emitted by `sqlite-graphrag reclassify-relation` on stdout as a single JSON line. Renames a relation type across matching edges (single or batch mode). Exit codes: 0 success, 1 validation error, 4 edge not found.",
+  "type": "object",
+  "required": ["action", "from_relation", "to_relation", "count", "merged_duplicates", "namespace", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "action":            { "type": "string",  "enum": ["reclassified", "dry_run"], "description": "'reclassified' when changes were applied, 'dry_run' when previewed only." },
+    "from_relation":     { "type": "string",  "description": "Original relation type that was renamed." },
+    "to_relation":       { "type": "string",  "description": "New relation type assigned to the edges." },
+    "count":             { "type": "integer", "minimum": 0, "description": "Number of edges successfully renamed." },
+    "merged_duplicates": { "type": "integer", "minimum": 0, "description": "Edges that collided with an existing (source, target, to_relation) triple and were removed rather than renamed." },
+    "namespace":         { "type": "string",  "description": "Namespace the operation was applied to." },
+    "elapsed_ms":        { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+  }
+}

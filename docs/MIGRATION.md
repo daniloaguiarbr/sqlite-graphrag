@@ -73,6 +73,21 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.65 — 3 NEW commands, deep-research fixes, entity normalization, enrich pipeline
+
+- NEW `reclassify-relation` command for bulk or single reclassification of relationship types with UNIQUE collision handling
+- NEW `normalize-entities` command to normalize entity names to lowercase kebab-case and auto-merge duplicates
+- NEW `enrich` command for LLM-augmented graph quality via `--mode claude-code` or `--mode codex`; 3 operations: memory-bindings, entity-descriptions, body-enrich
+- CRITICAL fix: `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic in v1.0.64
+- CRITICAL fix: `deep-research` fuses KNN + FTS5 via RRF instead of hardcoded 0.5 for FTS results
+- HIGH fix: `deep-research` evidence chains are now directed seed-to-target paths instead of flat global dumps
+- Entity names are normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
+- `health` now reports relation concentration: `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`
+- New deep-research flags: `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`
+- `--max-entity-degree` warning flag on `link` and `remember`
+- New JSON schemas: `deep-research`, `reclassify-relation`, `normalize-entities`, `enrich-phase`, `enrich-item-event`, `enrich-summary`
+- No schema migration required; no breaking changes to existing JSON contracts
+
 ### v1.0.64 — deep-research command, ingest hooks fix, OAuth cost detection, body cap pre-validation, rename same-name rejection
 - NEW `deep-research` subcommand for parallel multi-hop GraphRAG research via query decomposition and bounded fan-out
 - `ingest --mode claude-code` disables hooks via `--settings '{"hooks":{}}'` for OAuth users — prevents Stop hooks from consuming extraction turns

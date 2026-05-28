@@ -55,3 +55,6 @@ graphrag.sqlite-wal
 # Temporary files
 *.tmp
 *.bak
+
+# Internal analysis
+gaps.md

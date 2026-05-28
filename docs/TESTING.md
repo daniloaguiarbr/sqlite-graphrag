@@ -69,6 +69,24 @@
 - Unit tests in `src/commands/ingest_claude.rs` cover terminal_reason parsing, OAuth detection via apiKeySource, and body size pre-validation
 - Unit tests in `src/commands/rename.rs` and `src/commands/rename_entity.rs` cover same-name rejection with exit 1
 
+### v1.0.65 New Command Tests
+#### Deep Research Tests
+- Unit tests in `src/commands/deep_research.rs` cover decompose_query splitting, single-query passthrough, bounded concurrency semaphore, result deduplication, evidence chain assembly (depth >= 2 filter), and empty-query validation
+- Contract test `contract_36_deep_research` in `tests/doc_contract_integration.rs`: seeds two memories, runs `deep-research "auth and deploy" --max-sub-queries 2 --k 5`, asserts required keys (`query`, `sub_queries`, `results`, `evidence_chains`, `stats`) and validates `sub_queries[].source` enum
+- Schema test `schema_36_deep_research` in `tests/schema_contract_strict.rs`: validates the full response against `docs/schemas/deep-research.schema.json` (Draft 2020-12, `additionalProperties: false`)
+#### reclassify-relation Tests
+- 8 unit tests in `src/commands/reclassify_relation.rs` cover serialization, dry-run action, merged-duplicates counting, zero-match case, and same-value rejection guard
+- Contract test `contract_37_reclassify_relation`: links two entities via `mentions`, runs `reclassify-relation --from-relation mentions --to-relation related --batch --dry-run`, asserts all 7 required keys and `action == "dry_run"`
+- Schema test `schema_37_reclassify_relation`: validates against `docs/schemas/reclassify-relation.schema.json`
+#### normalize-entities Tests
+- 5 unit tests in `src/commands/normalize_entities.rs` cover dry-run count, in-place rename, collision merge, serialization, and dry-run action field
+- Contract test `contract_38_normalize_entities`: seeds a memory, runs `normalize-entities --dry-run`, asserts 5 required keys and `action == "dry_run"`
+- Schema test `schema_38_normalize_entities`: validates against `docs/schemas/normalize-entities.schema.json`
+#### enrich Tests
+- Contract test `contract_39_enrich`: seeds a memory, runs `enrich --operation memory-bindings --dry-run`, parses NDJSON lines, asserts validate phase event, scan phase event, preview item events (status=`preview`), and summary line with all required keys
+- Schema test `schema_39_enrich`: validates each NDJSON line type against its respective schema (`enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`)
+- All enrich tests use `--dry-run` to avoid spawning the LLM binary
+
 
 ## How to Run
 ### Default — Local Development

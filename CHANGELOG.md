@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.65] - 2026-05-28
+
+### Added
+- `reclassify-relation` command — bulk or single reclassification of relationship types with `UPDATE OR IGNORE` + `DELETE` duplicate merging, `--dry-run`, `--filter-source-type`/`--filter-target-type` (GAP-13)
+- `normalize-entities` command — normalizes existing entity names to lowercase kebab-case and auto-merges near-duplicate collisions, with `--dry-run`/`--yes` (GAP-15)
+- `enrich` command — LLM-augmented graph quality via `--mode claude-code|codex`, scan→judge→persist pipeline, 12 operations (memory-bindings, entity-descriptions, body-enrich and more), `--dry-run` previews without spawning the LLM, queue DB with resume/retry (GAP-14, GAP-18)
+- `health` now reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, and `relation_concentration_warning` when one relation exceeds 40% of edges (GAP-13)
+- `deep-research` flags `--rrf-k`, `--graph-decay`, `--graph-min-score`, and `--max-neighbors-per-hop`
+- `--max-entity-degree` warning on `link` and `remember` to flag super-hub growth (GAP-17)
+- JSON schemas `deep-research`, `reclassify-relation`, `normalize-entities`, and `enrich-{phase,item-event,summary}`, plus `contract_36..39` and `schema_36..39` tests — restores 100% schema/contract coverage (GAP-01, GAP-02, GAP-03, GAP-04)
+
+### Fixed
+- GAP-07 CRITICAL: `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic because all sub-queries shared the original query embedding for KNN, returning identical results (also resolves GAP-10 centroid collapse and GAP-12 partial decomposition)
+- GAP-08 CRITICAL: `deep-research` now fuses KNN, FTS5, and graph pools via Reciprocal Rank Fusion (new shared `storage::fusion`) instead of assigning FTS results a hardcoded score of 0.5
+- GAP-11: `deep-research` graph-pool scoring incorporates seed score, hop decay, and edge weight, fused via RRF with a minimum-score filter
+- GAP-09 HIGH: `deep-research` evidence chains are now directed seed→target paths (`from`, `to`, `path`, `total_weight`) filtered by discovered entities, instead of a flat global dump of the top-20 relationships
+- GAP-15 HIGH: entity names are normalized to lowercase kebab-case on every write AND read path (`find_entity_id`, `rename-entity`, `reclassify-relation`, `prune-ner`, `enrich`) — validation runs on the raw name first so short ALL_CAPS NER noise is still rejected, then the normalized form is stored and looked up
+
+### Changed
+- GAP-17: graph traversal accepts an optional per-hop neighbor cap (top-K by weight); default behavior is unchanged
+- hybrid-search RRF fusion extracted into the shared `storage::fusion` module (no behavior change)
+- GAP-16: docs clarify that relations are accepted in kebab-case or snake_case and always stored and emitted as snake_case
+
 ## [1.0.64] - 2026-05-28
 
 ### Fixed

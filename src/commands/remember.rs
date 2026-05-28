@@ -172,6 +172,10 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_RSS_MB,
           help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
     pub max_rss_mb: u64,
+    /// Emit a warning (but do not reject) when persisting an entity whose degree would
+    /// exceed this value after the upsert. Default 50. Set 0 to disable the check.
+    #[arg(long, default_value_t = 50, value_name = "N")]
+    pub max_entity_degree: u32,
 }
 
 #[derive(Deserialize, Default)]
@@ -763,6 +767,23 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             )?;
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
             entities::increment_degree(&tx, entity_id)?;
+            // GAP-17: warn when entity degree exceeds the configured cap.
+            if args.max_entity_degree > 0 {
+                let cap = args.max_entity_degree as i64;
+                let degree: i64 = tx.query_row(
+                    "SELECT degree FROM entities WHERE id = ?1",
+                    rusqlite::params![entity_id],
+                    |r| r.get(0),
+                )?;
+                if degree > cap {
+                    tracing::warn!(
+                        entity = %entity.name,
+                        degree = degree,
+                        cap = cap,
+                        "entity degree cap exceeded"
+                    );
+                }
+            }
             entities_persisted += 1;
         }
         let entity_types: std::collections::HashMap<&str, EntityType> = graph

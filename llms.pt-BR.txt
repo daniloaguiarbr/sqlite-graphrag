@@ -12,7 +12,6 @@
 - [COOKBOOK](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/COOKBOOK.md): trinta receitas cobrindo ingestão, recuperação, travessia de grafo, backup e auditoria
 - [AGENTS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENTS.md): guia persuasivo para autores de agentes IA: economia, contrato JSON, roteamento por exit codes
 - [INTEGRATIONS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/INTEGRATIONS.md): configuração específica por fornecedor para todos os 27 agentes e IDEs suportados
-- [AGENT_PROTOCOL](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENT_PROTOCOL.md): especificação imperativa stdin/stdout, schemas JSON e protocolo de concorrência
 - [CHANGELOG](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CHANGELOG.md): histórico completo de versões com notas de migração
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CONTRIBUTING.md): fluxo de pull request e padrões de código
 - [SECURITY](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/SECURITY.md): política de divulgação responsável e canal de contato
@@ -25,7 +24,7 @@
 - `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional; use `--max-rss-mb` para limitar o RSS do processo durante embedding (padrão 8192 MiB)
 - `recall` realiza busca por similaridade vetorial KNN sobre as memórias armazenadas
 - `hybrid-search` funde FTS5 full-text e KNN vetorial via Reciprocal Rank Fusion
-- `deep-research` decompõe uma query em até 7 sub-queries, executa busca vetorial paralela mais travessia de grafo de 3 hops por sub-query, deduplica e monta cadeias de evidência; flags: `--k` (padrão 20), `--max-sub-queries` (padrão 7), `--max-hops` (padrão 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (padrão 50)
+- `deep-research` decompõe uma query em até 7 sub-queries, computa embedding separado por sub-query, executa busca híbrida vetorial+FTS paralela fundida via RRF mais travessia de grafo de 3 hops por sub-query, deduplica e monta cadeias de evidência direcionadas; flags: `--k` (padrão 20), `--max-sub-queries` (padrão 7), `--max-hops` (padrão 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (padrão 50), `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.2), `--max-neighbors-per-hop`
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
 - `link` `unlink` `related` gerenciam relacionamentos tipados entre entidades para travessia multi-hop
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` gerenciam o banco de dados
@@ -40,6 +39,9 @@
 - `remember --dry-run` faz preview do parsing e extração do grafo sem gravar no banco
 - `cleanup-orphans` `prune-relations` removem entidades órfãs e relações fracas ou não utilizadas do grafo
 - `purge` `namespace-detect` cuidam de manutenção e resolução de namespace
+- `reclassify-relation` renomeia tipos de relacionamento no grafo; modo individual: `--source A --target B --from-relation antigo --to-relation novo`; modo batch: `--from-relation antigo --to-relation novo --batch`; filtros opcionais: `--filter-source-type`, `--filter-target-type`; `--dry-run` faz preview; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`
+- `normalize-entities` normaliza todos os nomes de entidade no namespace para kebab-case ASCII minúsculo; mescla colisões automaticamente (ex.: `Claude Code` e `claude-code` viram um nó com relacionamentos combinados); `--dry-run` faz preview, `--yes` aplica
+- `enrich` pipeline de qualidade do grafo aumentada por LLM via `--mode claude-code` ou `--mode codex`; padrão scan-judge-persist com queue DB para resume/retry; 3 operações implementadas: `--operation memory-bindings` (extrai entidades de memórias órfãs), `--operation entity-descriptions` (gera descrições para entidades sem descrição), `--operation body-enrich` (expande corpos curtos de memória); `--dry-run` faz preview sem spawnar LLM; `--max-cost-usd` limita orçamento; saída é NDJSON (eventos de fase, eventos por item, resumo)
 
 
 ## Variáveis de Ambiente
@@ -130,7 +132,7 @@ Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) são opcionais e aceleram o st
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.64 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.65 com MSRV Rust 1.88 declarado no `Cargo.toml`
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
 - Modelo de embeddings `multilingual-e5-small` quantizado via `fastembed` com aproximadamente 750 MB de RAM
 - Camada de armazenamento `rusqlite` com SQLite bundled mais extensão `sqlite-vec` e módulo FTS5

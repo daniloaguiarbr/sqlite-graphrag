@@ -28,7 +28,7 @@ pub struct StatsArgs {
 #[derive(Serialize)]
 struct StatsResponse {
     memories: i64,
-    /// Alias of `memories` for the documented contract in SKILL.md and AGENT_PROTOCOL.md.
+    /// Alias of `memories` for the documented contract in SKILL.md.
     memories_total: i64,
     entities: i64,
     /// Alias of `entities` for the documented contract.
@@ -36,7 +36,7 @@ struct StatsResponse {
     relationships: i64,
     /// Alias of `relationships` for the documented contract.
     relationships_total: i64,
-    /// Semantic alias of `relationships` per the contract in AGENT_PROTOCOL.md.
+    /// Semantic alias of `relationships` per the contract in SKILL.md.
     edges: i64,
     /// Total indexed chunks (one row per chunk in `memory_chunks`).
     chunks_total: i64,

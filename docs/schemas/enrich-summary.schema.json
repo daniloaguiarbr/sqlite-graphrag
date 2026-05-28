@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/enrich-summary.schema.json",
+  "title": "EnrichSummary",
+  "description": "Final summary NDJSON line emitted by `sqlite-graphrag enrich`. Always the last line. The 'summary' sentinel field distinguishes it from per-item events.",
+  "type": "object",
+  "required": ["summary", "operation", "items_total", "completed", "failed", "skipped", "cost_usd", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "summary":     { "const": true,    "description": "Sentinel field; always true. Distinguishes this line from per-item events." },
+    "operation":   { "type": "string", "description": "Rust Debug format of the EnrichOperation variant (e.g. 'MemoryBindings', 'EntityDescriptions', 'BodyEnrich')." },
+    "items_total": { "type": "integer", "minimum": 0, "description": "Total items discovered by the scan phase." },
+    "completed":   { "type": "integer", "minimum": 0, "description": "Items successfully processed." },
+    "failed":      { "type": "integer", "minimum": 0, "description": "Items that failed processing." },
+    "skipped":     { "type": "integer", "minimum": 0, "description": "Items skipped (filtered out or not-yet-implemented operation)." },
+    "cost_usd":    { "type": "number",  "minimum": 0, "description": "Cumulative LLM cost in USD. Zero for dry-run and OAuth runs." },
+    "elapsed_ms":  { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+  }
+}

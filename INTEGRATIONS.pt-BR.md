@@ -24,6 +24,15 @@
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## Novos Comandos e Flags (desde v1.0.65)
+- `reclassify-relation --from-relation <antigo> --to-relation <novo> --batch` renomeia tipos de relação em massa; modo individual via `--source`/`--target`; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` faz preview; filtros opcionais `--filter-source-type`/`--filter-target-type`
+- `normalize-entities --yes` normaliza todos os nomes de entidade para kebab-case ASCII minúsculo; mescla colisões automaticamente; `--dry-run` faz preview
+- `enrich --operation <op> --mode claude-code` qualidade do grafo aumentada por LLM; operações: `memory-bindings`, `entity-descriptions`, `body-enrich`; `--dry-run` faz preview sem LLM; `--max-cost-usd`, `--resume`, `--retry-failed`
+- `deep-research` novas flags: `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.2), `--max-neighbors-per-hop`
+- `--max-entity-degree N` em `link` e `remember` emite `tracing::warn!` quando entidade excede N conexões
+- `health` reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` quando qualquer relação excede 40%
+- Nomes de entidade normalizados para kebab-case em todo path de escrita (remember, ingest, link, rename-entity)
+
 ## Comportamento do Daemon (desde v1.0.50)
 - Após upgrades do binário, a CLI reinicia automaticamente o daemon em caso de incompatibilidade de versão (desde v1.0.50)
 

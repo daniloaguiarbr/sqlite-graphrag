@@ -54,10 +54,14 @@
     "wal_size_mb":     { "type": "number", "minimum": 0 },
     "journal_mode":    { "type": "string" },
     "checks":            { "type": "array", "items": { "$ref": "#/$defs/HealthCheck" } },
-    "mentions_ratio":    { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all relationships that are of type 'mentions'. Present when mentions dominate the graph above 50%." },
-    "mentions_warning":  { "type": "string", "description": "Human-readable warning when mentions_ratio exceeds threshold. Present alongside mentions_ratio." },
-    "fts_query_ok":      { "type": "boolean", "description": "True when FTS5 MATCH query succeeds (not just table existence)" },
-    "sqlite_version":    { "type": "string", "description": "Bundled SQLite version from SELECT sqlite_version()" },
-    "elapsed_ms":        { "type": "integer", "minimum": 0 }
+    "mentions_ratio":                { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all relationships that are of type 'mentions'. Present when mentions dominate the graph above 50%." },
+    "mentions_warning":              { "type": "string",  "description": "Human-readable warning when mentions_ratio exceeds threshold. Present alongside mentions_ratio." },
+    "fts_query_ok":                  { "type": "boolean", "description": "True when FTS5 MATCH query succeeds (not just table existence)" },
+    "sqlite_version":                { "type": "string",  "description": "Bundled SQLite version from SELECT sqlite_version()" },
+    "top_relation":                  { "type": "string",  "description": "Relation type with the highest edge count. Present when relation concentration analysis is available." },
+    "top_relation_ratio":            { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges occupied by top_relation (0.0-1.0). Present alongside top_relation." },
+    "applies_to_ratio":              { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges that are of type 'applies-to'. Present when relation concentration analysis is available." },
+    "relation_concentration_warning":{ "type": "string",  "description": "Human-readable warning when a single relation type dominates the graph. Present when concentration threshold is exceeded." },
+    "elapsed_ms":                    { "type": "integer", "minimum": 0 }
   }
 }

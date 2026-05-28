@@ -57,7 +57,7 @@ pub struct ListArgs {
 #[derive(Serialize)]
 struct ListItem {
     id: i64,
-    /// Semantic alias of `id` for the contract documented in SKILL.md and AGENT_PROTOCOL.md.
+    /// Semantic alias of `id` for the contract documented in SKILL.md.
     memory_id: i64,
     name: String,
     namespace: String,

@@ -1758,3 +1758,75 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 > `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
 > `--mode codex` reads device auth from `codex auth login` (OpenAI).
 > API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
+
+
+## How To Reclassify Relationship Types In Bulk (v1.0.65)
+
+### Problem
+- Your graph has hundreds of `mentions` or `applies_to` relationships that should be more precisely typed
+- Manually unlinking and relinking each edge is impractical at scale
+
+### Solution
+```bash
+sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --dry-run --json
+sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --json
+```
+
+### Explanation
+- `--dry-run` previews how many edges would change without modifying the database
+- `--batch` reclassifies all edges of the specified type in the namespace
+- Handles UNIQUE collisions automatically: if (source, target, new_relation) already exists, the old edge is merged and deleted
+- Use `--filter-source-type incident --filter-target-type tool` to narrow scope to specific entity type pairs
+
+### Variants
+- Single edge: `sqlite-graphrag reclassify-relation --source entity-a --target entity-b --from-relation applies-to --to-relation uses --json`
+- Targeted batch: `sqlite-graphrag reclassify-relation --from-relation applies-to --to-relation depends-on --filter-source-type concept --batch --json`
+
+
+## How To Normalize Entity Names To Kebab-Case (v1.0.65)
+
+### Problem
+- Your graph has duplicate entities like `Claude Code` and `claude-code` or `CANONICAL_RELATIONS` and `canonical-relations`
+- Graph traversal treats them as separate nodes, splitting relationships and reducing recall
+
+### Solution
+```bash
+sqlite-graphrag normalize-entities --dry-run --json
+sqlite-graphrag normalize-entities --yes --json
+```
+
+### Explanation
+- `--dry-run` shows which entities would be renamed or merged without touching the database
+- Normalization pipeline: NFKD decomposition, ASCII filtering, lowercase, spaces and underscores to hyphens, collapse consecutive hyphens
+- When normalization creates a collision (both `Claude Code` and `claude-code` exist), automatically merges all relationships into the target and deletes the source entity
+- After normalization, all entity names are guaranteed idempotent lowercase kebab-case
+
+### Notes
+- Entity names are also normalized on every write path since v1.0.65 (remember, ingest, link, rename-entity)
+- Run `cleanup-orphans --json` after normalization to remove any newly orphaned entities
+
+
+## How To Enrich Orphan Memories With LLM-Extracted Entities (v1.0.65)
+
+### Problem
+- Most memories in your database have zero entity bindings (orphan memories invisible to graph traversal)
+- Manual entity extraction via `remember --graph-stdin` is tedious for hundreds of memories
+
+### Solution
+```bash
+sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50 --dry-run --json
+sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50 --json
+```
+
+### Explanation
+- Scans for memories with zero entity bindings, sends each body to the LLM for structured extraction, and persists extracted entities and relationships via `--force-merge`
+- `--dry-run` previews which memories would be enriched without spawning the LLM (zero tokens)
+- `--limit 50` caps the batch size for cost control
+- `--max-cost-usd 5.00` caps cumulative API spend
+- Output is NDJSON: phase events, per-item events, and summary line
+
+### Variants
+- Generate entity descriptions: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --limit 100 --json`
+- Expand short memory bodies: `sqlite-graphrag enrich --operation body-enrich --mode claude-code --limit 20 --json`
+- Resume after interruption: `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --resume --json`
+- Use Codex instead of Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`

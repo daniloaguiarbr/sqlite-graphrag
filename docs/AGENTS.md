@@ -29,6 +29,22 @@
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
 
+## New in v1.0.65
+### New Commands
+- `reclassify-relation --from-relation <old> --to-relation <new> --batch --json` — renames relationship types in bulk across the graph; single-edge mode via `--source A --target B`; optional `--filter-source-type` and `--filter-target-type` for targeted batch; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge; `--dry-run` previews count
+- `normalize-entities --yes --json` — normalizes all entity names to lowercase kebab-case ASCII, auto-merging collisions (e.g., `Claude Code` + `claude-code` become one node); `--dry-run` previews
+- `enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline; 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions), `body-enrich` (expand short bodies); queue DB for resume/retry; `--dry-run` previews without spawning LLM; output is NDJSON
+### Deep Research Improvements
+- `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic in v1.0.64
+- `deep-research` fuses KNN + FTS5 + graph pools via RRF instead of hardcoded 0.5 for FTS results
+- Evidence chains are now directed seed-to-target paths instead of a flat dump of top-20 global relationships
+- New flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.2), `--max-neighbors-per-hop`
+### Entity Normalization
+- Entity names are now normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
+- `--max-entity-degree N` warning flag on `link` and `remember` — emits `tracing::warn!` when an entity exceeds N edges
+### Health Command Additions
+- `health` now reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, and `relation_concentration_warning` when any single relation type exceeds 40% of all edges
+
 ## New in v1.0.58
 ### Bug Fixes
 - `remember --force-merge` now synchronizes the FTS5 index after update — previously every force-merge silently corrupted the full-text search index (CRITICAL fix)
@@ -485,6 +501,7 @@ let output = Command::new("sqlite-graphrag")
 - RUN `optimize --json` to refresh planner statistics
 - DETECT schema drift via `__debug_schema` for troubleshooting
 - CHECK `mentions_ratio` (float) and `mentions_warning` (string) in `health --json` output when `mentions` relationships dominate the graph above 50%
+- CHECK `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float), and `relation_concentration_warning` (string) when any single relation type exceeds 40% of edges (v1.0.65)
 ### Correct Pattern — Bootstrap Sequence
 - `sqlite-graphrag init --namespace my-project`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -999,7 +1016,7 @@ let output = Command::new("sqlite-graphrag")
 - `list` response-level: `items[]`, `total_count`, `truncated`, `elapsed_ms`; each item includes `body_length` (byte length of stored body) in addition to existing fields
 - `link` response includes `warnings` (array of strings) for non-canonical relation types or other advisory notices
 - `graph entities` items include `degree` (total edge count for the entity, both directions)
-- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships
+- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships; since v1.0.65 also emits `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), and `relation_concentration_warning` (string?) when any single relation exceeds 40%
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`, `body_length?` (byte length of indexed body, present on `"indexed"` lines)

@@ -30,7 +30,7 @@ pub struct HealthArgs {
 #[derive(Serialize)]
 struct HealthCounts {
     memories: i64,
-    /// Alias of `memories` for the documented contract in AGENT_PROTOCOL.md.
+    /// Alias of `memories` for the documented contract in SKILL.md.
     memories_total: i64,
     entities: i64,
     relationships: i64,
@@ -66,7 +66,7 @@ struct HealthResponse {
     /// (canonical SCHEMA_USER_VERSION from __debug_schema).
     schema_version: u32,
     /// List of entities referenced by memories but absent from the entities table.
-    /// Empty in a healthy DB. Per the contract documented in AGENT_PROTOCOL.md.
+    /// Empty in a healthy DB. Per the contract documented in SKILL.md.
     missing_entities: Vec<String>,
     /// WAL file size in MB (0.0 if WAL does not exist or journal_mode != wal).
     wal_size_mb: f64,
@@ -82,6 +82,22 @@ struct HealthResponse {
     /// Omitted when the ratio is within acceptable bounds or there are no relationships.
     #[serde(skip_serializing_if = "Option::is_none")]
     mentions_warning: Option<String>,
+    /// The relation type with the highest edge count in the namespace.
+    /// Omitted when there are no relationships in the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_relation: Option<String>,
+    /// Fraction of all edges occupied by `top_relation` (0.0–1.0).
+    /// Omitted when there are no relationships in the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_relation_ratio: Option<f64>,
+    /// Fraction of relationships that use the `applies_to` relation type (0.0–1.0).
+    /// Omitted when there are no relationships or when `applies_to` is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    applies_to_ratio: Option<f64>,
+    /// Human-readable warning when a single relation type occupies more than 40 % of edges.
+    /// Omitted when concentration is within acceptable bounds or there are no relationships.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation_concentration_warning: Option<String>,
     checks: Vec<HealthCheck>,
     elapsed_ms: u64,
 }
@@ -140,6 +156,10 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             journal_mode: "unknown".to_string(),
             mentions_ratio: None,
             mentions_warning: None,
+            top_relation: None,
+            top_relation_ratio: None,
+            applies_to_ratio: None,
+            relation_concentration_warning: None,
             checks: vec![HealthCheck {
                 name: "integrity".to_string(),
                 ok: false,
@@ -185,6 +205,61 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     } else {
         (None, None)
     };
+
+    // Relation concentration: find the most frequent relation type and check threshold.
+    let (top_relation, top_relation_ratio, applies_to_ratio, relation_concentration_warning) =
+        if relationships_count > 0 {
+            // Identify the relation with the highest edge count.
+            let (top_rel, top_count): (String, i64) = conn
+                .query_row(
+                    "SELECT relation, COUNT(*) AS cnt
+                     FROM relationships
+                     GROUP BY relation
+                     ORDER BY cnt DESC
+                     LIMIT 1",
+                    [],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+                )
+                .unwrap_or_else(|_| ("unknown".to_string(), 0));
+
+            let top_ratio = top_count as f64 / relationships_count as f64;
+
+            // Compute applies_to ratio separately (may be 0 if absent).
+            let applies_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM relationships WHERE relation = 'applies_to'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let at_ratio = if applies_count > 0 {
+                Some(applies_count as f64 / relationships_count as f64)
+            } else {
+                None
+            };
+
+            let concentration_warning = if top_ratio > 0.40 {
+                Some(format!(
+                    "relation '{}' dominates graph at {:.1}% ({}/{} total); consider running prune-relations --relation {} --dry-run",
+                    top_rel,
+                    top_ratio * 100.0,
+                    top_count,
+                    relationships_count,
+                    top_rel,
+                ))
+            } else {
+                None
+            };
+
+            (
+                Some(top_rel),
+                Some(top_ratio),
+                at_ratio,
+                concentration_warning,
+            )
+        } else {
+            (None, None, None, None)
+        };
 
     let status = "ok";
 
@@ -365,6 +440,10 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         journal_mode,
         mentions_ratio,
         mentions_warning,
+        top_relation,
+        top_relation_ratio,
+        applies_to_ratio,
+        relation_concentration_warning,
         checks,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
@@ -408,6 +487,10 @@ mod tests {
             journal_mode: "wal".to_string(),
             mentions_ratio: None,
             mentions_warning: None,
+            top_relation: None,
+            top_relation_ratio: None,
+            applies_to_ratio: None,
+            relation_concentration_warning: None,
             checks: vec![
                 HealthCheck {
                     name: "integrity".to_string(),
@@ -508,6 +591,10 @@ mod tests {
             journal_mode: "wal".to_string(),
             mentions_ratio: None,
             mentions_warning: None,
+            top_relation: None,
+            top_relation_ratio: None,
+            applies_to_ratio: None,
+            relation_concentration_warning: None,
             checks: vec![],
         };
 
@@ -537,6 +624,128 @@ mod tests {
         assert_eq!(
             check_json["detail"],
             "FTS5 MATCH query failed — run 'sqlite-graphrag fts rebuild'"
+        );
+    }
+
+    fn make_full_response(
+        top_relation: Option<String>,
+        top_relation_ratio: Option<f64>,
+        applies_to_ratio: Option<f64>,
+        relation_concentration_warning: Option<String>,
+    ) -> HealthResponse {
+        HealthResponse {
+            status: "ok".to_string(),
+            integrity: "ok".to_string(),
+            integrity_ok: true,
+            schema_ok: true,
+            vec_memories_ok: true,
+            vec_entities_ok: true,
+            vec_chunks_ok: true,
+            fts_ok: true,
+            fts_query_ok: true,
+            model_ok: true,
+            counts: HealthCounts {
+                memories: 10,
+                memories_total: 10,
+                entities: 5,
+                relationships: 20,
+                vec_memories: 10,
+            },
+            db_path: "/tmp/test.sqlite".to_string(),
+            db_size_bytes: 8192,
+            schema_version: 3,
+            sqlite_version: "3.46.0".to_string(),
+            elapsed_ms: 1,
+            missing_entities: vec![],
+            wal_size_mb: 0.0,
+            journal_mode: "wal".to_string(),
+            mentions_ratio: None,
+            mentions_warning: None,
+            top_relation,
+            top_relation_ratio,
+            applies_to_ratio,
+            relation_concentration_warning,
+            checks: vec![],
+        }
+    }
+
+    #[test]
+    fn health_concentration_fields_omitted_when_no_relationships() {
+        // Represents a DB with zero relationships.
+        let resp = make_full_response(None, None, None, None);
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json.get("top_relation").is_none(),
+            "top_relation must be omitted when None"
+        );
+        assert!(
+            json.get("top_relation_ratio").is_none(),
+            "top_relation_ratio must be omitted when None"
+        );
+        assert!(
+            json.get("applies_to_ratio").is_none(),
+            "applies_to_ratio must be omitted when None"
+        );
+        assert!(
+            json.get("relation_concentration_warning").is_none(),
+            "relation_concentration_warning must be omitted when None"
+        );
+    }
+
+    #[test]
+    fn health_concentration_fields_present_with_data() {
+        let resp = make_full_response(
+            Some("mentions".to_string()),
+            Some(0.60),
+            Some(0.10),
+            Some("relation 'mentions' dominates graph at 60.0%".to_string()),
+        );
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["top_relation"], "mentions");
+        assert!((json["top_relation_ratio"].as_f64().unwrap() - 0.60).abs() < 1e-9);
+        assert!((json["applies_to_ratio"].as_f64().unwrap() - 0.10).abs() < 1e-9);
+        assert!(json["relation_concentration_warning"]
+            .as_str()
+            .unwrap()
+            .contains("60.0%"));
+    }
+
+    #[test]
+    fn health_concentration_warning_absent_when_ratio_below_threshold() {
+        // top_relation_ratio of 0.39 is below the 0.40 threshold — no warning.
+        let resp = make_full_response(Some("uses".to_string()), Some(0.39), None, None);
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["top_relation"], "uses");
+        assert!(
+            json.get("relation_concentration_warning").is_none(),
+            "warning must be absent when ratio <= 0.40"
+        );
+    }
+
+    #[test]
+    fn health_concentration_warning_present_at_threshold() {
+        // Exactly at 0.41 (above 0.40) — warning must appear.
+        let resp = make_full_response(
+            Some("depends_on".to_string()),
+            Some(0.41),
+            None,
+            Some("relation 'depends_on' dominates graph at 41.0%".to_string()),
+        );
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json["relation_concentration_warning"].is_string(),
+            "warning must be present when top_relation_ratio > 0.40"
+        );
+    }
+
+    #[test]
+    fn health_applies_to_ratio_omitted_when_none() {
+        // applies_to_ratio is None when there are no applies_to edges.
+        let resp = make_full_response(Some("related".to_string()), Some(0.30), None, None);
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json.get("applies_to_ratio").is_none(),
+            "applies_to_ratio must be omitted when None"
         );
     }
 }
