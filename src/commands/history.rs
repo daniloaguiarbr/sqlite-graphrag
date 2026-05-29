@@ -187,15 +187,16 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Compute character-level change summaries between consecutive versions.
-    // Version N receives the diff relative to version N-1 (i.e., what changed going forward).
-    // Version 1 (the first) has no predecessor so `changes` stays `None`.
-    if want_diff && versions.len() > 1 {
-        // Collect body lengths first to avoid borrowing issues.
+    if want_diff && !versions.is_empty() {
         let body_lens: Vec<usize> = versions
             .iter()
             .map(|v| v.body.as_deref().map_or(0, str::len))
             .collect();
+
+        versions[0].changes = Some(VersionChanges {
+            added_chars: body_lens[0],
+            removed_chars: 0,
+        });
 
         for i in 1..versions.len() {
             let old_len = body_lens[i - 1];

@@ -38,7 +38,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - CHECK `journal_mode` equals `wal` in production
 - RUN `optimize --json` to refresh planner statistics; response includes `fts_rebuilt` (bool) indicating whether the FTS5 index was also rebuilt
 - USE `optimize --skip-fts --json` to skip the FTS5 rebuild step (faster, use when FTS5 was recently rebuilt)
-- DETECT schema drift via `__debug_schema` for troubleshooting
+- DETECT schema drift via `debug-schema` for troubleshooting
 ### Correct Pattern — Bootstrap Sequence
 - `sqlite-graphrag init --namespace my-project`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -418,7 +418,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Fuses KNN + FTS5 results via RRF per sub-query (v1.0.65 fix — FTS was hardcoded at 0.5)
 - Evidence chains are directed seed-to-target paths (v1.0.65 fix — was flat global dump of top-20 relationships)
 - Graph scores incorporate seed score, hop decay, and edge weight (v1.0.65 fix)
-- Output: `sub_queries[]`, `results[]`, `evidence_chains[]`, `stats`
+- Output: `sub_queries[]`, `results[]`, `evidence_chains[]`, `graph_context?` (entities + relationships from result memories, v1.0.66), `stats`
 - Replaces manual 3-layer pipeline for comprehensive research in a single invocation
 - `--k 20` results per sub-query (default, Recall@20 captures 95%+ relevant hits)
 - `--max-sub-queries 7` caps decomposition (default, calibrated against MuSiQue/StepChain benchmarks)
@@ -430,7 +430,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `--timeout 30` per-sub-query timeout in seconds (default)
 - `--rrf-k 60` RRF fusion constant (v1.0.65, same as hybrid-search)
 - `--graph-decay 0.7` graph score decay factor per hop (v1.0.65)
-- `--graph-min-score 0.2` minimum score threshold for graph-expanded results (v1.0.65)
+- `--graph-min-score 0.05` minimum score threshold for graph-expanded results (v1.0.65)
 - `--max-neighbors-per-hop N` caps BFS fan-out per entity per hop (v1.0.65, default unlimited)
 ### Reclassify Relationship Types (v1.0.65)
 - `sqlite-graphrag reclassify-relation --from-relation <old> --to-relation <new> --batch --json` — bulk renames relationship types
@@ -735,11 +735,15 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `link` returns `action` ("linked"), `from`, `to`, `relation`, `weight`, `namespace`, `elapsed_ms`, `created_entities?` (array, when `--create-missing`), `warnings?` (array, when non-canonical relation)
 - `unlink` returns `action` ("deleted"), `from_name`, `to_name`, `relation`, `relationships_removed`, `namespace`, `elapsed_ms`
 - `rename-entity` returns `action` ("renamed"), `old_name`, `new_name`, `entity_id`, `namespace`, `elapsed_ms`
-- `deep-research` returns `query`, `sub_queries[]` (`id`, `text`, `source`), `results[]` (`name`, `score`, `source`, `sub_query_ids`, `snippet`, `body?`, `hop_distance?`), `evidence_chains[]` (`from`, `to`, `path[]`, `total_weight`, `depth`, `sub_query_ids`), `stats` (`sub_queries_total`, `sub_queries_completed`, `sub_queries_failed`, `sub_queries_timed_out`, `unique_memories_found`, `evidence_chains_found`, `elapsed_ms`)
+- `deep-research` returns `query`, `sub_queries[]` (`id`, `text`, `source`), `results[]` (`name`, `score`, `source` enum: knn/fts/hybrid/graph, `sub_query_ids`, `snippet`, `body?`, `hop_distance?`), `evidence_chains[]` (`from`, `to`, `path[]`, `total_weight`, `depth`, `sub_query_ids`), `graph_context?` (`entities[]` with `name`, `entity_type`, `degree`; `relationships[]` with `from`, `to`, `relation`, `weight`), `stats` (`sub_queries_total`, `sub_queries_completed`, `sub_queries_failed`, `sub_queries_timed_out`, `unique_memories_found`, `evidence_chains_found`, `elapsed_ms`)
 - `reclassify-relation` returns `action` ("reclassified"/"dry_run"), `from_relation`, `to_relation`, `count`, `merged_duplicates`, `namespace`, `elapsed_ms`
 - `normalize-entities` returns `action` ("normalized"/"dry_run"), `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
 - `enrich` emits NDJSON: phase events (`phase`, `operation`), item events (`name`, `status`, `entities?`, `rels?`, `cost_usd?`, `elapsed_ms?`), summary (`operation`, `completed`, `failed`, `skipped`, `cost_usd`, `elapsed_ms`)
-- `health` also returns `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), `relation_concentration_warning` (string?) when any single relation exceeds 40% of edges (v1.0.65)
+- `health` also returns `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), `relation_concentration_warning` (string?) when any single relation exceeds 40% of edges (v1.0.65); `vec_memories_missing` (i64) and `vec_memories_orphaned` (i64) for vector desync diagnostics (v1.0.66)
+- `graph --format json` returns `nodes[]` AND `entities[]` (alias, v1.0.66) with `id`, `name`, `namespace`, `kind`, `type`; `edges[]`; `elapsed_ms`
+- `list --json` returns `items[]` AND `memories[]` (alias, v1.0.66); each item includes `body_length`
+- `graph entities --json` returns `entities[]` with `id`, `name`, `entity_type`, `namespace`, `created_at`, `degree`, `description?` (v1.0.66)
+- `edit` accepts `--type` to change memory type without re-creating (v1.0.66); `--body` and `--description` remain unchanged
 
 
 ## Exit Codes and Retry Strategy
@@ -860,7 +864,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - VERSION the database with Git LFS when feasible
 - IF corruption occurs despite checkpoint, recover with `sqlite3 broken.sqlite ".recover" | sqlite3 repaired.sqlite`
 ### REQUIRED — Schema Diagnostics
-- USE `__debug_schema --json` for troubleshooting
+- USE `debug-schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`
 - CURRENT schema version is 11 (V011 adds `idx_relationships_ns_relation` index)
 - COMMAND is hidden from `--help`; invoke by exact name

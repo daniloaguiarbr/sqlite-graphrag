@@ -101,7 +101,10 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
-    if args.from == args.to {
+    let norm_from = crate::parsers::normalize_entity_name(&args.from);
+    let norm_to = crate::parsers::normalize_entity_name(&args.to);
+
+    if norm_from == norm_to {
         return Err(AppError::Validation(validation::self_referential_link()));
     }
 
@@ -156,43 +159,43 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
         );
     }
 
-    let source_id = match entities::find_entity_id(&tx, &namespace, &args.from)? {
+    let source_id = match entities::find_entity_id(&tx, &namespace, &norm_from)? {
         Some(id) => id,
         None if args.create_missing => {
             let new_entity = NewEntity {
-                name: args.from.clone(),
+                name: norm_from.clone(),
                 entity_type: args.entity_type,
                 description: None,
             };
-            created_entities.push(args.from.clone());
+            created_entities.push(norm_from.clone());
             entities::upsert_entity(&tx, &namespace, &new_entity)?
         }
         None => {
             return Err(AppError::NotFound(errors_msg::entity_not_found(
-                &args.from, &namespace,
+                &norm_from, &namespace,
             )));
         }
     };
 
-    let target_id = match entities::find_entity_id(&tx, &namespace, &args.to)? {
+    let target_id = match entities::find_entity_id(&tx, &namespace, &norm_to)? {
         Some(id) => id,
         None if args.create_missing => {
             let new_entity = NewEntity {
-                name: args.to.clone(),
+                name: norm_to.clone(),
                 entity_type: args.entity_type,
                 description: None,
             };
-            created_entities.push(args.to.clone());
+            created_entities.push(norm_to.clone());
             entities::upsert_entity(&tx, &namespace, &new_entity)?
         }
         None => {
             return Err(AppError::NotFound(errors_msg::entity_not_found(
-                &args.to, &namespace,
+                &norm_to, &namespace,
             )));
         }
     };
 
-    let (_rel_id, was_created) = entities::create_or_fetch_relationship(
+    let (rel_id, was_created) = entities::create_or_fetch_relationship(
         &tx,
         &namespace,
         source_id,
@@ -202,26 +205,28 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
         None,
     )?;
 
+    let actual_weight: f64 = tx.query_row(
+        "SELECT weight FROM relationships WHERE id = ?1",
+        params![rel_id],
+        |r| r.get(0),
+    )?;
+
     if was_created {
         entities::recalculate_degree(&tx, source_id)?;
         entities::recalculate_degree(&tx, target_id)?;
 
-        // GAP-17: warn when an entity's degree exceeds the configured cap.
         if args.max_entity_degree > 0 {
             let cap = args.max_entity_degree as i64;
-            for (entity_id, entity_name) in [(source_id, &args.from), (target_id, &args.to)] {
+            for (entity_id, entity_name) in [(source_id, &norm_from), (target_id, &norm_to)] {
                 let degree: i64 = tx.query_row(
                     "SELECT degree FROM entities WHERE id = ?1",
                     params![entity_id],
                     |r| r.get(0),
                 )?;
                 if degree > cap {
-                    tracing::warn!(
-                        entity = %entity_name,
-                        degree = degree,
-                        cap = cap,
-                        "entity degree cap exceeded"
-                    );
+                    output::emit_progress(&format!(
+                        "WARNING: entity '{entity_name}' degree {degree} exceeds cap {cap}"
+                    ));
                 }
             }
         }
@@ -238,10 +243,10 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 
     let response = LinkResponse {
         action: action.clone(),
-        from: args.from.clone(),
-        to: args.to.clone(),
+        from: norm_from.clone(),
+        to: norm_to.clone(),
         relation: relation_str.to_string(),
-        weight,
+        weight: actual_weight,
         namespace: namespace.clone(),
         elapsed_ms: inicio.elapsed().as_millis() as u64,
         created_entities,

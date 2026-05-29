@@ -41,6 +41,9 @@ pub struct EditArgs {
     /// New description (≤500 chars) replacing the existing one.
     #[arg(long)]
     pub description: Option<String>,
+    /// Change the memory type (e.g. note, skill, decision).
+    #[arg(long, value_enum, help = "Change memory type")]
+    pub memory_type: Option<crate::cli::MemoryType>,
     #[arg(
         long,
         value_name = "EPOCH_OR_RFC3339",
@@ -129,22 +132,33 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let new_body = raw_body.unwrap_or(row.body.clone());
     let new_description = args.description.unwrap_or(row.description.clone());
     let new_hash = blake3::hash(new_body.as_bytes()).to_hex().to_string();
-    let memory_type = row.memory_type.clone();
+    let memory_type = args
+        .memory_type
+        .map(|t| t.as_str().to_string())
+        .unwrap_or_else(|| row.memory_type.clone());
+    let type_changed = memory_type != row.memory_type;
     let metadata = row.metadata.clone();
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
-            "UPDATE memories SET description=?2, body=?3, body_hash=?4
-             WHERE id=?1 AND updated_at=?5 AND deleted_at IS NULL",
-            rusqlite::params![memory_id, new_description, new_body, new_hash, ts],
+            "UPDATE memories SET description=?2, body=?3, body_hash=?4, type=?5
+             WHERE id=?1 AND updated_at=?6 AND deleted_at IS NULL",
+            rusqlite::params![
+                memory_id,
+                new_description,
+                new_body,
+                new_hash,
+                memory_type,
+                ts
+            ],
         )?
     } else {
         tx.execute(
-            "UPDATE memories SET description=?2, body=?3, body_hash=?4
+            "UPDATE memories SET description=?2, body=?3, body_hash=?4, type=?5
              WHERE id=?1 AND deleted_at IS NULL",
-            rusqlite::params![memory_id, new_description, new_body, new_hash],
+            rusqlite::params![memory_id, new_description, new_body, new_hash, memory_type],
         )?
     };
 
@@ -154,7 +168,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         ));
     }
 
-    if body_changed {
+    if body_changed || type_changed {
         output::emit_progress_i18n(
             "Re-computing embedding for edited body...",
             crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),

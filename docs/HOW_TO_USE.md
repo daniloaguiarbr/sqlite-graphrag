@@ -200,7 +200,7 @@ sqlite-graphrag reclassify --name authentication --description "JWT-based authen
 - Use `--timeout N` to set per-sub-query timeout in seconds (default: 30)
 - Use `--rrf-k N` to tune RRF fusion constant (default: 60, same as hybrid-search)
 - Use `--graph-decay F` to set graph score decay factor per hop (default: 0.7)
-- Use `--graph-min-score F` to filter noise from graph-expanded results (default: 0.2)
+- Use `--graph-min-score F` to filter noise from graph-expanded results (default: 0.05)
 - Use `--max-neighbors-per-hop N` to cap the BFS fan-out per entity per hop (default: unlimited)
 - Use instead of the manual 3-layer pipeline (hybrid-search → read → related) for comprehensive research in a single invocation
 
@@ -333,7 +333,7 @@ sqlite-graphrag read --name my-note --tz America/Sao_Paulo
 
 # Persistent via env var
 export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-sqlite-graphrag list | jaq '.items[].updated_at_iso'
+sqlite-graphrag list | jaq '.items[].updated_at_iso'   # or .memories[] (v1.0.66 alias)
 ```
 
 ### Concurrency Cap
@@ -500,12 +500,12 @@ sqlite-graphrag namespace-detect --namespace my-project
 - Precedence order: `--namespace` flag > `SQLITE_GRAPHRAG_NAMESPACE` env > auto-detect
 - Exit code 0: resolution succeeded
 
-### Using __debug_schema
+### Using debug-schema
 - Hidden diagnostic subcommand that dumps the full SQLite schema and migration history
 - Use when troubleshooting schema drift between binary versions or after failed migrations
 ```bash
-sqlite-graphrag __debug_schema
-sqlite-graphrag __debug_schema --db /path/to/custom.db
+sqlite-graphrag debug-schema
+sqlite-graphrag debug-schema --db /path/to/custom.db
 ```
 - Prerequisites: an initialized database must exist at the default or specified path
 - Output schema: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`

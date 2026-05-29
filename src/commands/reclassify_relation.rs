@@ -191,7 +191,7 @@ fn run_single(
 
     let updated = tx.execute(
         "UPDATE OR IGNORE relationships
-         SET relation = ?1, updated_at = unixepoch()
+         SET relation = ?1
          WHERE source_id = ?2 AND target_id = ?3 AND relation = ?4 AND namespace = ?5",
         params![
             args.to_relation,
@@ -301,7 +301,7 @@ fn run_batch(
         for id in &ids {
             let n = tx.execute(
                 "UPDATE OR IGNORE relationships
-                 SET relation = ?1, updated_at = unixepoch()
+                 SET relation = ?1
                  WHERE id = ?2",
                 params![args.to_relation, id],
             )?;
@@ -311,7 +311,7 @@ fn run_batch(
     } else {
         tx.execute(
             "UPDATE OR IGNORE relationships
-             SET relation = ?1, updated_at = unixepoch()
+             SET relation = ?1
              WHERE relation = ?2 AND namespace = ?3",
             params![args.to_relation, args.from_relation, namespace],
         )?

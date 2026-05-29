@@ -30,6 +30,11 @@
         }
       }
     },
+    "memories": {
+      "type": "array",
+      "description": "Alias for items (v1.0.66). LLM-friendly field name. Identical content.",
+      "items": { "$ref": "#/properties/items/items" }
+    },
     "total_count": { "type": "integer", "minimum": 0, "description": "Total memories matching filters before pagination" },
     "truncated":   { "type": "boolean", "description": "True when returned items are fewer than total_count due to limit" },
     "elapsed_ms":  { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }

@@ -104,7 +104,7 @@ pub struct DeepResearchArgs {
     /// Minimum score threshold for graph-expanded results (filters noise).
     #[arg(
         long,
-        default_value_t = 0.2,
+        default_value_t = 0.05,
         help = "Minimum score threshold for graph-expanded results"
     )]
     pub graph_min_score: f64,
@@ -120,6 +120,16 @@ pub struct DeepResearchArgs {
         help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
     )]
     pub namespace: Option<String>,
+    /// Research mode: `none` (local heuristic, default), `claude-code`, `codex` (v1.1.0).
+    #[arg(long, default_value = "none", value_parser = ["none"], hide = true)]
+    pub mode: String,
+    /// Maximum LLM cost in USD (effective with --mode claude-code/codex, reserved for v1.1.0).
+    #[arg(
+        long,
+        value_name = "USD",
+        help = "Max LLM cost in USD (effective with --mode claude-code/codex)"
+    )]
+    pub max_cost_usd: Option<f64>,
     /// JSON output (always on, kept for consistency).
     #[arg(long, hide = true)]
     pub json: bool,
@@ -189,11 +199,34 @@ struct ResearchStats {
 }
 
 #[derive(Serialize)]
+struct GraphContextEntity {
+    name: String,
+    entity_type: String,
+    degree: u32,
+}
+
+#[derive(Serialize)]
+struct GraphContextRel {
+    from: String,
+    to: String,
+    relation: String,
+    weight: f64,
+}
+
+#[derive(Serialize)]
+struct GraphContext {
+    entities: Vec<GraphContextEntity>,
+    relationships: Vec<GraphContextRel>,
+}
+
+#[derive(Serialize)]
 struct DeepResearchResponse {
     query: String,
     sub_queries: Vec<SubQuery>,
     results: Vec<DeepResult>,
     evidence_chains: Vec<EvidenceChain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_context: Option<GraphContext>,
     stats: ResearchStats,
 }
 
@@ -225,6 +258,10 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
 
     if args.query.trim().is_empty() {
         return Err(AppError::Validation(crate::i18n::validation::empty_query()));
+    }
+
+    if args.max_cost_usd.is_some() && args.mode == "none" {
+        tracing::warn!("--max-cost-usd has no effect without --mode claude-code/codex");
     }
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -439,12 +476,105 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
     let unique_memories = results.len();
     let evidence_count = evidence_chains.len();
 
+    // MEDIUM-01b: Build graph_context with entities and relationships from result memories.
+    let graph_context = if !results.is_empty() {
+        let result_names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        let mut ctx_entities: Vec<GraphContextEntity> = Vec::new();
+        let mut ctx_rels: Vec<GraphContextRel> = Vec::new();
+        let mut seen_entity_ids: HashSet<i64> = HashSet::new();
+
+        for name in &result_names {
+            if let Ok(Some(eid)) = entities::find_entity_id(&conn, &namespace, name) {
+                if seen_entity_ids.insert(eid) {
+                    let etype: String = conn
+                        .query_row(
+                            "SELECT COALESCE(type,'concept') FROM entities WHERE id = ?1",
+                            rusqlite::params![eid],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or_else(|_| "concept".to_string());
+                    let degree: u32 = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM relationships WHERE source_id = ?1 OR target_id = ?1",
+                            rusqlite::params![eid],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    ctx_entities.push(GraphContextEntity {
+                        name: name.to_string(),
+                        entity_type: etype,
+                        degree,
+                    });
+                }
+            }
+        }
+
+        let entity_ids: Vec<i64> = seen_entity_ids.iter().copied().collect();
+        if entity_ids.len() >= 2 {
+            let placeholders: String = entity_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT s.name, t.name, r.relation, r.weight \
+                 FROM relationships r \
+                 JOIN entities s ON s.id = r.source_id \
+                 JOIN entities t ON t.id = r.target_id \
+                 WHERE r.source_id IN ({placeholders}) AND r.target_id IN ({placeholders}) \
+                 LIMIT 50"
+            );
+            if let Ok(mut stmt) = conn.prepare(&sql) {
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+                for id in &entity_ids {
+                    params.push(Box::new(*id));
+                }
+                for id in &entity_ids {
+                    params.push(Box::new(*id));
+                }
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                if let Ok(rows) = stmt.query_map(param_refs.as_slice(), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, f64>(3)?,
+                    ))
+                }) {
+                    for row in rows.flatten() {
+                        ctx_rels.push(GraphContextRel {
+                            from: row.0,
+                            to: row.1,
+                            relation: row.2,
+                            weight: row.3,
+                        });
+                    }
+                }
+            }
+        }
+
+        if ctx_entities.is_empty() {
+            None
+        } else {
+            Some(GraphContext {
+                entities: ctx_entities,
+                relationships: ctx_rels,
+            })
+        }
+    } else {
+        None
+    };
+
+    tracing::debug!(
+        total_results = results.len(),
+        total_chains = evidence_chains.len(),
+        "assembly complete"
+    );
+
     // Phase 4: JSON output.
     output::emit_json(&DeepResearchResponse {
         query: args.query,
         sub_queries,
         results,
         evidence_chains,
+        graph_context,
         stats: ResearchStats {
             sub_queries_total: sub_query_texts.len(),
             sub_queries_completed: completed_count,
@@ -531,7 +661,20 @@ fn decompose_query(query: &str, max: usize) -> Vec<String> {
         }
     }
 
-    // If still no split, return original as single sub-query.
+    // If still no split, try word-pair decomposition for multi-word queries.
+    if parts.is_empty() {
+        let words: Vec<&str> = query.split_whitespace().filter(|w| w.len() > 2).collect();
+        if words.len() >= 3 {
+            parts.push(query.to_string());
+            parts.push(format!("{} {}", words[0], words[1]));
+            parts.push(format!(
+                "{} {}",
+                words[words.len() - 2],
+                words[words.len() - 1]
+            ));
+        }
+    }
+
     if parts.is_empty() {
         return vec![query.to_string()];
     }
@@ -620,6 +763,7 @@ fn execute_sub_query(
     let knn_results = memories::knn_search(&conn, embedding, &[namespace.to_string()], None, k)
         .map_err(|e| format!("knn_search failed: {e}"))?;
     let knn_ids: Vec<i64> = knn_results.iter().map(|(id, _)| *id).collect();
+    tracing::debug!(sub_query_id, knn_count = knn_ids.len(), "KNN complete");
 
     // Build distance map for score computation.
     let knn_distance_map: HashMap<i64, f64> = knn_results
@@ -639,6 +783,7 @@ fn execute_sub_query(
         }
     };
     let fts_ids: Vec<i64> = fts_results.iter().map(|r| r.id).collect();
+    tracing::debug!(sub_query_id, fts_count = fts_ids.len(), "FTS complete");
 
     // 3. Fuse via RRF.
     let rrf_scores = rrf_fuse(&[(1.0, &knn_ids), (1.0, &fts_ids)], rrf_k);
@@ -648,6 +793,16 @@ fn execute_sub_query(
     let mut fused: Vec<(i64, f64)> = rrf_scores.into_iter().collect();
     fused.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     fused.truncate(k * 2);
+    tracing::debug!(
+        sub_query_id,
+        fused_count = fused.len(),
+        "RRF fusion complete"
+    );
+
+    if fused.is_empty() && !knn_ids.is_empty() {
+        tracing::warn!(sub_query_id, knn_count = knn_ids.len(), fts_count = fts_ids.len(),
+            "RRF fusion returned 0 results despite KNN/FTS hits; consider lowering --graph-min-score");
+    }
 
     for (memory_id, combined_score) in &fused {
         if seen_ids.insert(*memory_id) {
@@ -657,10 +812,13 @@ fn execute_sub_query(
                 0.0
             };
             let score = normalized.clamp(0.0, 1.0);
-            let source = if knn_distance_map.contains_key(memory_id) {
-                "knn"
-            } else {
-                "fts"
+            let in_knn = knn_distance_map.contains_key(memory_id);
+            let in_fts = fts_ids.contains(memory_id);
+            let source = match (in_knn, in_fts) {
+                (true, true) => "hybrid",
+                (true, false) => "knn",
+                (false, true) => "fts",
+                (false, false) => "graph",
             };
             if let Ok(Some(row)) = memories::read_full(&conn, *memory_id) {
                 let snippet: String = row.body.chars().take(300).collect();
@@ -686,9 +844,12 @@ fn execute_sub_query(
         let entity_knn = entities::knn_search(&conn, embedding, namespace, 5).unwrap_or_default();
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
-        // Gather seed entity IDs from discovered memories too.
+        // HIGH-01 FIX: limit seeds to top-5 memories by score to prevent
+        // BFS from starting at every node when k >= total memories.
+        let top_seed_count = 5.min(memory_ids.len());
+        let top_memory_ids = &memory_ids[..top_seed_count];
         let mut seed_entity_ids: Vec<i64> = entity_ids.clone();
-        for &mem_id in &memory_ids {
+        for &mem_id in top_memory_ids {
             let mut stmt = conn
                 .prepare_cached("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")
                 .map_err(|e| format!("prepare failed: {e}"))?;
@@ -701,6 +862,11 @@ fn execute_sub_query(
         }
         seed_entity_ids.sort_unstable();
         seed_entity_ids.dedup();
+        tracing::debug!(
+            sub_query_id,
+            seed_count = seed_entity_ids.len(),
+            "seed entities collected"
+        );
 
         let all_seed_ids: Vec<i64> = memory_ids
             .iter()
@@ -777,6 +943,13 @@ fn execute_sub_query(
             )
             .unwrap_or_default();
 
+            tracing::debug!(
+                sub_query_id,
+                bfs_nodes = entity_depth.len(),
+                predecessors = predecessor.len(),
+                "BFS complete"
+            );
+
             let seed_entity_set: HashSet<i64> = seed_entity_ids.iter().copied().collect();
 
             // Collect entity IDs we need names for.
@@ -834,6 +1007,11 @@ fn execute_sub_query(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             chains.truncate(20);
+            tracing::debug!(
+                sub_query_id,
+                chains_count = chains.len(),
+                "evidence chains built"
+            );
         }
     }
 
@@ -998,6 +1176,7 @@ mod tests {
             }],
             results: vec![],
             evidence_chains: vec![],
+            graph_context: None,
             stats: ResearchStats {
                 sub_queries_total: 1,
                 sub_queries_completed: 1,

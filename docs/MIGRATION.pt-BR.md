@@ -206,8 +206,9 @@ sqlite-graphrag namespace-detect
 
 #### Campos de resposta do list corrigidos
 - SKILL.md documentava `total`, `limit`, `offset` como campos top-level na resposta do `list`
-- A resposta real contém apenas `items[]` e `elapsed_ms` no nível superior
+- A resposta real contém `items[]` (e alias `memories[]` desde v1.0.66), `total_count`, `truncated` e `elapsed_ms` no nível superior
 - Agentes que parseiam `.total`, `.limit` ou `.offset` do list devem remover essas referências
+- Desde v1.0.66: `memories[]` é alias domain-specific de `items[]` — ambos contêm dados idênticos
 
 #### Exit code de timezone inválido corrigido de 1 para 2
 - `--tz` com valor de timezone inválido retorna exit 2 (parsing de argumentos Clap), não exit 1 (validação da aplicação)

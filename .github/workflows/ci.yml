@@ -337,3 +337,23 @@ jobs:
             exit 1
           fi
           echo "OK: both CHANGELOGs have [$CARGO_VERSION] entry"
+
+  coverage:
+    name: Coverage threshold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --text --output-path coverage.txt
+      - name: Enforce 75% threshold
+        run: |
+          TOTAL=$(tail -1 coverage.txt | awk '{print $NF}' | tr -d '%')
+          echo "Total line coverage: ${TOTAL}%"
+          if [ "$(echo "$TOTAL < 75" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${TOTAL}% is below threshold 75%"
+            exit 1
+          fi

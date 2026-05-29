@@ -187,7 +187,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Use `--timeout N` para definir timeout por sub-query em segundos (padrão: 30)
 - Use `--rrf-k N` para ajustar a constante de fusão RRF (padrão: 60, igual ao hybrid-search)
 - Use `--graph-decay F` para definir o fator de decaimento do score por hop (padrão: 0.7)
-- Use `--graph-min-score F` para filtrar ruído dos resultados expandidos por grafo (padrão: 0.2)
+- Use `--graph-min-score F` para filtrar ruído dos resultados expandidos por grafo (padrão: 0.05)
 - Use `--max-neighbors-per-hop N` para limitar o fan-out do BFS por entidade por hop (padrão: ilimitado)
 - Use ao invés do pipeline manual de 3 camadas (hybrid-search → read → related) para pesquisa completa em uma única invocação
 
@@ -320,7 +320,7 @@ sqlite-graphrag read --name minha-nota --tz America/Sao_Paulo
 
 # Persistente via variável de ambiente
 export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-sqlite-graphrag list | jaq '.items[].updated_at_iso'
+sqlite-graphrag list | jaq '.items[].updated_at_iso'   # ou .memories[] (alias v1.0.66)
 ```
 
 ### Limite de Concorrência
@@ -487,12 +487,12 @@ sqlite-graphrag namespace-detect --namespace meu-projeto
 - Ordem de precedência: flag `--namespace` > env `SQLITE_GRAPHRAG_NAMESPACE` > auto-detecção
 - Exit code 0: resolução concluída
 
-### Usando __debug_schema
+### Usando debug-schema
 - Subcomando diagnóstico oculto que exibe o schema SQLite completo e o histórico de migrações
 - Use ao solucionar problemas de deriva de schema entre versões do binário ou após migrações com falha
 ```bash
-sqlite-graphrag __debug_schema
-sqlite-graphrag __debug_schema --db /caminho/para/custom.db
+sqlite-graphrag debug-schema
+sqlite-graphrag debug-schema --db /caminho/para/custom.db
 ```
 - Pré-requisitos: um banco de dados inicializado deve existir no caminho padrão ou especificado
 - Schema de saída: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`

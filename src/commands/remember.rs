@@ -44,7 +44,19 @@ fn compute_chunks_persisted(chunks_created: usize) -> usize {
     --graph-stdin --enable-ner --gliner-variant int8\n\n  \
     # Idempotent upsert with --force-merge\n  \
     sqlite-graphrag remember --name my-mem --type note --description \"updated\" \\\n    \
-    --body \"new content\" --force-merge")]
+    --body \"new content\" --force-merge\n\n\
+NOTE:\n  \
+    remember does NOT accept positional arguments.\n  \
+    Use --body \"text\" for inline content\n  \
+    Use --body-file path for file content\n  \
+    Use --body-stdin for piped content\n  \
+    Use --graph-stdin for JSON with entities and relationships\n\n\
+ENTITY TYPES (for --graph-stdin entities, NOT memory --type):\n  \
+    concept, tool, person, file, project, decision, incident,\n  \
+    organization, location, date, dashboard, issue_tracker, memory\n  \
+    WARNING: reference, skill, document, note, user, feedback are\n  \
+    MEMORY types only — NOT valid for entities.\n  \
+    Mapping: reference→concept, document→file, user→person")]
 pub struct RememberArgs {
     /// Memory name in kebab-case (lowercase letters, digits, hyphens).
     /// Acts as unique key within the namespace; collisions trigger merge or rejection.
@@ -276,8 +288,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let mut raw_body = if let Some(b) = args.body {
         b
-    } else if let Some(path) = args.body_file {
-        std::fs::read_to_string(&path).map_err(AppError::Io)?
+    } else if let Some(ref path) = args.body_file {
+        match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                let bytes = std::fs::read(path).map_err(AppError::Io)?;
+                tracing::warn!("body file contains invalid UTF-8; replacing invalid sequences");
+                String::from_utf8_lossy(&bytes).into_owned()
+            }
+            Err(e) => return Err(AppError::Io(e)),
+        }
     } else if args.body_stdin || args.graph_stdin {
         crate::stdin_helper::read_stdin_with_timeout(60)?
     } else {
@@ -311,10 +331,16 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             max_entities_per_memory(),
         )));
     }
-    if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
-        return Err(AppError::LimitExceeded(
-            errors_msg::relationship_limit_exceeded(MAX_RELATIONSHIPS_PER_MEMORY),
-        ));
+    let mut relationships_truncated = false;
+    let rel_cap = max_relationships_per_memory();
+    if graph.relationships.len() > rel_cap {
+        tracing::warn!(
+            count = graph.relationships.len(),
+            cap = rel_cap,
+            "truncating relationships to cap"
+        );
+        graph.relationships.truncate(rel_cap);
+        relationships_truncated = true;
     }
     normalize_and_validate_graph_input(&mut graph)?;
 
@@ -356,7 +382,6 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     // v1.0.20: use .trim().is_empty() to reject bodies that are only whitespace.
     let mut extraction_method: Option<String> = None;
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::with_capacity(4);
-    let mut relationships_truncated = false;
     if args.enable_ner && args.skip_extraction {
         tracing::warn!(
             "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
@@ -382,9 +407,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 if graph.entities.len() > max_entities_per_memory() {
                     graph.entities.truncate(max_entities_per_memory());
                 }
-                if graph.relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
+                if graph.relationships.len() > max_relationships_per_memory() {
                     relationships_truncated = true;
-                    graph.relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
+                    graph.relationships.truncate(max_relationships_per_memory());
                 }
                 normalize_and_validate_graph_input(&mut graph)?;
             }

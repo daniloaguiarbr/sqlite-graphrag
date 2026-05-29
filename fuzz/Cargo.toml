@@ -1,0 +1,22 @@
+[package]
+name = "sqlite-graphrag-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[[bin]]
+name = "fuzz_graph_stdin"
+path = "fuzz_targets/fuzz_graph_stdin.rs"
+
+[[bin]]
+name = "fuzz_name_validation"
+path = "fuzz_targets/fuzz_name_validation.rs"
+
+[workspace]

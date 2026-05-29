@@ -52,6 +52,8 @@ struct HealthResponse {
     integrity_ok: bool,
     schema_ok: bool,
     vec_memories_ok: bool,
+    vec_memories_missing: i64,
+    vec_memories_orphaned: i64,
     vec_entities_ok: bool,
     vec_chunks_ok: bool,
     fts_ok: bool,
@@ -135,6 +137,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             integrity_ok: false,
             schema_ok: false,
             vec_memories_ok: false,
+            vec_memories_missing: 0,
+            vec_memories_orphaned: 0,
             vec_entities_ok: false,
             vec_chunks_ok: false,
             fts_ok: false,
@@ -277,7 +281,26 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let vec_memories_ok = table_exists(&conn, "vec_memories");
     let vec_entities_ok = table_exists(&conn, "vec_entities");
     let vec_chunks_ok = table_exists(&conn, "vec_chunks");
-    tracing::info!(vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, "vector table checks complete");
+
+    let vec_memories_missing: i64 = if vec_memories_ok {
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories m LEFT JOIN vec_memories v ON v.memory_id = m.id WHERE v.memory_id IS NULL AND m.deleted_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let vec_memories_orphaned: i64 = if vec_memories_ok {
+        conn.query_row(
+            "SELECT COUNT(*) FROM vec_memories v LEFT JOIN memories m ON m.id = v.memory_id WHERE m.id IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    } else {
+        0
+    };
+
+    tracing::info!(vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, vec_missing = vec_memories_missing, vec_orphaned = vec_memories_orphaned, "vector table checks complete");
     let fts_ok = table_exists(&conn, "fts_memories");
 
     // Verifies that FTS5 can execute a MATCH query (catches index corruption distinct from table absence).
@@ -419,6 +442,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         integrity_ok,
         schema_ok,
         vec_memories_ok,
+        vec_memories_missing,
+        vec_memories_orphaned,
         vec_entities_ok,
         vec_chunks_ok,
         fts_ok,
@@ -465,6 +490,8 @@ mod tests {
             integrity_ok: true,
             schema_ok: true,
             vec_memories_ok: true,
+            vec_memories_missing: 0,
+            vec_memories_orphaned: 0,
             vec_entities_ok: true,
             vec_chunks_ok: true,
             fts_ok: true,
@@ -569,6 +596,8 @@ mod tests {
             integrity_ok: true,
             schema_ok: true,
             vec_memories_ok: true,
+            vec_memories_missing: 0,
+            vec_memories_orphaned: 0,
             vec_entities_ok: true,
             vec_chunks_ok: true,
             fts_ok: true,
@@ -639,6 +668,8 @@ mod tests {
             integrity_ok: true,
             schema_ok: true,
             vec_memories_ok: true,
+            vec_memories_missing: 0,
+            vec_memories_orphaned: 0,
             vec_entities_ok: true,
             vec_chunks_ok: true,
             fts_ok: true,

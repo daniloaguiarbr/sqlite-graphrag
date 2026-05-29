@@ -181,7 +181,7 @@ pub struct GraphEntitiesArgs {
     pub db: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct NodeOut {
     id: i64,
     name: String,
@@ -206,6 +206,7 @@ struct EdgeOut {
 #[derive(Serialize)]
 struct GraphSnapshot {
     nodes: Vec<NodeOut>,
+    entities: Vec<NodeOut>,
     edges: Vec<EdgeOut>,
     elapsed_ms: u64,
 }
@@ -247,6 +248,8 @@ struct EntityItem {
     created_at: String,
     /// Total number of relationships (inbound + outbound) for this entity.
     degree: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -351,11 +354,15 @@ fn run_entities_snapshot(
     }
 
     let rendered = match effective_format {
-        GraphExportFormat::Json => render_json(&GraphSnapshot {
-            nodes,
-            edges,
-            elapsed_ms: inicio.elapsed().as_millis() as u64,
-        })?,
+        GraphExportFormat::Json => {
+            let entities = nodes.clone();
+            render_json(&GraphSnapshot {
+                nodes,
+                entities,
+                edges,
+                elapsed_ms: inicio.elapsed().as_millis() as u64,
+            })?
+        }
         GraphExportFormat::Dot => render_dot(&nodes, &edges),
         GraphExportFormat::Mermaid => render_mermaid(&nodes, &edges),
         GraphExportFormat::Ndjson => unreachable!("ndjson handled above"),
@@ -563,6 +570,7 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
             namespace: r.get(3)?,
             created_at,
             degree: r.get(5)?,
+            description: r.get(6)?,
         })
     };
 
@@ -572,7 +580,8 @@ fn run_entities(args: GraphEntitiesArgs) -> Result<(), AppError> {
 
     let base_select = "SELECT e.id, e.name, COALESCE(e.type, ''), e.namespace, e.created_at,
                         (SELECT COUNT(*) FROM relationships r
-                         WHERE r.source_id = e.id OR r.target_id = e.id) AS degree
+                         WHERE r.source_id = e.id OR r.target_id = e.id) AS degree,
+                        e.description
                  FROM entities e";
 
     let (total_count, items) = match (
@@ -842,8 +851,10 @@ mod tests {
     #[test]
     fn graph_snapshot_serializes_nodes_with_type() {
         let node = make_node("concept");
+        let entities = vec![make_node("concept")];
         let snapshot = GraphSnapshot {
             nodes: vec![node],
+            entities,
             edges: vec![],
             elapsed_ms: 0,
         };
@@ -928,6 +939,7 @@ mod tests {
                 namespace: "global".to_string(),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 degree: 0,
+                description: None,
             }],
             total_count: 1,
             limit: 50,
@@ -954,6 +966,7 @@ mod tests {
             namespace: "project-a".to_string(),
             created_at: "2026-04-19T12:00:00Z".to_string(),
             degree: 3,
+            description: Some("test description".to_string()),
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["id"], 42);
@@ -973,6 +986,7 @@ mod tests {
             namespace: "ns".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             degree: 0,
+            description: None,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert!(

@@ -42,6 +42,8 @@
     "integrity_ok":    { "type": "boolean" },
     "schema_ok":       { "type": "boolean" },
     "vec_memories_ok": { "type": "boolean" },
+    "vec_memories_missing":  { "type": "integer", "minimum": 0, "description": "Active memories without a corresponding vector embedding." },
+    "vec_memories_orphaned": { "type": "integer", "minimum": 0, "description": "Vector embeddings without a corresponding memory row." },
     "vec_entities_ok": { "type": "boolean" },
     "vec_chunks_ok":   { "type": "boolean" },
     "fts_ok":          { "type": "boolean" },

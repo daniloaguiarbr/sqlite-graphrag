@@ -54,7 +54,7 @@ pub struct ListArgs {
     pub db: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct ListItem {
     id: i64,
     /// Semantic alias of `id` for the contract documented in SKILL.md.
@@ -86,6 +86,7 @@ struct ListItem {
 #[derive(Serialize)]
 struct ListResponse {
     items: Vec<ListItem>,
+    memories: Vec<ListItem>,
     /// Total number of matching memories in the namespace (ignoring limit/offset).
     total_count: usize,
     /// True when the returned item count is less than `total_count`, indicating
@@ -152,12 +153,16 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let truncated = args.limit.is_some_and(|lim| items.len() >= lim);
 
     match args.format {
-        OutputFormat::Json => output::emit_json(&ListResponse {
-            total_count,
-            truncated,
-            items,
-            elapsed_ms: inicio.elapsed().as_millis() as u64,
-        })?,
+        OutputFormat::Json => {
+            let memories = items.clone();
+            output::emit_json(&ListResponse {
+                total_count,
+                truncated,
+                memories,
+                items,
+                elapsed_ms: inicio.elapsed().as_millis() as u64,
+            })?;
+        }
         OutputFormat::Text | OutputFormat::Markdown => {
             for item in &items {
                 output::emit_text(&format!("{}: {}", item.name, item.snippet));
@@ -193,6 +198,7 @@ mod tests {
     fn list_response_serializes_items_and_elapsed_ms() {
         let resp = ListResponse {
             items: vec![make_item("test-memory")],
+            memories: vec![make_item("test-memory")],
             total_count: 1,
             truncated: false,
             elapsed_ms: 7,
@@ -234,6 +240,7 @@ mod tests {
     fn list_response_items_empty_serializes_empty_array() {
         let resp = ListResponse {
             items: vec![],
+            memories: vec![],
             total_count: 0,
             truncated: false,
             elapsed_ms: 0,

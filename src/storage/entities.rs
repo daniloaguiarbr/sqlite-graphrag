@@ -290,9 +290,15 @@ pub fn create_or_fetch_relationship(
     weight: f64,
     description: Option<&str>,
 ) -> Result<(i64, bool), AppError> {
-    // Check if it exists first.
+    // Check if it exists first; update weight if different.
     let existing = find_relationship(conn, source_id, target_id, relation)?;
     if let Some(row) = existing {
+        if (row.weight - weight).abs() > f64::EPSILON {
+            conn.execute(
+                "UPDATE relationships SET weight = ?1 WHERE id = ?2",
+                params![weight, row.id],
+            )?;
+        }
         return Ok((row.id, false));
     }
     conn.execute(

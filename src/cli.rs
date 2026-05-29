@@ -376,7 +376,7 @@ pub enum Commands {
     /// Normalize entity names (deduplicate, kebab-case, merge near-duplicates)
     #[command(name = "normalize-entities")]
     NormalizeEntities(normalize_entities::NormalizeEntitiesArgs),
-    #[command(name = "__debug_schema", hide = true)]
+    #[command(name = "debug-schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
 }
 

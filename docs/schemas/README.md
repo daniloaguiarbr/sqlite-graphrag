@@ -50,7 +50,7 @@
 | `ingest --mode claude-code` (phase event) | `ingest-claude-phase.schema.json` |
 | `ingest --mode claude-code` (per-file event) | `ingest-claude-file-event.schema.json` |
 | `ingest --mode claude-code` (summary) | `ingest-claude-summary.schema.json` |
-| `__debug_schema` | `debug-schema.schema.json` |
+| `debug-schema` | `debug-schema.schema.json` |
 | `fts rebuild` | `fts-rebuild.schema.json` |
 | `fts check` | `fts-check.schema.json` |
 | `fts stats` | `fts-stats.schema.json` |
@@ -78,13 +78,13 @@
 ### Usage
 - Inspect a `recall` response shape quickly: `sqlite-graphrag recall "query" | jaq '.'`
 - Validate with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
-- The `__debug_schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`__debug_schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
+- The `debug-schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`debug-schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
 ### Flag Behavior
 - Schemas describe the OUTPUT JSON contract, not the CLI input shape
 - Several subcommands accept multiple flag aliases that produce the same output
 - `sync-safe-copy` accepts `--dest` (primary), `--to`, and `--output` — all write to the same `dest_path` field in the response
 - `graph stats` accepts both `--json` and `--format json`; if `--json` is combined with `--format text`, `--json` wins and the response remains JSON
-- `__debug_schema` is exposed by the binary with a double-underscore prefix; the schema file uses kebab-case `debug-schema.schema.json` following the directory convention
+- `debug-schema` is exposed by the binary with a double-underscore prefix; the schema file uses kebab-case `debug-schema.schema.json` following the directory convention
 - The `--json` flag is the universal compatibility switch for JSON stdout; on commands with alternate text formats, `--json` wins
 ### Stability Guarantee
 - Schemas track the `main` branch and are updated with every breaking change
@@ -116,12 +116,12 @@
 - Vários subcomandos aceitam múltiplos aliases de flag que produzem a mesma saída
 - `sync-safe-copy` aceita `--dest` (primária), `--to` e `--output` — todos gravam no mesmo campo `dest_path` da resposta
 - `graph stats` aceita `--json` e `--format json`; se `--json` for combinado com `--format text`, `--json` vence e a resposta continua JSON
-- `__debug_schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
+- `debug-schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 - A flag `--json` é o switch universal de compatibilidade para JSON no stdout; em comandos com formatos textuais alternativos, `--json` vence
 ### Uso
 - Inspecionar rapidamente o shape da resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq '.'`
 - Validar com um validador JSON Schema real: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
-- O subcomando `__debug_schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`__debug_schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
+- O subcomando `debug-schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`debug-schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
 ### Garantia de Estabilidade
 - Os schemas acompanham a branch `main` e são atualizados a cada breaking change
 - Adições menores (novos campos opcionais) NÃO incrementam a versão do schema

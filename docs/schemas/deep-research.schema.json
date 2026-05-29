@@ -21,7 +21,7 @@
       "properties": {
         "name":          { "type": "string",  "description": "Kebab-case memory name." },
         "score":         { "type": "number",  "minimum": 0, "description": "Aggregated relevance score (higher is better)." },
-        "source":        { "type": "string",  "description": "Origin of the result: 'direct' (KNN), 'graph' (traversal), or combined label." },
+        "source":        { "type": "string",  "enum": ["knn", "fts", "hybrid", "graph"], "description": "Origin: 'knn' (vector only), 'fts' (text only), 'hybrid' (both KNN+FTS), 'graph' (traversal)." },
         "sub_query_ids": { "type": "array",   "items": { "type": "integer", "minimum": 0 }, "description": "IDs of sub-queries that contributed this result." },
         "snippet":       { "type": "string",  "description": "Short excerpt from the memory body." },
         "body":          { "type": "string",  "description": "Full memory body. Present only when --with-bodies is set; absent otherwise (skip_serializing_if)." },
@@ -77,6 +77,37 @@
     "sub_queries":     { "type": "array",   "items": { "$ref": "#/$defs/SubQuery" }, "description": "Sub-queries derived from the original query." },
     "results":         { "type": "array",   "items": { "$ref": "#/$defs/DeepResult" }, "description": "Deduplicated, ranked memory results." },
     "evidence_chains": { "type": "array",   "items": { "$ref": "#/$defs/EvidenceChain" }, "description": "Multi-hop evidence chains (depth >= 2)." },
+    "graph_context": {
+      "type": "object",
+      "description": "Graph context with entities and relationships from result memories. Present when results are non-empty.",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "entity_type", "degree"],
+            "properties": {
+              "name":        { "type": "string" },
+              "entity_type": { "type": "string" },
+              "degree":      { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "relation", "weight"],
+            "properties": {
+              "from":     { "type": "string" },
+              "to":       { "type": "string" },
+              "relation": { "type": "string" },
+              "weight":   { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
     "stats":           { "$ref": "#/$defs/ResearchStats", "description": "Execution statistics." }
   }
 }

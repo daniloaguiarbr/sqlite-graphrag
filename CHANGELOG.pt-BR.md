@@ -10,6 +10,40 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+## [1.0.66] - 2026-05-29
+
+### Corrigido
+- BUG-01 CRITICO: `reclassify-relation` crash — removido `updated_at = unixepoch()` de 3 SQL UPDATE referenciando coluna inexistente
+- BUG-02 ALTO: `link --create-missing` agora normaliza nomes de entidades para kebab-case no storage e no JSON response
+- BUG-04 MEDIO: `deep-research` decompoe queries de 3+ palavras sem conjuncoes via word-pair heuristic
+- BUG-05 BAIXO: `remember --body-file` tratamento defensivo UTF-8 — bytes invalidos substituidos por U+FFFD
+- BUG-06 ALTO: `link` agora atualiza peso de relacoes existentes e reporta peso real do DB no JSON response
+- HIGH-01 CRITICO: `deep-research` evidence chains corrigidas — seeds BFS limitados a top-5 memorias por score
+- HIGH-01b: `deep-research --graph-min-score` default reduzido de 0.2 para 0.05
+- HIGH-04: `link --max-entity-degree` warning agora visivel sem flag -v
+- HIGH-08: `deep-research` source classification reporta `hybrid` quando KNN e FTS encontraram a mesma memoria
+- HIGH-12: `remember` e `ingest` agora usam `max_relationships_per_memory()` (le env var override) em vez de constante hardcoded
+
+### Adicionado
+- `edit --type` para mudar tipo de memoria sem recriar (HIGH-10)
+- `deep-research --mode` campo reservado (none; claude-code/codex planejado para v1.1.0) (HIGH-06)
+- `deep-research --max-cost-usd` campo reservado para controle de custo LLM (HIGH-09)
+- `deep-research` campo `graph_context` no JSON com entidades e relacoes das memorias encontradas (MEDIUM-01b)
+- `deep-research` 7 chamadas `tracing::debug!` em `execute_sub_query()` para diagnostico com `-vv` (HIGH-07)
+- `graph --format json` inclui campo `entities` como alias de `nodes` (HIGH-05)
+- `list --json` inclui campo `memories` como alias de `items` (HIGH-05)
+- `graph entities --json` inclui campo `description` por entidade (HIGH-11)
+- `health --json` inclui `vec_memories_missing` e `vec_memories_orphaned` (MEDIUM-09)
+- `history --diff` primeira versao reporta baseline `changes: {added_chars: N}` em vez de null (MEDIUM-02)
+- Validacao de entity_type sugere mapeamento quando memory types sao usados: reference→concept, document→file, user→person (HIGH-10c)
+- `debug-schema` renomeado de `__debug_schema` (HIGH-03)
+- Diretorio `fuzz/` com targets cargo-fuzz (LOW-01)
+- `mutants.toml` para cargo-mutants (LOW-02)
+- Job de coverage no CI com threshold 75% (LOW-03)
+
+### Alterado
+- `deep-research --graph-min-score` default: 0.2 → 0.05
+
 ## [1.0.65] - 2026-05-28
 
 ### Adicionado

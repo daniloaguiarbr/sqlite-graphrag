@@ -33,6 +33,15 @@
             "type": "string",
             "format": "date-time",
             "description": "ISO 8601 / RFC 3339 timestamp of entity creation (UTC, Z suffix)."
+          },
+          "degree": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of relationships (inbound + outbound) for this entity."
+          },
+          "description": {
+            "type": ["string", "null"],
+            "description": "Entity description. Null when no description has been set. (v1.0.66)"
           }
         },
         "additionalProperties": false

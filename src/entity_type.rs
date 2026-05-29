@@ -77,9 +77,29 @@ impl std::str::FromStr for EntityType {
             "person" => Ok(EntityType::Person),
             "project" => Ok(EntityType::Project),
             "tool" => Ok(EntityType::Tool),
-            other => Err(AppError::Validation(format!(
-                "invalid entity type: {other}; expected one of: concept, date, dashboard, decision, file, incident, issue_tracker, location, memory, organization, person, project, tool"
-            ))),
+            other => {
+                let hint = match other {
+                    "reference" | "skill" | "note" | "feedback" => Some("concept"),
+                    "document" => Some("file"),
+                    "user" => Some("person"),
+                    _ => None,
+                };
+                let msg = if let Some(suggested) = hint {
+                    format!(
+                        "invalid entity_type '{other}'; '{other}' is a MEMORY type, not an entity type. \
+                         Try '{suggested}' instead. Valid entity types: concept, date, dashboard, \
+                         decision, file, incident, issue_tracker, location, memory, organization, \
+                         person, project, tool"
+                    )
+                } else {
+                    format!(
+                        "invalid entity type: {other}; expected one of: concept, date, dashboard, \
+                         decision, file, incident, issue_tracker, location, memory, organization, \
+                         person, project, tool"
+                    )
+                };
+                Err(AppError::Validation(msg))
+            }
         }
     }
 }

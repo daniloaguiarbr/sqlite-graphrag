@@ -836,7 +836,7 @@ sqlite-graphrag health --json | jaq '{integrity, wal_size_mb, journal_mode}'
 sqlite-graphrag stats --json | jaq '{memories, entities, edges, avg_body_len}'
 SQLITE_GRAPHRAG_LOG_LEVEL=debug sqlite-graphrag recall "slow query" --k 5 --json
 sqlite-graphrag optimize --json
-sqlite-graphrag __debug_schema --json | jaq '{schema_version, objects: (.objects | length)}'
+sqlite-graphrag debug-schema --json | jaq '{schema_version, objects: (.objects | length)}'
 ```
 
 
@@ -846,7 +846,7 @@ sqlite-graphrag __debug_schema --json | jaq '{schema_version, objects: (.objects
 - `SQLITE_GRAPHRAG_LOG_LEVEL=debug` emite tempos por estágio SQLite em stderr para tracing
 - Comparar `avg_body_len` atual ao baseline mostra se os bodies cresceram além dos defaults
 - `optimize` atualiza estatísticas do query planner para que o próximo recall ou hybrid-search use índices atualizados
-- `__debug_schema` é um comando oculto que despeja versão do schema, contagem de objetos e histórico de migrações para troubleshooting de drift
+- `debug-schema` é um comando oculto que despeja versão do schema, contagem de objetos e histórico de migrações para troubleshooting de drift
 - Poupa horas de tuning às cegas expondo o caminho lento exato em três comandos
 
 
@@ -1296,7 +1296,7 @@ sqlite-graphrag read --name minha-nota --tz America/Sao_Paulo
 
 # Variável de ambiente persistente: todos os comandos da sessão usam o fuso configurado
 export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-sqlite-graphrag list --json | jaq '.items[].updated_at_iso'
+sqlite-graphrag list --json | jaq '.items[].updated_at_iso'   # ou .memories[] (alias v1.0.66)
 
 # Pipeline CI: forçar UTC explicitamente para evitar surpresas de fuso do sistema
 SQLITE_GRAPHRAG_DISPLAY_TZ=UTC sqlite-graphrag recall "notas de deploy" --json

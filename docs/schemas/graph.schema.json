@@ -33,6 +33,7 @@
   "additionalProperties": false,
   "properties": {
     "nodes":      { "type": "array", "items": { "$ref": "#/$defs/NodeOut" } },
+    "entities":   { "type": "array", "items": { "$ref": "#/$defs/NodeOut" }, "description": "Alias for nodes (v1.0.66). LLM-friendly field name." },
     "edges":      { "type": "array", "items": { "$ref": "#/$defs/EdgeOut" } },
     "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Wall-clock time in milliseconds." }
   }

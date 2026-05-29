@@ -1,0 +1,11 @@
+# cargo-mutants configuration
+# Run: cargo mutants --timeout-multiplier 3
+exclude_globs = [
+    "src/i18n.rs",
+    "src/commands/mod.rs",
+    "tests/**",
+    "benches/**",
+    "fuzz/**",
+    "migrations/**",
+]
+timeout_multiplier = 3.0

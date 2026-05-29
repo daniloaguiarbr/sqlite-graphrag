@@ -24,7 +24,7 @@
 - `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional; use `--max-rss-mb` para limitar o RSS do processo durante embedding (padrão 8192 MiB)
 - `recall` realiza busca por similaridade vetorial KNN sobre as memórias armazenadas
 - `hybrid-search` funde FTS5 full-text e KNN vetorial via Reciprocal Rank Fusion
-- `deep-research` decompõe uma query em até 7 sub-queries, computa embedding separado por sub-query, executa busca híbrida vetorial+FTS paralela fundida via RRF mais travessia de grafo de 3 hops por sub-query, deduplica e monta cadeias de evidência direcionadas; flags: `--k` (padrão 20), `--max-sub-queries` (padrão 7), `--max-hops` (padrão 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (padrão 50), `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.2), `--max-neighbors-per-hop`
+- `deep-research` decompõe uma query em até 7 sub-queries, computa embedding separado por sub-query, executa busca híbrida vetorial+FTS paralela fundida via RRF mais travessia de grafo de 3 hops por sub-query, deduplica e monta cadeias de evidência direcionadas; flags: `--k` (padrão 20), `--max-sub-queries` (padrão 7), `--max-hops` (padrão 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (padrão 50), `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.05), `--max-neighbors-per-hop`
 - `read` `list` `forget` `rename` `edit` `history` `restore` gerenciam o ciclo de vida da memória
 - `link` `unlink` `related` gerenciam relacionamentos tipados entre entidades para travessia multi-hop
 - `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` gerenciam o banco de dados

@@ -38,7 +38,7 @@
 - `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic in v1.0.64
 - `deep-research` fuses KNN + FTS5 + graph pools via RRF instead of hardcoded 0.5 for FTS results
 - Evidence chains are now directed seed-to-target paths instead of a flat dump of top-20 global relationships
-- New flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.2), `--max-neighbors-per-hop`
+- New flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`
 ### Entity Normalization
 - Entity names are now normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
 - `--max-entity-degree N` warning flag on `link` and `remember` — emits `tracing::warn!` when an entity exceeds N edges
@@ -499,7 +499,7 @@ let output = Command::new("sqlite-graphrag")
 - INSPECT `wal_size_mb` in `health` to detect fragmentation
 - CHECK `journal_mode` equals `wal` in production
 - RUN `optimize --json` to refresh planner statistics
-- DETECT schema drift via `__debug_schema` for troubleshooting
+- DETECT schema drift via `debug-schema` for troubleshooting
 - CHECK `mentions_ratio` (float) and `mentions_warning` (string) in `health --json` output when `mentions` relationships dominate the graph above 50%
 - CHECK `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float), and `relation_concentration_warning` (string) when any single relation type exceeds 40% of edges (v1.0.65)
 ### Correct Pattern — Bootstrap Sequence
@@ -1013,9 +1013,13 @@ let output = Command::new("sqlite-graphrag")
 - `edit` returns `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - `rename` returns `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
 - `forget` returns `action` (`"soft_deleted"`/`"already_deleted"`), `forgotten`, `name`, `namespace`, `elapsed_ms`
-- `list` response-level: `items[]`, `total_count`, `truncated`, `elapsed_ms`; each item includes `body_length` (byte length of stored body) in addition to existing fields
-- `link` response includes `warnings` (array of strings) for non-canonical relation types or other advisory notices
-- `graph entities` items include `degree` (total edge count for the entity, both directions)
+- `list` response-level: `items[]` (also available as `memories[]` alias since v1.0.66), `total_count`, `truncated`, `elapsed_ms`; each item includes `body_length` (byte length of stored body) in addition to existing fields
+- `link` response includes `warnings` (array of strings) for non-canonical relation types or other advisory notices; weight reflects the actual DB value (v1.0.66 fix: previously echoed the requested weight even when edge already existed)
+- `graph entities` items include `degree` (total edge count for the entity, both directions) and `description` (nullable, v1.0.66)
+- `graph --format json` response includes `entities[]` alias for `nodes[]` (v1.0.66) for LLM agent compatibility
+- `edit` accepts `--type` to change memory type without re-creating (v1.0.66)
+- `deep-research` response includes optional `graph_context` with entities and relationships from result memories (v1.0.66)
+- `health` response includes `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics (v1.0.66)
 - `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships; since v1.0.65 also emits `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), and `relation_concentration_warning` (string?) when any single relation exceeds 40%
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
@@ -1094,7 +1098,7 @@ let output = Command::new("sqlite-graphrag")
 - EXPORT memories via `list --limit 10000 --json` to NDJSON
 - VERSION the database with Git LFS when feasible
 ### REQUIRED — Schema Diagnostics
-- USE `__debug_schema --json` for troubleshooting
+- USE `debug-schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`
 - COMMAND is hidden from `--help`; invoke by exact name
 ### Correct Pattern — Weekly Cron
@@ -1267,7 +1271,7 @@ let output = Command::new("sqlite-graphrag")
 - Schemas use `$defs` for shared subtypes (e.g. `RecallItem`, `HealthCheck`)
 - Optional fields are absent from the `required` array and typed with `["T", "null"]` where nullable
 - Validate a live response with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
-- File `docs/schemas/debug-schema.schema.json` covers the hidden `__debug_schema` diagnostic subcommand
+- File `docs/schemas/debug-schema.schema.json` covers the hidden `debug-schema` diagnostic subcommand
 - Schemas are updated on every breaking change and follow the CLI SemVer major version
 
 

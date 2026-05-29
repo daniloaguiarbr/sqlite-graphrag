@@ -24,10 +24,10 @@
 - `remember` saves a memory with name, type, description, body and optional entity graph; use `--max-rss-mb` to cap process RSS during embedding (default 8192 MiB)
 - `recall` performs vector KNN similarity search over stored memories
 - `hybrid-search` fuses FTS5 full-text and vector KNN via Reciprocal Rank Fusion
-- `deep-research` decomposes a query into up to 7 sub-queries, computes a separate embedding per sub-query, runs parallel vector+FTS hybrid search fused via RRF plus 3-hop graph traversal per sub-query, deduplicates and assembles directed evidence chains; flags: `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.2), `--max-neighbors-per-hop`
-- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle
+- `deep-research` decomposes a query into up to 7 sub-queries, computes a separate embedding per sub-query, runs parallel vector+FTS hybrid search fused via RRF plus 3-hop graph traversal per sub-query, deduplicates and assembles directed evidence chains with `graph_context` (entities + relationships); flags: `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`, `--mode` (none|claude-code|codex, v1.1.0), `--max-cost-usd`
+- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle; `edit --type` changes memory type
 - `link` `unlink` `related` manage typed entity relationships for multi-hop traversal
-- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database
+- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database; `health` reports `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics
 - `backup` creates a consistent database backup using SQLite Online Backup API, safe with WAL mode
 - `fts rebuild` `fts check` `fts stats` repair, verify, and inspect the FTS5 full-text index
 - `memory-entities` lists all entities linked to a named memory

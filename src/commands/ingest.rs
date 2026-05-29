@@ -482,8 +482,8 @@ fn stage_file(
                 if extracted_entities.len() > max_entities_per_memory() {
                     extracted_entities.truncate(max_entities_per_memory());
                 }
-                if extracted_relationships.len() > MAX_RELATIONSHIPS_PER_MEMORY {
-                    extracted_relationships.truncate(MAX_RELATIONSHIPS_PER_MEMORY);
+                if extracted_relationships.len() > max_relationships_per_memory() {
+                    extracted_relationships.truncate(max_relationships_per_memory());
                 }
             }
             Err(e) => {

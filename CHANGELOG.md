@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.66] - 2026-05-29
+
+### Fixed
+- BUG-01 CRITICAL: `reclassify-relation` crash — removed `updated_at = unixepoch()` from 3 SQL UPDATE statements referencing non-existent column in `relationships` table
+- BUG-02 HIGH: `link --create-missing` now normalizes entity names to kebab-case in both storage and JSON response (`created_entities` array)
+- BUG-04 MEDIUM: `deep-research` word-pair decomposition for 3+ word queries without conjunctions — queries like "authentication JWT tokens" now generate multiple sub-queries
+- BUG-05 LOW: `remember --body-file` defensive UTF-8 handling — invalid byte sequences replaced with U+FFFD instead of process abort
+- BUG-06 HIGH: `link` now updates weight of existing relationships and reports actual DB weight in JSON response (previously returned requested weight while keeping old value)
+- HIGH-01 CRITICAL: `deep-research` evidence chains fixed — BFS seeds limited to top-5 memories by score, preventing seed flooding that made all entities seeds with no room for BFS expansion
+- HIGH-01b: `deep-research --graph-min-score` default lowered from 0.2 to 0.05 to avoid discarding valid results in small databases; warns when RRF fusion returns 0 despite KNN/FTS hits
+- HIGH-04: `link --max-entity-degree` warning now uses `emit_progress` (always visible on stderr) instead of `tracing::warn` (requires `-v`)
+- HIGH-08: `deep-research` source classification now reports `hybrid` when both KNN and FTS matched, instead of always `knn`
+- HIGH-12: `remember` and `ingest` now use `max_relationships_per_memory()` function (reads `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` env var) instead of hardcoded constant; `remember --graph-stdin` truncates with warning instead of rejecting
+
+### Added
+- `edit --type` flag to change memory type without re-creating (HIGH-10)
+- `deep-research --mode` reserved field (`none` default; `claude-code`/`codex` planned for v1.1.0) (HIGH-06)
+- `deep-research --max-cost-usd` reserved field for future LLM cost tracking (HIGH-09)
+- `deep-research` `graph_context` field in JSON response with entities and relationships from result memories (MEDIUM-01b)
+- `deep-research` 7 `tracing::debug!` calls in `execute_sub_query()` for diagnostics with `-vv` (HIGH-07)
+- `graph --format json` now includes `entities` alias field alongside `nodes` for LLM agent compatibility (HIGH-05)
+- `list --json` now includes `memories` alias field alongside `items` for LLM agent compatibility (HIGH-05)
+- `graph entities --json` now includes `description` field per entity (HIGH-11)
+- `health --json` now includes `vec_memories_missing` and `vec_memories_orphaned` counts (MEDIUM-09)
+- `history --diff` first version now reports baseline `changes: {added_chars: N, removed_chars: 0}` instead of `null` (MEDIUM-02)
+- Entity type validation suggests mapping when memory types are used as entity types: reference→concept, document→file, user→person (HIGH-10c)
+- `remember` after_long_help documents positional arg limitation and entity_type vs memory_type taxonomy (HIGH-10b)
+- `debug-schema` command renamed from `__debug_schema` for discoverability (HIGH-03, still hidden from `--help`)
+- `fuzz/` directory with cargo-fuzz targets for graph-stdin JSON and name validation (LOW-01)
+- `mutants.toml` configuration for cargo-mutants (LOW-02)
+- CI coverage job with 75% threshold enforcement (LOW-03)
+
+### Changed
+- `deep-research --graph-min-score` default: 0.2 → 0.05
+
+### Data Migration (recommended after upgrade)
+- Run `reclassify-relation --from-relation applies-to --to-relation applies_to --batch --yes` (and similarly for depends-on, tracked-in) to normalize legacy kebab-case relations to snake_case (HIGH-13)
+- Run `normalize-entities --yes` to merge mixed-case entity duplicates (HIGH-13)
+
 ## [1.0.65] - 2026-05-28
 
 ### Added
