@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/remember-batch-summary.schema.json",
+  "title": "RememberBatchSummary",
+  "description": "Summary line emitted as the last NDJSON line by `sqlite-graphrag remember-batch`.",
+  "type": "object",
+  "required": ["summary", "total", "succeeded", "failed", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "summary":    { "type": "boolean", "const": true },
+    "total":      { "type": "integer", "minimum": 0 },
+    "succeeded":  { "type": "integer", "minimum": 0 },
+    "failed":     { "type": "integer", "minimum": 0 },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

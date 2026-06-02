@@ -36,7 +36,9 @@ pub struct NewRelationship {
     pub source: String,
     #[serde(alias = "to")]
     pub target: String,
+    #[serde(alias = "type")]
     pub relation: String,
+    #[serde(alias = "weight")]
     pub strength: f64,
     pub description: Option<String>,
 }
@@ -185,6 +187,11 @@ pub fn upsert_relationship(
     Ok(id)
 }
 
+/// Links a memory to an entity in the `memory_entities` join table.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn link_memory_entity(
     conn: &Connection,
     memory_id: i64,
@@ -197,6 +204,11 @@ pub fn link_memory_entity(
     Ok(())
 }
 
+/// Links a memory to a relationship in the `memory_relationships` join table.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn link_memory_relationship(
     conn: &Connection,
     memory_id: i64,
@@ -209,6 +221,11 @@ pub fn link_memory_relationship(
     Ok(())
 }
 
+/// Increments the `degree` counter of an entity by one.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn increment_degree(conn: &Connection, entity_id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE entities SET degree = degree + 1 WHERE id = ?1",
@@ -218,6 +235,10 @@ pub fn increment_degree(conn: &Connection, entity_id: i64) -> Result<(), AppErro
 }
 
 /// Looks up the entity by name and namespace. Returns the id when it exists.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn find_entity_id(
     conn: &Connection,
     namespace: &str,
@@ -251,6 +272,10 @@ pub struct RelationshipRow {
 }
 
 /// Looks up a specific relation by (source_id, target_id, relation).
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn find_relationship(
     conn: &Connection,
     source_id: i64,
@@ -281,6 +306,11 @@ pub fn find_relationship(
 
 /// Creates a relation if it does not exist (returns action="created")
 /// or returns the existing relation (action="already_exists") with updated weight.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — SQLite query or constraint failure.
+/// - [`AppError::Validation`] — self-link attempt (source equals target).
 pub fn create_or_fetch_relationship(
     conn: &Connection,
     namespace: &str,
@@ -322,6 +352,10 @@ pub fn create_or_fetch_relationship(
 }
 
 /// Removes a relation by id and cleans up memory_relationships.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn delete_relationship_by_id(conn: &Connection, relationship_id: i64) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM memory_relationships WHERE relationship_id = ?1",
@@ -335,6 +369,10 @@ pub fn delete_relationship_by_id(conn: &Connection, relationship_id: i64) -> Res
 }
 
 /// Recalculates the `degree` field of an entity.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn recalculate_degree(conn: &Connection, entity_id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE entities
@@ -356,12 +394,16 @@ pub struct EntityNode {
 }
 
 /// Lists entities, filtering by namespace if provided.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn list_entities(
     conn: &Connection,
     namespace: Option<&str>,
 ) -> Result<Vec<EntityNode>, AppError> {
     if let Some(ns) = namespace {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT id, name, namespace, type FROM entities WHERE namespace = ?1 ORDER BY id",
         )?;
         let rows = stmt
@@ -376,8 +418,9 @@ pub fn list_entities(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
-        let mut stmt =
-            conn.prepare("SELECT id, name, namespace, type FROM entities ORDER BY namespace, id")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, name, namespace, type FROM entities ORDER BY namespace, id",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(EntityNode {
@@ -393,12 +436,16 @@ pub fn list_entities(
 }
 
 /// Lists relations filtered by namespace (of source/target entities).
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn list_relationships_by_namespace(
     conn: &Connection,
     namespace: Option<&str>,
 ) -> Result<Vec<RelationshipRow>, AppError> {
     if let Some(ns) = namespace {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT r.id, r.namespace, r.source_id, r.target_id, r.relation, r.weight, r.description
              FROM relationships r
              JOIN entities se ON se.id = r.source_id AND se.namespace = ?1
@@ -420,7 +467,7 @@ pub fn list_relationships_by_namespace(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT id, namespace, source_id, target_id, relation, weight, description
              FROM relationships ORDER BY id",
         )?;
@@ -442,12 +489,16 @@ pub fn list_relationships_by_namespace(
 }
 
 /// Locates orphan entities: no link in memory_entities and no relations.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn find_orphan_entity_ids(
     conn: &Connection,
     namespace: Option<&str>,
 ) -> Result<Vec<i64>, AppError> {
     if let Some(ns) = namespace {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT e.id FROM entities e
              WHERE e.namespace = ?1
                AND NOT EXISTS (SELECT 1 FROM memory_entities me WHERE me.entity_id = e.id)
@@ -461,7 +512,7 @@ pub fn find_orphan_entity_ids(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ids)
     } else {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT e.id FROM entities e
              WHERE NOT EXISTS (SELECT 1 FROM memory_entities me WHERE me.entity_id = e.id)
                AND NOT EXISTS (
@@ -477,6 +528,10 @@ pub fn find_orphan_entity_ids(
 }
 
 /// Deletes entities and their associated vectors. Returns the number of entities removed.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
 pub fn delete_entities_by_ids(conn: &Connection, entity_ids: &[i64]) -> Result<usize, AppError> {
     if entity_ids.is_empty() {
         return Ok(0);
@@ -525,7 +580,7 @@ pub fn list_entity_names_by_relation(
     namespace: &str,
     relation: &str,
 ) -> Result<Vec<String>, AppError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT e.name FROM entities e
          INNER JOIN relationships r ON (e.id = r.source_id OR e.id = r.target_id)
          WHERE r.namespace = ?1 AND r.relation = ?2
@@ -553,7 +608,7 @@ pub fn delete_relationships_by_relation(
     relation: &str,
 ) -> Result<(usize, Vec<i64>), AppError> {
     // Step 1: collect all affected entity IDs before deletion.
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT source_id FROM relationships WHERE namespace = ?1 AND relation = ?2
          UNION
          SELECT DISTINCT target_id FROM relationships WHERE namespace = ?1 AND relation = ?2",
@@ -564,7 +619,7 @@ pub fn delete_relationships_by_relation(
 
     // Step 2: collect relationship IDs to delete.
     let mut id_stmt =
-        conn.prepare("SELECT id FROM relationships WHERE namespace = ?1 AND relation = ?2")?;
+        conn.prepare_cached("SELECT id FROM relationships WHERE namespace = ?1 AND relation = ?2")?;
     let rel_ids: Vec<i64> = id_stmt
         .query_map(params![namespace, relation], |r| r.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -591,6 +646,12 @@ pub fn delete_relationships_by_relation(
     Ok((total_deleted, entity_ids))
 }
 
+/// Searches the `vec_entities` virtual table for the k nearest neighbours.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — SQLite or sqlite-vec query failure.
+/// - [`AppError::Embedding`] — invalid or mismatched embedding dimension.
 pub fn knn_search(
     conn: &Connection,
     embedding: &[f32],
@@ -598,7 +659,7 @@ pub fn knn_search(
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
     let bytes = f32_to_bytes(embedding);
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT entity_id, distance FROM vec_entities
          WHERE embedding MATCH ?1 AND namespace = ?2
          ORDER BY distance LIMIT ?3",

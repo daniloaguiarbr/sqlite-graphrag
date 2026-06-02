@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.67] - 2026-06-01
+
+### Added
+- `remember-batch` command — batch-create memories from NDJSON stdin in a single invocation with `--transaction` for atomicity, `--force-merge` for idempotent updates, `--fail-fast` to abort on first error (G08)
+- `completions` command — generate shell completions for Bash, Zsh, Fish, PowerShell, and Elvish
+- `read --id <N>` flag for direct memory lookup by integer `memory_id`, bypassing name resolution (G17)
+- `read --with-graph` flag to include linked entities and relationships in the JSON response (G22)
+- `enrich --llm-parallelism <N>` flag for parallel LLM worker threads (default 1, max 32) — reduces enrich wall-clock time proportionally (G19)
+- `health` now detects super-hub entities (degree > 50) and reports `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree` in JSON output (G25)
+- `health` now reports `non_normalized_count` and `normalization_warning` for entities not matching kebab-case (G24)
+- `related` aliases: `--from`/`--to` for `--source`/`--target`, `related_memories` as field alias (G23)
+- `claude_runner.rs` shared module — DRY extraction logic for `enrich` and `ingest-claude` subprocess management (G02)
+- `claude_runner.rs` detects `terminal_reason: "max_turns"` and returns specific error instead of generic failure (G03)
+- `enrich` passes `max_turns=7` to Claude subprocess, absorbing hook turn consumption (G01)
+
+### Fixed
+- `edit` now compares `body_hash` (blake3) before re-embedding — idempotent edits skip the ~1.5s embedding step (G15)
+- `rename` now purges ghost soft-deleted memories occupying the target name before UPDATE — eliminates UNIQUE constraint crash (exit 10) that previously required `purge --retention-days 0` workaround (G16)
+- `hybrid-search` rejects `--max-hops` and `--min-weight` without `--with-graph` with actionable error instead of silent discard (G20 partial)
+- `recall` rejects `--max-hops` and `--min-weight` with `--no-graph` with actionable error instead of silent discard (G20 partial)
+- `ingest` rejects contradictory NER flags and `--low-memory` with `--ingest-parallelism > 1` with validation error (G21 partial)
+- `normalize-entities --dry-run` now computes real `merge_count_preview` instead of always 0 (G10)
+- Entity name normalization maps ALL non-alphanumeric chars to hyphens, not just spaces/underscores (G11)
+- Relationship deserialization accepts `type` as alias for `relation` via `#[serde(alias)]` (G12)
+- `recall`, `hybrid-search`, `deep-research` accept `--limit` and `--top-k` as aliases of `--k` (G13)
+- `enrich` `linked_entities` query provides graph context per entity for LLM prompts (G26)
+- `enrich` supports all 13 operations including `relation-cleanup`, `duplicate-detection`, `type-audit`, `hub-analysis` (G27)
+- V012 migration adds `created_at`/`updated_at` timestamps to relationships table with backfill trigger (G09)
+- `memory_guard` removes /2 margin on memory threshold; lock ceiling uses dynamic 2*nCPUs (G18)
+
 ## [1.0.66] - 2026-05-29
 
 ### Fixed

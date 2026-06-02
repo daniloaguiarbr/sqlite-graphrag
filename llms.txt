@@ -25,9 +25,11 @@
 - `recall` performs vector KNN similarity search over stored memories
 - `hybrid-search` fuses FTS5 full-text and vector KNN via Reciprocal Rank Fusion
 - `deep-research` decomposes a query into up to 7 sub-queries, computes a separate embedding per sub-query, runs parallel vector+FTS hybrid search fused via RRF plus 3-hop graph traversal per sub-query, deduplicates and assembles directed evidence chains with `graph_context` (entities + relationships); flags: `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`, `--mode` (none|claude-code|codex, v1.1.0), `--max-cost-usd`
-- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle; `edit --type` changes memory type
+- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle; `read --id <id>` fetches by numeric memory ID as alternative to `--name`; `edit --type` changes memory type
+- `remember-batch` ingests multiple memories from a NDJSON stream in a single invocation
+- `completions` generates shell completion scripts for bash, zsh, fish, elvish and powershell
 - `link` `unlink` `related` manage typed entity relationships for multi-hop traversal
-- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database; `health` reports `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics
+- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database; `health` reports `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics; `health` also reports `relation_concentration_warning` and super-hub detection when any entity or relation type dominates the graph
 - `backup` creates a consistent database backup using SQLite Online Backup API, safe with WAL mode
 - `fts rebuild` `fts check` `fts stats` repair, verify, and inspect the FTS5 full-text index
 - `memory-entities` lists all entities linked to a named memory
@@ -41,7 +43,7 @@
 - `purge` `namespace-detect` handle maintenance and namespace resolution
 - `reclassify-relation` renames relationship types across the graph; single mode: `--source A --target B --from-relation old --to-relation new`; batch mode: `--from-relation old --to-relation new --batch`; optional filters: `--filter-source-type`, `--filter-target-type`; `--dry-run` previews count; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge
 - `normalize-entities` normalizes all entity names in the namespace to lowercase kebab-case ASCII; auto-merges collisions (e.g., `Claude Code` and `claude-code` become one node with combined relationships); `--dry-run` previews, `--yes` applies
-- `enrich` LLM-augmented graph quality pipeline via `--mode claude-code` or `--mode codex`; scan-judge-persist pattern with queue DB for resume/retry; 3 operations implemented: `--operation memory-bindings` (extract entities from orphan memories), `--operation entity-descriptions` (generate descriptions for entities with none), `--operation body-enrich` (expand short memory bodies); `--dry-run` previews without spawning LLM; `--max-cost-usd` caps budget; output is NDJSON (phase events, item events, summary)
+- `enrich` LLM-augmented graph quality pipeline via `--mode claude-code` or `--mode codex`; scan-judge-persist pattern with queue DB for resume/retry; 3 operations implemented: `--operation memory-bindings` (extract entities from orphan memories), `--operation entity-descriptions` (generate descriptions for entities with none), `--operation body-enrich` (expand short memory bodies); `--dry-run` previews without spawning LLM; `--max-cost-usd` caps budget; `--llm-parallelism <N>` controls concurrent LLM subprocesses (default 1); output is NDJSON (phase events, item events, summary)
 
 
 ## Environment Variables
@@ -133,7 +135,7 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster sub
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.65 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.67 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

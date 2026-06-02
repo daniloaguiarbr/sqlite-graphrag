@@ -2,6 +2,7 @@
 //!
 //! Owns the in-process `TextEmbedding` model and exposes batch encode/query
 //! helpers used by remember, recall, and related commands.
+// Workload: CPU-bound (ONNX inference, matrix multiplication via fastembed)
 
 use crate::constants::{
     EMBEDDING_DIM, EMBEDDING_MAX_TOKENS, FASTEMBED_BATCH_SIZE, PASSAGE_PREFIX, QUERY_PREFIX,
@@ -10,13 +11,28 @@ use crate::constants::{
 use crate::errors::AppError;
 use fastembed::{EmbeddingModel, ExecutionProviderDispatch, TextEmbedding, TextInitOptions};
 use ort::ep::CPU;
+use parking_lot::Mutex;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
+/// Process-wide singleton embedding model behind a `Mutex`.
+///
+/// ONNX Runtime's `Session` is not guaranteed thread-safe for concurrent
+/// inference; `Mutex` serialises all embedding calls.  This is correct by
+/// design — without the daemon, embedding throughput is intentionally serial.
+///
+/// For parallel workloads (enrich, ingest) start the daemon first:
+/// `sqlite-graphrag daemon` — the model is loaded once and served via UDS,
+/// eliminating Mutex contention across CLI invocations.
 static EMBEDDER: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 
 /// Returns the process-wide singleton embedder, initializing it on first call.
 /// Subsequent calls return the cached instance regardless of `models_dir`.
+///
+/// # Errors
+///
+/// - [`AppError::Embedding`] — ONNX model load failure or runtime initialisation error.
+/// - [`AppError::Io`] — cache directory is inaccessible or cannot be created.
 pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, AppError> {
     if let Some(m) = EMBEDDER.get() {
         return Ok(m);
@@ -101,12 +117,12 @@ fn maybe_init_dynamic_ort(_models_dir: &Path) -> Result<(), AppError> {
 /// Embeds a single passage using the `passage:` prefix required by E5 models.
 ///
 /// # Errors
-/// Returns `Err` when the mutex is poisoned or the model returns an unexpected result.
+/// Returns `Err` when the model returns an unexpected result.
+#[tracing::instrument(skip(embedder, text), fields(text_len = text.len()))]
 pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
@@ -120,12 +136,12 @@ pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<
 /// Embeds a search query using the `query:` prefix required by E5 models.
 ///
 /// # Errors
-/// Returns `Err` when the mutex is poisoned or the model returns an unexpected result.
+/// Returns `Err` when the model returns an unexpected result.
+#[tracing::instrument(skip(embedder, text), fields(text_len = text.len()))]
 pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let prefixed = format!("{QUERY_PREFIX}{text}");
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(vec![prefixed.as_str()], Some(1))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     let emb = results
@@ -140,7 +156,8 @@ pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f3
 /// `batch_size` is capped at `FASTEMBED_BATCH_SIZE`. All texts receive the `passage:` prefix.
 ///
 /// # Errors
-/// Returns `Err` when the mutex is poisoned or the model inference fails.
+/// Returns `Err` when the model inference fails.
+#[tracing::instrument(skip(embedder, texts), fields(batch_size = texts.len()))]
 pub fn embed_passages_batch(
     embedder: &Mutex<TextEmbedding>,
     texts: &[&str],
@@ -153,7 +170,6 @@ pub fn embed_passages_batch(
     let strs: Vec<&str> = prefixed.iter().map(String::as_str).collect();
     let results = embedder
         .lock()
-        .map_err(|e| AppError::Embedding(format!("embedder mutex poisoned: {e}")))?
         .embed(strs, Some(batch_size.min(FASTEMBED_BATCH_SIZE)))
         .map_err(|e| AppError::Embedding(e.to_string()))?;
     for emb in &results {
@@ -210,6 +226,10 @@ pub fn embed_passages_controlled(
 /// extreme padding overhead). Callers that need parallelism should use the rayon
 /// `ThreadPool` in `src/commands/ingest.rs::run`, which partitions work across
 /// CPU threads and calls this function per shard.
+///
+/// # Errors
+///
+/// Returns [`AppError::Embedding`] when the ONNX encoder fails on any passage.
 pub fn embed_passages_serial<'a, I>(
     embedder: &Mutex<TextEmbedding>,
     texts: I,
@@ -263,6 +283,12 @@ fn plan_controlled_batches(token_counts: &[usize]) -> Vec<(usize, usize)> {
 /// 2. The returned `&[u8]` borrows from `v`; its lifetime is tied to the input slice.
 /// 3. Endianness matches sqlite-vec on supported platforms (x86_64, aarch64 little-endian).
 ///    Targets with big-endian `f32` storage are not supported by sqlite-vec.
+#[cfg(target_endian = "big")]
+compile_error!(
+    "sqlite-graphrag requires little-endian f32 layout for sqlite-vec compatibility. \
+     Big-endian targets (PPC64, S390x) are not supported."
+);
+
 pub fn f32_to_bytes(v: &[f32]) -> &[u8] {
     // SAFETY: see invariants above. f32→u8 transmute via from_raw_parts is sound.
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }

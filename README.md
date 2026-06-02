@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.67**: 2 NEW commands: `remember-batch` (NDJSON batch memory creation with `--transaction`/`--force-merge`), `completions` (shell completions for Bash/Zsh/Fish/PowerShell/Elvish); `read --id` for direct memory_id lookup, `enrich --llm-parallelism` for parallel LLM workers, `health` super-hub detection (degree > 50), `edit` skip-embed optimization via body_hash comparison, `rename` ghost purge for soft-deleted name conflicts, flag validation in hybrid-search/recall/ingest, V012 relationship timestamps migration, 24 gap fixes total
+- **v1.0.66**: 35 BUG/GAP fixes including 3 CRITICAL (reclassify-relation crash, evidence chain flooding, link weight), `edit --type` flag, `graph_context` in deep-research, LLM-friendly aliases for graph/list JSON, full doc audit
 - **v1.0.65**: 3 NEW commands: `reclassify-relation` (bulk relationship type renames with UNIQUE collision handling), `normalize-entities` (normalize entity names to kebab-case with auto-merge), `enrich` (LLM-augmented graph quality: memory-bindings, entity-descriptions, body-enrich); CRITICAL deep-research fixes: per-sub-query embeddings (was sharing one), RRF fusion for KNN+FTS5 (was hardcoded 0.5), directed evidence chains (was flat global dump); new deep-research flags `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`; entity name normalization on all write paths; `health` reports relation concentration; `--max-entity-degree` warning on link/remember
 - **v1.0.64**: NEW `deep-research` command for parallel multi-hop GraphRAG research via query decomposition (up to 7 sub-queries) with bounded JoinSet + Semaphore fan-out and evidence chain assembly; ingest claude-code disables hooks via `--settings` for OAuth (was failing 65% of files), detects OAuth and omits misleading `cost_usd`, validates body size BEFORE LLM extraction (files >512 KB skipped); rename/rename-entity reject same-name with exit 1
 - **v1.0.63**: restore preserves current name after rename (was reverting to version's original name), ingest claude-code/codex normalizes relation strings before DB insertion, edit re-generates vector embeddings when body changes, OAuth-first auth docs
@@ -442,7 +444,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Initialize database and download embedding model |
 | `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs`, `--db`, `--json` | Run or control the persistent embedding daemon |
-| `health` | `--json` | Show database integrity, FTS5 functional check, sqlite version |
+| `health` | `--json` | Show database integrity, FTS5 functional check, sqlite version, super-hub detection (degree > 50) |
 | `stats` | `--json` | Count memories, entities and relationships |
 | `migrate` | `--json` | Apply pending schema migrations via `refinery` |
 | `vacuum` | `--json` | Checkpoint WAL and reclaim disk space |
@@ -453,12 +455,13 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant`, `--force-merge`, `--clear-body`, `--dry-run` | Save a memory with optional entity graph; `--type`/`--description` optional with `--force-merge` (inherited from existing); `--dry-run` validates without persisting |
+| `remember-batch` | `--transaction`, `--force-merge`, `--fail-fast` | Batch-create memories from NDJSON stdin; one invocation, one slot, one DB connection |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit`), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Search memories semantically via KNN + graph traversal |
-| `read` | `[name]` or `--name <name>` | Fetch a memory by exact kebab-case name |
+| `read` | `[name]` or `--name <name>`, `--id <N>`, `--with-graph` | Fetch a memory by exact name or integer memory_id; `--with-graph` includes linked entities and relationships |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Paginate memories sorted by `updated_at`; default limit is all with `--json`, 50 for text; response includes `total_count`, `truncated`, `body_length` |
 | `forget` | `[name]` or `--name <name>` | Soft-delete a memory preserving history |
 | `rename` | `[old]`, or `--name`/`--old`/`--from <NAME>`, `--new-name`/`--new`/`--to <NAME>` | Rename a memory while keeping versions |
-| `edit` | `[name]` or `--name`, `--body`, `--description` | Edit body or description creating new version |
+| `edit` | `[name]` or `--name`, `--body`, `--description`, `--type` | Edit body, description or memory type creating new version; skips re-embedding when body content is unchanged |
 | `history` | `[name]` or `--name <name>`, `--diff` | List all versions of a memory; `--diff` includes character-level change summary |
 | `memory-entities` | `[name]` or `--name <name>`, `--entity <name>` | List entities linked to a memory, or memories linked to an entity (reverse lookup via `--entity`) |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
@@ -504,6 +507,7 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `fts rebuild` | `--json` | Rebuild the FTS5 full-text search index from scratch |
 | `fts check` | `--json` | Run FTS5 integrity-check without modifying the index |
 | `fts stats` | `--json` | Show FTS5 index statistics (row count, shadow pages) |
+| `completions` | `bash`, `zsh`, `fish`, `powershell`, `elvish` | Generate shell completions for the specified shell |
 
 ### `cache` subcommands
 | Subcommand | Description |
@@ -628,6 +632,10 @@ RUN cargo install --path .
 - Use `--max-concurrency N` to request the slot limit for the current invocation; heavy commands may still be reduced automatically
 - Memory guard aborts with exit 77 when less than 2 GB of RAM is available
 - SIGINT and SIGTERM trigger graceful shutdown via `shutdown_requested()` atomic
+- Exit code 130 when interrupted by SIGINT (Ctrl+C)
+- Exit code 141 when SIGPIPE fires (stdout closed by downstream consumer in pipeline)
+- Exit code 143 when terminated by SIGTERM
+- Second signal forces immediate exit without waiting for current operation
 
 
 ## Troubleshooting FAQ

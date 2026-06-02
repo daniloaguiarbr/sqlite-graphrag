@@ -390,7 +390,6 @@ fn ingest_unicode_filenames_yield_meaningful_names() {
             "note",
             "--pattern",
             "*.md",
-            "--skip-extraction",
         ])
         .assert()
         .success();

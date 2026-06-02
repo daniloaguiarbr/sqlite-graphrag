@@ -57,9 +57,9 @@ pub fn calculate_safe_concurrency(
 
     let memory_bound = (available_mb / ram_per_task_mb) as usize;
     let resource_bound = cpu_count.min(memory_bound).max(1);
-    let safe_with_margin = (resource_bound / 2).max(1);
-
-    safe_with_margin.min(max_concurrency)
+    // G18: removed unconditional /2 margin — callers should pass lower ram_per_task_mb
+    // when daemon is active (model shared) instead of halving the result
+    resource_bound.min(max_concurrency)
 }
 
 /// Checks whether sufficient memory is available to start loading the model.

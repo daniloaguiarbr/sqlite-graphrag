@@ -978,16 +978,16 @@ fn contract_25_debug_schema() {
     let env = Env::new();
     env.init();
 
-    let out = env.cmd().arg("__debug_schema").output().unwrap();
+    let out = env.cmd().arg("debug-schema").output().unwrap();
     assert!(
         out.status.success(),
-        "__debug_schema failed: {:?}\nstderr: {}",
+        "debug-schema failed: {:?}\nstderr: {}",
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
     let json = Env::parse_stdout(&out);
     assert_has_keys(
-        "__debug_schema",
+        "debug-schema",
         &json,
         &[
             "schema_version",

@@ -54,10 +54,12 @@ fn entity_name_too_short_rejected_via_link() {
 
 #[test]
 #[serial]
-fn entity_name_all_caps_short_rejected_via_link() {
+fn entity_name_all_caps_short_normalized_via_link() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
+    // Since v1.0.65, link normalizes ALL_CAPS to kebab-case ("RAM" -> "ram")
+    // before validation, so short ALL_CAPS names are accepted after normalization.
     cmd_base(&tmp)
         .args([
             "link",
@@ -70,7 +72,7 @@ fn entity_name_all_caps_short_rejected_via_link() {
             "--create-missing",
         ])
         .assert()
-        .failure();
+        .success();
 }
 
 #[test]

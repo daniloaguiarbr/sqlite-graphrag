@@ -100,6 +100,30 @@ struct HealthResponse {
     /// Omitted when concentration is within acceptable bounds or there are no relationships.
     #[serde(skip_serializing_if = "Option::is_none")]
     relation_concentration_warning: Option<String>,
+    /// Number of entities whose name differs from its normalized kebab-case form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    non_normalized_count: Option<i64>,
+    /// Warning when non-normalized entities are detected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalization_warning: Option<String>,
+    /// Number of entities with degree exceeding the super-hub threshold (default 50).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    super_hub_count: Option<i64>,
+    /// Warning listing top super-hub entity names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    super_hub_warning: Option<String>,
+    /// Name of the entity with the highest connection count in the namespace.
+    /// Omitted when there are no entities in the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_hub_entity: Option<String>,
+    /// Number of connections (degree) of `top_hub_entity`.
+    /// Omitted when there are no entities in the database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_hub_degree: Option<i64>,
+    /// Human-readable warning when `top_hub_entity` exceeds 50 connections.
+    /// Omitted when degree is within acceptable bounds or there are no entities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hub_warning: Option<String>,
     checks: Vec<HealthCheck>,
     elapsed_ms: u64,
 }
@@ -127,7 +151,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 
     let integrity: String = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0))?;
     let integrity_ok = integrity == "ok";
-    tracing::info!(integrity_ok = %integrity_ok, "PRAGMA integrity_check complete");
+    tracing::info!(target: "health", integrity_ok = %integrity_ok, "PRAGMA integrity_check complete");
 
     if !integrity_ok {
         let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
@@ -164,6 +188,13 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             top_relation_ratio: None,
             applies_to_ratio: None,
             relation_concentration_warning: None,
+            non_normalized_count: None,
+            normalization_warning: None,
+            super_hub_count: None,
+            super_hub_warning: None,
+            top_hub_entity: None,
+            top_hub_degree: None,
+            hub_warning: None,
             checks: vec![HealthCheck {
                 name: "integrity".to_string(),
                 ok: false,
@@ -300,7 +331,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         0
     };
 
-    tracing::info!(vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, vec_missing = vec_memories_missing, vec_orphaned = vec_memories_orphaned, "vector table checks complete");
+    tracing::info!(target: "health", vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, vec_missing = vec_memories_missing, vec_orphaned = vec_memories_orphaned, "vector table checks complete");
     let fts_ok = table_exists(&conn, "fts_memories");
 
     // Verifies that FTS5 can execute a MATCH query (catches index corruption distinct from table absence).
@@ -315,7 +346,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         false
     };
 
-    tracing::info!(fts_ok = %fts_ok, fts_query_ok = %fts_query_ok, "FTS5 checks complete");
+    tracing::info!(target: "health", fts_ok = %fts_ok, fts_query_ok = %fts_query_ok, "FTS5 checks complete");
 
     // Captures the SQLite runtime version for observability.
     let sqlite_version: String = conn
@@ -323,8 +354,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         .unwrap_or_else(|_| "unknown".to_string());
 
     // Detects orphan entities referenced by memories but absent from the entities table.
-    let mut missing_entities: Vec<String> = Vec::new();
-    let mut stmt = conn.prepare(
+    let mut missing_entities: Vec<String> = Vec::with_capacity(4);
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT me.entity_id
          FROM memory_entities me
          LEFT JOIN entities e ON e.id = me.entity_id
@@ -351,7 +382,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     // Checks whether the ONNX model is present in the cache
     let model_dir = paths.models.join("models--intfloat--multilingual-e5-small");
     let model_ok = model_dir.exists();
-    tracing::info!(model_ok = %model_ok, "embedding model check complete");
+    tracing::info!(target: "health", model_ok = %model_ok, "embedding model check complete");
 
     // Builds the checks array for detailed diagnostics
     let mut checks: Vec<HealthCheck> = Vec::with_capacity(8);
@@ -436,6 +467,80 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         },
     });
 
+    // G24: detect non-normalized entity names
+    let (non_normalized_count, normalization_warning) = {
+        let mut stmt = conn.prepare_cached("SELECT name FROM entities")?;
+        let names: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let count = names
+            .iter()
+            .filter(|n| crate::parsers::normalize_entity_name(n) != **n)
+            .count() as i64;
+        let warning = if count > 0 {
+            Some(format!(
+                "run 'normalize-entities --yes' to fix {count} non-normalized entities"
+            ))
+        } else {
+            None
+        };
+        (Some(count), warning)
+    };
+
+    // G25: detect super-hub entities (degree > 50)
+    let (super_hub_count, super_hub_warning) = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT e.name, COUNT(r.id) as deg FROM entities e \
+             LEFT JOIN relationships r ON e.id = r.source_id OR e.id = r.target_id \
+             GROUP BY e.id HAVING deg > 50 ORDER BY deg DESC LIMIT 5",
+        )?;
+        let hubs: Vec<(String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let count = hubs.len() as i64;
+        let warning = if count > 0 {
+            let names: Vec<String> = hubs
+                .iter()
+                .map(|(n, d)| format!("{n} (degree {d})"))
+                .collect();
+            Some(format!("super-hubs detected: {}", names.join(", ")))
+        } else {
+            None
+        };
+        (Some(count), warning)
+    };
+
+    // G25 (extended): identify the single highest-degree entity for programmatic use.
+    let (top_hub_entity, top_hub_degree, hub_warning) = {
+        let result: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT e.name, COUNT(r.id) AS degree
+                 FROM entities e
+                 LEFT JOIN relationships r ON e.id = r.source_id OR e.id = r.target_id
+                 GROUP BY e.id
+                 ORDER BY degree DESC
+                 LIMIT 1",
+                [],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .ok();
+        match result {
+            Some((name, degree)) => {
+                let warning = if degree > 50 {
+                    Some(format!(
+                        "entity '{name}' has {degree} connections; consider splitting or using --max-neighbors-per-hop"
+                    ))
+                } else {
+                    None
+                };
+                (Some(name), Some(degree), warning)
+            }
+            None => (None, None, None),
+        }
+    };
+
     let response = HealthResponse {
         status: status.to_string(),
         integrity,
@@ -469,6 +574,13 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         top_relation_ratio,
         applies_to_ratio,
         relation_concentration_warning,
+        non_normalized_count,
+        normalization_warning,
+        super_hub_count,
+        super_hub_warning,
+        top_hub_entity,
+        top_hub_degree,
+        hub_warning,
         checks,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
@@ -518,6 +630,13 @@ mod tests {
             top_relation_ratio: None,
             applies_to_ratio: None,
             relation_concentration_warning: None,
+            non_normalized_count: None,
+            normalization_warning: None,
+            super_hub_count: None,
+            super_hub_warning: None,
+            top_hub_entity: None,
+            top_hub_degree: None,
+            hub_warning: None,
             checks: vec![
                 HealthCheck {
                     name: "integrity".to_string(),
@@ -624,6 +743,13 @@ mod tests {
             top_relation_ratio: None,
             applies_to_ratio: None,
             relation_concentration_warning: None,
+            non_normalized_count: None,
+            normalization_warning: None,
+            super_hub_count: None,
+            super_hub_warning: None,
+            top_hub_entity: None,
+            top_hub_degree: None,
+            hub_warning: None,
             checks: vec![],
         };
 
@@ -696,6 +822,13 @@ mod tests {
             top_relation_ratio,
             applies_to_ratio,
             relation_concentration_warning,
+            non_normalized_count: None,
+            normalization_warning: None,
+            super_hub_count: None,
+            super_hub_warning: None,
+            top_hub_entity: None,
+            top_hub_degree: None,
+            hub_warning: None,
             checks: vec![],
         }
     }

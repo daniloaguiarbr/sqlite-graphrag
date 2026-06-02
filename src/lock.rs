@@ -9,6 +9,7 @@
 //! [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] milliseconds until the deadline. When it
 //! is `None` or `Some(0)`, a single attempt is made and `Err(AppError::AllSlotsFull)` is
 //! returned immediately if all slots are occupied.
+// Workload: I/O-bound (flock polling with exponential backoff sleep)
 
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
@@ -76,7 +77,15 @@ pub fn acquire_cli_slot(
     max_concurrency: usize,
     wait_seconds: Option<u64>,
 ) -> Result<(File, usize), AppError> {
-    let max = max_concurrency.clamp(1, MAX_CONCURRENT_CLI_INSTANCES);
+    // G18: use env override or 2*cpus as ceiling instead of hardcoded 4
+    let ncpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let ceiling = std::env::var("SQLITE_GRAPHRAG_MAX_CLI_INSTANCES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| (2 * ncpus).max(MAX_CONCURRENT_CLI_INSTANCES));
+    let max = max_concurrency.clamp(1, ceiling);
     let wait_secs = wait_seconds.unwrap_or(0);
 
     // Tentativa inicial sem espera.
@@ -91,10 +100,15 @@ pub fn acquire_cli_slot(
         });
     }
 
-    // Polling loop until the deadline.
+    // Polling loop with progressive backoff until the deadline.
     let deadline = Instant::now() + Duration::from_secs(wait_secs);
+    let mut polls: u64 = 0;
     loop {
-        thread::sleep(Duration::from_millis(CLI_LOCK_POLL_INTERVAL_MS));
+        let poll_delay = CLI_LOCK_POLL_INTERVAL_MS
+            .saturating_mul(1 + polls / 4)
+            .min(CLI_LOCK_POLL_INTERVAL_MS * 4);
+        thread::sleep(Duration::from_millis(poll_delay));
+        polls += 1;
         if let Some((file, slot)) = try_any_slot(max)? {
             return Ok((file, slot));
         }

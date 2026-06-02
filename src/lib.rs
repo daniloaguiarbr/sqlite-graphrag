@@ -36,13 +36,33 @@
 //! suitable for orchestration by shell scripts and LLM agents. Consult the
 //! README for the full contract.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::OnceLock;
+use tokio_util::sync::CancellationToken;
 
 /// Signals that a shutdown signal (SIGINT / SIGTERM / SIGHUP) has been received.
 ///
 /// Set in `main` via `ctrlc::set_handler`. Long-running subcommands can
 /// poll [`shutdown_requested`] to shut down gracefully before timeout.
+/// Async code should prefer [`cancel_token`] with `tokio::select!`.
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Counter of shutdown signals received. 0=none, 1=graceful, 2+=forced exit.
+pub static SIGNAL_COUNT: AtomicU8 = AtomicU8::new(0);
+
+/// Signal number that triggered shutdown (2=SIGINT, 15=SIGTERM). 0=none.
+static SIGNAL_NUMBER: AtomicU8 = AtomicU8::new(0);
+
+static CANCEL: OnceLock<CancellationToken> = OnceLock::new();
+
+/// Returns the process-wide cancellation token for async graceful shutdown.
+///
+/// The token is cancelled by the signal handler alongside [`SHUTDOWN`].
+/// Async loops should use `token.cancelled().await` inside `tokio::select!`
+/// for instant wake-up instead of polling [`shutdown_requested`].
+pub fn cancel_token() -> &'static CancellationToken {
+    CANCEL.get_or_init(CancellationToken::new)
+}
 
 /// Returns `true` if a shutdown signal has been received since the process started.
 ///
@@ -63,13 +83,22 @@ pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// use sqlite_graphrag::{SHUTDOWN, shutdown_requested};
 ///
 /// // Simulate receiving a signal and verify that the function reflects the state.
-/// SHUTDOWN.store(true, Ordering::SeqCst);
+/// SHUTDOWN.store(true, Ordering::Release);
 /// assert!(shutdown_requested());
 /// // Restore to avoid contaminating other tests.
-/// SHUTDOWN.store(false, Ordering::SeqCst);
+/// SHUTDOWN.store(false, Ordering::Release);
 /// ```
 pub fn shutdown_requested() -> bool {
-    SHUTDOWN.load(Ordering::SeqCst)
+    // ORDERING: Acquire pairs with the Release store in the signal handler (main.rs).
+    SHUTDOWN.load(Ordering::Acquire)
+}
+
+/// Returns the signal number that triggered shutdown (0 if none received).
+///
+/// Typically 2 (SIGINT) for Ctrl+C. Used to compute Unix-conventional exit
+/// code 128+N in the main function.
+pub fn shutdown_signal() -> u8 {
+    SIGNAL_NUMBER.load(Ordering::Acquire)
 }
 
 /// Token-aware chunking utilities for bodies that exceed the embedding window.
@@ -102,6 +131,9 @@ pub mod errors;
 /// Graph traversal helpers over the entities and relationships tables.
 pub mod graph;
 
+/// Type aliases for AHash-backed collections in hot paths.
+pub mod hash;
+
 /// Bilingual message layer for human-facing stderr progress (`--lang en|pt`, `SQLITE_GRAPHRAG_LANG`).
 pub mod i18n;
 
@@ -126,8 +158,20 @@ pub mod paths;
 /// SQLite pragma helpers applied on every connection.
 pub mod pragmas;
 
+/// Cross-platform signal handling: SIGINT, SIGTERM, SIGHUP.
+pub mod signals;
+
+/// Centralized retry infrastructure with exponential backoff and half-jitter.
+pub mod retry;
+
 /// Persistence layer: memories, entities, chunks and version history.
 pub mod storage;
+
+/// Centralized tracing subscriber initialization with panic hook and log bridge.
+pub mod telemetry;
+
+/// Cross-platform terminal initialization: UTF-8 console, ANSI colors, NO_COLOR.
+pub mod terminal;
 
 /// Display time zone for `*_iso` fields (flag `--tz`, env `SQLITE_GRAPHRAG_DISPLAY_TZ`, fallback UTC).
 pub mod tz;

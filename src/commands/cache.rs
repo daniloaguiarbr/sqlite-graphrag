@@ -231,7 +231,7 @@ fn run_list(args: CacheListArgs) -> Result<(), AppError> {
         collect_cache_files(models_dir, models_dir, &mut entries).map_err(AppError::Io)?;
     }
 
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     let total_bytes: u64 = entries.iter().map(|e| e.size_bytes).sum();
     let total_human = format_bytes_human(total_bytes);
     let n_files = entries.len();

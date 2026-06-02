@@ -148,6 +148,20 @@ jobs:
       - run: cargo install cargo-deny --locked
       - run: cargo deny check advisories licenses bans sources
 
+  geiger:
+    name: Unsafe Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger --locked || true
+      - name: Audit unsafe density
+        run: |
+          cargo geiger --all-features --output-format ascii 2>&1 | tee geiger-report.txt || true
+          echo "::notice::Unsafe audit report generated"
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -294,6 +308,21 @@ jobs:
           RUST_TEST_THREADS: "1"
         run: timeout 600 cargo test --test loom_lock_slots --release -- --test-threads=1
 
+  miri:
+    name: Miri Unsafe Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Run miri on pure-Rust unsafe tests
+        run: |
+          cargo +nightly miri test -- \
+            f32_to_bytes \
+            controlled_batch_plan
+
   bench-regression:
     name: Benchmark Regression
     runs-on: ubuntu-latest
@@ -317,6 +346,16 @@ jobs:
         with:
           name: bench-baseline
           path: target/criterion
+
+  careful:
+    name: cargo-careful sanity
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-careful
+      - run: timeout 600 cargo +nightly careful test -- --test-threads=2
 
   changelog-version-check:
     name: CHANGELOG version sync

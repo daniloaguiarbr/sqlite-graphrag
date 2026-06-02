@@ -39,7 +39,8 @@ use std::collections::HashMap;
 /// assert!(scores[&1] > scores[&3]);
 /// ```
 pub fn rrf_fuse(lists: &[(f64, &Vec<i64>)], rrf_k: f64) -> HashMap<i64, f64> {
-    let mut combined: HashMap<i64, f64> = HashMap::new();
+    let total_ids: usize = lists.iter().map(|(_, ids)| ids.len()).sum();
+    let mut combined: HashMap<i64, f64> = HashMap::with_capacity(total_ids);
     for (weight, ids) in lists {
         for (rank, &id) in ids.iter().enumerate() {
             // rank is 0-indexed here; formula uses 1-indexed, so we add 1.

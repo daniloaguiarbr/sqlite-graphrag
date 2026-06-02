@@ -98,6 +98,7 @@ struct LinkResponse {
 
 pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
+    tracing::debug!(target: "link", from = %args.from, to = %args.to, relation = %args.relation, "creating relationship");
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
 
@@ -115,13 +116,13 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
         )));
     }
     if weight >= 0.95 {
-        tracing::warn!(
+        tracing::warn!(target: "link",
             weight = weight,
             "weight >= 0.95 compresses the scoring range; consider using a value below 0.95"
         );
     }
     if weight <= 0.05 {
-        tracing::warn!(
+        tracing::warn!(target: "link",
             weight = weight,
             "weight <= 0.05 may be too weak to influence traversal; consider using a value above 0.05"
         );
@@ -129,7 +130,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 
     crate::storage::connection::ensure_db_ready(&paths)?;
 
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::with_capacity(2);
     let is_canonical = crate::parsers::is_canonical_relation(&args.relation);
     if !is_canonical {
         if args.strict_relations {
@@ -140,7 +141,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
             )));
         }
         warnings.push(format!("non-canonical relation '{}'", args.relation));
-        tracing::warn!(
+        tracing::warn!(target: "link",
             relation = %args.relation,
             "non-canonical relation accepted; consider using a well-known value"
         );
@@ -153,7 +154,7 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     let mut created_entities: Vec<String> = Vec::with_capacity(2);
 
     if args.entity_type.as_str() == "memory" {
-        tracing::warn!(
+        tracing::warn!(target: "link",
             entity_type = "memory",
             "entity_type 'memory' may conflict with memory table semantics; consider using 'concept' or another type"
         );

@@ -15,7 +15,7 @@ use crate::storage::fusion::{rrf_fuse, rrf_max_possible};
 use crate::storage::{entities, memories};
 
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -36,12 +36,17 @@ use tokio::task::JoinSet;
 )]
 pub struct DeepResearchArgs {
     /// Research query to decompose and search.
-    #[arg(value_name = "QUERY", help = "Research query to decompose and search")]
+    #[arg(
+        value_name = "QUERY",
+        allow_hyphen_values = true,
+        help = "Research query to decompose and search"
+    )]
     pub query: String,
     /// Results per sub-query (Recall@20 captures 95%+ relevant hits).
     #[arg(
         long,
         short,
+        aliases = ["limit", "top-k"],
         default_value_t = 20,
         help = "Results per sub-query (Recall@20 captures 95%+ relevant hits)"
     )]
@@ -243,7 +248,9 @@ struct SubQueryResult {
 }
 
 /// Sync entry point — builds a tokio runtime for the async fan-out.
+#[tracing::instrument(skip_all, level = "debug", name = "deep_research")]
 pub fn run(args: DeepResearchArgs) -> Result<(), AppError> {
+    tracing::debug!(target: "deep_research", query = %args.query, k = args.k, "starting deep research");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -261,7 +268,7 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
     }
 
     if args.max_cost_usd.is_some() && args.mode == "none" {
-        tracing::warn!("--max-cost-usd has no effect without --mode claude-code/codex");
+        tracing::warn!(target: "deep_research", "--max-cost-usd has no effect without --mode claude-code/codex");
     }
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -376,14 +383,14 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
                 } else {
                     failed_count += 1;
                 }
-                tracing::warn!(sub_query_id = _idx, reason = %reason, "sub-query failed");
+                tracing::warn!(target: "deep_research", sub_query_id = _idx, reason = %reason, "sub-query failed");
             }
             Err(join_err) => {
                 failed_count += 1;
                 if join_err.is_panic() {
-                    tracing::error!("sub-query task panicked: {join_err}");
+                    tracing::error!(target: "deep_research", error = %join_err, "sub-query task panicked");
                 } else {
-                    tracing::warn!("sub-query task cancelled: {join_err}");
+                    tracing::warn!(target: "deep_research", error = %join_err, "sub-query task cancelled");
                 }
             }
         }
@@ -391,7 +398,11 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
 
     // Phase 3: Evidence assembly — merge, dedup, rank.
     // Aggregate hits: memory_id -> (best_score, source, snippet, body, hop_distance, sub_query_ids)
-    let mut merged: HashMap<i64, MergedHit> = HashMap::new();
+    let mut merged: crate::hash::AHashMap<i64, MergedHit> =
+        crate::hash::AHashMap::with_capacity_and_hasher(
+            sub_query_results.len() * args.k,
+            Default::default(),
+        );
 
     for sqr in &sub_query_results {
         for (mem_id, score, source, snippet, body, hop) in &sqr.hits {
@@ -452,8 +463,8 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
     // The old code appended flat node pairs from a global SELECT; now each
     // sub-query returns directed EvidenceChain structs (from, to, path).
     let completed_count = sub_query_results.len();
-    let mut evidence_chains: Vec<EvidenceChain> = Vec::new();
-    let mut seen_chain_keys: HashSet<String> = HashSet::new();
+    let mut evidence_chains: Vec<EvidenceChain> = Vec::with_capacity(completed_count * 2);
+    let mut seen_chain_keys: HashSet<String> = HashSet::with_capacity(completed_count * 2);
 
     for sqr in sub_query_results {
         for chain in sqr.chains {
@@ -479,9 +490,10 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
     // MEDIUM-01b: Build graph_context with entities and relationships from result memories.
     let graph_context = if !results.is_empty() {
         let result_names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
-        let mut ctx_entities: Vec<GraphContextEntity> = Vec::new();
-        let mut ctx_rels: Vec<GraphContextRel> = Vec::new();
-        let mut seen_entity_ids: HashSet<i64> = HashSet::new();
+        let mut ctx_entities: Vec<GraphContextEntity> = Vec::with_capacity(results.len());
+        let mut ctx_rels: Vec<GraphContextRel> = Vec::with_capacity(results.len() * 2);
+        let mut seen_entity_ids: crate::hash::AHashSet<i64> =
+            crate::hash::AHashSet::with_capacity_and_hasher(results.len(), Default::default());
 
         for name in &result_names {
             if let Ok(Some(eid)) = entities::find_entity_id(&conn, &namespace, name) {
@@ -521,7 +533,8 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
                  LIMIT 50"
             );
             if let Ok(mut stmt) = conn.prepare(&sql) {
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    Vec::with_capacity(entity_ids.len() * 2);
                 for id in &entity_ids {
                     params.push(Box::new(*id));
                 }
@@ -562,7 +575,7 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
         None
     };
 
-    tracing::debug!(
+    tracing::debug!(target: "deep_research",
         total_results = results.len(),
         total_chains = evidence_chains.len(),
         "assembly complete"
@@ -596,7 +609,7 @@ fn decompose_query(query: &str, max: usize) -> Vec<String> {
         return vec![query.to_string()];
     }
 
-    let mut parts: Vec<String> = Vec::new();
+    let mut parts: Vec<String> = Vec::with_capacity(max);
 
     // Split by relational phrases first (most specific).
     let relational = [
@@ -691,9 +704,9 @@ fn reconstruct_path(
     target_id: i64,
     seed_entity_ids: &HashSet<i64>,
     predecessor: &PredecessorMap,
-    entity_names: &HashMap<i64, String>,
+    entity_names: &crate::hash::AHashMap<i64, String>,
 ) -> Option<(Vec<EvidenceNode>, f64)> {
-    let mut path_ids: Vec<(i64, Option<String>, Option<f64>)> = Vec::new();
+    let mut path_ids: Vec<(i64, Option<String>, Option<f64>)> = Vec::with_capacity(8);
     let mut total_weight = 1.0_f64;
     let mut current = target_id;
 
@@ -755,7 +768,8 @@ fn execute_sub_query(
 
     let mut hits: Vec<(i64, f64, String, String, String, Option<usize>)> =
         Vec::with_capacity(k * 2);
-    let mut seen_ids: HashSet<i64> = HashSet::new();
+    let mut seen_ids: crate::hash::AHashSet<i64> =
+        crate::hash::AHashSet::with_capacity_and_hasher(k * 2, Default::default());
 
     // --- GAP-08/11 FIX: Use RRF fusion for KNN + FTS instead of hardcoded 0.5 ---
 
@@ -763,10 +777,10 @@ fn execute_sub_query(
     let knn_results = memories::knn_search(&conn, embedding, &[namespace.to_string()], None, k)
         .map_err(|e| format!("knn_search failed: {e}"))?;
     let knn_ids: Vec<i64> = knn_results.iter().map(|(id, _)| *id).collect();
-    tracing::debug!(sub_query_id, knn_count = knn_ids.len(), "KNN complete");
+    tracing::debug!(target: "deep_research", sub_query_id, knn_count = knn_ids.len(), "KNN complete");
 
     // Build distance map for score computation.
-    let knn_distance_map: HashMap<i64, f64> = knn_results
+    let knn_distance_map: crate::hash::AHashMap<i64, f64> = knn_results
         .iter()
         .map(|(id, dist)| (*id, *dist as f64))
         .collect();
@@ -775,7 +789,7 @@ fn execute_sub_query(
     let fts_results = match memories::fts_search(&conn, query_text, namespace, None, k) {
         Ok(rows) => rows,
         Err(e) => {
-            tracing::warn!(
+            tracing::warn!(target: "deep_research",
                 sub_query_id,
                 "FTS5 search failed, continuing with KNN only: {e}"
             );
@@ -783,7 +797,7 @@ fn execute_sub_query(
         }
     };
     let fts_ids: Vec<i64> = fts_results.iter().map(|r| r.id).collect();
-    tracing::debug!(sub_query_id, fts_count = fts_ids.len(), "FTS complete");
+    tracing::debug!(target: "deep_research", sub_query_id, fts_count = fts_ids.len(), "FTS complete");
 
     // 3. Fuse via RRF.
     let rrf_scores = rrf_fuse(&[(1.0, &knn_ids), (1.0, &fts_ids)], rrf_k);
@@ -793,14 +807,14 @@ fn execute_sub_query(
     let mut fused: Vec<(i64, f64)> = rrf_scores.into_iter().collect();
     fused.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     fused.truncate(k * 2);
-    tracing::debug!(
+    tracing::debug!(target: "deep_research",
         sub_query_id,
         fused_count = fused.len(),
         "RRF fusion complete"
     );
 
     if fused.is_empty() && !knn_ids.is_empty() {
-        tracing::warn!(sub_query_id, knn_count = knn_ids.len(), fts_count = fts_ids.len(),
+        tracing::warn!(target: "deep_research", sub_query_id, knn_count = knn_ids.len(), fts_count = fts_ids.len(),
             "RRF fusion returned 0 results despite KNN/FTS hits; consider lowering --graph-min-score");
     }
 
@@ -837,11 +851,13 @@ fn execute_sub_query(
     // 5. Graph traversal from discovered memories.
     // GAP-09/10 FIX: entity KNN also uses this sub-query's embedding.
     let memory_ids: Vec<i64> = hits.iter().map(|(id, ..)| *id).collect();
-    let mut chains: Vec<EvidenceChain> = Vec::new();
+    let mut chains: Vec<EvidenceChain> = Vec::with_capacity(memory_ids.len());
 
     if !memory_ids.is_empty() && max_hops > 0 {
         // Seed entities from KNN on entity vectors using THIS sub-query's embedding.
-        let entity_knn = entities::knn_search(&conn, embedding, namespace, 5).unwrap_or_default();
+        let entity_knn = entities::knn_search(&conn, embedding, namespace, 5)
+            .inspect_err(|e| tracing::warn!(target: "deep_research", error = %e, "entity KNN search failed, skipping graph seed"))
+            .unwrap_or_default();
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
         // HIGH-01 FIX: limit seeds to top-5 memories by score to prevent
@@ -862,7 +878,7 @@ fn execute_sub_query(
         }
         seed_entity_ids.sort_unstable();
         seed_entity_ids.dedup();
-        tracing::debug!(
+        tracing::debug!(target: "deep_research",
             sub_query_id,
             seed_count = seed_entity_ids.len(),
             "seed entities collected"
@@ -884,7 +900,7 @@ fn execute_sub_query(
             max_neighbors_per_hop,
         ) {
             // Build seed score map from RRF-fused scores for graph decay computation.
-            let seed_score_map: HashMap<i64, f64> = fused
+            let seed_score_map: crate::hash::AHashMap<i64, f64> = fused
                 .iter()
                 .map(|(id, s)| {
                     let normalized = if max_possible > 0.0 {
@@ -943,7 +959,7 @@ fn execute_sub_query(
             )
             .unwrap_or_default();
 
-            tracing::debug!(
+            tracing::debug!(target: "deep_research",
                 sub_query_id,
                 bfs_nodes = entity_depth.len(),
                 predecessors = predecessor.len(),
@@ -954,7 +970,11 @@ fn execute_sub_query(
 
             // Collect entity IDs we need names for.
             let all_entity_ids: Vec<i64> = entity_depth.keys().copied().collect();
-            let mut entity_names: HashMap<i64, String> = HashMap::new();
+            let mut entity_names: crate::hash::AHashMap<i64, String> =
+                crate::hash::AHashMap::with_capacity_and_hasher(
+                    all_entity_ids.len(),
+                    ahash::RandomState::default(),
+                );
             for &eid in &all_entity_ids {
                 let name_res: rusqlite::Result<String> = conn.query_row(
                     "SELECT name FROM entities WHERE id = ?1",
@@ -1007,7 +1027,7 @@ fn execute_sub_query(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             chains.truncate(20);
-            tracing::debug!(
+            tracing::debug!(target: "deep_research",
                 sub_query_id,
                 chains_count = chains.len(),
                 "evidence chains built"
@@ -1292,10 +1312,10 @@ mod tests {
     fn test_reconstruct_path_root_to_target_order() {
         // Build a simple chain: entity 10 (seed) -> entity 20 -> entity 30 (target)
         let seed_set: HashSet<i64> = [10i64].into_iter().collect();
-        let mut predecessor: HashMap<i64, (i64, String, f64)> = HashMap::new();
+        let mut predecessor: PredecessorMap = std::collections::HashMap::new();
         predecessor.insert(20, (10, "depends-on".to_string(), 0.9));
         predecessor.insert(30, (20, "uses".to_string(), 0.8));
-        let mut entity_names: HashMap<i64, String> = HashMap::new();
+        let mut entity_names: crate::hash::AHashMap<i64, String> = crate::hash::AHashMap::default();
         entity_names.insert(10, "seed-entity".to_string());
         entity_names.insert(20, "middle-entity".to_string());
         entity_names.insert(30, "target-entity".to_string());

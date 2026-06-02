@@ -10,7 +10,7 @@ use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 /// Identifies whether the seed resolved to a memory or a bare entity.
 enum SeedKind {
@@ -72,6 +72,8 @@ struct RelatedResponse {
     /// Echo of the resolved `--max-hops` value (default 2). Added in v1.0.35.
     max_hops: u32,
     results: Vec<RelatedMemory>,
+    /// Semantic alias of `results` following the v1.0.66 alias pattern (list has items/memories).
+    related_memories: Vec<RelatedMemory>,
     elapsed_ms: u64,
 }
 
@@ -86,6 +88,12 @@ struct RelatedMemory {
     hop_distance: u32,
     source_entity: Option<String>,
     target_entity: Option<String>,
+    /// Alias of `source_entity` for cross-command consistency (graph, link, deep-research use from/to).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    /// Alias of `target_entity` for cross-command consistency.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to: Option<String>,
     relation: Option<String>,
     weight: Option<f64>,
 }
@@ -168,12 +176,16 @@ pub fn run(args: RelatedArgs) -> Result<(), AppError> {
     )?;
 
     match args.format {
-        OutputFormat::Json => output::emit_json(&RelatedResponse {
-            name: name.clone(),
-            max_hops: args.max_hops,
-            results,
-            elapsed_ms: inicio.elapsed().as_millis() as u64,
-        })?,
+        OutputFormat::Json => {
+            let related_memories = results.clone();
+            output::emit_json(&RelatedResponse {
+                name: name.clone(),
+                max_hops: args.max_hops,
+                results,
+                related_memories,
+                elapsed_ms: inicio.elapsed().as_millis() as u64,
+            })?;
+        }
         OutputFormat::Text => {
             for item in &results {
                 if item.description.is_empty() {
@@ -237,13 +249,15 @@ fn traverse_related(
     // BFS over entities keeping track of hop distance and the (source, target, relation, weight)
     // of the edge that first reached each entity.
     let mut visited: HashSet<i64> = seed_entity_ids.iter().copied().collect();
-    let mut entity_hop: HashMap<i64, u32> = HashMap::new();
+    let mut entity_hop: crate::hash::AHashMap<i64, u32> =
+        crate::hash::AHashMap::with_capacity_and_hasher(max_hops as usize * 10, Default::default());
     for &e in seed_entity_ids {
         entity_hop.insert(e, 0);
     }
     // Per-entity edge info: source_name, target_name, relation, weight (captures the FIRST edge
     // that reached this entity — equivalent to BFS shortest path recall edge).
-    let mut entity_edge: HashMap<i64, (String, String, String, f64)> = HashMap::new();
+    let mut entity_edge: crate::hash::AHashMap<i64, (String, String, String, f64)> =
+        crate::hash::AHashMap::with_capacity_and_hasher(max_hops as usize * 10, Default::default());
 
     let mut queue: VecDeque<i64> = seed_entity_ids.iter().copied().collect();
 
@@ -267,7 +281,8 @@ fn traverse_related(
 
     // For each discovered entity (hop >= 1) find its memories, skipping the seed memory.
     let mut out: Vec<RelatedMemory> = Vec::with_capacity(limit);
-    let mut dedup_ids: HashSet<i64> = HashSet::new();
+    let mut dedup_ids: crate::hash::AHashSet<i64> =
+        crate::hash::AHashSet::with_capacity_and_hasher(limit, Default::default());
     dedup_ids.insert(seed_memory_id);
 
     // Sort entities by hop ASC, weight DESC so we emit closer entities first.
@@ -310,6 +325,8 @@ fn traverse_related(
                 continue;
             }
             let edge = entity_edge.get(&entity_id);
+            let src = edge.map(|e| e.0.clone());
+            let tgt = edge.map(|e| e.1.clone());
             out.push(RelatedMemory {
                 memory_id: mid,
                 name,
@@ -317,8 +334,10 @@ fn traverse_related(
                 memory_type: mtype,
                 description: desc,
                 hop_distance: hop,
-                source_entity: edge.map(|e| e.0.clone()),
-                target_entity: edge.map(|e| e.1.clone()),
+                source_entity: src.clone(),
+                target_entity: tgt.clone(),
+                from: src,
+                to: tgt,
                 relation: edge.map(|e| e.2.clone()),
                 weight: edge.map(|e| e.3),
             });
@@ -501,21 +520,25 @@ mod tests {
 
     #[test]
     fn related_response_serializes_results_and_elapsed_ms() {
+        let mem = RelatedMemory {
+            memory_id: 1,
+            name: "neighbor-mem".to_string(),
+            namespace: "global".to_string(),
+            memory_type: "document".to_string(),
+            description: "desc".to_string(),
+            hop_distance: 1,
+            source_entity: Some("entity-a".to_string()),
+            target_entity: Some("entity-b".to_string()),
+            from: Some("entity-a".to_string()),
+            to: Some("entity-b".to_string()),
+            relation: Some("related_to".to_string()),
+            weight: Some(0.9),
+        };
         let resp = RelatedResponse {
             name: "seed-mem".to_string(),
             max_hops: 2,
-            results: vec![RelatedMemory {
-                memory_id: 1,
-                name: "neighbor-mem".to_string(),
-                namespace: "global".to_string(),
-                memory_type: "document".to_string(),
-                description: "desc".to_string(),
-                hop_distance: 1,
-                source_entity: Some("entity-a".to_string()),
-                target_entity: Some("entity-b".to_string()),
-                relation: Some("related_to".to_string()),
-                weight: Some(0.9),
-            }],
+            related_memories: vec![mem.clone()],
+            results: vec![mem],
             elapsed_ms: 7,
         };
 
@@ -606,6 +629,8 @@ mod tests {
             hop_distance: 2,
             source_entity: None,
             target_entity: None,
+            from: None,
+            to: None,
             relation: None,
             weight: None,
         };

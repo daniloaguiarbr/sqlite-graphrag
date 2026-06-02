@@ -29,6 +29,7 @@ pub enum JsonOutputFormat {
 ///
 /// # Errors
 /// Returns `Err` when serialization fails or when a non-`BrokenPipe` I/O error occurs.
+#[inline]
 pub fn emit_json<T: Serialize>(value: &T) -> Result<(), AppError> {
     let json = serde_json::to_string_pretty(value)?;
     let mut out = std::io::stdout().lock();
@@ -50,6 +51,7 @@ pub fn emit_json<T: Serialize>(value: &T) -> Result<(), AppError> {
 ///
 /// # Errors
 /// Returns `Err` when serialization fails or when a non-`BrokenPipe` I/O error occurs.
+#[inline]
 pub fn emit_json_compact<T: Serialize>(value: &T) -> Result<(), AppError> {
     let json = serde_json::to_string(value)?;
     let mut out = std::io::stdout().lock();
@@ -65,9 +67,22 @@ pub fn emit_json_compact<T: Serialize>(value: &T) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Writes compact JSON to stdout, silently ignoring serialization and I/O errors.
+/// Designed for NDJSON streaming where partial output is acceptable.
+#[inline]
+pub fn emit_json_line<T: Serialize>(value: &T) {
+    if let Ok(json) = serde_json::to_string(value) {
+        let mut out = std::io::stdout().lock();
+        let _ = std::io::Write::write_all(&mut out, json.as_bytes());
+        let _ = std::io::Write::write_all(&mut out, b"\n");
+        let _ = std::io::Write::flush(&mut out);
+    }
+}
+
 /// Writes `msg` followed by a newline to stdout and flushes.
 ///
 /// A `BrokenPipe` error is silenced gracefully.
+#[inline]
 pub fn emit_text(msg: &str) {
     let mut out = std::io::stdout().lock();
     let _ = std::io::Write::write_all(&mut out, msg.as_bytes())
@@ -76,8 +91,9 @@ pub fn emit_text(msg: &str) {
 }
 
 /// Logs `msg` as a structured `tracing::info!` event (does not write to stdout).
+#[inline]
 pub fn emit_progress(msg: &str) {
-    tracing::info!(message = msg);
+    tracing::info!(target: "output", message = msg);
 }
 
 /// Emits a bilingual progress message honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
@@ -85,8 +101,8 @@ pub fn emit_progress(msg: &str) {
 pub fn emit_progress_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
     match current() {
-        Language::English => tracing::info!(message = en),
-        Language::Portuguese => tracing::info!(message = pt),
+        Language::English => tracing::info!(target: "output", message = en),
+        Language::Portuguese => tracing::info!(target: "output", message = pt),
     }
 }
 
@@ -96,6 +112,8 @@ pub fn emit_progress_i18n(en: &str, pt: &str) {
 /// `{"error": true, "code": <exit_code>, "message": "<localized_msg>"}`.
 /// A `BrokenPipe` error is silenced so piping to early-closing consumers
 /// does not surface a secondary error.
+#[cold]
+#[inline(never)]
 pub fn emit_error_json(code: i32, message: &str) {
     #[derive(serde::Serialize)]
     struct ErrorEnvelope<'a> {
@@ -123,12 +141,17 @@ pub fn emit_error_json(code: i32, message: &str) {
 /// Centralises human-readable error output following Pattern 5 (`output.rs` is the
 /// SOLE I/O point of the CLI). Does not log via `tracing` — call `tracing::error!`
 /// explicitly before this function when structured observability is desired.
+#[cold]
+#[inline(never)]
 pub fn emit_error(localized_msg: &str) {
+    tracing::error!(target: "output", message = localized_msg);
     eprintln!("{}: {}", crate::i18n::error_prefix(), localized_msg);
 }
 
 /// Emits a bilingual error to stderr honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
 /// Usage: `output::emit_error_i18n("invariant violated", "invariante violado")`.
+#[cold]
+#[inline(never)]
 pub fn emit_error_i18n(en: &str, pt: &str) {
     use crate::i18n::{current, Language};
     let msg = match current() {
@@ -295,6 +318,7 @@ impl RecallItem {
     /// `[0.0, 1.0]`. Cosine distance returned by sqlite-vec lives in `[0, 2]`
     /// in theory but the embedder produces unit-norm vectors so the practical
     /// range is `[0, 1]`. Centralized so every constructor keeps the contract.
+    #[inline]
     pub fn score_from_distance(distance: f32) -> f32 {
         let raw = 1.0 - distance;
         if raw.is_nan() {

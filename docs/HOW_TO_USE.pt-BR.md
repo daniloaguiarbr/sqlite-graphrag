@@ -73,7 +73,7 @@ sqlite-graphrag purge --retention-days 90 --yes
 - `--with-graph` enriquece resultados com matches de travessia de grafo semeados pelos top hits RRF
 - `--max-hops` (padrão 2) e `--min-weight` (padrão 0.3) ajustam a expansão do grafo
 - Matches de grafo aparecem no array `graph_matches`, separados de `results`
-- `read` recupera memória pelo nome kebab-case exato em uma única query SQL
+- `read` recupera memória pelo nome kebab-case exato em uma única query SQL; use `--id <N>` para lookup direto por `memory_id` inteiro quando você já tem o ID de uma query anterior; use `--with-graph` para incluir entidades e relacionamentos vinculados na resposta
 - `forget` faz remoção lógica preservando integralmente o histórico de versões
 - `purge` apaga permanentemente memórias removidas há mais de N dias de retenção
 
@@ -213,6 +213,7 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Use `--dry-run` para preview de quais itens seriam enriquecidos sem spawnar o LLM
 - Use `--max-cost-usd N` para limitar gasto acumulado da API (ignorado para usuários OAuth)
 - Use `--resume` e `--retry-failed` para resiliência via queue DB
+- Use `--llm-parallelism <N>` para controlar quantos subprocessos LLM rodam em paralelo (padrão: 1); aumente em hosts com capacidade disponível para acelerar execuções grandes de enriquecimento
 - Saída é NDJSON: eventos de fase, eventos por item (status: `done`/`failed`/`skipped`/`preview`) e linha de resumo
 - Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 
@@ -367,6 +368,7 @@ sqlite-graphrag export --include-deleted --json
 ### Usando edit
 - Altera o corpo ou a descrição de uma memória existente criando nova versão imutável
 - Regenera embedding vetorial quando body muda — `recall` e `hybrid-search` retornam scores precisos após edit (desde v1.0.63; edições somente de descrição não re-embdam)
+- Use `--type <TIPO>` para alterar o tipo da memória (ex.: de `note` para `decision`) sem recriar a memória; pula re-embedding quando o body não mudou
 - Use `--expected-updated-at` para locking otimista em pipelines de agentes concorrentes
 ```bash
 sqlite-graphrag edit --name design-auth --body "Justificativa atualizada após revisão do RFC"
@@ -453,13 +455,14 @@ sqlite-graphrag health --json
 ```
 - Pré-requisitos: um banco inicializado deve existir
 - Executa `PRAGMA integrity_check` primeiro; retorna exit code 10 com `integrity_ok: false` se corrupção for detectada
-- Schema de saída: `{"status":"ok","integrity":"ok","integrity_ok":true,"schema_ok":true,"counts":{"memories":N,"entities":N,"relationships":N,"vec_memories":N},"db_path":"...","db_size_bytes":N,"schema_version":N,"wal_size_mb":N.N,"journal_mode":"wal","checks":[{"name":"integrity","ok":true}],"elapsed_ms":N}`
+- Schema de saída: `{"status":"ok","integrity":"ok","integrity_ok":true,"schema_ok":true,"vec_memories_ok":true,"vec_memories_missing":0,"vec_memories_orphaned":0,"counts":{"memories":N,"entities":N,"relationships":N,"vec_memories":N},"db_path":"...","db_size_bytes":N,"schema_version":N,"wal_size_mb":N.N,"journal_mode":"wal","checks":[{"name":"integrity","ok":true}],"elapsed_ms":N}`
 - `journal_mode` reporta o modo de journaling do SQLite (`wal` ou `delete`)
 - `wal_size_mb` reporta o tamanho atual do arquivo WAL em megabytes (0.0 quando não está em modo WAL)
 - `checks` é um array de objetos diagnósticos com `name` e `ok`
 - `integrity_ok` é `true` quando `integrity_check` retorna `"ok"` e `false` caso contrário
 - Quando relacionamentos `mentions` ultrapassam 50% de todos os relacionamentos do grafo, a resposta também inclui `mentions_ratio` (float) e `mentions_warning` (string)
 - Desde v1.0.65: também reporta `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float) e `relation_concentration_warning` (string) quando qualquer tipo de relação excede 40% das arestas
+- Detecção de super-hubs: quando qualquer entidade tem `degree > 50`, a resposta inclui o campo `super_hub_warning` listando os nomes das entidades afetadas; revise e pode esses hubs para evitar viés no retrieval
 - Exit code 0: banco está íntegro
 - Exit code 10: verificação de integridade falhou — trate como banco corrompido
 
@@ -620,6 +623,10 @@ sqlite-graphrag link --from design-auth --to spec-jwt --relation depends-on
 ### Nota sobre remember
 - `--force-merge` atualiza o corpo de uma memória existente em vez de retornar exit code 9 em nome duplicado; desde v1.0.51 também restaura memórias soft-deleted e atualiza em um passo
 - Use `--force-merge` em loops de pipeline idempotentes onde a mesma chave pode aparecer múltiplas vezes
+- Use `remember-batch` para criar múltiplas memórias a partir de NDJSON no stdin; cada linha é um objeto JSON com `name`, `type`, `description`, `body` e arrays opcionais `entities`/`relationships`
+- Use `--transaction` no `remember-batch` para atomicidade tudo-ou-nada em todas as linhas
+- Use `--force-merge` no `remember-batch` para atualizar memórias existentes pelo nome em vez de falhar em duplicatas
+- Use `--fail-fast` no `remember-batch` para interromper o processamento no primeiro erro
 - `--entities-file` aceita arquivo JSON onde cada objeto deve incluir o campo `entity_type`
 - O campo alias `type` também é aceito como sinônimo de `entity_type`
 - NÃO envie `entity_type` e `type` no mesmo objeto porque o parser trata isso como campo duplicado

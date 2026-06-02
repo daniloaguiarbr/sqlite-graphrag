@@ -386,7 +386,7 @@ const GLINER_ENTITY_LABELS: &[(&str, EntityType)] = &[
 ];
 
 struct GlinerModel {
-    session: std::sync::Mutex<Session>,
+    session: parking_lot::Mutex<Session>,
     tokenizer: tokenizers::Tokenizer,
     #[allow(dead_code)]
     variant: GlinerVariant,
@@ -408,7 +408,7 @@ impl GlinerModel {
             .map_err(|e| anyhow::anyhow!("loading GLiNER tokenizer: {e}"))?;
 
         Ok(Self {
-            session: std::sync::Mutex::new(session),
+            session: parking_lot::Mutex::new(session),
             tokenizer,
             variant,
         })
@@ -430,7 +430,7 @@ impl GlinerModel {
         let label_token_count = label_names.len() * 2 + 1;
         let max_words = GLINER_MAX_SEQ_LEN.saturating_sub(label_token_count + 2);
         let words = if words.len() > max_words {
-            tracing::warn!(
+            tracing::warn!(target: "extraction",
                 original_words = words.len(),
                 capped_words = max_words,
                 "GLiNER input truncated to fit model sequence length"
@@ -442,8 +442,13 @@ impl GlinerModel {
         let num_words = words.len();
 
         // Build prompt: [<<ENT>>, label1, <<ENT>>, label2, ..., <<SEP>>, word1, word2, ...]
-        let mut prompt_tokens: Vec<String> =
-            Vec::with_capacity(label_names.len() * 2 + 1 + num_words);
+        let prompt_cap = label_names.len() * 2 + 1 + num_words;
+        let mut prompt_tokens: Vec<String> = Vec::new();
+        prompt_tokens.try_reserve(prompt_cap).map_err(|_| {
+            anyhow::anyhow!(
+                "allocation of {prompt_cap} prompt tokens would exceed available memory"
+            )
+        })?;
         for label in &label_names {
             prompt_tokens.push(GLINER_ENT_TOKEN.to_string());
             prompt_tokens.push((*label).to_string());
@@ -455,9 +460,20 @@ impl GlinerModel {
 
         // Encode each token individually (word-by-word encoding per GLiNER protocol)
         let seq_estimate = prompt_tokens.len() * 3;
-        let mut all_ids: Vec<i64> = Vec::with_capacity(seq_estimate);
-        let mut all_attention: Vec<i64> = Vec::with_capacity(seq_estimate);
-        let mut all_word_mask: Vec<i64> = Vec::with_capacity(seq_estimate);
+        let mut all_ids: Vec<i64> = Vec::new();
+        all_ids.try_reserve(seq_estimate).map_err(|_| {
+            anyhow::anyhow!("allocation of {seq_estimate} token IDs would exceed available memory")
+        })?;
+        let mut all_attention: Vec<i64> = Vec::new();
+        all_attention.try_reserve(seq_estimate).map_err(|_| {
+            anyhow::anyhow!(
+                "allocation of {seq_estimate} attention masks would exceed available memory"
+            )
+        })?;
+        let mut all_word_mask: Vec<i64> = Vec::new();
+        all_word_mask.try_reserve(seq_estimate).map_err(|_| {
+            anyhow::anyhow!("allocation of {seq_estimate} word masks would exceed available memory")
+        })?;
 
         // BOS token
         all_ids.push(1);
@@ -530,10 +546,7 @@ impl GlinerModel {
                 .map_err(|e| anyhow::anyhow!("building span_mask tensor: {e}"))?;
 
         // Run inference — Session::run requires &mut Session; bind guard first.
-        let mut session_guard = self
-            .session
-            .lock()
-            .map_err(|_| anyhow::anyhow!("GLiNER session mutex poisoned"))?;
+        let mut session_guard = self.session.lock();
         let outputs = session_guard
             .run(ort::inputs![
                 "input_ids" => t_input_ids,
@@ -560,8 +573,13 @@ impl GlinerModel {
             .unwrap_or(GLINER_MAX_WIDTH as i64) as usize;
         let nc = logits_shape.get(3).copied().unwrap_or(num_classes as i64) as usize;
 
-        let mut candidates: Vec<(usize, usize, usize, f32)> =
-            Vec::with_capacity(num_words * max_width);
+        let candidates_cap = num_words * max_width;
+        let mut candidates: Vec<(usize, usize, usize, f32)> = Vec::new();
+        candidates.try_reserve(candidates_cap).map_err(|_| {
+            anyhow::anyhow!(
+                "allocation of {candidates_cap} candidates would exceed available memory"
+            )
+        })?;
 
         for start in 0..num_words {
             for width in 0..max_width {
@@ -636,7 +654,7 @@ fn ensure_gliner_model_files(paths: &AppPaths, variant: GlinerVariant) -> Result
     }
 
     let repo = crate::constants::gliner_model_repo();
-    tracing::info!(
+    tracing::info!(target: "extraction",
         "Downloading GLiNER model ({variant}, ~{})...",
         variant.display_size()
     );
@@ -651,7 +669,7 @@ fn ensure_gliner_model_files(paths: &AppPaths, variant: GlinerVariant) -> Result
         ),
     );
 
-    let api = huggingface_hub::api::sync::Api::new().context("creating HF Hub client")?;
+    let api = huggingface_hub::api::sync::Api::new().with_context(|| "creating HF Hub client")?;
     let hf_repo = api.model(repo);
 
     let remote_model = format!("onnx/{}", variant.as_filename());
@@ -666,8 +684,8 @@ fn ensure_gliner_model_files(paths: &AppPaths, variant: GlinerVariant) -> Result
     if !tokenizer_file.exists() {
         let src = hf_repo
             .get("tokenizer.json")
-            .context("downloading tokenizer.json from HF Hub")?;
-        std::fs::copy(&src, &tokenizer_file).context("copying tokenizer.json to cache")?;
+            .with_context(|| "downloading tokenizer.json from HF Hub")?;
+        std::fs::copy(&src, &tokenizer_file).with_context(|| "copying tokenizer.json to cache")?;
     }
 
     Ok(dir)
@@ -683,7 +701,7 @@ fn get_or_init_gliner(paths: &AppPaths, variant: GlinerVariant) -> Option<&'stat
         .get_or_init(|| match load_gliner_model(paths, variant) {
             Ok(m) => Some(m),
             Err(e) => {
-                tracing::warn!("GLiNER model unavailable (graceful degradation): {e:#}");
+                tracing::warn!(target: "extraction", error = %e, "GLiNER model unavailable, graceful degradation");
                 None
             }
         })
@@ -692,7 +710,7 @@ fn get_or_init_gliner(paths: &AppPaths, variant: GlinerVariant) -> Option<&'stat
 
 fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
     let mut entities = Vec::with_capacity(16);
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::with_capacity(32);
 
     let add = |entities: &mut Vec<ExtractedEntity>,
                seen: &mut std::collections::HashSet<String>,
@@ -740,7 +758,7 @@ fn apply_regex_prefilter(body: &str) -> Vec<ExtractedEntity> {
 /// URLs are stored in the `memory_urls` table separately from graph entities.
 /// v1.0.24: split of the URL block that polluted apply_regex_prefilter with entity_type='concept'.
 pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::with_capacity(8);
     let mut result = Vec::with_capacity(4);
     for m in regex_url().find_iter(body) {
         let raw = m.as_str();
@@ -781,8 +799,9 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
     // Allows users with dense corpora to increase beyond the default 50.
     let max_rels = crate::constants::max_relationships_per_memory();
     let n = entities.len().min(MAX_ENTS);
-    let mut rels: Vec<NewRelationship> = Vec::new();
-    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut rels: Vec<NewRelationship> = Vec::with_capacity(n.min(max_rels));
+    let mut seen: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::with_capacity(n.min(max_rels));
 
     let mut hit_cap = false;
     'outer: for i in 0..n {
@@ -820,7 +839,7 @@ fn build_relationships(entities: &[NewEntity]) -> (Vec<NewRelationship>, bool) {
 
     // v1.0.20: warn when relationships were truncated before covering all possible pairs.
     if hit_cap {
-        tracing::warn!(
+        tracing::warn!(target: "extraction",
             "relationships truncated to {max_rels} (with {n} entities, theoretical max was ~{}x combinations)",
             n.saturating_sub(1)
         );
@@ -856,7 +875,8 @@ fn build_relationships_by_sentence_cooccurrence(
         .collect();
 
     let mut rels: Vec<NewRelationship> = Vec::with_capacity(max_rels);
-    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::with_capacity(max_rels);
     let mut hit_cap = false;
 
     for sentence in body.split(['.', '!', '?', '\n']) {
@@ -874,11 +894,12 @@ fn build_relationships_by_sentence_cooccurrence(
             continue;
         }
 
-        for i in 0..present.len() {
-            for j in (i + 1)..present.len() {
+        let n = present.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
                 if rels.len() >= max_rels {
                     hit_cap = true;
-                    tracing::warn!(
+                    tracing::warn!(target: "extraction",
                         "relationships truncated to {max_rels} during sentence-level pairing"
                     );
                     return (rels, hit_cap);
@@ -1031,7 +1052,8 @@ fn merge_and_deduplicate(
     // - NFKC normalization before lowercasing (v1.0.24).
     // - Longest-wins: on collision keep the entity with the longer name.
     // - Truncation warning at MAX_ENTS.
-    let mut by_lc: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut by_lc: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::with_capacity(regex_ents.len() + ner_ents.len());
     let mut result: Vec<ExtractedEntity> = Vec::with_capacity(MAX_ENTS);
     let mut truncated = false;
 
@@ -1108,7 +1130,7 @@ fn merge_and_deduplicate(
 
     // v1.0.20: warn when silent truncation discards entities above MAX_ENTS.
     if truncated {
-        tracing::warn!(
+        tracing::warn!(target: "extraction",
             "extraction truncated at {MAX_ENTS} entities (input had {total_input} candidates before deduplication)"
         );
     }
@@ -1143,7 +1165,7 @@ pub fn extract_graph_auto(
                 ents
             }
             Err(e) => {
-                tracing::warn!("GLiNER NER failed, falling back to regex-only extraction: {e:#}");
+                tracing::warn!(target: "extraction", error = %e, "GLiNER NER failed, falling back to regex-only");
                 Vec::new()
             }
         },

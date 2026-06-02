@@ -89,7 +89,7 @@ pub fn run(args: SyncSafeCopyArgs) -> Result<(), AppError> {
     }
     #[cfg(windows)]
     {
-        tracing::debug!(
+        tracing::debug!(target: "sync_safe_copy",
             path = %dest.display(),
             "skipping Unix mode 0o600 on Windows; NTFS DACL default is private-to-user"
         );

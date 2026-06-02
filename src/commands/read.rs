@@ -1,7 +1,6 @@
 //! Handler for the `read` CLI subcommand.
 
 use crate::errors::AppError;
-use crate::i18n::errors_msg;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_ro;
@@ -14,6 +13,8 @@ use serde::Serialize;
     sqlite-graphrag read onboarding\n\n  \
     # Read using the named flag form\n  \
     sqlite-graphrag read --name onboarding\n\n  \
+    # Read by memory ID (integer emitted in JSON output of most commands)\n  \
+    sqlite-graphrag read --id 42 --json\n\n  \
     # Read from a specific namespace\n  \
     sqlite-graphrag read onboarding --namespace my-project")]
 pub struct ReadArgs {
@@ -27,11 +28,24 @@ pub struct ReadArgs {
     /// Memory name to read. Returns NotFound (exit 4) if missing or soft-deleted.
     #[arg(long)]
     pub name: Option<String>,
+    /// Memory ID (integer) for direct lookup. Conflicts with --name and positional NAME.
+    #[arg(
+        long,
+        conflicts_with_all = ["name", "name_positional"],
+        help = "Memory ID (integer) for direct lookup"
+    )]
+    pub id: Option<i64>,
     #[arg(
         long,
         help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
     )]
     pub namespace: Option<String>,
+    /// Include linked entities and relationships in the response.
+    #[arg(
+        long,
+        help = "Include graph context (entities + relationships) in response"
+    )]
+    pub with_graph: bool,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -64,8 +78,29 @@ struct ReadResponse {
     updated_at: i64,
     /// RFC 3339 UTC timestamp parallel to `updated_at` for ISO 8601 parsers.
     updated_at_iso: String,
+    /// Linked entities (opt-in via --with-graph).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entities: Option<Vec<ReadEntityBinding>>,
+    /// Relationships from linked entities (opt-in via --with-graph).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relationships: Option<Vec<ReadRelationshipBinding>>,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
+}
+
+#[derive(Serialize)]
+struct ReadEntityBinding {
+    entity_id: i64,
+    name: String,
+    entity_type: String,
+}
+
+#[derive(Serialize)]
+struct ReadRelationshipBinding {
+    from: String,
+    to: String,
+    relation: String,
+    weight: f64,
 }
 
 fn epoch_to_iso(epoch: i64) -> String {
@@ -74,16 +109,33 @@ fn epoch_to_iso(epoch: i64) -> String {
 
 pub fn run(args: ReadArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    // Resolve name from positional or --name flag; both are optional, at least one is required.
-    let name = args.name_positional.or(args.name).ok_or_else(|| {
-        AppError::Validation("name required: pass as positional argument or via --name".to_string())
-    })?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
-    match memories::read_by_name(&conn, &namespace, &name)? {
+    let row_opt = if let Some(id) = args.id {
+        let r = memories::read_full(&conn, id)?;
+        if let Some(ref row) = r {
+            if row.namespace != namespace {
+                return Err(AppError::NotFound(format!(
+                    "memory id {id} exists but belongs to namespace '{}', not '{namespace}'",
+                    row.namespace
+                )));
+            }
+        }
+        r
+    } else {
+        let name = args.name_positional.or(args.name).ok_or_else(|| {
+            AppError::Validation(
+                "name or --id required: pass name as positional argument, via --name, or use --id"
+                    .to_string(),
+            )
+        })?;
+        memories::read_by_name(&conn, &namespace, &name)?
+    };
+
+    match row_opt {
         Some(row) => {
             // Resolve current version via memory_versions table (highest version for this memory_id).
             let version: i64 = conn
@@ -93,6 +145,61 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
                     |r| r.get(0),
                 )
                 .unwrap_or(1);
+
+            // G22: optional graph context
+            let (entities, relationships) = if args.with_graph {
+                let mut ent_stmt = conn.prepare_cached(
+                    "SELECT e.id, e.name, e.type FROM memory_entities me \
+                     JOIN entities e ON e.id = me.entity_id \
+                     WHERE me.memory_id = ?1",
+                )?;
+                let ents: Vec<ReadEntityBinding> = ent_stmt
+                    .query_map(rusqlite::params![row.id], |r| {
+                        Ok(ReadEntityBinding {
+                            entity_id: r.get(0)?,
+                            name: r.get(1)?,
+                            entity_type: r.get(2)?,
+                        })
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                drop(ent_stmt);
+
+                let entity_ids: Vec<i64> = ents.iter().map(|e| e.entity_id).collect();
+                let rels: Vec<ReadRelationshipBinding> = if !entity_ids.is_empty() {
+                    let placeholders: String = entity_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let sql = format!(
+                        "SELECT e1.name, e2.name, r.relation, r.weight \
+                         FROM relationships r \
+                         JOIN entities e1 ON e1.id = r.source_id \
+                         JOIN entities e2 ON e2.id = r.target_id \
+                         WHERE r.source_id IN ({placeholders}) OR r.target_id IN ({placeholders})"
+                    );
+                    let mut rel_stmt = conn.prepare(&sql)?;
+                    let result: Vec<ReadRelationshipBinding> = rel_stmt
+                        .query_map([], |r| {
+                            Ok(ReadRelationshipBinding {
+                                from: r.get(0)?,
+                                to: r.get(1)?,
+                                relation: r.get(2)?,
+                                weight: r.get(3)?,
+                            })
+                        })?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    drop(rel_stmt);
+                    result
+                } else {
+                    vec![]
+                };
+                (Some(ents), Some(rels))
+            } else {
+                (None, None)
+            };
 
             let response = ReadResponse {
                 id: row.id,
@@ -113,14 +220,21 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
                 created_at_iso: epoch_to_iso(row.created_at),
                 updated_at: row.updated_at,
                 updated_at_iso: epoch_to_iso(row.updated_at),
+                entities,
+                relationships,
                 elapsed_ms: start.elapsed().as_millis() as u64,
             };
             output::emit_json(&response)?;
         }
         None => {
-            return Err(AppError::NotFound(errors_msg::memory_not_found(
-                &name, &namespace,
-            )))
+            let label = if let Some(id) = args.id {
+                format!("id={id}")
+            } else {
+                "unknown".to_string()
+            };
+            return Err(AppError::NotFound(format!(
+                "memory not found: {label} in namespace '{namespace}'"
+            )));
         }
     }
 
@@ -178,6 +292,8 @@ mod tests {
             created_at_iso: "2024-01-15T12:00:00Z".to_string(),
             updated_at: 1_705_320_000,
             updated_at_iso: "2024-01-15T12:00:00Z".to_string(),
+            entities: None,
+            relationships: None,
             elapsed_ms: 5,
         };
 
@@ -218,6 +334,8 @@ mod tests {
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             updated_at: 0,
             updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            entities: None,
+            relationships: None,
             elapsed_ms: 0,
         };
 
@@ -245,6 +363,8 @@ mod tests {
             created_at_iso: "1970-01-01T00:16:40Z".to_string(),
             updated_at: 2000,
             updated_at_iso: "1970-01-01T00:33:20Z".to_string(),
+            entities: None,
+            relationships: None,
             elapsed_ms: 123,
         };
 
@@ -275,6 +395,8 @@ mod tests {
             created_at_iso: "1970-01-01T00:00:00Z".to_string(),
             updated_at: 0,
             updated_at_iso: "1970-01-01T00:00:00Z".to_string(),
+            entities: None,
+            relationships: None,
             elapsed_ms: 1,
         };
 

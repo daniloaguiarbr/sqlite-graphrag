@@ -69,6 +69,15 @@
 - Testes unitários em `src/commands/ingest_claude.rs` cobrem parsing de terminal_reason, detecção OAuth via apiKeySource e pré-validação de tamanho do body
 - Testes unitários em `src/commands/rename.rs` e `src/commands/rename_entity.rs` cobrem rejeição de mesmo nome com exit 1
 
+### Testes de Novos Comandos v1.0.67
+- Testes de `remember-batch` em `src/commands/remember_batch.rs`: testes de serialização para BatchItemEvent e BatchSummary
+- Comando `completions`: testado via smoke test `cargo run -- completions bash`
+- Integração `read --id`: testado via round-trip `read --id <memory_id> --json`
+- Detecção de super-hub no `health`: testado com banco de produção (1059 memórias, 3 super-hubs detectados)
+- `edit` skip-embed: testado via comparação body_hash (edição idempotente pula embedding)
+- `rename` ghost purge: testado via workflow forget → rename
+- Validação de flags: testado via `hybrid-search --max-hops 2` (sem `--with-graph`) esperando exit 1
+
 ### Testes dos Novos Comandos v1.0.65
 #### Testes de Deep Research
 - Testes unitários em `src/commands/deep_research.rs` cobrem divisão de decompose_query, passthrough de query única, semáforo de concorrência bounded, deduplicação de resultados, montagem de cadeias de evidência (filtro depth >= 2) e validação de query vazia

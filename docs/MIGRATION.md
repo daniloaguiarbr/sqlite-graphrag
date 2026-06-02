@@ -73,6 +73,32 @@ sqlite-graphrag namespace-detect
 - `errors_msg::*` functions always return English; JSON stdout is a deterministic English-only API contract
 - Graph export logs orphaned edges via `tracing::warn!` instead of silently skipping them
 
+### v1.0.67 — 2 NEW commands, 24 gap fixes, remember-batch, completions, V012 migration
+- NEW `remember-batch` command for batch memory creation from NDJSON stdin
+- NEW `completions` command for shell completion generation (Bash, Zsh, Fish, PowerShell, Elvish)
+- `read --id <N>` for direct memory_id lookup
+- `read --with-graph` includes linked entities and relationships
+- `enrich --llm-parallelism <N>` for parallel LLM workers
+- `health` now detects super-hub entities (degree > 50) and reports normalization warnings
+- `edit` skips re-embedding when body content is unchanged (body_hash comparison)
+- `rename` purges ghost soft-deleted memories occupying the target name
+- Flag validation in `hybrid-search`, `recall`, `ingest` rejects silently-discarded flags
+- V012 migration adds `created_at`/`updated_at` timestamps to relationships table
+- Run `sqlite-graphrag migrate --json` after upgrading to apply V012
+- JSON schemas added: `remember-batch.schema.json`, `remember-batch-summary.schema.json`
+- JSON schemas updated: `health.schema.json` (super-hub fields), `rename.schema.json` (ghost_purged)
+
+### v1.0.66 — 35 BUG/GAP fixes, edit --type, graph_context, LLM-friendly aliases
+- 3 CRITICAL fixes: reclassify-relation crash, deep-research evidence chain flooding, link weight update
+- `edit --type` flag to change memory type without re-creating
+- `deep-research` `graph_context` field in JSON response
+- `graph --format json` includes `entities` alias alongside `nodes`
+- `list --json` includes `memories` alias alongside `items`
+- `graph entities --json` includes `description` field per entity
+- `health --json` includes `vec_memories_missing` and `vec_memories_orphaned` counts
+- Run `sqlite-graphrag migrate --json` after upgrading
+- Recommended data migration: `reclassify-relation --from-relation applies-to --to-relation applies_to --batch --yes`
+
 ### v1.0.65 — 3 NEW commands, deep-research fixes, entity normalization, enrich pipeline
 
 - NEW `reclassify-relation` command for bulk or single reclassification of relationship types with UNIQUE collision handling

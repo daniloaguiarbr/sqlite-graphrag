@@ -58,3 +58,7 @@ graphrag.sqlite-wal
 
 # Internal analysis
 gaps.md
+
+# Fuzzing artifacts
+fuzz/corpus/
+fuzz/artifacts/

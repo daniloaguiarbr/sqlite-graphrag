@@ -268,7 +268,7 @@ fn select_candidates(
          ORDER BY deleted_at ASC"
     };
 
-    let mut stmt = conn.prepare(query)?;
+    let mut stmt = conn.prepare_cached(query)?;
     let rows = if let Some(name) = name {
         stmt.query_map(rusqlite::params![namespace, name, cutoff_epoch], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))

@@ -42,19 +42,32 @@ where
         match op() {
             Ok(()) => return Ok(()),
             Err(e) if is_sqlite_busy(&e) => {
-                // v1.0.43 (M7): half-jitter to prevent thundering herd when multiple CLIs hit
-                // SQLITE_BUSY simultaneously. Effective delay: [base/2, base).
+                if crate::retry::is_kill_switch_active() {
+                    tracing::warn!(target: "storage", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, propagating SQLITE_BUSY immediately");
+                    return Err(e);
+                }
                 let base_ms = SQLITE_BUSY_BASE_DELAY_MS * (1u64 << attempt);
                 let half = base_ms / 2;
                 let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
                 let delay_ms = half + jitter;
+                tracing::debug!(
+                    target: "storage",
+                    attempt = attempt + 1,
+                    attempt_max = MAX_SQLITE_BUSY_RETRIES,
+                    delay_ms,
+                    "SQLITE_BUSY retry with half-jitter"
+                );
                 thread::sleep(Duration::from_millis(delay_ms));
             }
             Err(other) => return Err(other),
         }
     }
 
-    // All retries exhausted — convert to DbBusy for stable exit-code 15.
+    tracing::error!(
+        target: "storage",
+        retries = MAX_SQLITE_BUSY_RETRIES,
+        "SQLITE_BUSY exhausted all retries"
+    );
     Err(AppError::DbBusy(format!(
         "SQLITE_BUSY after {MAX_SQLITE_BUSY_RETRIES} retries"
     )))

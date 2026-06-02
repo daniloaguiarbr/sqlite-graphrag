@@ -315,7 +315,7 @@ fn run_entities_snapshot(
             Some(n) => n.clone(),
             None => {
                 orphan_edges += 1;
-                tracing::warn!(source_id = r.source_id, relation = %r.relation, "edge skipped: source entity not found in id_to_name map");
+                tracing::warn!(target: "graph_export", source_id = r.source_id, relation = %r.relation, "edge skipped: source entity not found in id_to_name map");
                 continue;
             }
         };
@@ -323,7 +323,7 @@ fn run_entities_snapshot(
             Some(n) => n.clone(),
             None => {
                 orphan_edges += 1;
-                tracing::warn!(target_id = r.target_id, relation = %r.relation, "edge skipped: target entity not found in id_to_name map");
+                tracing::warn!(target: "graph_export", target_id = r.target_id, relation = %r.relation, "edge skipped: target entity not found in id_to_name map");
                 continue;
             }
         };
@@ -335,7 +335,7 @@ fn run_entities_snapshot(
         });
     }
     if orphan_edges > 0 {
-        tracing::warn!(
+        tracing::warn!(target: "graph_export",
             count = orphan_edges,
             "edges skipped due to orphaned entity references"
         );
@@ -399,7 +399,8 @@ fn run_traverse(args: GraphTraverseArgs) -> Result<(), AppError> {
         .collect();
 
     let mut hops: Vec<TraverseHop> = Vec::with_capacity(16);
-    let mut visited: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut visited: std::collections::HashSet<i64> =
+        std::collections::HashSet::with_capacity(args.depth as usize * 10);
     let mut frontier: Vec<(i64, u32)> = vec![(from_id, 0)];
 
     while let Some((current_id, current_depth)) = frontier.pop() {
@@ -766,18 +767,22 @@ fn sanitize_dot_id(raw: &str) -> String {
 }
 
 fn render_dot(nodes: &[NodeOut], edges: &[EdgeOut]) -> String {
-    let mut out = String::new();
-    out.push_str("digraph sqlite-graphrag {\n");
+    use std::fmt::Write;
+    let mut out = String::with_capacity(nodes.len() * 80 + edges.len() * 60 + 300);
+    out.push_str("digraph sqlite_graphrag {\n");
+    out.push_str("  graph [bgcolor=\"white\", fontname=\"Helvetica Neue\", fontsize=12, rankdir=LR, nodesep=0.8, ranksep=1.2];\n");
+    out.push_str("  node [shape=box, style=\"filled,rounded\", fillcolor=\"#F2F2F7\", fontname=\"Helvetica Neue\", fontsize=11, color=\"#C7C7CC\"];\n");
+    out.push_str("  edge [fontname=\"Helvetica Neue\", fontsize=9, color=\"#8E8E93\"];\n");
     for node in nodes {
         let node_id = sanitize_dot_id(&node.name);
         let escaped = node.name.replace('"', "\\\"");
-        out.push_str(&format!("  {node_id} [label=\"{escaped}\"];\n"));
+        let _ = writeln!(out, "  {node_id} [label=\"{escaped}\"];");
     }
     for edge in edges {
         let from = sanitize_dot_id(&edge.from);
         let to = sanitize_dot_id(&edge.to);
         let label = edge.relation.replace('"', "\\\"");
-        out.push_str(&format!("  {from} -> {to} [label=\"{label}\"];\n"));
+        let _ = writeln!(out, "  {from} -> {to} [label=\"{label}\"];");
     }
     out.push_str("}\n");
     out
@@ -796,18 +801,20 @@ fn sanitize_mermaid_id(raw: &str) -> String {
 }
 
 fn render_mermaid(nodes: &[NodeOut], edges: &[EdgeOut]) -> String {
-    let mut out = String::new();
+    use std::fmt::Write;
+    let mut out = String::with_capacity(nodes.len() * 50 + edges.len() * 40 + 200);
+    out.push_str("%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#F2F2F7', 'primaryTextColor': '#1C1C1E', 'primaryBorderColor': '#C7C7CC', 'lineColor': '#8E8E93'}}}%%\n");
     out.push_str("graph LR\n");
     for node in nodes {
         let id = sanitize_mermaid_id(&node.name);
         let escaped = node.name.replace('"', "\\\"");
-        out.push_str(&format!("  {id}[\"{escaped}\"]\n"));
+        let _ = writeln!(out, "  {id}[\"{escaped}\"]");
     }
     for edge in edges {
         let from = sanitize_mermaid_id(&edge.from);
         let to = sanitize_mermaid_id(&edge.to);
         let label = edge.relation.replace('|', "\\|");
-        out.push_str(&format!("  {from} -->|{label}| {to}\n"));
+        let _ = writeln!(out, "  {from} -->|{label}| {to}");
     }
     out
 }

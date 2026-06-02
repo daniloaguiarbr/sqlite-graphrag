@@ -92,7 +92,7 @@ mod tests {
 
         let args = OptimizeArgs {
             json: false,
-            db: Some(db_path.to_string_lossy().to_string()),
+            db: Some(db_path.to_string_lossy().into_owned()),
             skip_fts: false,
         };
         let result = run(args);

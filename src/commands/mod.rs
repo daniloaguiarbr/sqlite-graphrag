@@ -1,6 +1,8 @@
 pub mod backup;
 pub mod cache;
+pub mod claude_runner;
 pub mod cleanup_orphans;
+pub mod completions;
 pub mod daemon;
 pub mod debug_schema;
 pub mod deep_research;
@@ -35,6 +37,7 @@ pub mod reclassify;
 pub mod reclassify_relation;
 pub mod related;
 pub mod remember;
+pub mod remember_batch;
 pub mod rename;
 pub mod rename_entity;
 pub mod restore;

@@ -26,7 +26,7 @@ use serde::Serialize;
     # Reclassify in a specific namespace\n  \
     sqlite-graphrag reclassify --name alice --new-type person --namespace my-project\n\n\
 NOTE:\n  \
-    Single mode requires --name and --new-type.\n  \
+    Single mode requires --name and at least one of --new-type or --description.\n  \
     Batch mode requires --from-type, --to-type and --batch.\n  \
     Providing --name together with --batch is an error.\n\n\
 VALID ENTITY TYPES:\n  \
@@ -104,7 +104,7 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
         )?;
         tx.commit()?;
         if affected == 0 {
-            tracing::warn!(
+            tracing::warn!(target: "reclassify",
                 from_type = from_type.as_str(),
                 namespace = %namespace,
                 "reclassify batch matched zero entities — verify --from-type value exists"
@@ -117,9 +117,12 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
             .name
             .as_deref()
             .ok_or_else(|| AppError::Validation("--name is required in single mode".to_string()))?;
-        let new_type = args.new_type.ok_or_else(|| {
-            AppError::Validation("--new-type is required in single mode".to_string())
-        })?;
+        if args.new_type.is_none() && args.description.is_none() {
+            return Err(AppError::Validation(
+                "at least one of --new-type or --description is required in single mode"
+                    .to_string(),
+            ));
+        }
 
         // Verify entity exists.
         entities::find_entity_id(&conn, &namespace, entity_name)?.ok_or_else(|| {
@@ -127,17 +130,23 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
         })?;
 
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let affected = tx.execute(
-            "UPDATE entities SET type = ?1, updated_at = unixepoch()
-             WHERE name = ?2 AND namespace = ?3",
-            params![new_type.as_str(), entity_name, namespace],
-        )?;
+        let mut affected = 0;
+        if let Some(new_type) = args.new_type {
+            affected = tx.execute(
+                "UPDATE entities SET type = ?1, updated_at = unixepoch()
+                 WHERE name = ?2 AND namespace = ?3",
+                params![new_type.as_str(), entity_name, namespace],
+            )?;
+        }
         if let Some(ref desc) = args.description {
-            tx.execute(
+            let rows = tx.execute(
                 "UPDATE entities SET description = ?1, updated_at = unixepoch()
                  WHERE name = ?2 AND namespace = ?3",
                 params![desc, entity_name, namespace],
             )?;
+            if affected == 0 {
+                affected = rows;
+            }
         }
         tx.commit()?;
         affected

@@ -241,6 +241,7 @@ impl Commands {
             self,
             Self::Init(_)
                 | Self::Remember(_)
+                | Self::RememberBatch(_)
                 | Self::Recall(_)
                 | Self::HybridSearch(_)
                 | Self::DeepResearch(_)
@@ -279,6 +280,13 @@ pub enum Commands {
         # Enable GLiNER entity extraction (disabled by default)\n  \
         sqlite-graphrag remember --name rich --type note --description \"...\" --body \"...\" --enable-ner")]
     Remember(remember::RememberArgs),
+    /// Batch-create memories from NDJSON stdin (one invocation, one slot)
+    #[command(after_long_help = "EXAMPLES:\n  \
+        # Batch create from NDJSON\n  \
+        cat memories.ndjson | sqlite-graphrag remember-batch --force-merge --json\n\n  \
+        # Atomic batch\n  \
+        cat memories.ndjson | sqlite-graphrag remember-batch --transaction --json")]
+    RememberBatch(remember_batch::RememberBatchArgs),
     /// Bulk-ingest every file under a directory as separate memories (NDJSON output)
     Ingest(ingest::IngestArgs),
     /// Search memories semantically
@@ -376,6 +384,8 @@ pub enum Commands {
     /// Normalize entity names (deduplicate, kebab-case, merge near-duplicates)
     #[command(name = "normalize-entities")]
     NormalizeEntities(normalize_entities::NormalizeEntitiesArgs),
+    /// Generate shell completions for Bash, Zsh, Fish, PowerShell, or Elvish
+    Completions(completions::CompletionsArgs),
     #[command(name = "debug-schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
 }

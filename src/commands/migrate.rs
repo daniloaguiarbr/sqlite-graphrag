@@ -109,7 +109,7 @@ fn list_applied_migrations(conn: &rusqlite::Connection) -> Result<Vec<MigrationE
     if table_exists.is_none() {
         return Ok(vec![]);
     }
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT version, name, applied_on FROM refinery_schema_history ORDER BY version ASC",
     )?;
     let entries = stmt

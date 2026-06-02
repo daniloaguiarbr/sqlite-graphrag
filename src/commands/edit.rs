@@ -77,6 +77,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
+    tracing::debug!(target: "edit", name = ?args.name_positional.as_deref().or(args.name.as_deref()), "updating memory");
     // Resolve name from positional or --name flag; both are optional, at least one is required.
     let name = args.name_positional.or(args.name).ok_or_else(|| {
         AppError::Validation("name required: pass as positional argument or via --name".to_string())
@@ -105,6 +106,12 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         let b = if let Some(b) = args.body {
             b
         } else if let Some(path) = &args.body_file {
+            let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
+            if file_size > MAX_MEMORY_BODY_LEN as u64 {
+                return Err(AppError::LimitExceeded(
+                    crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+                ));
+            }
             std::fs::read_to_string(path).map_err(AppError::Io)?
         } else {
             crate::stdin_helper::read_stdin_with_timeout(60)?
@@ -132,6 +139,8 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
     let new_body = raw_body.unwrap_or(row.body.clone());
     let new_description = args.description.unwrap_or(row.description.clone());
     let new_hash = blake3::hash(new_body.as_bytes()).to_hex().to_string();
+    // Skip re-embedding when body content is identical to the stored version.
+    let body_changed = body_changed && new_hash != row.body_hash;
     let memory_type = args
         .memory_type
         .map(|t| t.as_str().to_string())

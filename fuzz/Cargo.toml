@@ -9,14 +9,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-serde_json = "1"
+sqlite-graphrag = { path = ".." }
 
 [[bin]]
-name = "fuzz_graph_stdin"
-path = "fuzz_targets/fuzz_graph_stdin.rs"
-
-[[bin]]
-name = "fuzz_name_validation"
-path = "fuzz_targets/fuzz_name_validation.rs"
-
-[workspace]
+name = "fuzz_parse_body"
+path = "fuzz_targets/fuzz_parse_body.rs"
+doc = false

@@ -197,7 +197,11 @@ pub fn normalize_entity_name(s: &str) -> String {
     // Then keep only ASCII characters, effectively stripping diacritics.
     let ascii: String = s.nfkd().filter(|c| c.is_ascii()).collect();
     // Lowercase, then replace spaces and underscores with hyphens.
-    let hyphenated = ascii.to_lowercase().replace([' ', '_'], "-");
+    let hyphenated: String = ascii
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
     // Collapse consecutive hyphens and trim from both ends.
     let mut result = String::with_capacity(hyphenated.len());
     let mut prev_was_hyphen = false;
@@ -239,7 +243,7 @@ pub fn validate_relation_format(s: &str) -> Result<(), String> {
 /// Emits a `tracing::warn!` when the relation is not in [`CANONICAL_RELATIONS`].
 pub fn warn_if_non_canonical(relation: &str) {
     if !is_canonical_relation(relation) {
-        tracing::warn!(
+        tracing::warn!(target: "parsers",
             relation,
             "non-canonical relation accepted; consider using a well-known value"
         );
@@ -380,5 +384,14 @@ mod entity_name_tests {
     fn empty_or_only_separators_returns_empty() {
         assert_eq!(normalize_entity_name(""), "");
         assert_eq!(normalize_entity_name("---"), "");
+    }
+
+    #[test]
+    fn normalizes_dots_slashes_and_punctuation() {
+        assert_eq!(normalize_entity_name("lei-14.478/2022"), "lei-14-478-2022");
+        assert_eq!(normalize_entity_name("src/main.rs"), "src-main-rs");
+        assert_eq!(normalize_entity_name("user@domain.com"), "user-domain-com");
+        assert_eq!(normalize_entity_name("v1.0.66"), "v1-0-66");
+        assert_eq!(normalize_entity_name("key:value"), "key-value");
     }
 }

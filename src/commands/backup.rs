@@ -86,7 +86,7 @@ pub fn run(args: BackupArgs) -> Result<(), AppError> {
             let mut perms = meta.permissions();
             perms.set_mode(0o600);
             if let Err(e) = std::fs::set_permissions(&args.output, perms) {
-                tracing::warn!(
+                tracing::warn!(target: "backup",
                     path = %args.output.display(),
                     error = %e,
                     "failed to set 0600 permissions on backup file"
@@ -96,7 +96,7 @@ pub fn run(args: BackupArgs) -> Result<(), AppError> {
     }
     #[cfg(windows)]
     {
-        tracing::debug!(
+        tracing::debug!(target: "backup",
             path = %args.output.display(),
             "skipping Unix mode 0o600 on Windows; NTFS DACL default is private-to-user"
         );

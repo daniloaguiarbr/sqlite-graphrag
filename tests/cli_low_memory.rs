@@ -78,7 +78,6 @@ fn ingest_low_memory_flag_succeeds() {
             "--pattern",
             "*.md",
             "--low-memory",
-            "--skip-extraction",
         ])
         .assert()
         .success();
@@ -94,16 +93,13 @@ fn ingest_low_memory_flag_succeeds() {
 
 #[test]
 #[serial]
-fn ingest_low_memory_overrides_explicit_parallelism() {
+fn ingest_low_memory_rejects_explicit_parallelism() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
     let dir = write_corpus(&tmp);
 
-    // Combine --low-memory with --ingest-parallelism 4. The flag must win and
-    // emit a tracing::warn! about the override (visible at -v info level).
     let out = ingest_cmd(&tmp)
         .args([
-            "-v",
             "ingest",
             dir.to_str().unwrap(),
             "--type",
@@ -113,18 +109,15 @@ fn ingest_low_memory_overrides_explicit_parallelism() {
             "--low-memory",
             "--ingest-parallelism",
             "4",
-            "--skip-extraction",
         ])
         .assert()
-        .success();
+        .failure();
 
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
     assert!(
-        stderr.contains("--ingest-parallelism overridden by --low-memory"),
-        "stderr must announce the override; got:\n{stderr}"
+        stderr.contains("conflicts with --low-memory"),
+        "stderr must announce the conflict; got:\n{stderr}"
     );
-    let summary = parse_summary(&out.get_output().stdout);
-    assert_eq!(summary["files_succeeded"].as_u64().unwrap(), 2);
 }
 
 #[test]
@@ -144,7 +137,6 @@ fn ingest_env_var_low_memory_activates_mode() {
             "document",
             "--pattern",
             "*.md",
-            "--skip-extraction",
         ])
         .assert()
         .success();

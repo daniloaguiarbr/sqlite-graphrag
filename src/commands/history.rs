@@ -150,7 +150,7 @@ pub fn run(args: HistoryArgs) -> Result<(), AppError> {
         row.ok_or_else(|| AppError::NotFound(errors_msg::memory_not_found(&name, &namespace)))?;
     let deleted = deleted_at.is_some();
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT version, name, type, description, body, metadata,
                 change_reason, changed_by, created_at
          FROM memory_versions

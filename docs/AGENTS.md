@@ -29,11 +29,15 @@
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
 
+## New in v1.0.67
+### New Commands
+- `remember-batch` — Batch-create memories from NDJSON stdin in a single invocation. Eliminates N-process contention from parallel `remember` calls. Supports `--transaction` (all-or-nothing), `--force-merge` (idempotent updates), `--fail-fast`.
+
 ## New in v1.0.65
 ### New Commands
 - `reclassify-relation --from-relation <old> --to-relation <new> --batch --json` — renames relationship types in bulk across the graph; single-edge mode via `--source A --target B`; optional `--filter-source-type` and `--filter-target-type` for targeted batch; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge; `--dry-run` previews count
 - `normalize-entities --yes --json` — normalizes all entity names to lowercase kebab-case ASCII, auto-merging collisions (e.g., `Claude Code` + `claude-code` become one node); `--dry-run` previews
-- `enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline; 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions), `body-enrich` (expand short bodies); queue DB for resume/retry; `--dry-run` previews without spawning LLM; output is NDJSON
+- `enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline; 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions), `body-enrich` (expand short bodies); queue DB for resume/retry; `--dry-run` previews without spawning LLM; `--llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32) to reduce wall-clock time; output is NDJSON
 ### Deep Research Improvements
 - `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic in v1.0.64
 - `deep-research` fuses KNN + FTS5 + graph pools via RRF instead of hardcoded 0.5 for FTS results
@@ -502,6 +506,7 @@ let output = Command::new("sqlite-graphrag")
 - DETECT schema drift via `debug-schema` for troubleshooting
 - CHECK `mentions_ratio` (float) and `mentions_warning` (string) in `health --json` output when `mentions` relationships dominate the graph above 50%
 - CHECK `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float), and `relation_concentration_warning` (string) when any single relation type exceeds 40% of edges (v1.0.65)
+- CHECK `super_hub_count` (int) and `top_hub_entity` (string) reported when any entity exceeds 50 connections — indicates graph topology that may degrade traversal quality
 ### Correct Pattern — Bootstrap Sequence
 - `sqlite-graphrag init --namespace my-project`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -712,6 +717,7 @@ let output = Command::new("sqlite-graphrag")
 ## CRUD — Read with read and list
 ### REQUIRED — Direct Read by Name (read)
 - USE `read --name <kebab-case>` for O(1) fetch by name
+- USE `read --id <N>` for direct lookup by integer `memory_id` — useful when agent pipelines pass IDs from `list` or `remember` responses
 - PARSE fields `body`, `description`, `created_at_iso`, `updated_at_iso`
 - TREAT exit code 4 as memory not found in the namespace
 - APPLY `--tz` to localize timestamps in the output

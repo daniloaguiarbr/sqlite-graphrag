@@ -27,7 +27,7 @@ pub fn apply_init_pragmas(conn: &Connection) -> Result<(), AppError> {
 pub fn ensure_wal_mode(conn: &Connection) -> Result<(), AppError> {
     let mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
     if mode != "wal" {
-        tracing::warn!(mode = %mode, "journal_mode did not switch to WAL after re-assertion");
+        tracing::warn!(target: "pragmas", mode = %mode, "journal_mode did not switch to WAL after re-assertion");
     }
     Ok(())
 }
@@ -52,7 +52,7 @@ pub fn apply_connection_pragmas(conn: &Connection) -> Result<(), AppError> {
     ))?;
     let mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
     if mode != "wal" {
-        tracing::warn!(mode = %mode, "journal_mode did not switch to WAL");
+        tracing::warn!(target: "pragmas", mode = %mode, "journal_mode did not switch to WAL");
     }
     Ok(())
 }

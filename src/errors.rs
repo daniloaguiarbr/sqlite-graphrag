@@ -13,11 +13,36 @@ use thiserror::Error;
 /// Each variant corresponds to a distinct failure category. The
 /// [`AppError::exit_code`] method converts a variant into a stable numeric
 /// code so that shell callers and LLM agents can route on it.
+///
+/// # SemVer Policy
+///
+/// This enum is `#[non_exhaustive]`. New variants may be added in minor
+/// releases without breaking downstream match arms (use a wildcard `_`).
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AppError {
     /// Input failed schema, length or format validation. Maps to exit code `1`.
+    ///
+    /// This variant groups multiple validation failure causes. Callers that need
+    /// programmatic retry decisions should use [`AppError::is_retryable`] instead
+    /// of parsing the message string.
     #[error("validation error: {0}")]
     Validation(String),
+
+    /// External binary required for operation was not found in PATH. Maps to exit code `1`.
+    #[error("binary not found: {name} — ensure it is installed and in PATH")]
+    BinaryNotFound { name: String },
+
+    /// Remote service signaled rate limiting; caller should retry with backoff. Maps to exit code `1`.
+    #[error("rate limited: {detail}")]
+    RateLimited { detail: String },
+
+    /// Operation exceeded its time budget. Maps to exit code `1`.
+    #[error("timeout after {duration_secs}s: {operation}")]
+    Timeout {
+        operation: String,
+        duration_secs: u64,
+    },
 
     /// A memory or entity with the same `(namespace, name)` already exists. Maps to exit code `9`.
     #[error("duplicate detected: {0}")]
@@ -67,7 +92,7 @@ pub enum AppError {
     Io(#[from] std::io::Error),
 
     /// Unexpected internal error surfaced through `anyhow`. Maps to exit code `20`.
-    #[error("internal error: {0}")]
+    #[error(transparent)]
     Internal(#[from] anyhow::Error),
 
     /// JSON serialization or deserialization failure. Maps to exit code `20`.
@@ -128,9 +153,14 @@ impl AppError {
     /// assert_eq!(AppError::DbBusy("retries exhausted".into()).exit_code(), 15);
     /// assert_eq!(AppError::LockBusy("another instance".into()).exit_code(), 75);
     /// ```
+    #[inline]
+    #[must_use]
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::Validation(_) => 1,
+            Self::BinaryNotFound { .. } => 1,
+            Self::RateLimited { .. } => 1,
+            Self::Timeout { .. } => 1,
             Self::Duplicate(_) => crate::constants::DUPLICATE_EXIT_CODE,
             Self::Conflict(_) => 3,
             Self::NotFound(_) => 4,
@@ -148,6 +178,62 @@ impl AppError {
             Self::AllSlotsFull { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
         }
+    }
+
+    /// Returns `true` when the error is transient and the operation may
+    /// succeed on retry with backoff.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sqlite_graphrag::errors::AppError;
+    ///
+    /// assert!(AppError::DbBusy("busy".into()).is_retryable());
+    /// assert!(AppError::LockBusy("held".into()).is_retryable());
+    /// assert!(!AppError::NotFound("x".into()).is_retryable());
+    /// assert!(!AppError::Validation("bad".into()).is_retryable());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::DbBusy(_)
+                | Self::LockBusy(_)
+                | Self::AllSlotsFull { .. }
+                | Self::LowMemory { .. }
+                | Self::RateLimited { .. }
+                | Self::Timeout { .. }
+        )
+    }
+
+    /// Returns `true` when the error is permanent and must NOT be retried.
+    ///
+    /// Complement to [`Self::is_retryable`]. Errors not classified by either
+    /// method (e.g. `Database`, `Io`, `Internal`) are ambiguous — the caller
+    /// decides based on context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sqlite_graphrag::errors::AppError;
+    ///
+    /// assert!(AppError::Validation("bad".into()).is_permanent());
+    /// assert!(!AppError::DbBusy("busy".into()).is_permanent());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::Validation(_)
+                | Self::BinaryNotFound { .. }
+                | Self::Duplicate(_)
+                | Self::NotFound(_)
+                | Self::NamespaceError(_)
+                | Self::LimitExceeded(_)
+                | Self::VecExtension(_)
+        )
     }
 
     /// Returns the localized error message in the active language (`--lang` / `SQLITE_GRAPHRAG_LANG`).
@@ -186,6 +272,12 @@ impl AppError {
         use crate::i18n::validation::app_error_pt as pt;
         match self {
             Self::Validation(msg) => pt::validation(msg),
+            Self::BinaryNotFound { name } => pt::binary_not_found(name),
+            Self::RateLimited { detail } => pt::rate_limited(detail),
+            Self::Timeout {
+                operation,
+                duration_secs,
+            } => pt::timeout(operation, *duration_secs),
             Self::Duplicate(msg) => pt::duplicate(msg),
             Self::Conflict(msg) => pt::conflict(msg),
             Self::NotFound(msg) => pt::not_found(msg),
@@ -372,7 +464,7 @@ mod tests {
         let anyhow_err = anyhow::anyhow!("internal detail");
         let app_err: AppError = anyhow_err.into();
         assert_eq!(app_err.exit_code(), 20);
-        assert!(app_err.to_string().contains("internal error"));
+        assert!(app_err.to_string().contains("internal detail"));
     }
 
     #[test]
@@ -452,11 +544,88 @@ mod tests {
                 },
                 pt::low_memory(100, 500),
             ),
+            (
+                AppError::BinaryNotFound {
+                    name: "claude".into(),
+                },
+                pt::binary_not_found("claude"),
+            ),
+            (
+                AppError::RateLimited {
+                    detail: "429".into(),
+                },
+                pt::rate_limited("429"),
+            ),
+            (
+                AppError::Timeout {
+                    operation: "op".into(),
+                    duration_secs: 30,
+                },
+                pt::timeout("op", 30),
+            ),
         ];
 
         for (err, expected) in cases {
             let actual = err.localized_message_for(crate::i18n::Language::Portuguese);
             assert_eq!(actual, expected, "delegation mismatch");
         }
+    }
+
+    #[test]
+    fn is_retryable_transient_errors() {
+        assert!(AppError::DbBusy("x".into()).is_retryable());
+        assert!(AppError::LockBusy("x".into()).is_retryable());
+        assert!(AppError::AllSlotsFull {
+            max: 4,
+            waited_secs: 60
+        }
+        .is_retryable());
+        assert!(AppError::LowMemory {
+            available_mb: 100,
+            required_mb: 500
+        }
+        .is_retryable());
+        assert!(AppError::RateLimited {
+            detail: "429".into()
+        }
+        .is_retryable());
+        assert!(AppError::Timeout {
+            operation: "op".into(),
+            duration_secs: 30
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn is_retryable_permanent_errors() {
+        assert!(!AppError::Validation("x".into()).is_retryable());
+        assert!(!AppError::NotFound("x".into()).is_retryable());
+        assert!(!AppError::Duplicate("x".into()).is_retryable());
+        assert!(!AppError::Conflict("x".into()).is_retryable());
+        assert!(!AppError::BinaryNotFound { name: "x".into() }.is_retryable());
+    }
+
+    #[test]
+    fn exit_code_new_variants() {
+        assert_eq!(AppError::BinaryNotFound { name: "x".into() }.exit_code(), 1);
+        assert_eq!(AppError::RateLimited { detail: "x".into() }.exit_code(), 1);
+        assert_eq!(
+            AppError::Timeout {
+                operation: "x".into(),
+                duration_secs: 5
+            }
+            .exit_code(),
+            1
+        );
+    }
+
+    #[test]
+    fn app_error_size_does_not_exceed_budget() {
+        let size = std::mem::size_of::<AppError>();
+        assert!(
+            size <= 128,
+            "AppError is {size} bytes — exceeds 128-byte budget; \
+             consider boxing large variants to reduce memcpy cost in Result propagation"
+        );
     }
 }

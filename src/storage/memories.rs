@@ -388,19 +388,19 @@ pub fn list(
     offset: usize,
     include_deleted: bool,
 ) -> Result<Vec<MemoryRow>, AppError> {
-    let deleted_clause = if include_deleted {
-        ""
-    } else {
-        " AND deleted_at IS NULL"
-    };
     if let Some(mt) = memory_type {
-        let sql = format!(
+        let sql = if include_deleted {
             "SELECT id, namespace, name, type, description, body, body_hash,
                     session_id, source, metadata, created_at, updated_at, deleted_at
-             FROM memories WHERE namespace=?1 AND type=?2{deleted_clause}
+             FROM memories WHERE namespace=?1 AND type=?2
              ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4"
-        );
-        let mut stmt = conn.prepare(&sql)?;
+        } else {
+            "SELECT id, namespace, name, type, description, body, body_hash,
+                    session_id, source, metadata, created_at, updated_at, deleted_at
+             FROM memories WHERE namespace=?1 AND type=?2 AND deleted_at IS NULL
+             ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4"
+        };
+        let mut stmt = conn.prepare_cached(sql)?;
         let rows = stmt
             .query_map(params![namespace, mt, limit as i64, offset as i64], |r| {
                 Ok(MemoryRow {
@@ -422,13 +422,18 @@ pub fn list(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
-        let sql = format!(
+        let sql = if include_deleted {
             "SELECT id, namespace, name, type, description, body, body_hash,
                     session_id, source, metadata, created_at, updated_at, deleted_at
-             FROM memories WHERE namespace=?1{deleted_clause}
+             FROM memories WHERE namespace=?1
              ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"
-        );
-        let mut stmt = conn.prepare(&sql)?;
+        } else {
+            "SELECT id, namespace, name, type, description, body, body_hash,
+                    session_id, source, metadata, created_at, updated_at, deleted_at
+             FROM memories WHERE namespace=?1 AND deleted_at IS NULL
+             ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3"
+        };
+        let mut stmt = conn.prepare_cached(sql)?;
         let rows = stmt
             .query_map(params![namespace, limit as i64, offset as i64], |r| {
                 Ok(MemoryRow {
@@ -481,7 +486,7 @@ pub fn knn_search(
         0 => {
             // No namespace filter — search all namespaces.
             if let Some(mt) = memory_type {
-                let mut stmt = conn.prepare(
+                let mut stmt = conn.prepare_cached(
                     "SELECT memory_id, distance FROM vec_memories \
                      WHERE embedding MATCH ?1 AND type = ?2 \
                      ORDER BY distance LIMIT ?3",
@@ -493,7 +498,7 @@ pub fn knn_search(
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             } else {
-                let mut stmt = conn.prepare(
+                let mut stmt = conn.prepare_cached(
                     "SELECT memory_id, distance FROM vec_memories \
                      WHERE embedding MATCH ?1 \
                      ORDER BY distance LIMIT ?2",
@@ -510,7 +515,7 @@ pub fn knn_search(
             // Fast single-namespace path (preserved from previous implementation).
             let ns = &namespaces[0];
             if let Some(mt) = memory_type {
-                let mut stmt = conn.prepare(
+                let mut stmt = conn.prepare_cached(
                     "SELECT memory_id, distance FROM vec_memories \
                      WHERE embedding MATCH ?1 AND namespace = ?2 AND type = ?3 \
                      ORDER BY distance LIMIT ?4",
@@ -522,7 +527,7 @@ pub fn knn_search(
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             } else {
-                let mut stmt = conn.prepare(
+                let mut stmt = conn.prepare_cached(
                     "SELECT memory_id, distance FROM vec_memories \
                      WHERE embedding MATCH ?1 AND namespace = ?2 \
                      ORDER BY distance LIMIT ?3",
@@ -707,7 +712,7 @@ pub fn fts_search(
 ) -> Result<Vec<MemoryRow>, AppError> {
     let fts_query = preprocess_fts_query(query);
     if let Some(mt) = memory_type {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT m.id, m.namespace, m.name, m.type, m.description, m.body, m.body_hash,
                     m.session_id, m.source, m.metadata, m.created_at, m.updated_at, m.deleted_at
              FROM fts_memories fts
@@ -736,7 +741,7 @@ pub fn fts_search(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     } else {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT m.id, m.namespace, m.name, m.type, m.description, m.body, m.body_hash,
                     m.session_id, m.source, m.metadata, m.created_at, m.updated_at, m.deleted_at
              FROM fts_memories fts

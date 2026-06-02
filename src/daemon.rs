@@ -195,6 +195,7 @@ impl Drop for DaemonSpawnGuard {
             match std::fs::remove_file(&lock_path) {
                 Ok(()) => {
                     tracing::debug!(
+                        target: "daemon",
                         path = %lock_path.display(),
                         "spawn lock file removed during graceful daemon shutdown"
                     );
@@ -202,6 +203,7 @@ impl Drop for DaemonSpawnGuard {
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                 Err(err) => {
                     tracing::warn!(
+                        target: "daemon",
                         error = %err,
                         path = %lock_path.display(),
                         "failed to remove spawn lock file while shutting down daemon"
@@ -209,13 +211,21 @@ impl Drop for DaemonSpawnGuard {
                 }
             }
         }
+        let pid_path = pid_file_path(&self.models_dir);
+        let _ = std::fs::remove_file(&pid_path);
+
         tracing::info!(
+            target: "daemon",
             "daemon shut down gracefully; socket will be cleaned up by OS or by the next daemon via try_overwrite"
         );
     }
 }
 
-pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
+pub fn run(
+    models_dir: &Path,
+    idle_shutdown_secs: u64,
+    shutdown_timeout_secs: u64,
+) -> Result<(), AppError> {
     // Scale worker threads to available parallelism so embedding tasks saturate CPU cores.
     // Clamped to [2, 8] to avoid excessive threads on high-core machines.
     let permits = std::thread::available_parallelism()
@@ -229,9 +239,12 @@ pub fn run(models_dir: &Path, idle_shutdown_secs: u64) -> Result<(), AppError> {
         .build()
         .map_err(AppError::Io)?;
 
-    rt.block_on(run_async(models_dir, idle_shutdown_secs, permits))
+    let result = rt.block_on(run_async(models_dir, idle_shutdown_secs, permits));
+    rt.shutdown_timeout(std::time::Duration::from_secs(shutdown_timeout_secs));
+    result
 }
 
+#[tracing::instrument(skip_all, fields(idle_secs = idle_shutdown_secs, permits))]
 async fn run_async(
     models_dir: &Path,
     idle_shutdown_secs: u64,
@@ -258,6 +271,9 @@ async fn run_async(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("model warm-up panicked: {e}")))??;
 
+    let pid_path = pid_file_path(models_dir);
+    let _ = std::fs::write(&pid_path, std::process::id().to_string());
+
     crate::output::emit_json(&DaemonResponse::Listening {
         pid: std::process::id(),
         socket,
@@ -270,13 +286,14 @@ async fn run_async(
     // Bound concurrent spawn_blocking tasks to the same thread count as the runtime.
     let permit_pool = Arc::new(tokio::sync::Semaphore::new(permits));
 
+    let token = crate::cancel_token();
     loop {
-        if shutdown_requested() {
+        if shutdown_requested() || token.is_cancelled() {
             break;
         }
 
         if !daemon_control_dir(&models_dir).exists() {
-            tracing::info!("daemon control directory disappeared; shutting down");
+            tracing::info!(target: "daemon", "daemon control directory disappeared; shutting down");
             break;
         }
 
@@ -305,13 +322,17 @@ async fn run_async(
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if last_activity.elapsed() >= Duration::from_secs(idle_shutdown_secs) {
                     tracing::info!(
+                        target: "daemon",
                         idle_shutdown_secs,
                         handled_embed_requests = handled_embed_requests.load(Ordering::Relaxed),
                         "daemon idle timeout reached"
                     );
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(50)) => {}
+                    () = token.cancelled() => { break; }
+                }
             }
             Err(err) => return Err(AppError::Io(err)),
         }
@@ -469,12 +490,14 @@ fn should_autostart(cli_flag: bool) -> bool {
 /// re-spawns a fresh one. The `VERSION_RESTART_ATTEMPTED` state prevents infinite loops:
 /// this function is a no-op after the first attempt regardless of outcome.
 fn maybe_restart_for_version_mismatch(models_dir: &Path) -> Result<(), AppError> {
+    // ORDERING: Acquire on success synchronizes-with the Release store at line ~505.
+    // Relaxed on failure: no dependent memory is read on the CAS failure path.
     if DAEMON_VERSION_STATE
         .compare_exchange(
             VERSION_NOT_CHECKED,
             VERSION_COMPATIBLE,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
+            Ordering::Acquire,
+            Ordering::Relaxed,
         )
         .is_err()
     {
@@ -497,9 +520,11 @@ fn maybe_restart_for_version_mismatch(models_dir: &Path) -> Result<(), AppError>
     }
 
     // Mismatch detected — mark as restart-attempted so we never loop.
-    DAEMON_VERSION_STATE.store(VERSION_RESTART_ATTEMPTED, Ordering::SeqCst);
+    // ORDERING: Release pairs with the Acquire in compare_exchange and load.
+    DAEMON_VERSION_STATE.store(VERSION_RESTART_ATTEMPTED, Ordering::Release);
 
     tracing::warn!(
+        target: "daemon",
         daemon_version = %daemon_version,
         cli_version = SQLITE_GRAPHRAG_VERSION,
         "daemon version mismatch detected; auto-restarting daemon"
@@ -520,13 +545,15 @@ fn maybe_restart_for_version_mismatch(models_dir: &Path) -> Result<(), AppError>
 /// Polls until the daemon stops responding to pings, with exponential backoff.
 /// Starts at 50 ms, doubles each iteration, caps at 500 ms per sleep.
 /// Returns `Ok(())` once the daemon is gone or the timeout is reached.
+#[cold]
+#[inline(never)]
 fn wait_for_daemon_exit(models_dir: &Path) -> Result<(), AppError> {
     let deadline = Instant::now() + Duration::from_millis(DAEMON_VERSION_RESTART_WAIT_MS);
     let mut sleep_ms: u64 = 50;
 
     while Instant::now() < deadline {
         if try_ping(models_dir)?.is_none() {
-            tracing::debug!("stale daemon exited after version-mismatch shutdown");
+            tracing::debug!(target: "daemon", "stale daemon exited after version-mismatch shutdown");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(sleep_ms));
@@ -534,6 +561,7 @@ fn wait_for_daemon_exit(models_dir: &Path) -> Result<(), AppError> {
     }
 
     tracing::warn!(
+        target: "daemon",
         timeout_ms = DAEMON_VERSION_RESTART_WAIT_MS,
         "timed out waiting for stale daemon to exit after version-mismatch shutdown"
     );
@@ -545,7 +573,8 @@ fn request_or_autostart(
     request: &DaemonRequest,
     cli_autostart: bool,
 ) -> Result<Option<DaemonResponse>, AppError> {
-    if DAEMON_VERSION_STATE.load(Ordering::SeqCst) == VERSION_NOT_CHECKED {
+    // ORDERING: Acquire pairs with the Release store in maybe_restart_for_version_mismatch.
+    if DAEMON_VERSION_STATE.load(Ordering::Acquire) == VERSION_NOT_CHECKED {
         maybe_restart_for_version_mismatch(models_dir)?;
     }
 
@@ -572,7 +601,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
     }
 
     if spawn_backoff_active(models_dir)? {
-        tracing::warn!("daemon autostart suppressed by backoff window");
+        tracing::warn!(target: "daemon", "daemon autostart suppressed by backoff window");
         return Ok(false);
     }
 
@@ -590,7 +619,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
     let exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(err) => {
-            record_spawn_failure(models_dir, format!("current_exe failed: {err}"))?;
+            record_spawn_failure(models_dir, &format!("current_exe failed: {err}"))?;
             drop(spawn_lock);
             return Ok(false);
         }
@@ -611,7 +640,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    match child.spawn() {
+    match crate::commands::claude_runner::spawn_with_memory_limit(&mut child) {
         Ok(child_handle) => {
             // SAFETY: deliberate orphan daemon detach. The Child handle is intentionally
             // dropped without a corresponding `.wait()` call because the daemon owns its
@@ -627,6 +656,7 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
             let pid = child_handle.id();
             drop(child_handle);
             tracing::debug!(
+                target: "daemon",
                 pid,
                 "daemon detached; lifecycle managed via spawn lock + readiness file"
             );
@@ -634,16 +664,13 @@ fn ensure_daemon_running(models_dir: &Path) -> Result<bool, AppError> {
             if ready {
                 clear_spawn_backoff_state(models_dir).ok();
             } else {
-                record_spawn_failure(
-                    models_dir,
-                    "daemon did not become healthy after autostart".to_string(),
-                )?;
+                record_spawn_failure(models_dir, "daemon did not become healthy after autostart")?;
             }
             drop(spawn_lock);
             Ok(ready)
         }
         Err(err) => {
-            record_spawn_failure(models_dir, format!("daemon spawn failed: {err}"))?;
+            record_spawn_failure(models_dir, &format!("daemon spawn failed: {err}"))?;
             drop(spawn_lock);
             Ok(false)
         }
@@ -686,6 +713,10 @@ fn spawn_state_path(models_dir: &Path) -> PathBuf {
     daemon_control_dir(models_dir).join("daemon-spawn-state.json")
 }
 
+fn pid_file_path(models_dir: &Path) -> PathBuf {
+    daemon_control_dir(models_dir).join("daemon.pid")
+}
+
 fn try_acquire_spawn_lock(models_dir: &Path) -> Result<Option<File>, AppError> {
     let path = spawn_lock_path(models_dir);
     std::fs::create_dir_all(crate::paths::parent_or_err(&path)?).map_err(AppError::Io)?;
@@ -717,7 +748,9 @@ fn spawn_backoff_active(models_dir: &Path) -> Result<bool, AppError> {
     Ok(now_epoch_ms() < state.not_before_epoch_ms)
 }
 
-fn record_spawn_failure(models_dir: &Path, message: String) -> Result<(), AppError> {
+#[cold]
+#[inline(never)]
+fn record_spawn_failure(models_dir: &Path, message: &str) -> Result<(), AppError> {
     let mut state = load_spawn_state(models_dir)?;
     state.consecutive_failures = state.consecutive_failures.saturating_add(1);
     let exponent = state.consecutive_failures.saturating_sub(1).min(6);
@@ -729,7 +762,7 @@ fn record_spawn_failure(models_dir: &Path, message: String) -> Result<(), AppErr
     let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
     let backoff_ms = half + jitter;
     state.not_before_epoch_ms = now_epoch_ms() + backoff_ms;
-    state.last_error = Some(message);
+    state.last_error = Some(message.to_string());
     save_spawn_state(models_dir, &state)
 }
 
@@ -806,7 +839,7 @@ mod tests {
 
         assert!(!spawn_backoff_active(&models_dir).unwrap());
 
-        record_spawn_failure(&models_dir, "spawn failed".to_string()).unwrap();
+        record_spawn_failure(&models_dir, "spawn failed").unwrap();
         assert!(spawn_backoff_active(&models_dir).unwrap());
 
         let state = load_spawn_state(&models_dir).unwrap();
@@ -851,7 +884,7 @@ mod tests {
 
         // Record 10 consecutive failures to force exponent saturation.
         for i in 0..10 {
-            record_spawn_failure(&models_dir, format!("failure {i}")).unwrap();
+            record_spawn_failure(&models_dir, &format!("failure {i}")).unwrap();
         }
 
         let state = load_spawn_state(&models_dir).unwrap();

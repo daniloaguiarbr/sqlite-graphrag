@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.66"
+version = "1.0.67"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -36,6 +36,7 @@ exclude = [
     "*.sqlite-shm",
     "*.sqlite-wal",
     "gaps.md",
+    "fuzz/",
 ]
 
 [[bin]]
@@ -60,14 +61,17 @@ path = "tests/loom_lock_slots.rs"
 # v0.9.1). Native SQLite linking forbids two rusqlite versions in the graph
 # (see https://stackoverflow.com/questions/69403524). Reassess when a refinery
 # release supporting rusqlite 0.39 ships; tracked for v1.0.41.
+ahash = "0.8"
+mimalloc = { version = "0.1", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace", "backup"] }
 sqlite-vec = "0.1.9"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 clap = { version = "4.6", features = ["derive", "env"] }
+clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing = { version = "0.1", features = ["release_max_level_info", "attributes"] }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt", "ansi", "registry", "tracing-log"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
 anyhow = "1"
 thiserror = "2"
@@ -79,6 +83,7 @@ fs4 = { version = "0.9", features = ["sync"] }
 interprocess = "2"
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
@@ -88,13 +93,21 @@ ctrlc = { version = "3.4", features = ["termination"] }
 # sem --locked resolve 0.4.3 e quebra a instalação em toolchains 1.88..1.94.
 # Reavaliar quando CI passar em 1.95 e `rust-version` avançar para 1.95.
 constant_time_eq = "=0.4.2"
+# parking_lot: faster Mutex + deadlock detection in debug builds (P09 parallelism gap)
+parking_lot = "0.12"
+libc = "0.2"
 rayon = "1.10"
 text-splitter = { version = "0.30.1", features = ["markdown", "tokenizers"] }
 huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
 unicode-normalization = "0.1.25"
 ndarray = "0.16"
 tempfile = "3"
+sys-locale = "0.3"
 wait-timeout = "0.2"
+which = "7"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 
 # ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
 # pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:
@@ -113,6 +126,8 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "
 
 [dev-dependencies]
 assert_cmd = "2"
+insta = { version = "1", features = ["json"] }
+tracing-test = "0.2"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = { version = "1", features = ["std"] }
 tempfile = "3"
@@ -134,13 +149,28 @@ codegen-units = 1
 strip = true
 opt-level = 3
 panic = "abort"
+debug = false
+overflow-checks = false
+incremental = false
+
+[profile.release.package."*"]
+opt-level = 3
+
+[profile.bench]
+inherits = "release"
+debug = 1
 
 [features]
 # Opt-in for future heavy tests (stress/exhaustive property tests).
 slow-tests = []
+# Enable parking_lot deadlock detection thread (10s polling interval).
+deadlock-detection = ["parking_lot/deadlock_detection"]
 
 [profile.dev]
 opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)'] }

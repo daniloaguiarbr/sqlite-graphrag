@@ -98,7 +98,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Initialize database and download embedding model |
-| `health` | `--json` | Show database integrity and pragma status |
+| `health` | `--json` | Show database integrity and pragma status; reports super-hub detection and `relation_concentration_warning` when any entity or relation type dominates the graph |
 | `stats` | `--json` | Count memories, entities and relationships |
 | `migrate` | `--json` | Apply pending schema migrations via `refinery` |
 | `vacuum` | `--json` | Checkpoint WAL and reclaim disk space |
@@ -109,21 +109,26 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 | --- | --- | --- |
 | `remember` | `--name`, `--type`, `--description`, `--body` (or `--body-file`/`--body-stdin`), `--dry-run` | Save a memory with optional entity graph; `--dry-run` previews without writing |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--type` | Search memories semantically via KNN |
-| `read` | `--name <name>` | Fetch a memory by exact kebab-case name |
+| `read` | `--name <name>`, `--id <id>` | Fetch a memory by exact kebab-case name or numeric ID |
 | `list` | `--type`, `--limit`, `--offset` | Paginate memories sorted by `updated_at` |
 | `forget` | `--name <name>` | Soft-delete a memory preserving history |
 | `rename` | `--old`/`--from` (since v1.0.35) `<name>`, `--new`/`--to` (since v1.0.35) `<name>` | Rename a memory while keeping versions |
-| `edit` | `--name`, `--body`, `--description` | Edit body or description creating new version |
+| `edit` | `--name`, `--body`, `--description`, `--type` | Edit body, description, or memory type creating new version |
 | `history` | `--name <name>` | List all versions of a memory |
 | `restore` | `--name`, `--version` | Restore a memory to a previous version |
+| `remember-batch` | `--json`, `--force-merge` | Ingest multiple memories from a NDJSON stream in one invocation |
+### Utilities
+| Command | Arguments | Description |
+| --- | --- | --- |
+| `completions` | `<shell>` (bash, zsh, fish, elvish, powershell) | Generate shell completion script and print to stdout |
 ### Retrieval and graph
 | Command | Arguments | Description |
 | --- | --- | --- |
 | `hybrid-search` | `<query>`, `-k`/`--k` (alias `--limit` since v1.0.35), `--rrf-k` | FTS5 plus vector fused via Reciprocal Rank Fusion |
-| `deep-research` | `<query>`, `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`, `--mode` (none), `--max-cost-usd` | Parallel multi-hop GraphRAG research with per-sub-query embeddings, RRF fusion for KNN+FTS5, directed evidence chains, graph_context with entities and relationships |
+| `deep-research` | `<query>`, `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`, `--mode` (none|claude-code|codex), `--max-cost-usd` | Parallel multi-hop GraphRAG research with per-sub-query embeddings, RRF fusion for KNN+FTS5, directed evidence chains, graph_context with entities and relationships |
 | `reclassify-relation` | `--from-relation`, `--to-relation`, `--batch`, `--source`, `--target`, `--filter-source-type`, `--filter-target-type`, `--dry-run` | Bulk or single reclassification of relationship types with UNIQUE collision handling |
 | `normalize-entities` | `--dry-run`, `--yes` | Normalize entity names to lowercase kebab-case ASCII, auto-merge collisions |
-| `enrich` | `--operation` (memory-bindings, entity-descriptions, body-enrich), `--mode` (claude-code, codex), `--limit`, `--dry-run`, `--max-cost-usd`, `--resume`, `--retry-failed` | LLM-augmented graph quality pipeline with scan-judge-persist pattern |
+| `enrich` | `--operation` (memory-bindings, entity-descriptions, body-enrich), `--mode` (claude-code, codex), `--limit`, `--dry-run`, `--max-cost-usd`, `--resume`, `--retry-failed`, `--llm-parallelism <N>` | LLM-augmented graph quality pipeline with scan-judge-persist pattern; `--llm-parallelism` controls concurrent LLM subprocesses (default 1) |
 | `link` | `--source`, `--target`, `--relation` | Create an explicit relationship between two entities |
 | `unlink` | `--source`, `--target`, `--relation` | Remove a specific relationship between two entities |
 | `related` | `<name>`, `--hops` | Traverse the entity graph N hops from a memory |
@@ -550,7 +555,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.65 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.67 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM

@@ -222,11 +222,13 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
     Ok(())
 }
 
+#[tracing::instrument(skip_all, level = "debug", name = "remember")]
 pub fn run(args: RememberArgs) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
     let _ = args.format;
+    tracing::debug!(target: "remember", name = %args.name, "persisting memory");
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
     // Capture the original `--name` before normalization so the JSON response can
@@ -241,7 +243,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         let lower = args.name.to_lowercase().replace(['_', ' '], "-");
         let trimmed = lower.trim_matches('-').to_string();
         if trimmed != args.name {
-            tracing::warn!(
+            tracing::warn!(target: "remember",
                 original = %args.name,
                 normalized = %trimmed,
                 "name auto-normalized to kebab-case"
@@ -269,8 +271,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     }
 
     {
-        let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
+        let slug_re = crate::constants::name_slug_regex();
         if !slug_re.is_match(&normalized_name) {
             return Err(AppError::Validation(crate::i18n::validation::name_kebab(
                 &normalized_name,
@@ -289,11 +290,17 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut raw_body = if let Some(b) = args.body {
         b
     } else if let Some(ref path) = args.body_file {
+        let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
         match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 let bytes = std::fs::read(path).map_err(AppError::Io)?;
-                tracing::warn!("body file contains invalid UTF-8; replacing invalid sequences");
+                tracing::warn!(target: "remember", "body file contains invalid UTF-8; replacing invalid sequences");
                 String::from_utf8_lossy(&bytes).into_owned()
             }
             Err(e) => return Err(AppError::Io(e)),
@@ -309,10 +316,22 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let mut graph = GraphInput::default();
     if let Some(path) = args.entities_file {
+        let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         graph.entities = serde_json::from_str(&content)?;
     }
     if let Some(path) = args.relationships_file {
+        let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         graph.relationships = serde_json::from_str(&content)?;
     }
@@ -334,7 +353,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut relationships_truncated = false;
     let rel_cap = max_relationships_per_memory();
     if graph.relationships.len() > rel_cap {
-        tracing::warn!(
+        tracing::warn!(target: "remember",
             count = graph.relationships.len(),
             cap = rel_cap,
             "truncating relationships to cap"
@@ -367,6 +386,12 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let metadata: serde_json::Value = if let Some(m) = args.metadata {
         serde_json::from_str(&m)?
     } else if let Some(path) = args.metadata_file {
+        let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         serde_json::from_str(&content)?
     } else {
@@ -383,16 +408,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut extraction_method: Option<String> = None;
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::with_capacity(4);
     if args.enable_ner && args.skip_extraction {
-        tracing::warn!(
-            "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
-        );
+        return Err(AppError::Validation(
+            "--enable-ner and --skip-extraction are mutually exclusive; remove one".to_string(),
+        ));
     }
     if args.skip_extraction && !args.enable_ner {
-        tracing::warn!("--skip-extraction is deprecated and has no effect (NER is disabled by default since v1.0.45); remove this flag");
+        return Err(AppError::Validation(
+            "--skip-extraction is deprecated since v1.0.45 and has no effect; remove this flag"
+                .to_string(),
+        ));
     }
     let gliner_variant: crate::extraction::GlinerVariant =
         args.gliner_variant.parse().unwrap_or_else(|e| {
-            tracing::warn!("invalid --gliner-variant: {e}; using fp32");
+            tracing::warn!(target: "remember", error = %e, "invalid --gliner-variant, defaulting to fp32");
             crate::extraction::GlinerVariant::Fp32
         });
     if args.enable_ner && graph.entities.is_empty() && !raw_body.trim().is_empty() {
@@ -414,7 +442,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 normalize_and_validate_graph_input(&mut graph)?;
             }
             Err(e) => {
-                tracing::warn!("auto-extraction failed (graceful degradation): {e:#}");
+                tracing::warn!(target: "remember", error = %e, "auto-extraction failed, graceful degradation");
                 extraction_method = Some("none:extraction-failed".to_string());
             }
         }
@@ -522,7 +550,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     if body_will_be_preserved {
         if let Some(existing_row) = memories::read_by_name(&conn, &namespace, &normalized_name)? {
             if !existing_row.body.is_empty() {
-                tracing::debug!(
+                tracing::debug!(target: "remember",
                     name = %normalized_name,
                     "GAP-08: empty body with --force-merge and no --clear-body; preserving existing body"
                 );
@@ -596,11 +624,17 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 chunks_info.len()
             ),
         );
-        let mut chunk_embeddings = Vec::with_capacity(chunk_texts.len());
+        let embed_cap = chunk_texts.len();
+        let mut chunk_embeddings = Vec::new();
+        chunk_embeddings.try_reserve(embed_cap).map_err(|_| {
+            AppError::LimitExceeded(format!(
+                "allocation of {embed_cap} chunk embeddings would exceed available memory"
+            ))
+        })?;
         for chunk_text in &chunk_texts {
             if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
                 if rss > args.max_rss_mb {
-                    tracing::error!(
+                    tracing::error!(target: "remember",
                         rss_mb = rss,
                         max_rss_mb = args.max_rss_mb,
                         "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
@@ -663,6 +697,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
+    let mut skip_reindex = false;
     let (memory_id, action, version) = match existing_memory {
         Some((existing_id, _updated_at, _current_version)) => {
             if let Some(hash_id) = duplicate_hash_id {
@@ -681,7 +716,19 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )?;
 
-            storage_chunks::delete_chunks(&tx, existing_id)?;
+            // G15: skip re-indexing when body hash matches (common in --force-merge loops)
+            let existing_body_hash: Option<String> = tx
+                .query_row(
+                    "SELECT body_hash FROM memories WHERE id = ?1",
+                    rusqlite::params![existing_id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let body_unchanged = existing_body_hash.as_deref() == Some(&body_hash);
+            skip_reindex = body_unchanged;
+            if !body_unchanged {
+                storage_chunks::delete_chunks(&tx, existing_id)?;
+            }
 
             let next_v = versions::next_version(&tx, existing_id)?;
             memories::update(&tx, existing_id, &new_memory, args.expected_updated_at)?;
@@ -711,15 +758,17 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 None,
                 "edit",
             )?;
-            memories::upsert_vec(
-                &tx,
-                existing_id,
-                &namespace,
-                memory_type,
-                &embedding,
-                &normalized_name,
-                &snippet,
-            )?;
+            if !body_unchanged {
+                memories::upsert_vec(
+                    &tx,
+                    existing_id,
+                    &namespace,
+                    memory_type,
+                    &embedding,
+                    &normalized_name,
+                    &snippet,
+                )?;
+            }
             (existing_id, "updated".to_string(), next_v)
         }
         None => {
@@ -754,7 +803,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         }
     };
 
-    if chunks_info.len() > 1 {
+    if chunks_info.len() > 1 && !skip_reindex {
         storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
 
         let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
@@ -801,7 +850,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                     |r| r.get(0),
                 )?;
                 if degree > cap {
-                    tracing::warn!(
+                    tracing::warn!(target: "remember",
                         entity = %entity.name,
                         degree = degree,
                         cap = cap,

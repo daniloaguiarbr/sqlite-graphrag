@@ -60,6 +60,7 @@ struct ForgetResponse {
 
 pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
+    tracing::debug!(target: "forget", name = ?args.name_positional.as_deref().or(args.name.as_deref()), "soft-deleting memory");
     // Resolve name from positional or --name flag; both are optional, at least one is required.
     let name = args.name_positional.or(args.name).ok_or_else(|| {
         AppError::Validation("name required: pass as positional argument or via --name".to_string())
@@ -119,7 +120,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
             // when `purge` physically removes the row from `memories`. Between soft-delete
             // and purge, FTS queries filter `m.deleted_at IS NULL` in the JOIN.
             if let Err(e) = memories::delete_vec(&conn, id) {
-                tracing::warn!(memory_id = id, error = %e, "vec cleanup failed — orphan vector left");
+                tracing::warn!(target: "forget", memory_id = id, error = %e, "vec cleanup failed — orphan vector left");
             }
         }
     }

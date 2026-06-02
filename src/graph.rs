@@ -261,7 +261,8 @@ fn traverse_from_memories_with_hops_inner(
     let seed_entity_set: std::collections::HashSet<i64> = seed_entities.iter().copied().collect();
 
     let mut result: Vec<(i64, u32)> = Vec::with_capacity(entity_depth.len());
-    let mut seen_memories: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut seen_memories: std::collections::HashSet<i64> =
+        std::collections::HashSet::with_capacity(entity_depth.len());
 
     for (&entity_id, &hop) in &entity_depth {
         if seed_entity_set.contains(&entity_id) {
@@ -320,7 +321,8 @@ pub fn bfs_with_predecessors(
     use std::collections::HashMap;
 
     let mut entity_depth: HashMap<i64, u32> = seed_entity_ids.iter().map(|&id| (id, 0)).collect();
-    let mut predecessor: HashMap<i64, (i64, String, f64)> = HashMap::new();
+    let mut predecessor: HashMap<i64, (i64, String, f64)> =
+        HashMap::with_capacity(max_hops as usize * 10);
     let mut frontier: Vec<i64> = seed_entity_ids.to_vec();
 
     for hop in 1..=max_hops {

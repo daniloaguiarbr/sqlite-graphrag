@@ -77,12 +77,14 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
     let target_id = entities::find_entity_id(&conn, &namespace, &args.into)?
         .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.into, &namespace)))?;
 
-    // Resolve source entity IDs (skip the target if it appears in the list).
+    // Resolve source entity IDs — reject self-referential merge (G21).
     let mut source_ids: Vec<i64> = Vec::with_capacity(args.names.len());
     for name in &args.names {
         if name == &args.into {
-            // Source equals target — skip silently to avoid self-referential merge.
-            continue;
+            return Err(AppError::Validation(format!(
+                "source entity '{}' equals target '{}' — self-referential merge is not allowed",
+                name, args.into
+            )));
         }
         let id = entities::find_entity_id(&conn, &namespace, name)?
             .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(name, &namespace)))?;

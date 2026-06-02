@@ -1383,6 +1383,7 @@ sqlite-graphrag edit --name design-auth \
 - No exit code 3, releia a memória com `read --json` para obter o novo `updated_at` e tente novamente
 - `--body-file` lê o novo corpo de um arquivo; alternativas são `--body` (inline) e `--body-stdin` (pipe)
 - Altere apenas a descrição sem tocar o corpo: `edit --name <nome> --description "nova desc"`
+- Altere o tipo da memória sem recriar: `edit --name <nome> --type decision` (pula re-embedding quando body não mudou)
 - JSON response inclui `memory_id`, `name`, `action` ("updated"), `version` e `elapsed_ms`
 
 
@@ -1828,3 +1829,95 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Expandir corpos curtos: `sqlite-graphrag enrich --operation body-enrich --mode claude-code --limit 20 --json`
 - Retomar após interrupção: `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --resume --json`
 - Usar Codex em vez de Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`
+- Rodar com workers LLM em paralelo: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
+
+
+## Como Criar Memórias em Lote a Partir de NDJSON (v1.0.67)
+
+### Problema
+- Você tem uma lista de memórias para criar e chamar `remember` em loop é lento e não-atômico
+- Uma escrita parcial deixa o banco em estado inconsistente quando o loop é interrompido
+
+### Solução
+```bash
+# Criar 3 memórias em lote a partir de NDJSON
+printf '{"name":"nota-a","type":"note","description":"primeira","body":"conteudo a"}\n{"name":"nota-b","type":"note","description":"segunda","body":"conteudo b"}\n{"name":"nota-c","type":"note","description":"terceira","body":"conteudo c"}' | sqlite-graphrag remember-batch --json
+
+# Lote atômico com transação
+cat memorias.ndjson | sqlite-graphrag remember-batch --transaction --force-merge --json
+```
+
+### Explicação
+- `remember-batch` lê um objeto JSON por linha do stdin e insere cada um como memória
+- `--transaction` envolve todos os inserts em uma única transação SQLite: todos confirmam ou todos revertem
+- `--force-merge` faz upsert de memórias existentes em vez de falhar com exit 9 em duplicatas
+- Cada linha de entrada suporta os mesmos campos do `remember`: `name`, `type`, `description`, `body`
+- Saída é NDJSON: uma linha de resultado por memória de entrada mais uma linha resumo com `summary: true`
+- Mais rápido que loop no shell porque lotes de embedding são despachados juntos ao daemon
+
+### Variantes
+- Canalizar saída do `jaq` diretamente: `jaq -c '.[]' memorias.json | sqlite-graphrag remember-batch --json`
+- Omitir `--transaction` quando sucesso parcial é aceitável e você quer detalhes de erro por item
+
+### Veja Também
+- Receita "Como Importar Em Massa Um Diretório De Base De Conhecimento"
+- Receita "Como Tratar Exit Codes Em Pipelines Automatizados"
+
+
+## Como Buscar Uma Memória Por ID (v1.0.67)
+
+### Problema
+- Você tem um `memory_id` inteiro da resposta de `list` ou `remember` e quer fetch O(1) direto
+- Buscar pelo nome exige conhecer o slug kebab-case exato, que nem sempre está disponível
+
+### Solução
+```bash
+# Busca direta pelo memory_id (do list ou resposta do remember)
+sqlite-graphrag read --id 42 --json
+```
+
+### Explicação
+- `--id` aceita o inteiro `memory_id` retornado por `list`, `remember` e `remember-batch`
+- A busca é O(1) por chave primária — mais rápida que `--name` quando você já tem o ID
+- `--id` e `--name` são mutuamente exclusivos; passe exatamente um por invocação
+- Todas as outras flags de `read` (`--tz`, `--json`, `--lang`) funcionam normalmente com `--id`
+
+### Variantes
+- Extrair o ID da resposta do `remember`: `sqlite-graphrag remember ... --json | jaq '.memory_id'`
+- Combinar com `list`: `sqlite-graphrag list --json | jaq '.items[0].memory_id'`
+
+### Veja Também
+- Receita "Como Encadear Recuperação Profunda Em 3 Camadas"
+- Receita "Como Editar Uma Memória Com Locking Otimista"
+
+
+## Como Instalar Completions de Shell
+
+### Problema
+- Você digita subcomandos do `sqlite-graphrag` de memória e perde flags que poderiam economizar tempo
+- Tab-completion não está disponível após instalar o binário
+
+### Solução
+```bash
+# Completions para Bash
+sqlite-graphrag completions bash > ~/.bash_completion.d/sqlite-graphrag
+# Completions para Zsh
+sqlite-graphrag completions zsh > ~/.zfunc/_sqlite-graphrag
+# Completions para Fish
+sqlite-graphrag completions fish > ~/.config/fish/completions/sqlite-graphrag.fish
+```
+
+### Explicação
+- O subcomando `completions` gera scripts de completion para bash, zsh e fish
+- Bash: faça source do arquivo ou coloque-o em diretório que o bash carrega automaticamente no startup
+- Zsh: adicione `fpath=(~/.zfunc $fpath)` e `autoload -U compinit && compinit` ao `~/.zshrc`
+- Fish: o arquivo de completions é carregado automaticamente do diretório de completions do fish
+- Completions cobrem todos os subcomandos, flags e valores de enum (ex.: `--type`, `--entity-type`, `--format`)
+
+### Variantes
+- PowerShell: `sqlite-graphrag completions powershell > sqlite-graphrag.ps1` e faça dot-source
+- Elvish: `sqlite-graphrag completions elvish > ~/.config/elvish/lib/sqlite-graphrag.elv`
+
+### Veja Também
+- Receita "Como Bootstrapar O Banco De Memória Em 60 Segundos"
+- Receita "Como Integrar sqlite-graphrag Com Loop Subprocess Do Claude Code"

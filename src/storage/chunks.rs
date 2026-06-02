@@ -93,7 +93,7 @@ pub fn knn_search_chunks(
     k: usize,
 ) -> Result<Vec<(i64, i32, f32)>, AppError> {
     let bytes = f32_to_bytes(embedding);
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT memory_id, chunk_idx, distance FROM vec_chunks
          WHERE embedding MATCH ?1
          ORDER BY distance LIMIT ?2",
@@ -111,7 +111,7 @@ pub fn knn_search_chunks(
 }
 
 pub fn get_chunks_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<Chunk>, AppError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT memory_id, chunk_idx, chunk_text, start_offset, end_offset, token_count
          FROM memory_chunks WHERE memory_id = ?1 ORDER BY chunk_idx",
     )?;

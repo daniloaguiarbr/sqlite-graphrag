@@ -64,6 +64,13 @@
     "top_relation_ratio":            { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges occupied by top_relation (0.0-1.0). Present alongside top_relation." },
     "applies_to_ratio":              { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges that are of type 'applies-to'. Present when relation concentration analysis is available." },
     "relation_concentration_warning":{ "type": "string",  "description": "Human-readable warning when a single relation type dominates the graph. Present when concentration threshold is exceeded." },
+    "super_hub_count":    { "type": "integer", "minimum": 0, "description": "Number of entities with degree > 50. Present when super-hub analysis is available." },
+    "super_hub_warning":  { "type": "string", "description": "Human-readable warning when super-hub entities are detected. Present when super_hub_count > 0." },
+    "top_hub_entity":     { "type": "string", "description": "Name of the entity with the highest degree. Present when graph has entities." },
+    "top_hub_degree":     { "type": "integer", "minimum": 0, "description": "Degree of the top hub entity. Present alongside top_hub_entity." },
+    "hub_warning":        { "type": "string", "description": "Warning when top hub degree exceeds threshold. Present alongside top_hub_entity." },
+    "non_normalized_count": { "type": "integer", "minimum": 0, "description": "Number of entities whose names do not match kebab-case normalization." },
+    "normalization_warning": { "type": "string", "description": "Warning when non-normalized entities are detected." },
     "elapsed_ms":                    { "type": "integer", "minimum": 0 }
   }
 }

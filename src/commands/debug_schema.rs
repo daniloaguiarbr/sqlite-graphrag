@@ -67,7 +67,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap_or(0);
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT name, type FROM sqlite_master \
          WHERE type IN ('table','view','trigger','index') \
          ORDER BY type, name",
@@ -90,7 +90,7 @@ pub fn run(args: DebugSchemaArgs) -> Result<(), AppError> {
         .unwrap_or(0);
 
     let migrations: Vec<MigrationRecord> = if existe_hist > 0 {
-        let mut stmt_mig = conn.prepare(
+        let mut stmt_mig = conn.prepare_cached(
             "SELECT version, name, applied_on \
              FROM refinery_schema_history \
              ORDER BY version",

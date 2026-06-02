@@ -128,6 +128,21 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `decision`, `incident`, `skill`, `document`, `note`
 
 
+## CRUD — Batch Create with remember-batch (v1.0.67)
+### REQUIRED — NDJSON Batch Memory Creation
+- USE `remember-batch` for creating multiple memories in a single invocation via NDJSON stdin
+- EACH input line is a JSON object with `name`, `type`, `description`, `body` fields
+- OUTPUT is NDJSON: one event per item plus a summary line
+- USE `--force-merge` to update existing memories in the batch
+- USE `--dry-run` to validate the batch without persisting
+- PREFER over looping `remember` for 10+ memories — reduces overhead from repeated model loading
+- Per-item event: `name`, `status` (`"created"`/`"updated"`/`"skipped"`/`"failed"`), `memory_id?`, `error?`, `elapsed_ms`
+- Summary line: `summary` (true), `total`, `created`, `updated`, `skipped`, `failed`, `elapsed_ms`
+### Correct Pattern — remember-batch Examples
+- `echo '{"name":"a","type":"note","description":"x","body":"hello"}' | sqlite-graphrag remember-batch --json`
+- `cat batch.ndjson | sqlite-graphrag remember-batch --force-merge --json`
+
+
 ## CRUD — Bulk Ingest with ingest
 ### REQUIRED — When to Use ingest
 - USE `ingest <DIR>` to import entire directories as memories
@@ -255,8 +270,10 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 
 ## CRUD — Read with read and list
-### REQUIRED — Direct Read by Name (read)
+### REQUIRED — Direct Read by Name or ID (read)
 - USE `read --name <kebab-case>` for O(1) fetch by name
+- USE `read --id <N>` for direct lookup by memory_id (v1.0.67) — avoids semantic search when ID is known from prior `list` or `recall` output
+- USE `read --with-graph` to include linked entities and relationships in the response (v1.0.67)
 - PARSE fields `body`, `description`, `created_at_iso`, `updated_at_iso`
 - TREAT exit code 4 as memory not found in the namespace
 - APPLY `--tz` to localize timestamps in the output
@@ -278,6 +295,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `edit --name <name> --body <text>` for short bodies
 - PREFER `--body-file` or `--body-stdin` for long bodies
 - CHANGE description via `--description <text>`
+- CHANGE memory type via `--type <kind>` (e.g., `note` to `decision`) without recreating the memory (v1.0.67); skips re-embedding when body is unchanged
 - EACH edit creates a new immutable version preserving history
 - EDIT re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate scores after edit (since v1.0.63; description-only edits skip re-embedding)
 - VALIDATE exit code 3 as an optimistic locking conflict
@@ -289,7 +307,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - PRESERVE all versions and graph connections
 - TREAT exit code 4 as missing source memory
 - Since v1.0.64: rejects rename to the same name with exit 1 (Validation) — prevents version inflation
-- JSON response: `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`
+- JSON response: `memory_id`, `name` (new), `action` ("renamed"), `version`, `elapsed_ms`, `ghost_purged` (bool?, v1.0.67 — true when a soft-deleted memory occupying the target name was auto-purged)
 - v1.0.56: FTS5 desync bug fixed — renamed memories are immediately findable via full-text search
 ### REQUIRED — Old Version Restore (restore)
 - INSPECT versions via `history --name <name>` first
@@ -453,6 +471,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `--dry-run` previews without spawning LLM (zero tokens)
 - `--max-cost-usd N` caps cumulative API spend (ignored for OAuth users)
 - `--resume` and `--retry-failed` for crash resilience via queue DB
+- `--llm-parallelism <N>` controls how many LLM subprocesses run concurrently (v1.0.67, default 1); set to 2-4 to reduce wall-clock time for large enrichment batches
 - Output is NDJSON: phase events, per-item events (status: `done`/`failed`/`skipped`/`preview`), summary line
 - Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 ### REQUIRED — Canonical Three-Layer Pattern
@@ -740,10 +759,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `normalize-entities` returns `action` ("normalized"/"dry_run"), `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
 - `enrich` emits NDJSON: phase events (`phase`, `operation`), item events (`name`, `status`, `entities?`, `rels?`, `cost_usd?`, `elapsed_ms?`), summary (`operation`, `completed`, `failed`, `skipped`, `cost_usd`, `elapsed_ms`)
 - `health` also returns `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), `relation_concentration_warning` (string?) when any single relation exceeds 40% of edges (v1.0.65); `vec_memories_missing` (i64) and `vec_memories_orphaned` (i64) for vector desync diagnostics (v1.0.66)
+- `health` returns super-hub detection fields (v1.0.67): `super_hub_count` (i64?), `super_hub_warning` (string?), `top_hub_entity` (string?), `top_hub_degree` (i64?), `hub_warning` (string?) when entities exceed degree threshold; also `non_normalized_count` (i64?) and `normalization_warning` (string?) for entity name normalization audit
 - `graph --format json` returns `nodes[]` AND `entities[]` (alias, v1.0.66) with `id`, `name`, `namespace`, `kind`, `type`; `edges[]`; `elapsed_ms`
 - `list --json` returns `items[]` AND `memories[]` (alias, v1.0.66); each item includes `body_length`
 - `graph entities --json` returns `entities[]` with `id`, `name`, `entity_type`, `namespace`, `created_at`, `degree`, `description?` (v1.0.66)
 - `edit` accepts `--type` to change memory type without re-creating (v1.0.66); `--body` and `--description` remain unchanged
+- `remember-batch` emits per-item NDJSON with `name`, `status`, `memory_id?`, `error?`, `elapsed_ms` plus a summary line (v1.0.67)
 
 
 ## Exit Codes and Retry Strategy
@@ -866,7 +887,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Schema Diagnostics
 - USE `debug-schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`
-- CURRENT schema version is 11 (V011 adds `idx_relationships_ns_relation` index)
+- CURRENT schema version is 12 (V012 adds relationship timestamps `created_at`/`updated_at` columns; V011 added `idx_relationships_ns_relation` index)
 - COMMAND is hidden from `--help`; invoke by exact name
 ### Correct Pattern — Weekly Cron
 - `sqlite-graphrag purge --retention-days 30 --yes`
@@ -875,3 +896,14 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `sqlite-graphrag vacuum --json`
 - `sqlite-graphrag optimize --json`
 - `sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite`
+
+
+## Shell Completions (v1.0.67)
+### REQUIRED — completions Command
+- USE `completions <shell>` to generate shell completion scripts
+- SUPPORTED shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`
+- PIPE output to appropriate shell config file
+### Correct Pattern — completions Examples
+- `sqlite-graphrag completions bash > ~/.local/share/bash-completion/completions/sqlite-graphrag`
+- `sqlite-graphrag completions zsh > ~/.zfunc/_sqlite-graphrag`
+- `sqlite-graphrag completions fish > ~/.config/fish/completions/sqlite-graphrag.fish`

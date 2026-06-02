@@ -73,6 +73,32 @@ sqlite-graphrag namespace-detect
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
 
+### v1.0.67 — 2 NOVOS comandos, 24 correções de gaps, remember-batch, completions, migração V012
+- NOVO comando `remember-batch` para criação em lote de memórias via NDJSON no stdin
+- NOVO comando `completions` para geração de completions de shell (Bash, Zsh, Fish, PowerShell, Elvish)
+- `read --id <N>` para busca direta por memory_id
+- `read --with-graph` inclui entidades e relacionamentos vinculados
+- `enrich --llm-parallelism <N>` para workers LLM paralelos
+- `health` detecta entidades super-hub (grau > 50) e reporta avisos de normalização
+- `edit` pula re-embedding quando conteúdo do body é inalterado (comparação body_hash)
+- `rename` purga memórias ghost (soft-deleted) que ocupam o nome destino
+- Validação de flags em `hybrid-search`, `recall`, `ingest` rejeita flags silenciosamente descartadas
+- Migração V012 adiciona `created_at`/`updated_at` na tabela relationships
+- Execute `sqlite-graphrag migrate --json` após upgrade para aplicar V012
+- Schemas JSON adicionados: `remember-batch.schema.json`, `remember-batch-summary.schema.json`
+- Schemas JSON atualizados: `health.schema.json` (campos super-hub), `rename.schema.json` (ghost_purged)
+
+### v1.0.66 — 35 correções BUG/GAP, edit --type, graph_context, aliases LLM-friendly
+- 3 correções CRÍTICAS: crash reclassify-relation, flooding de evidence chain, atualização de weight do link
+- Flag `edit --type` para alterar tipo de memória sem recriar
+- Campo `graph_context` na resposta JSON do `deep-research`
+- `graph --format json` inclui alias `entities` junto com `nodes`
+- `list --json` inclui alias `memories` junto com `items`
+- `graph entities --json` inclui campo `description` por entidade
+- `health --json` inclui contagens `vec_memories_missing` e `vec_memories_orphaned`
+- Execute `sqlite-graphrag migrate --json` após upgrade
+- Migração de dados recomendada: `reclassify-relation --from-relation applies-to --to-relation applies_to --batch --yes`
+
 ### v1.0.65 — 3 NOVOS comandos, correções deep-research, normalização de entidades, pipeline enrich
 
 - NOVO comando `reclassify-relation` para reclassificação em massa ou individual de tipos de relacionamento com tratamento de colisões UNIQUE

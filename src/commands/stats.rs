@@ -73,7 +73,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
     let relationships: i64 =
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?;
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT namespace FROM memories WHERE deleted_at IS NULL ORDER BY namespace",
     )?;
     let namespaces: Vec<String> = stmt
@@ -102,7 +102,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
         Ok(n) => n,
         Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => 0,
         Err(e) => {
-            tracing::warn!("failed to count memory_chunks: {e}");
+            tracing::warn!(target: "stats", error = %e, "memory_chunks count failed");
             0
         }
     };

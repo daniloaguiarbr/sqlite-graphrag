@@ -33,7 +33,10 @@ NOTES:\n  \
     source=\"direct\". The source field is therefore redundant with --no-graph and\n  \
     may be ignored by callers in that mode.")]
 pub struct RecallArgs {
-    #[arg(help = "Search query string (semantic vector search via sqlite-vec)")]
+    #[arg(
+        allow_hyphen_values = true,
+        help = "Search query string (semantic vector search via sqlite-vec)"
+    )]
     pub query: String,
     /// Maximum number of direct vector matches to return.
     ///
@@ -42,7 +45,7 @@ pub struct RecallArgs {
     /// cap them independently. The `results` field aggregates both lists.
     /// Validated to the inclusive range `1..=4096` (the upper bound matches
     /// `sqlite-vec`'s knn limit; out-of-range values are rejected at parse time).
-    #[arg(short = 'k', long, alias = "limit", default_value = "10", value_parser = crate::parsers::parse_k_range)]
+    #[arg(short = 'k', long, aliases = ["limit", "top-k"], default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     /// Filter by memory.type. Note: distinct from graph entity_type
     /// (project/tool/person/file/concept/incident/decision/memory/dashboard/issue_tracker/organization/location/date)
@@ -94,9 +97,26 @@ pub struct RecallArgs {
     pub daemon: crate::cli::DaemonOpts,
 }
 
+#[tracing::instrument(skip_all, level = "debug", name = "recall")]
 pub fn run(args: RecallArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
+    tracing::debug!(target: "recall", query = %args.query, k = args.k, "searching");
+
+    // G20: reject graph-specific flags when --no-graph is active
+    if args.no_graph {
+        if args.max_hops != 2 {
+            return Err(AppError::Validation(
+                "--max-hops has no effect with --no-graph; remove one".to_string(),
+            ));
+        }
+        if (args.min_weight - 0.3).abs() > f64::EPSILON {
+            return Err(AppError::Validation(
+                "--min-weight has no effect with --no-graph; remove one".to_string(),
+            ));
+        }
+    }
+
     if args.query.trim().is_empty() {
         return Err(AppError::Validation(crate::i18n::validation::empty_query()));
     }

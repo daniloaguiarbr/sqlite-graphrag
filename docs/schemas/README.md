@@ -62,9 +62,14 @@
 | `memory-entities` (forward: `--name`) | `memory-entities.schema.json` |
 | `memory-entities` (reverse: `--entity`) | `memory-entities-reverse.schema.json` |
 | `prune-ner` | `prune-ner.schema.json` |
+| `remember-batch` (per-item event) | `remember-batch.schema.json` |
+| `remember-batch` (summary) | `remember-batch-summary.schema.json` |
 | `export` (per-memory line) | `export-memory-line.schema.json` |
 | `export` (summary) | `export-summary.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
+### Commands Without JSON Schemas
+- `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies
+- `daemon`, `daemon --ping`, `daemon --stop` use plain-text status messages — no JSON schema applies
 ### Ingest Mode Schema Selection
 - `--mode none` and `--mode gliner` use `ingest-file-event.schema.json` and `ingest-summary.schema.json`
 - `--mode claude-code` uses `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, and `ingest-claude-summary.schema.json`
@@ -101,6 +106,9 @@
 - Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
 ### Arquivos de Schema
 - Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
+### Comandos Sem JSON Schema
+- `completions` emite scripts de completion de shell (Bash, Zsh, Fish, PowerShell, Elvish) como texto puro — nenhum JSON schema se aplica
+- `daemon`, `daemon --ping`, `daemon --stop` usam mensagens de status em texto puro — nenhum JSON schema se aplica
 ### Seleção de Schema por Modo de Ingestão
 - `--mode none` e `--mode gliner` usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
 - `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`

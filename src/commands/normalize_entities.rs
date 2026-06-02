@@ -77,7 +77,7 @@ pub fn run(args: NormalizeEntitiesArgs) -> Result<(), AppError> {
     // Collect all entity (id, name) pairs for the namespace.
     let entities: Vec<(i64, String)> = {
         let mut stmt =
-            conn.prepare("SELECT id, name FROM entities WHERE namespace = ?1 ORDER BY id")?;
+            conn.prepare_cached("SELECT id, name FROM entities WHERE namespace = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![namespace], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
         })?;
@@ -97,13 +97,43 @@ pub fn run(args: NormalizeEntitiesArgs) -> Result<(), AppError> {
         })
         .collect();
 
-    let normalized_count_preview = to_change.len();
+    // G10: classify changes into renames (no collision) and merges (collision).
+    // A collision occurs when two distinct names normalize to the same target,
+    // or when the normalized target already exists in the DB as an already-normalized entity.
+    let already_normalized: std::collections::HashSet<String> = entities
+        .iter()
+        .filter(|(_, name)| normalize_entity_name(name) == *name)
+        .map(|(_, name)| name.clone())
+        .collect();
+
+    let mut target_groups: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::with_capacity(to_change.len());
+    for (_, _, normalized) in &to_change {
+        *target_groups.entry(normalized.clone()).or_insert(0) += 1;
+    }
+
+    let mut merge_count_preview: usize = 0;
+    let mut rename_count_preview: usize = 0;
+    for (target, count) in &target_groups {
+        if *count > 1 || already_normalized.contains(target) {
+            // All sources in this group will merge into the existing or first entity
+            let extra = if already_normalized.contains(target) {
+                *count // all merge into existing
+            } else {
+                count - 1 // first one renames, rest merge
+            };
+            merge_count_preview += extra;
+            rename_count_preview += count - extra;
+        } else {
+            rename_count_preview += 1;
+        }
+    }
 
     if args.dry_run {
         let response = NormalizeEntitiesResponse {
             action: "dry_run".to_string(),
-            normalized_count: normalized_count_preview,
-            merged_count: 0,
+            normalized_count: rename_count_preview,
+            merged_count: merge_count_preview,
             namespace,
             elapsed_ms: inicio.elapsed().as_millis() as u64,
         };
@@ -179,7 +209,7 @@ pub fn run(args: NormalizeEntitiesArgs) -> Result<(), AppError> {
                      WHERE id = ?1",
                     params![target_id],
                 )?;
-                tracing::info!(
+                tracing::info!(target: "normalize_entities",
                     src_id = src_id,
                     target_id = target_id,
                     normalized = normalized,
@@ -193,7 +223,7 @@ pub fn run(args: NormalizeEntitiesArgs) -> Result<(), AppError> {
                     "UPDATE entities SET name = ?1, updated_at = unixepoch() WHERE id = ?2",
                     params![normalized, src_id],
                 )?;
-                tracing::info!(
+                tracing::info!(target: "normalize_entities",
                     entity_id = src_id,
                     normalized = normalized,
                     "entity name normalized"

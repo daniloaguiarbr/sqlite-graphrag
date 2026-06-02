@@ -1,6 +1,7 @@
 //! Process entry point: signal handling, language/timezone init, dispatch.
 
-use std::sync::atomic::Ordering;
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use clap::Parser;
 use sqlite_graphrag::{
@@ -13,10 +14,17 @@ use sqlite_graphrag::{
     lock::acquire_cli_slot,
     memory_guard::{available_memory_mb, calculate_safe_concurrency, check_available_memory},
     storage::connection::register_vec_extension,
-    SHUTDOWN,
 };
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    // Reset SIGPIPE to default so pipe consumers (head, jaq) cause clean exit 141.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    sqlite_graphrag::terminal::init_console();
+
     // Limit the ONNX Runtime thread pool to 1 intra-op and 1 inter-op thread per instance,
     // preventing parallel invocations from spawning dozens of threads each.
     // Must be set BEFORE fastembed initializes the ONNX session.
@@ -87,20 +95,31 @@ fn main() {
     let log_format =
         std::env::var("SQLITE_GRAPHRAG_LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
 
-    if log_format == "json" {
-        tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(tracing_subscriber::EnvFilter::new(&log_level))
-            .with_writer(std::io::stderr)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::new(&log_level))
-            .with_writer(std::io::stderr)
-            .init();
-    }
+    sqlite_graphrag::telemetry::init_tracing(&log_level, &log_format);
 
     register_vec_extension();
+
+    #[cfg(feature = "deadlock-detection")]
+    {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            let deadlocks = parking_lot::deadlock::check_deadlock();
+            if !deadlocks.is_empty() {
+                tracing::error!(target: "deadlock_detection", count = deadlocks.len(), "deadlocks detected");
+                for (i, threads) in deadlocks.iter().enumerate() {
+                    for t in threads {
+                        tracing::error!(
+                            target: "deadlock_detection",
+                            index = i,
+                            thread_id = ?t.thread_id(),
+                            backtrace = ?t.backtrace(),
+                            "deadlock thread info"
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     // Pre-parse --lang before Cli::parse() so the language is set even
     // when clap exits early via process::exit (--help, parse errors, etc.).
@@ -152,7 +171,7 @@ fn main() {
         sqlite_graphrag::output::emit_error(&e.localized_message());
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());
-        std::process::exit(e.exit_code());
+        return std::process::ExitCode::from(e.exit_code() as u8);
     }
 
     // Validate flags before any heavy initialization.
@@ -160,7 +179,7 @@ fn main() {
         sqlite_graphrag::output::emit_error(&msg);
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());
-        std::process::exit(2);
+        return std::process::ExitCode::from(2);
     }
 
     let embedding_heavy = cli.command.is_embedding_heavy();
@@ -174,7 +193,7 @@ fn main() {
                     sqlite_graphrag::output::emit_error(&e.localized_message());
                     let _ = std::io::Write::flush(&mut std::io::stdout());
                     let _ = std::io::Write::flush(&mut std::io::stderr());
-                    std::process::exit(e.exit_code());
+                    return std::process::ExitCode::from(e.exit_code() as u8);
                 }
             }
         };
@@ -193,15 +212,18 @@ fn main() {
         // SAFETY invariant: measured_available_mb is always Some when embedding_heavy is true,
         // because the block above (lines ~137-157) sets it to Some(available_mb) in that branch.
         // Using unwrap_or_else with exit instead of ? because main() returns ().
-        let available_mb = measured_available_mb.unwrap_or_else(|| {
-            sqlite_graphrag::output::emit_error_i18n(
-                "embedding-heavy command must measure available RAM",
-                &sqlite_graphrag::i18n::validation::runtime_pt::embedding_heavy_must_measure_ram(),
-            );
-            let _ = std::io::Write::flush(&mut std::io::stdout());
-            let _ = std::io::Write::flush(&mut std::io::stderr());
-            std::process::exit(20);
-        });
+        let available_mb = match measured_available_mb {
+            Some(mb) => mb,
+            None => {
+                sqlite_graphrag::output::emit_error_i18n(
+                    "embedding-heavy command must measure available RAM",
+                    &sqlite_graphrag::i18n::validation::runtime_pt::embedding_heavy_must_measure_ram(),
+                );
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                return std::process::ExitCode::from(20);
+            }
+        };
         let safe_concurrency = calculate_safe_concurrency(
             available_mb,
             cpu_count,
@@ -247,28 +269,20 @@ fn main() {
                 sqlite_graphrag::output::emit_error(&e.localized_message());
                 let _ = std::io::Write::flush(&mut std::io::stdout());
                 let _ = std::io::Write::flush(&mut std::io::stderr());
-                std::process::exit(e.exit_code());
+                return std::process::ExitCode::from(e.exit_code() as u8);
             }
         })
     } else {
         None
     };
 
-    // Register handler for SIGINT / SIGTERM / SIGHUP (via the "termination" feature).
-    // The handler signals SHUTDOWN and logs the event; slot cleanup occurs via Drop on the File.
-    if let Err(e) = ctrlc::set_handler(move || {
-        SHUTDOWN.store(true, Ordering::SeqCst);
-        tracing::warn!(
-            "shutdown signal received; waiting for current command to finish gracefully"
-        );
-    }) {
-        tracing::warn!("failed to register signal handler: {e}");
-    }
+    sqlite_graphrag::signals::register_shutdown_handler();
 
     let result = match cli.command {
         sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
         sqlite_graphrag::cli::Commands::Daemon(args) => commands::daemon::run(args),
         sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
+        sqlite_graphrag::cli::Commands::RememberBatch(args) => commands::remember_batch::run(args),
         sqlite_graphrag::cli::Commands::Ingest(args) => commands::ingest::run(args),
         sqlite_graphrag::cli::Commands::Recall(args) => commands::recall::run(args),
         sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
@@ -319,6 +333,7 @@ fn main() {
         sqlite_graphrag::cli::Commands::NormalizeEntities(args) => {
             commands::normalize_entities::run(args)
         }
+        sqlite_graphrag::cli::Commands::Completions(args) => commands::completions::run(args),
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
     };
 
@@ -327,6 +342,21 @@ fn main() {
         sqlite_graphrag::output::emit_error(&e.localized_message());
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());
-        std::process::exit(e.exit_code());
+        return std::process::ExitCode::from(e.exit_code() as u8);
     }
+
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+
+    if sqlite_graphrag::shutdown_requested() {
+        let sig = sqlite_graphrag::shutdown_signal();
+        let code = if sig > 0 {
+            128u8.saturating_add(sig)
+        } else {
+            130u8
+        };
+        return std::process::ExitCode::from(code);
+    }
+
+    std::process::ExitCode::SUCCESS
 }

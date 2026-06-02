@@ -24,6 +24,27 @@
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` tunes the entity confidence threshold (float, default `0.5`).
 - Entity types now include `organization`, `location`, `date` alongside `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## New Commands and Flags (since v1.0.67)
+- `remember-batch` batch-creates memories from NDJSON stdin in a single invocation; `--transaction` for atomicity, `--force-merge` for idempotent updates, `--fail-fast` to stop on first error
+- `completions` generates shell completions for Bash, Zsh, Fish, PowerShell, and Elvish
+- `read --id <N>` fetches a memory by integer `memory_id` directly (bypasses name resolution)
+- `read --with-graph` includes linked entities and relationships in the JSON response
+- `enrich --llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32)
+- `health` detects super-hub entities (degree > 50) and reports `super_hub_count`, `top_hub_entity`, `top_hub_degree`
+- `health` reports `non_normalized_count` and `normalization_warning` for entities not matching kebab-case
+- `edit` skips re-embedding when body content is unchanged (body_hash comparison)
+- `rename` purges ghost soft-deleted memories occupying the target name before UPDATE
+- `hybrid-search` and `recall` reject `--max-hops` and `--min-weight` when graph traversal is disabled
+- V012 migration adds `created_at`/`updated_at` timestamps to relationships table
+
+## New Commands and Flags (since v1.0.66)
+- `edit --type` changes memory type without re-creating the memory
+- `deep-research` `graph_context` field in JSON response with entities and relationships from result memories
+- `graph --format json` includes `entities` alias alongside `nodes` for LLM agent compatibility
+- `list --json` includes `memories` alias alongside `items` for LLM agent compatibility
+- `graph entities --json` includes `description` field per entity
+- `health --json` includes `vec_memories_missing` and `vec_memories_orphaned` counts
+
 ## New Commands and Flags (since v1.0.65)
 - `reclassify-relation --from-relation <old> --to-relation <new> --batch` renames relationship types in bulk; single mode via `--source`/`--target`; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` previews; optional `--filter-source-type`/`--filter-target-type`
 - `normalize-entities --yes` normalizes all entity names to lowercase kebab-case ASCII; auto-merges collisions; `--dry-run` previews

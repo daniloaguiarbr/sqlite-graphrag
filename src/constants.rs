@@ -265,6 +265,16 @@ pub fn gliner_model_repo() -> String {
 /// containing only `[a-z0-9-]`. Rejects the `__` prefix (internal reserved).
 pub const NAME_SLUG_REGEX: &str = r"^[a-z][a-z0-9-]{0,78}[a-z0-9]$|^[a-z0-9]$";
 
+static NAME_SLUG_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+/// Returns a reference to the compiled [`NAME_SLUG_REGEX`] pattern.
+/// Compiled once on first call, cached via `OnceLock`.
+pub fn name_slug_regex() -> &'static regex::Regex {
+    NAME_SLUG_RE.get_or_init(|| {
+        regex::Regex::new(NAME_SLUG_REGEX).expect("NAME_SLUG_REGEX is a valid pattern")
+    })
+}
+
 /// Default retention period (days) used by `purge` when `--retention-days` is omitted.
 pub const PURGE_RETENTION_DAYS_DEFAULT: u32 = 90;
 
@@ -389,7 +399,7 @@ pub const SCHEMA_USER_VERSION: i64 = 49;
 /// Added in v1.0.27 as a runtime and test sanity check.
 /// Must be bumped in sync with new Refinery migrations; the unit test
 /// `schema_version_matches_migrations_count` validates this automatically.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 #[cfg(test)]
 mod tests_schema_version {

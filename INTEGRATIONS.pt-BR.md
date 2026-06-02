@@ -24,6 +24,27 @@
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## Novos Comandos e Flags (desde v1.0.67)
+- `remember-batch` cria memórias em lote via NDJSON no stdin em uma única invocação; `--transaction` para atomicidade, `--force-merge` para atualizações idempotentes, `--fail-fast` para parar no primeiro erro
+- `completions` gera completions de shell para Bash, Zsh, Fish, PowerShell e Elvish
+- `read --id <N>` busca memória por `memory_id` inteiro diretamente (sem resolução de nome)
+- `read --with-graph` inclui entidades e relacionamentos vinculados na resposta JSON
+- `enrich --llm-parallelism <N>` spawna N threads paralelas de LLM (padrão 1, máximo 32)
+- `health` detecta entidades super-hub (grau > 50) e reporta `super_hub_count`, `top_hub_entity`, `top_hub_degree`
+- `health` reporta `non_normalized_count` e `normalization_warning` para entidades fora do padrão kebab-case
+- `edit` pula re-embedding quando conteúdo do body é inalterado (comparação body_hash)
+- `rename` purga memórias ghost (soft-deleted) que ocupam o nome destino antes do UPDATE
+- `hybrid-search` e `recall` rejeitam `--max-hops` e `--min-weight` quando travessia de grafo está desabilitada
+- Migração V012 adiciona `created_at`/`updated_at` na tabela relationships
+
+## Novos Comandos e Flags (desde v1.0.66)
+- `edit --type` altera tipo de memória sem recriar
+- `deep-research` campo `graph_context` na resposta JSON com entidades e relacionamentos das memórias encontradas
+- `graph --format json` inclui alias `entities` junto com `nodes` para compatibilidade com agentes LLM
+- `list --json` inclui alias `memories` junto com `items` para compatibilidade com agentes LLM
+- `graph entities --json` inclui campo `description` por entidade
+- `health --json` inclui contagens `vec_memories_missing` e `vec_memories_orphaned`
+
 ## Novos Comandos e Flags (desde v1.0.65)
 - `reclassify-relation --from-relation <antigo> --to-relation <novo> --batch` renomeia tipos de relação em massa; modo individual via `--source`/`--target`; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` faz preview; filtros opcionais `--filter-source-type`/`--filter-target-type`
 - `normalize-entities --yes` normaliza todos os nomes de entidade para kebab-case ASCII minúsculo; mescla colisões automaticamente; `--dry-run` faz preview

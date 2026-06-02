@@ -187,7 +187,7 @@ fn delete_all_entity_relationships(
 ) -> Result<u64, AppError> {
     // Collect IDs first to clean up memory_relationships junction.
     let mut stmt =
-        conn.prepare("SELECT id FROM relationships WHERE source_id = ?1 OR target_id = ?1")?;
+        conn.prepare_cached("SELECT id FROM relationships WHERE source_id = ?1 OR target_id = ?1")?;
     let ids: Vec<i64> = stmt
         .query_map(rusqlite::params![entity_id], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -213,8 +213,8 @@ fn delete_relationships_between(
     source_id: i64,
     target_id: i64,
 ) -> Result<u64, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT id FROM relationships WHERE source_id = ?1 AND target_id = ?2")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT id FROM relationships WHERE source_id = ?1 AND target_id = ?2")?;
     let ids: Vec<i64> = stmt
         .query_map(rusqlite::params![source_id, target_id], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;

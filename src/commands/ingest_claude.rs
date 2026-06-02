@@ -7,6 +7,7 @@
 //! Architecture: P1 One-Shot per file — each file spawns a separate
 //! `claude -p` process with `--json-schema` for guaranteed structured output.
 //! A SQLite queue DB tracks progress for resume/retry support.
+// Workload: Subprocess I/O-bound (claude -p headless with network wait)
 
 use crate::commands::ingest::IngestArgs;
 use crate::entity_type::EntityType;
@@ -317,7 +318,7 @@ fn extract_with_claude(
         .arg("--json-schema")
         .arg(EXTRACTION_SCHEMA)
         .arg("--max-turns")
-        .arg("3")
+        .arg("7")
         .arg("--no-session-persistence");
 
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
@@ -336,7 +337,7 @@ fn extract_with_claude(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(
             e.kind(),
             format!("failed to spawn claude: {e}"),
@@ -350,9 +351,11 @@ fn extract_with_claude(
         .ok_or_else(|| AppError::Validation("failed to open claude stdin".into()))?;
     let stdin_thread = std::thread::spawn(move || -> Result<(), std::io::Error> {
         child_stdin.write_all(&stdin_data)?;
+        drop(child_stdin);
         Ok(())
     });
 
+    let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
 
@@ -362,6 +365,13 @@ fn extract_with_claude(
                 .join()
                 .map_err(|_| AppError::Validation("stdin thread panicked".into()))?
                 .map_err(AppError::Io)?;
+
+            tracing::debug!(
+                target: "process",
+                exit_code = ?exit_status.code(),
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "external process completed"
+            );
 
             let mut stdout_buf = Vec::new();
             let mut stderr_buf = Vec::new();
@@ -396,9 +406,9 @@ fn extract_with_claude(
                                 .or(re.result.as_deref())
                                 .unwrap_or("unknown error");
                             if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-                                return Err(AppError::Validation(format!(
-                                    "RATE_LIMITED: {err_msg}"
-                                )));
+                                return Err(AppError::RateLimited {
+                                    detail: err_msg.to_string(),
+                                });
                             }
                             if err_msg.contains("Not logged in")
                                 || err_msg.contains("authentication")
@@ -474,7 +484,9 @@ fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64, bool), Ap
             .or(result_elem.result.as_deref())
             .unwrap_or("unknown error");
         if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-            return Err(AppError::Validation(format!("RATE_LIMITED: {err_msg}")));
+            return Err(AppError::RateLimited {
+                detail: err_msg.to_string(),
+            });
         }
         return Err(AppError::Validation(format!(
             "claude extraction failed: {err_msg}"
@@ -499,14 +511,7 @@ fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64, bool), Ap
     Ok((extraction, cost, is_oauth))
 }
 
-fn emit_json<T: Serialize>(value: &T) {
-    if let Ok(json) = serde_json::to_string(value) {
-        let stdout = std::io::stdout();
-        let mut lock = stdout.lock();
-        let _ = writeln!(lock, "{json}");
-        let _ = lock.flush();
-    }
-}
+use crate::output::emit_json_line as emit_json;
 
 /// Collects files matching the pattern (reuses ingest logic).
 fn collect_matching_files(
@@ -517,7 +522,7 @@ fn collect_matching_files(
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
     super::ingest::collect_files(dir, pattern, recursive, &mut files)?;
-    files.sort();
+    files.sort_unstable();
 
     if files.len() > max_files {
         return Err(AppError::Validation(format!(
@@ -627,7 +632,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
     if !args.retry_failed {
         for file in &files {
-            let file_str = file.to_string_lossy().to_string();
+            let file_str = file.to_string_lossy().into_owned();
             let inserted = queue_conn
                 .execute(
                     "INSERT OR IGNORE INTO queue (file_path, status) VALUES (?1, 'pending')",
@@ -710,8 +715,14 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let total = files.len();
 
     let mut backoff_secs = args.rate_limit_wait;
+    let rate_limit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
 
     loop {
+        if crate::shutdown_requested() {
+            tracing::info!(target: "ingest", "shutdown requested, stopping before next file");
+            break;
+        }
+
         let pending: Option<(i64, String)> = queue_conn
             .query_row(
                 "UPDATE queue SET status='processing', attempt=attempt+1 \
@@ -824,6 +835,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         let max_extract_attempts: u32 = 2;
         let mut extraction_result: Option<(ExtractionResult, f64, bool)> = None;
         let mut last_extract_err: Option<String> = None;
+        let mut last_was_rate_limited = false;
 
         for attempt in 1..=max_extract_attempts {
             match extract_with_claude(
@@ -836,15 +848,17 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     extraction_result = Some(result);
                     break;
                 }
-                Err(ref e) if format!("{e}").contains("RATE_LIMITED") => {
+                Err(ref e) if matches!(e, AppError::RateLimited { .. }) => {
                     last_extract_err = Some(format!("{e}"));
+                    last_was_rate_limited = true;
                     break;
                 }
                 Err(e) => {
                     let msg = format!("{e}");
                     if attempt < max_extract_attempts {
-                        tracing::warn!(target: "ingest", attempt, error = %msg, "extraction failed, retrying (cold-start workaround)");
-                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let cold_start_delay = 2 * attempt as u64;
+                        tracing::warn!(target: "ingest", attempt, delay_secs = cold_start_delay, error = %msg, "extraction failed, retrying (cold-start workaround)");
+                        std::thread::sleep(std::time::Duration::from_secs(cold_start_delay));
                     }
                     last_extract_err = Some(msg);
                 }
@@ -1163,19 +1177,24 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 total,
             });
         } else if let Some(ref err_str) = last_extract_err {
-            if err_str.contains("RATE_LIMITED") {
-                tracing::warn!(
-                    target: "ingest",
-                    wait_seconds = backoff_secs,
-                    "rate limited, waiting before retry"
-                );
-                let _ = queue_conn.execute(
-                    "UPDATE queue SET status='pending' WHERE id=?1",
-                    rusqlite::params![queue_id],
-                );
-                std::thread::sleep(std::time::Duration::from_secs(backoff_secs));
-                backoff_secs = (backoff_secs * 2).min(900);
-                continue;
+            if last_was_rate_limited {
+                if crate::retry::is_kill_switch_active() {
+                    tracing::warn!(target: "ingest", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
+                } else if std::time::Instant::now() >= rate_limit_deadline {
+                    tracing::error!(target: "ingest", "rate-limit retry deadline (1h) exhausted");
+                } else {
+                    let half = backoff_secs / 2;
+                    let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                    let actual_wait = half + jitter;
+                    tracing::warn!(target: "ingest", delay_secs = actual_wait, error_kind = "rate_limited", "rate limited, backing off");
+                    let _ = queue_conn.execute(
+                        "UPDATE queue SET status='pending' WHERE id=?1",
+                        rusqlite::params![queue_id],
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(actual_wait));
+                    backoff_secs = (backoff_secs * 2).min(900);
+                    continue;
+                }
             } else {
                 let _ = queue_conn.execute(
                     "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
@@ -1281,7 +1300,7 @@ mod tests {
             {"type":"result","is_error":true,"error":"rate_limit exceeded"}
         ]"#;
         let err = parse_claude_output(output).unwrap_err();
-        assert!(format!("{err}").contains("RATE_LIMITED"));
+        assert!(matches!(err, AppError::RateLimited { .. }));
     }
 
     #[test]

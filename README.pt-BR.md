@@ -127,6 +127,8 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.67**: 2 NOVOS comandos: `remember-batch` (criação em lote via NDJSON com `--transaction`/`--force-merge`), `completions` (completions de shell para Bash/Zsh/Fish/PowerShell/Elvish); `read --id` para busca direta por memory_id, `enrich --llm-parallelism` para workers LLM paralelos, `health` detecta super-hubs (grau > 50), `edit` otimização skip-embed via comparação body_hash, `rename` purge de ghost para conflitos de nome soft-deleted, validação de flags em hybrid-search/recall/ingest, migração V012 timestamps em relationships, 24 correções de gaps no total
+- **v1.0.66**: 35 correções BUG/GAP incluindo 3 CRÍTICAS (crash reclassify-relation, flooding de evidence chain, weight do link), flag `edit --type`, `graph_context` no deep-research, aliases LLM-friendly para graph/list JSON, auditoria completa de docs
 - **v1.0.65**: 3 NOVOS comandos: `reclassify-relation` (renomeia tipos de relação em massa com tratamento de colisões UNIQUE), `normalize-entities` (normaliza nomes de entidade para kebab-case com auto-merge), `enrich` (qualidade do grafo aumentada por LLM: memory-bindings, entity-descriptions, body-enrich); Correções CRITICAL no deep-research: embeddings por sub-query (antes compartilhava um), fusão RRF para KNN+FTS5 (antes fixo em 0.5), cadeias de evidência direcionadas (antes dump flat global); novas flags deep-research `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`; normalização de nomes de entidade em todos os paths de escrita; `health` reporta concentração de relações; warning `--max-entity-degree` em link/remember
 - **v1.0.64**: NOVO comando `deep-research` para pesquisa profunda multi-hop paralela via decomposição de query (até 7 sub-queries) com fan-out bounded JoinSet + Semaphore e montagem de cadeias de evidência; ingest claude-code desabilita hooks via `--settings` para OAuth (falhava em 65% dos arquivos), detecta OAuth e omite `cost_usd` enganoso, valida tamanho do body ANTES da extração LLM (arquivos >512 KB ignorados); rename/rename-entity rejeitam mesmo nome com exit 1
 - **v1.0.63**: restore preserva nome atual após rename (antes revertia para nome original da versão), ingest claude-code/codex normaliza relações antes de inserir no DB, edit regenera embeddings vetoriais quando body muda, documentação OAuth-first
@@ -441,7 +443,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Inicializa banco e baixa modelo de embedding |
 | `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs`, `--db`, `--json` | Executa ou controla o daemon persistente de embeddings |
-| `health` | `--json` | Exibe integridade, teste funcional FTS5, versão SQLite |
+| `health` | `--json` | Exibe integridade, teste funcional FTS5, versão SQLite, detecção de super-hub (grau > 50) |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |
 | `vacuum` | `--json` | Faz checkpoint do WAL e libera espaço |
@@ -452,12 +454,13 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant`, `--force-merge`, `--clear-body`, `--dry-run` | Salva memória com grafo opcional; `--type`/`--description` opcionais com `--force-merge` (herdados do existente); `--dry-run` valida sem persistir |
+| `remember-batch` | `--transaction`, `--force-merge`, `--fail-fast` | Criação em lote de memórias via NDJSON no stdin; uma invocação, um slot, uma conexão DB |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit` desde v1.0.35), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Busca memórias semanticamente via KNN + travessia do grafo |
-| `read` | `[nome]` ou `--name <nome>` | Recupera memória por nome kebab-case exato |
+| `read` | `[nome]` ou `--name <nome>`, `--id <N>`, `--with-graph` | Recupera memória por nome kebab-case exato ou `memory_id` inteiro via `--id`; `--with-graph` inclui entidades e relacionamentos vinculados |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Pagina memórias por `updated_at`; limite padrão é tudo com `--json`, 50 para texto; resposta inclui `total_count`, `truncated`, `body_length` |
 | `forget` | `[nome]` ou `--name <nome>` | Remove memória logicamente preservando histórico |
 | `rename` | `[antigo]`, ou `--name`/`--old`/`--from <NOME>` (desde v1.0.35), `--new-name`/`--new`/`--to <NOME>` (desde v1.0.35) | Renomeia memória mantendo versões |
-| `edit` | `[nome]` ou `--name`, `--body`, `--description` | Edita corpo ou descrição gerando nova versão |
+| `edit` | `[nome]` ou `--name`, `--body`, `--description`, `--type` | Edita corpo, descrição ou tipo gerando nova versão; `--type` altera tipo de memória; pula re-embedding quando conteúdo do body é inalterado |
 | `history` | `[nome]` ou `--name <nome>`, `--diff` | Lista versões da memória; `--diff` inclui resumo de mudanças por caractere |
 | `memory-entities` | `[nome]` ou `--name <nome>`, `--entity <nome>` | Lista entidades de uma memória, ou memórias vinculadas a uma entidade (busca reversa via `--entity`) |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
@@ -503,6 +506,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `fts rebuild` | `--json` | Reconstrói o índice FTS5 de busca textual do zero |
 | `fts check` | `--json` | Executa integrity-check do FTS5 sem modificar o índice |
 | `fts stats` | `--json` | Exibe estatísticas do índice FTS5 (contagem, páginas shadow) |
+| `completions` | `bash`, `zsh`, `fish`, `powershell`, `elvish` | Gera completions de shell para o shell especificado |
 
 ### Subcomandos de `cache`
 | Subcomando | Descrição |

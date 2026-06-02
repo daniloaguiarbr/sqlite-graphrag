@@ -261,7 +261,7 @@ fn run_batch(
     };
 
     if original_count == 0 {
-        tracing::warn!(
+        tracing::warn!(target: "reclassify_relation",
             from_relation = %args.from_relation,
             namespace = %namespace,
             "reclassify-relation batch matched zero edges — verify --from-relation value"

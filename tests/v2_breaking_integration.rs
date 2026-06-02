@@ -169,6 +169,7 @@ fn hybrid_search_response_shape_tem_results() {
             memory_type: "user".to_string(),
             description: "descrição".to_string(),
             body: "corpo".to_string(),
+            snippet: "corpo".to_string(),
             combined_score: 0.95,
             score: 0.95,
             source: "hybrid".to_string(),

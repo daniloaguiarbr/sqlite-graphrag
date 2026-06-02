@@ -81,7 +81,7 @@ mod tests {
             Ok(_) | Err(AppError::Io(_)) => {
                 // EOF reached before timeout — also acceptable in CI environments.
             }
-            Err(other) => panic!("unexpected error variant: {other:?}"),
+            Err(other) => unreachable!("stdin test: expected Internal/Io, got {other:?}"),
         }
     }
 

@@ -440,3 +440,90 @@ fn dez_remembers_namespaces_diferentes() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test 6 — Saturation 10x: 40 CLI processes compete for 4 slots
+// ---------------------------------------------------------------------------
+// Validates that the CLI slot semaphore bounds actual concurrency even under
+// extreme load. With 40 concurrent processes and 4 available slots, we expect
+// some to succeed (acquiring a slot) and others to fail with exit code 75
+// (AllSlotsFull). The key invariant is that the system never panics, never
+// hangs, and completes within a bounded time.
+
+#[test]
+#[serial]
+fn saturacao_10x_slots_bounded() {
+    let tmp = TempDir::new().expect("TempDir");
+    let db_path = tmp.path().join("test.sqlite");
+
+    Command::cargo_bin("sqlite-graphrag")
+        .expect("binary")
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
+        .args(["--skip-memory-guard", "init"])
+        .assert()
+        .success();
+
+    let total_processes = 40;
+    let barrier = Arc::new(Barrier::new(total_processes));
+    let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"));
+
+    let handles: Vec<_> = (0..total_processes)
+        .map(|i| {
+            let db_clone = db_path.clone();
+            let cache_clone = tmp.path().to_path_buf();
+            let barrier_clone = Arc::clone(&barrier);
+            let bin_clone = bin_path.clone();
+
+            std::thread::spawn(move || {
+                barrier_clone.wait();
+                std::process::Command::new(&bin_clone)
+                    .env("SQLITE_GRAPHRAG_DB_PATH", &db_clone)
+                    .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_clone)
+                    .args([
+                        "--skip-memory-guard",
+                        "--max-concurrency",
+                        "4",
+                        "--wait-lock",
+                        "0",
+                        "remember",
+                        "--name",
+                        &format!("sat-mem-{i}"),
+                        "--type",
+                        "note",
+                        "--description",
+                        "saturation test",
+                        "--body",
+                        &format!("saturation test item {i}"),
+                    ])
+                    .output()
+                    .expect("must not panic")
+            })
+        })
+        .collect();
+
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|h| h.join().expect("thread must not panic"))
+        .collect();
+
+    let successes = results.iter().filter(|r| r.status.success()).count();
+    let slot_full = results
+        .iter()
+        .filter(|r| r.status.code() == Some(75))
+        .count();
+
+    assert!(
+        successes > 0,
+        "at least one process must succeed acquiring a slot"
+    );
+    assert!(
+        slot_full > 0,
+        "with 40 processes and 4 slots (wait=0), some must get exit 75"
+    );
+    assert_eq!(
+        successes + slot_full,
+        total_processes,
+        "every process must either succeed or get exit 75 (no panics, no hangs)"
+    );
+}

@@ -51,8 +51,7 @@ Leia este documento em [inglês (EN)](CODE_OF_CONDUCT.md).
 
 ## Aplicação
 - Instâncias de comportamento abusivo, de assédio ou inaceitável podem ser reportadas em privado
-- Reporte questões por email em daniloaguiarbr@gmail.com enquanto o repositório renomeado ainda não for público
-- Quando o repositório público `sqlite-graphrag` existir, GitHub Security Advisories poderá ser usado como canal privado adicional
+- Reporte questões por email em daniloaguiarbr@gmail.com ou via GitHub Security Advisories no repositório público `sqlite-graphrag`
 - Todas as reclamações serão revisadas e investigadas pronta e justamente
 - A resposta inicial a cada relato é comprometida em até 48 horas do recebimento
 - Todos os líderes da comunidade são obrigados a respeitar a privacidade e segurança de quem reporta

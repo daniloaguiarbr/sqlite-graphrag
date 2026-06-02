@@ -69,6 +69,15 @@
 - Unit tests in `src/commands/ingest_claude.rs` cover terminal_reason parsing, OAuth detection via apiKeySource, and body size pre-validation
 - Unit tests in `src/commands/rename.rs` and `src/commands/rename_entity.rs` cover same-name rejection with exit 1
 
+### v1.0.67 New Command Tests
+- `remember-batch` tests in `src/commands/remember_batch.rs`: serialization tests for BatchItemEvent and BatchSummary
+- `completions` command: tested via `cargo run -- completions bash` smoke test
+- `read --id` integration: tested via `read --id <memory_id> --json` round-trip
+- `health` super-hub detection: tested with production database (1059 memories, 3 super-hubs detected)
+- `edit` skip-embed: tested via body_hash comparison (idempotent edit skips embedding)
+- `rename` ghost purge: tested via forget → rename workflow
+- Flag validation: tested via `hybrid-search --max-hops 2` (without `--with-graph`) expecting exit 1
+
 ### v1.0.65 New Command Tests
 #### Deep Research Tests
 - Unit tests in `src/commands/deep_research.rs` cover decompose_query splitting, single-query passthrough, bounded concurrency semaphore, result deduplication, evidence chain assembly (depth >= 2 filter), and empty-query validation

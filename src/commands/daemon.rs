@@ -30,6 +30,13 @@ pub struct DaemonArgs {
     /// Request graceful shutdown of a running daemon. Returns NotFound (exit 4) if no daemon.
     #[arg(long)]
     pub stop: bool,
+    /// Timeout in seconds for graceful shutdown drain of active requests.
+    #[arg(
+        long,
+        env = "SQLITE_GRAPHRAG_SHUTDOWN_TIMEOUT_SECS",
+        default_value_t = 10
+    )]
+    pub shutdown_timeout_secs: u64,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -46,7 +53,7 @@ pub fn run(args: DaemonArgs) -> Result<(), AppError> {
             .ok_or_else(|| AppError::NotFound("daemon not running".to_string()))?;
         if let crate::daemon::DaemonResponse::Ok { ref version, .. } = response {
             if version != crate::constants::SQLITE_GRAPHRAG_VERSION {
-                tracing::warn!(
+                tracing::warn!(target: "daemon_cmd",
                     daemon_version = %version,
                     cli_version = crate::constants::SQLITE_GRAPHRAG_VERSION,
                     "daemon version mismatch; auto-restart will occur on the next embedding request"
@@ -64,5 +71,9 @@ pub fn run(args: DaemonArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
-    crate::daemon::run(&paths.models, args.idle_shutdown_secs)
+    crate::daemon::run(
+        &paths.models,
+        args.idle_shutdown_secs,
+        args.shutdown_timeout_secs,
+    )
 }

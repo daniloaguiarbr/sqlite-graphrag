@@ -84,7 +84,7 @@ pub fn run(args: MemoryEntitiesArgs) -> Result<(), AppError> {
                 ))
             })?;
 
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT m.id, m.name, m.description, m.type
              FROM memory_entities me
              JOIN memories m ON m.id = me.memory_id
@@ -129,7 +129,7 @@ pub fn run(args: MemoryEntitiesArgs) -> Result<(), AppError> {
             AppError::NotFound(crate::i18n::errors_msg::memory_not_found(&name, &namespace))
         })?;
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT e.id, e.name, e.type AS entity_type
          FROM memory_entities me
          JOIN entities e ON e.id = me.entity_id

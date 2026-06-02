@@ -7,6 +7,7 @@
 //! Architecture: P1 One-Shot per file — each file spawns a separate
 //! `codex exec` process with `--output-schema` for guaranteed structured output.
 //! A SQLite queue DB tracks progress for resume/retry support.
+// Workload: Subprocess I/O-bound (codex exec headless with network wait)
 
 use crate::commands::ingest::IngestArgs;
 use crate::commands::ingest_claude::ExtractionResult;
@@ -197,7 +198,13 @@ pub fn find_codex_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> {
 /// Returns `AppError::Validation` when the binary cannot be executed or the
 /// version is below `MIN_CODEX_VERSION`.
 fn validate_codex_version(binary: &Path) -> Result<String, AppError> {
-    let output = Command::new(binary)
+    let resolved = which::which(binary).map_err(|_| {
+        AppError::Validation(format!(
+            "executable '{}' not found in PATH; ensure Codex CLI is installed",
+            binary.display()
+        ))
+    })?;
+    let output = Command::new(&resolved)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -332,7 +339,7 @@ fn extract_with_codex(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(
             e.kind(),
             format!("failed to spawn codex: {e}"),
@@ -350,9 +357,11 @@ fn extract_with_codex(
         .ok_or_else(|| AppError::Validation("failed to open codex stdin".into()))?;
     let stdin_thread = std::thread::spawn(move || -> Result<(), std::io::Error> {
         child_stdin.write_all(&stdin_bytes)?;
+        drop(child_stdin);
         Ok(())
     });
 
+    let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
 
@@ -362,6 +371,13 @@ fn extract_with_codex(
                 .join()
                 .map_err(|_| AppError::Validation("stdin thread panicked".into()))?
                 .map_err(AppError::Io)?;
+
+            tracing::debug!(
+                target: "process",
+                exit_code = ?exit_status.code(),
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "external process completed"
+            );
 
             let mut stdout_buf = Vec::new();
             let mut stderr_buf = Vec::new();
@@ -501,9 +517,9 @@ fn parse_codex_output(stdout: &str) -> Result<(ExtractionResult, Option<CodexUsa
     }
 
     if rate_limited {
-        return Err(AppError::Validation(format!(
-            "RATE_LIMITED: {failed_message}"
-        )));
+        return Err(AppError::RateLimited {
+            detail: failed_message,
+        });
     }
 
     if schema_error {
@@ -531,14 +547,7 @@ fn parse_codex_output(stdout: &str) -> Result<(ExtractionResult, Option<CodexUsa
     Ok((extraction, usage))
 }
 
-fn emit_json<T: Serialize>(value: &T) {
-    if let Ok(json) = serde_json::to_string(value) {
-        let stdout = std::io::stdout();
-        let mut lock = stdout.lock();
-        let _ = writeln!(lock, "{json}");
-        let _ = lock.flush();
-    }
-}
+use crate::output::emit_json_line as emit_json;
 
 /// Collects files matching the pattern (reuses ingest logic).
 fn collect_matching_files(
@@ -549,7 +558,7 @@ fn collect_matching_files(
 ) -> Result<Vec<PathBuf>, AppError> {
     let mut files = Vec::new();
     super::ingest::collect_files(dir, pattern, recursive, &mut files)?;
-    files.sort();
+    files.sort_unstable();
 
     if files.len() > max_files {
         return Err(AppError::Validation(format!(
@@ -663,7 +672,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
     if !args.retry_failed {
         for file in &files {
-            let file_str = file.to_string_lossy().to_string();
+            let file_str = file.to_string_lossy().into_owned();
             let inserted = queue_conn
                 .execute(
                     "INSERT OR IGNORE INTO queue (file_path, status) VALUES (?1, 'pending')",
@@ -752,8 +761,14 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let total = files.len();
 
     let mut backoff_secs = args.rate_limit_wait;
+    let rate_limit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
 
     loop {
+        if crate::shutdown_requested() {
+            tracing::info!(target: "ingest", "shutdown requested, stopping before next file");
+            break;
+        }
+
         let pending: Option<(i64, String)> = queue_conn
             .query_row(
                 "UPDATE queue SET status='processing', attempt=attempt+1 \
@@ -872,6 +887,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
         let max_extract_attempts: u32 = 2;
         let mut extraction_result: Option<(ExtractionResult, Option<CodexUsage>)> = None;
         let mut last_extract_err: Option<String> = None;
+        let mut last_was_rate_limited = false;
 
         for attempt in 1..=max_extract_attempts {
             match extract_with_codex(
@@ -885,20 +901,23 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     extraction_result = Some(result);
                     break;
                 }
-                Err(ref e) if format!("{e}").contains("RATE_LIMITED") => {
+                Err(ref e) if matches!(e, AppError::RateLimited { .. }) => {
                     last_extract_err = Some(format!("{e}"));
+                    last_was_rate_limited = true;
                     break;
                 }
                 Err(e) => {
                     let msg = format!("{e}");
                     if attempt < max_extract_attempts {
+                        let cold_start_delay = 2 * attempt as u64;
                         tracing::warn!(
                             target: "ingest",
                             attempt,
+                            delay_secs = cold_start_delay,
                             error = %msg,
                             "codex extraction failed, retrying"
                         );
-                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        std::thread::sleep(std::time::Duration::from_secs(cold_start_delay));
                     }
                     last_extract_err = Some(msg);
                 }
@@ -1077,19 +1096,24 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 total,
             });
         } else if let Some(ref err_str) = last_extract_err {
-            if err_str.contains("RATE_LIMITED") {
-                tracing::warn!(
-                    target: "ingest",
-                    wait_seconds = backoff_secs,
-                    "rate limited by Codex API, waiting before retry"
-                );
-                let _ = queue_conn.execute(
-                    "UPDATE queue SET status='pending' WHERE id=?1",
-                    rusqlite::params![queue_id],
-                );
-                std::thread::sleep(std::time::Duration::from_secs(backoff_secs));
-                backoff_secs = (backoff_secs * 2).min(900);
-                continue;
+            if last_was_rate_limited {
+                if crate::retry::is_kill_switch_active() {
+                    tracing::warn!(target: "ingest", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
+                } else if std::time::Instant::now() >= rate_limit_deadline {
+                    tracing::error!(target: "ingest", "rate-limit retry deadline (1h) exhausted");
+                } else {
+                    let half = backoff_secs / 2;
+                    let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                    let actual_wait = half + jitter;
+                    tracing::warn!(target: "ingest", delay_secs = actual_wait, error_kind = "rate_limited", "Codex rate limited, backing off");
+                    let _ = queue_conn.execute(
+                        "UPDATE queue SET status='pending' WHERE id=?1",
+                        rusqlite::params![queue_id],
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(actual_wait));
+                    backoff_secs = (backoff_secs * 2).min(900);
+                    continue;
+                }
             } else {
                 let _ = queue_conn.execute(
                     "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
@@ -1204,10 +1228,9 @@ mod tests {
         let jsonl = r#"{"type":"turn.failed","error":{"message":"rate_limit exceeded, 429 Too Many Requests"}}"#;
 
         let err = parse_codex_output(jsonl).unwrap_err();
-        let msg = format!("{err}");
         assert!(
-            msg.contains("RATE_LIMITED"),
-            "expected 'RATE_LIMITED' in: {msg}"
+            matches!(err, AppError::RateLimited { .. }),
+            "expected AppError::RateLimited, got: {err}"
         );
     }
 

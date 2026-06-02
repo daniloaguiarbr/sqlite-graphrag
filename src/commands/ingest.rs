@@ -443,8 +443,7 @@ fn stage_file(
         ));
     }
     {
-        let slug_re = regex::Regex::new(NAME_SLUG_REGEX)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
+        let slug_re = crate::constants::name_slug_regex();
         if !slug_re.is_match(name) {
             return Err(AppError::Validation(crate::i18n::validation::name_kebab(
                 name,
@@ -452,6 +451,12 @@ fn stage_file(
         }
     }
 
+    let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
+    if file_size > MAX_MEMORY_BODY_LEN as u64 {
+        return Err(AppError::LimitExceeded(
+            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+        ));
+    }
     let raw_body = std::fs::read_to_string(path).map_err(AppError::Io)?;
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
         return Err(AppError::LimitExceeded(
@@ -488,6 +493,7 @@ fn stage_file(
             }
             Err(e) => {
                 tracing::warn!(
+                    target: "ingest",
                     file = %path.display(),
                     "auto-extraction failed (graceful degradation): {e:#}"
                 );
@@ -533,11 +539,18 @@ fn stage_file(
             .iter()
             .map(|c| chunking::chunk_text(&raw_body, c))
             .collect();
-        let mut chunk_embeddings = Vec::with_capacity(chunk_texts.len());
+        let embed_cap = chunk_texts.len();
+        let mut chunk_embeddings = Vec::new();
+        chunk_embeddings.try_reserve(embed_cap).map_err(|_| {
+            AppError::LimitExceeded(format!(
+                "allocation of {embed_cap} chunk embeddings would exceed available memory"
+            ))
+        })?;
         for chunk_text in &chunk_texts {
             if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
                 if rss > max_rss_mb {
                     tracing::error!(
+                        target: "ingest",
                         rss_mb = rss,
                         max_rss_mb = max_rss_mb,
                         file = %path.display(),
@@ -743,7 +756,22 @@ fn persist_staged(
     })
 }
 
+#[tracing::instrument(skip_all, level = "debug", name = "ingest")]
 pub fn run(args: IngestArgs) -> Result<(), AppError> {
+    // TODO(G20): add mode-conditional flag validation before DB access.
+    // Flags that are silently discarded when the wrong mode is active:
+    //   --mode none/gliner:   claude_binary, claude_model, claude_timeout,
+    //                         max_cost_usd, rate_limit_wait, resume,
+    //                         retry_failed, keep_queue, queue_db
+    //   --mode none/gliner:   codex_binary, codex_model, codex_timeout
+    //   --mode claude-code:   codex_binary, codex_model, codex_timeout
+    //   --mode codex:         claude_binary, claude_model, claude_timeout,
+    //                         max_cost_usd, rate_limit_wait
+    //   --mode none:          gliner_variant (only meaningful with --enable-ner
+    //                         or --mode gliner)
+    // Approach: after the mode dispatch block below, check each non-default
+    // flag value and return Err(AppError::Validation(...)) for mismatches.
+    tracing::debug!(target: "ingest", dir = %args.dir.display(), mode = ?args.mode, "starting ingest");
     if args.mode == IngestMode::ClaudeCode {
         return super::ingest_claude::run_claude_ingest(&args);
     }
@@ -768,7 +796,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
 
     let mut files: Vec<PathBuf> = Vec::with_capacity(128);
     collect_files(&args.dir, &args.pattern, args.recursive, &mut files)?;
-    files.sort();
+    files.sort_unstable();
 
     if files.len() > args.max_files {
         return Err(AppError::Validation(format!(
@@ -826,9 +854,25 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         derived_name: String,
     }
 
-    let mut slots_meta: Vec<SlotMeta> = Vec::with_capacity(files.len());
-    let mut process_items: Vec<ProcessItem> = Vec::with_capacity(files.len());
-    let mut truncations: Vec<(String, String)> = Vec::with_capacity(files.len());
+    let files_cap = files.len();
+    let mut slots_meta: Vec<SlotMeta> = Vec::new();
+    slots_meta.try_reserve(files_cap).map_err(|_| {
+        AppError::LimitExceeded(format!(
+            "allocation of {files_cap} slot metadata entries would exceed available memory"
+        ))
+    })?;
+    let mut process_items: Vec<ProcessItem> = Vec::new();
+    process_items.try_reserve(files_cap).map_err(|_| {
+        AppError::LimitExceeded(format!(
+            "allocation of {files_cap} process items would exceed available memory"
+        ))
+    })?;
+    let mut truncations: Vec<(String, String)> = Vec::new();
+    truncations.try_reserve(files_cap).map_err(|_| {
+        AppError::LimitExceeded(format!(
+            "allocation of {files_cap} truncation entries would exceed available memory"
+        ))
+    })?;
 
     let max_name_length = args.max_name_length;
     for path in &files {
@@ -974,6 +1018,18 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
+    // Reject contradictory flag combination: explicit parallelism > 1 with --low-memory.
+    if args.low_memory {
+        if let Some(n) = args.ingest_parallelism {
+            if n > 1 {
+                return Err(AppError::Validation(
+                    "--ingest-parallelism N>1 conflicts with --low-memory; use one or the other"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
     // Determine rayon thread pool size, honoring --low-memory and the
     // SQLITE_GRAPHRAG_LOW_MEMORY env var (both force parallelism = 1).
     let parallelism = resolve_parallelism(args.low_memory, args.ingest_parallelism);
@@ -984,24 +1040,27 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("rayon pool: {e}")))?;
 
     if args.enable_ner && args.skip_extraction {
-        tracing::warn!(
-            "--enable-ner and --skip-extraction are contradictory; --enable-ner takes precedence"
-        );
+        return Err(AppError::Validation(
+            "--enable-ner and --skip-extraction are mutually exclusive; remove one".to_string(),
+        ));
     }
     if args.skip_extraction && !args.enable_ner {
-        tracing::warn!("--skip-extraction is deprecated and has no effect (NER is disabled by default since v1.0.45); remove this flag");
+        return Err(AppError::Validation(
+            "--skip-extraction is deprecated since v1.0.45 and has no effect; remove this flag"
+                .to_string(),
+        ));
     }
     let enable_ner = args.enable_ner;
     let max_rss_mb = args.max_rss_mb;
     let gliner_variant: crate::extraction::GlinerVariant =
         args.gliner_variant.parse().unwrap_or_else(|e| {
-            tracing::warn!("invalid --gliner-variant: {e}; using fp32");
+            tracing::warn!(target: "ingest", error = %e, "invalid --gliner-variant, defaulting to fp32");
             crate::extraction::GlinerVariant::Fp32
         });
 
     let total_to_process = process_items.len();
     tracing::info!(
-        target = "ingest",
+        target: "ingest",
         phase = "pipeline_start",
         files = total_to_process,
         ingest_parallelism = parallelism,
@@ -1022,6 +1081,9 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     let producer_handle = std::thread::spawn(move || {
         pool.install(|| {
             process_items.into_par_iter().for_each(|item| {
+                if crate::shutdown_requested() {
+                    return;
+                }
                 let t0 = std::time::Instant::now();
                 let result = stage_file(
                     item.idx,
@@ -1049,7 +1111,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     relationships: n_relationships,
                 };
                 if let Ok(line) = serde_json::to_string(&progress) {
-                    eprintln!("{line}");
+                    tracing::info!(target: "ingest_progress", "{}", line);
                 }
 
                 // Blocking send applies backpressure: if Phase B is slower,
@@ -1111,7 +1173,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
         .collect();
 
     tracing::info!(
-        target = "ingest",
+        target: "ingest",
         phase = "persist_start",
         files = total_to_process,
         "phase B starting: persisting files incrementally as Phase A completes each one",
@@ -1121,6 +1183,10 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     // HashMap. The bounded channel ensures Phase A cannot run too far ahead of
     // Phase B without applying backpressure.
     for (idx, stage_result) in rx {
+        if crate::shutdown_requested() {
+            tracing::info!(target: "ingest", "shutdown requested, stopping persistence loop");
+            break;
+        }
         let meta = meta_index.get(&idx).ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
                 "channel idx {idx} has no corresponding Process slot"

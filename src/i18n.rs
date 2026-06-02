@@ -32,9 +32,8 @@ impl Language {
     }
 
     pub fn from_env_or_locale() -> Self {
-        // v1.0.36 (L5): empty `SQLITE_GRAPHRAG_LANG` is treated as unset (no warning),
-        // matching POSIX convention where empty-string env vars are equivalent to
-        // missing ones for locale detection.
+        // Priority 1: explicit SQLITE_GRAPHRAG_LANG env var (highest precedence).
+        // Empty string treated as unset per POSIX convention.
         if let Ok(v) = std::env::var("SQLITE_GRAPHRAG_LANG") {
             if !v.is_empty() {
                 let lower = v.to_lowercase();
@@ -44,37 +43,22 @@ impl Language {
                 if lower.starts_with("en") {
                     return Language::English;
                 }
-                // Unrecognized non-empty value: warn and fall through to locale detection.
-                tracing::warn!(
+                tracing::warn!(target: "i18n",
                     value = %v,
                     "SQLITE_GRAPHRAG_LANG value not recognized, falling back to locale detection"
                 );
             }
         }
-        // POSIX locale precedence: LC_ALL > LC_MESSAGES > LANG.
-        // If LC_ALL is set, LANG must be IGNORED regardless of value.
-        // Previous implementation iterated both and returned PT on any "pt" prefix,
-        // violating POSIX semantics (e.g. `LC_ALL=en_US LANG=pt_BR` returned PT).
-        // Now: stop at first set var; recognize both "pt" and "en" prefixes; fall
-        // through to English default only when no locale var is set.
-        for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
-            if let Ok(v) = std::env::var(var) {
-                if v.is_empty() {
-                    // POSIX: empty-string env var is equivalent to unset; fall
-                    // through to the next variable in the precedence chain.
-                    continue;
-                }
-                let lower = v.to_lowercase();
-                if lower.starts_with("pt") {
-                    return Language::Portuguese;
-                }
-                if lower.starts_with("en") {
-                    return Language::English;
-                }
-                // Found non-empty var with unrecognized prefix: respect POSIX
-                // precedence by stopping iteration here. Do NOT fall through
-                // to the next var.
-                break;
+        // Priority 2: cross-platform locale detection via native OS APIs.
+        // Windows: GetUserDefaultLocaleName; macOS: CFLocaleCopyCurrent;
+        // Linux/BSD: reads POSIX vars (LC_ALL > LC_MESSAGES > LANG).
+        if let Some(locale) = sys_locale::get_locale() {
+            let lower = locale.to_lowercase();
+            if lower.starts_with("pt") {
+                return Language::Portuguese;
+            }
+            if lower.starts_with("en") {
+                return Language::English;
             }
         }
         Language::English
@@ -503,6 +487,18 @@ pub mod validation {
                 "memória disponível ({available_mb}MB) abaixo do mínimo requerido ({required_mb}MB) \
                  para carregar o modelo; aborte outras cargas ou use --skip-memory-guard (exit 77)"
             )
+        }
+
+        pub fn binary_not_found(name: &str) -> String {
+            format!("binário não encontrado: {name} — instale e adicione ao PATH")
+        }
+
+        pub fn rate_limited(detail: &str) -> String {
+            format!("taxa de requisição excedida: {detail}")
+        }
+
+        pub fn timeout(operation: &str, secs: u64) -> String {
+            format!("timeout após {secs}s: {operation}")
         }
     }
 

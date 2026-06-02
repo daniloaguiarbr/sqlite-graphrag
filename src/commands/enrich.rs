@@ -10,6 +10,7 @@
 //!
 //! Architecture mirrors `ingest_claude.rs`: SCAN → JUDGE (LLM) → PERSIST, with a
 //! SQLite queue DB (`.enrich-queue.sqlite`) for resume/retry support.
+// Workload: Subprocess I/O-bound (claude/codex API calls with network wait)
 //!
 //! # DRY opportunity
 //!
@@ -21,6 +22,7 @@
 //! this stream's boundary — flagged here for the Integration stream to evaluate.
 
 use crate::commands::ingest_claude::find_claude_binary;
+use crate::constants::MAX_MEMORY_BODY_LEN;
 use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::paths::AppPaths;
@@ -39,7 +41,6 @@ use std::time::Instant;
 // Constants
 // ---------------------------------------------------------------------------
 
-const MIN_CLAUDE_VERSION: &str = "2.1.0";
 const DEFAULT_QUEUE_DB: &str = ".enrich-queue.sqlite";
 const DEFAULT_RATE_LIMIT_WAIT: u64 = 60;
 const DEFAULT_BODY_ENRICH_MIN_CHARS: usize = 500;
@@ -104,6 +105,165 @@ const BODY_ENRICH_SCHEMA: &str = r#"{
     "enriched_body": { "type": "string" }
   },
   "required": ["enriched_body"],
+  "additionalProperties": false
+}"#;
+
+// G27 P1: weight-calibrate
+const WEIGHT_CALIBRATE_PROMPT: &str = "You are a knowledge graph quality auditor. Evaluate whether this relationship weight is correctly calibrated.\n\n\
+Scale:\n\
+- 0.9 = vital hard dependency (A cannot function without B)\n\
+- 0.7 = important design relationship (A strongly supports/enables B)\n\
+- 0.5 = useful contextual link (A and B share relevant context)\n\
+- 0.3 = weak reference (A mentions B without strong coupling)\n\n\
+Respond with the calibrated weight and brief reasoning.";
+
+const WEIGHT_CALIBRATE_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "calibrated_weight": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["calibrated_weight", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P1: relation-reclassify
+const RELATION_RECLASSIFY_PROMPT: &str = "You are a knowledge graph quality auditor. The relationship between these entities uses a generic type. Determine the REAL semantic relationship.\n\n\
+Valid canonical relations (pick exactly one):\n\
+- depends-on: A cannot function without B\n\
+- uses: A utilizes B but could substitute it\n\
+- supports: A reinforces or enables B\n\
+- causes: A triggers or produces B\n\
+- fixes: A resolves a problem in B\n\
+- contradicts: A conflicts with or invalidates B\n\
+- applies-to: A is relevant to or scoped within B\n\
+- follows: A comes after B in sequence\n\
+- replaces: A substitutes B\n\
+- tracked-in: A is monitored in B\n\
+- related: A and B share context (use sparingly)\n\n\
+Respond with the correct relation, strength, and reasoning.";
+
+const RELATION_RECLASSIFY_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "relation": { "type": "string" },
+    "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["relation", "strength", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: entity-connect — suggest relationships between isolated entities
+const ENTITY_CONNECT_PROMPT: &str = "You are a knowledge graph quality auditor. Two entities exist in the same graph but have no relationship between them. Determine if a meaningful relationship exists.\n\n\
+Valid canonical relations: depends-on, uses, supports, causes, fixes, contradicts, applies-to, follows, replaces, tracked-in, related.\n\n\
+If NO meaningful relationship exists, set relation to \"none\".\n\
+Respond with the relation (or \"none\"), strength, and reasoning.";
+
+const ENTITY_CONNECT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "relation": { "type": "string" },
+    "strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["relation", "strength", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: entity-type-validate — verify entity type assignments
+const ENTITY_TYPE_VALIDATE_PROMPT: &str = "You are a knowledge graph quality auditor. Verify whether this entity's type is correct.\n\n\
+Valid entity types: project, tool, person, file, concept, incident, decision, organization, location, date.\n\n\
+If the current type is correct, keep it. If wrong, suggest the correct type.\n\
+Respond with the validated type and reasoning.";
+
+const ENTITY_TYPE_VALIDATE_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "validated_type": { "type": "string" },
+    "was_correct": { "type": "boolean" },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["validated_type", "was_correct", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: description-enrich — improve generic memory descriptions
+const DESCRIPTION_ENRICH_PROMPT: &str = "You are a knowledge graph quality auditor. This memory has a generic or auto-generated description. Write a concise, semantic description (10-20 words) that captures WHAT this memory is about and WHY it matters.\n\n\
+BAD: 'ingested from docs/auth.md'\n\
+GOOD: 'JWT token rotation strategy with 15-min expiry and refresh flow'\n\n\
+Respond with the improved description and reasoning.";
+
+const DESCRIPTION_ENRICH_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "description": { "type": "string" },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["description", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: domain-classify — classify memory into domain category
+const DOMAIN_CLASSIFY_PROMPT: &str = "You are a knowledge graph quality auditor. Classify this memory into its primary domain category.\n\n\
+Respond with the domain name (kebab-case, 2-4 words) and reasoning.";
+
+const DOMAIN_CLASSIFY_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "domain": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["domain", "confidence", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: graph-audit — audit graph for quality issues
+const GRAPH_AUDIT_PROMPT: &str = "You are a knowledge graph quality auditor. Analyze this memory and its entity bindings for quality issues.\n\n\
+Check for: missing entities, wrong entity types, redundant relationships, orphaned entities, generic descriptions, low-signal relationships.\n\n\
+Respond with a list of issues found (or empty if none) and an overall quality score.";
+
+const GRAPH_AUDIT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "quality_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "issues": { "type": "array", "items": { "type": "object", "properties": { "kind": { "type": "string" }, "detail": { "type": "string" } }, "required": ["kind", "detail"] } },
+    "reasoning": { "type": "string" }
+  },
+  "required": ["quality_score", "issues", "reasoning"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: deep-research-synth — synthesize research findings into graph
+const DEEP_RESEARCH_SYNTH_PROMPT: &str = "You are a knowledge graph synthesizer. Given this memory body, extract key findings and synthesize them into structured entities and relationships.\n\n\
+Entity names: lowercase kebab-case, domain-specific.\n\
+Relations: depends-on, uses, supports, causes, fixes, contradicts, applies-to, follows, related, replaces, tracked-in.\n\n\
+Respond with extracted entities, relationships, and a synthesis summary.";
+
+const DEEP_RESEARCH_SYNTH_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "entities": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "entity_type": { "type": "string" } }, "required": ["name", "entity_type"] } },
+    "relationships": { "type": "array", "items": { "type": "object", "properties": { "source": { "type": "string" }, "target": { "type": "string" }, "relation": { "type": "string" }, "strength": { "type": "number" } }, "required": ["source", "target", "relation", "strength"] } },
+    "summary": { "type": "string" }
+  },
+  "required": ["entities", "relationships", "summary"],
+  "additionalProperties": false
+}"#;
+
+// G27 P2: body-extract — extract structured content from unstructured text
+const BODY_EXTRACT_PROMPT: &str = "You are a structured data extractor. Given this memory body (which may be unstructured text, raw notes, or a transcript), extract and restructure the content into a clean, well-organized markdown body.\n\n\
+Preserve all factual content. Remove noise, fix formatting, add section headers where appropriate.\n\
+Respond with the restructured body and a brief summary of changes.";
+
+const BODY_EXTRACT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "restructured_body": { "type": "string" },
+    "changes_summary": { "type": "string" }
+  },
+  "required": ["restructured_body", "changes_summary"],
   "additionalProperties": false
 }"#;
 
@@ -278,6 +438,12 @@ pub struct EnrichArgs {
     #[arg(long, value_name = "PATH")]
     pub prompt_template: Option<PathBuf>,
 
+    /// Number of parallel LLM workers (default 1 = serial).
+    /// Each worker claims items atomically from the queue DB via UPDATE...RETURNING.
+    /// Range: 1–32. For 2321 entities, --llm-parallelism 4 reduces wall time ~4×.
+    #[arg(long, default_value_t = 1, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=32))]
+    pub llm_parallelism: u32,
+
     // -- Output / infra --
     /// Emit NDJSON output. Always true; flag accepted for compatibility.
     #[arg(long)]
@@ -291,20 +457,6 @@ pub struct EnrichArgs {
 // ---------------------------------------------------------------------------
 // Internal types — raw LLM output structs
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct ClaudeElement {
-    r#type: Option<String>,
-    subtype: Option<String>,
-    #[serde(default)]
-    is_error: bool,
-    structured_output: Option<serde_json::Value>,
-    result: Option<String>,
-    total_cost_usd: Option<f64>,
-    error: Option<String>,
-    #[serde(rename = "apiKeySource")]
-    api_key_source: Option<String>,
-}
 
 // ---------------------------------------------------------------------------
 // NDJSON event types emitted to stdout
@@ -321,6 +473,9 @@ struct PhaseEvent<'a> {
     items_total: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     items_pending: Option<usize>,
+    /// Active parallel LLM worker count (1 = serial). Present only on the "scan" phase event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_parallelism: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -362,18 +517,7 @@ struct EnrichSummary {
     elapsed_ms: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Helper: emit a single JSON line to stdout
-// ---------------------------------------------------------------------------
-
-fn emit_json<T: Serialize>(value: &T) {
-    if let Ok(json) = serde_json::to_string(value) {
-        let stdout = std::io::stdout();
-        let mut lock = stdout.lock();
-        let _ = writeln!(lock, "{json}");
-        let _ = lock.flush();
-    }
-}
+use crate::output::emit_json_line as emit_json;
 
 // ---------------------------------------------------------------------------
 // Queue DB
@@ -415,66 +559,12 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Validate Claude version (private copy — see DRY note above)
-// ---------------------------------------------------------------------------
-
-fn validate_claude_version_local(binary: &Path) -> Result<String, AppError> {
-    let output = Command::new(binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(AppError::Io)?;
-
-    if !output.status.success() {
-        return Err(AppError::Validation(
-            "failed to run 'claude --version'".to_string(),
-        ));
-    }
-
-    let version_str = String::from_utf8(output.stdout)
-        .map_err(|_| AppError::Validation("claude --version output is not UTF-8".to_string()))?;
-    let version = version_str.trim().to_string();
-    let numeric = version.split([' ', '(']).next().unwrap_or("").trim();
-
-    fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-        let parts: Vec<&str> = s.splitn(3, '.').collect();
-        if parts.len() < 2 {
-            return None;
-        }
-        let major = parts[0].parse::<u64>().ok()?;
-        let minor = parts[1].parse::<u64>().ok()?;
-        let patch = parts
-            .get(2)
-            .and_then(|p| p.parse::<u64>().ok())
-            .unwrap_or(0);
-        Some((major, minor, patch))
-    }
-
-    if let (Some(actual), Some(min)) = (parse_semver(numeric), parse_semver(MIN_CLAUDE_VERSION)) {
-        if actual < min {
-            return Err(AppError::Validation(format!(
-                "Claude Code version {numeric} is below minimum required {MIN_CLAUDE_VERSION}"
-            )));
-        }
-    }
-
-    Ok(version)
-}
-
-// ---------------------------------------------------------------------------
 // LLM invocation — Claude Code
 // ---------------------------------------------------------------------------
 
-/// Calls `claude -p` with a prompt and JSON schema, returning the parsed JSON value.
+/// Calls `claude -p` via the shared `claude_runner` module (G02).
 ///
 /// Returns `(output_value, cost_usd, is_oauth)`.
-///
-/// # DRY note
-///
-/// Mirrors `extract_with_claude` in `ingest_claude.rs`. Should be unified in a
-/// shared module by the Integration stream.
 fn call_claude(
     binary: &Path,
     prompt: &str,
@@ -483,183 +573,16 @@ fn call_claude(
     model: Option<&str>,
     timeout_secs: u64,
 ) -> Result<(serde_json::Value, f64, bool), AppError> {
-    use wait_timeout::ChildExt;
-
-    let full_prompt = format!("{prompt}\n\n{input_text}");
-
-    let mut cmd = Command::new(binary);
-
-    // Least-privilege environment
-    cmd.env_clear();
-    for var in &[
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "TERM",
-        "LANG",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_RUNTIME_DIR",
-        "ANTHROPIC_API_KEY",
-        "CLAUDE_CONFIG_DIR",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "DYLD_FALLBACK_LIBRARY_PATH",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    #[cfg(windows)]
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-        "COMSPEC",
-        "PATHEXT",
-        "HOMEPATH",
-        "HOMEDRIVE",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    cmd.arg("-p")
-        .arg(&full_prompt)
-        .arg("--output-format")
-        .arg("json")
-        .arg("--json-schema")
-        .arg(json_schema)
-        .arg("--max-turns")
-        .arg("3")
-        .arg("--no-session-persistence");
-
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        cmd.arg("--bare");
-    } else {
-        cmd.arg("--dangerously-skip-permissions")
-            .arg("--settings")
-            .arg(r#"{"hooks":{}}"#);
-    }
-
-    if let Some(m) = model {
-        cmd.arg("--model").arg(m);
-    }
-
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        AppError::Io(std::io::Error::new(
-            e.kind(),
-            format!("failed to spawn claude: {e}"),
-        ))
-    })?;
-
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
-
-    match status {
-        Some(exit_status) => {
-            let mut stdout_buf = Vec::new();
-            let mut stderr_buf = Vec::new();
-            if let Some(mut out) = child.stdout.take() {
-                std::io::Read::read_to_end(&mut out, &mut stdout_buf).map_err(AppError::Io)?;
-            }
-            if let Some(mut err) = child.stderr.take() {
-                std::io::Read::read_to_end(&mut err, &mut stderr_buf).map_err(AppError::Io)?;
-            }
-
-            if !exit_status.success() {
-                let stderr_str = String::from_utf8_lossy(&stderr_buf);
-                if stderr_str.contains("auth") || stderr_str.contains("login") {
-                    tracing::warn!(
-                        target: "enrich",
-                        "Claude Code authentication may have failed. Re-authenticate with: claude"
-                    );
-                }
-                return Err(AppError::Validation(format!(
-                    "claude -p exited with code {:?}: {}",
-                    exit_status.code(),
-                    stderr_str.trim()
-                )));
-            }
-
-            let stdout_str = String::from_utf8(stdout_buf)
-                .map_err(|_| AppError::Validation("claude -p stdout is not valid UTF-8".into()))?;
-            parse_claude_json_output(&stdout_str)
-        }
-        None => {
-            tracing::warn!(target: "enrich", timeout_secs, "claude -p timed out, killing process");
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(AppError::Validation(format!(
-                "claude -p timed out after {timeout_secs} seconds"
-            )))
-        }
-    }
-}
-
-/// Parses the JSON array output from `claude -p --output-format json`.
-///
-/// Returns `(structured_value, cost_usd, is_oauth)`.
-///
-/// # DRY note
-///
-/// Mirrors `parse_claude_output` in `ingest_claude.rs`. Should be unified.
-fn parse_claude_json_output(stdout: &str) -> Result<(serde_json::Value, f64, bool), AppError> {
-    let elements: Vec<ClaudeElement> = serde_json::from_str(stdout).map_err(|e| {
-        AppError::Validation(format!("failed to parse claude output as JSON array: {e}"))
-    })?;
-
-    let is_oauth = elements
-        .iter()
-        .find(|e| e.r#type.as_deref() == Some("system") && e.subtype.as_deref() == Some("init"))
-        .and_then(|e| e.api_key_source.as_deref())
-        .map(|s| s == "none")
-        .unwrap_or(false);
-
-    let result_elem = elements
-        .iter()
-        .find(|e| e.r#type.as_deref() == Some("result"))
-        .ok_or_else(|| {
-            AppError::Validation("claude output missing 'result' element".to_string())
-        })?;
-
-    if result_elem.is_error {
-        let err_msg = result_elem
-            .error
-            .as_deref()
-            .or(result_elem.result.as_deref())
-            .unwrap_or("unknown error");
-        if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-            return Err(AppError::Validation(format!("RATE_LIMITED: {err_msg}")));
-        }
-        return Err(AppError::Validation(format!(
-            "claude extraction failed: {err_msg}"
-        )));
-    }
-
-    let value = if let Some(v) = result_elem.structured_output.clone() {
-        v
-    } else if let Some(text) = &result_elem.result {
-        serde_json::from_str(text).map_err(|e| {
-            AppError::Validation(format!("failed to parse claude result field as JSON: {e}"))
-        })?
-    } else {
-        return Err(AppError::Validation(
-            "claude result missing structured_output and result field".into(),
-        ));
-    };
-
-    let cost = result_elem.total_cost_usd.unwrap_or(0.0);
-    Ok((value, cost, is_oauth))
+    let result = crate::commands::claude_runner::run_claude(
+        binary,
+        prompt,
+        json_schema,
+        input_text,
+        model,
+        timeout_secs,
+        7,
+    )?;
+    Ok((result.value, result.cost_usd, result.is_oauth))
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +678,66 @@ fn scan_short_body_memories(
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// G27: Returns relationships with weight >= 0.7 that may need recalibration.
+#[allow(clippy::type_complexity)]
+fn scan_weight_candidates(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+) -> Result<Vec<(i64, String, String, String, f64)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let sql = format!(
+        "SELECT r.id, e1.name, e2.name, r.relation, r.weight \
+         FROM relationships r \
+         JOIN entities e1 ON e1.id = r.source_id \
+         JOIN entities e2 ON e2.id = r.target_id \
+         WHERE r.weight >= 0.7 AND e1.namespace = ?1 \
+         ORDER BY r.weight DESC {limit_clause}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params![namespace], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, f64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// G27: Returns relationships with generic relation types (applies_to).
+fn scan_generic_relations(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+) -> Result<Vec<(i64, String, String, String)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let sql = format!(
+        "SELECT r.id, e1.name, e2.name, r.relation \
+         FROM relationships r \
+         JOIN entities e1 ON e1.id = r.source_id \
+         JOIN entities e2 ON e2.id = r.target_id \
+         WHERE r.relation = 'applies_to' AND e1.namespace = ?1 \
+         ORDER BY r.id {limit_clause}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params![namespace], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -982,6 +965,13 @@ fn persist_enriched_body(
 
 /// Main entry point for the `enrich` command.
 pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
+    // TODO(G20): add mode-conditional flag validation before DB access.
+    // Flags that are silently discarded when the wrong mode is active:
+    //   --mode claude-code: codex_binary, codex_model, codex_timeout
+    //   --mode codex:       claude_binary, claude_model, claude_timeout,
+    //                       max_cost_usd, rate_limit_wait
+    // Approach: check each non-default flag value early and return
+    // Err(AppError::Validation(...)) for incompatible mode+flag combinations.
     let started = Instant::now();
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -993,7 +983,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
     let provider_binary = match args.mode {
         EnrichMode::ClaudeCode => {
             let bin = find_claude_binary(args.claude_binary.as_deref())?;
-            let version = validate_claude_version_local(&bin)?;
+            let version = super::claude_runner::validate_claude_version(&bin)?;
             tracing::info!(target: "enrich", binary = %bin.display(), version = %version, "Claude Code binary validated");
             emit_json(&PhaseEvent {
                 phase: "validate",
@@ -1001,6 +991,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                 version: Some(&version),
                 items_total: None,
                 items_pending: None,
+                llm_parallelism: None,
             });
             bin
         }
@@ -1013,6 +1004,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                 version: None,
                 items_total: None,
                 items_pending: None,
+                llm_parallelism: None,
             });
             bin
         }
@@ -1028,6 +1020,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
         version: None,
         items_total: Some(total),
         items_pending: Some(total),
+        llm_parallelism: Some(args.llm_parallelism),
     });
 
     // Dry-run: emit preview events and summary without calling LLM
@@ -1062,37 +1055,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // For operations not yet fully implemented, emit a clear structured response
-    // and exit without calling the LLM, so callers can branch on the NDJSON.
-    match args.operation {
-        EnrichOperation::MemoryBindings
-        | EnrichOperation::EntityDescriptions
-        | EnrichOperation::BodyEnrich => {
-            // Fully implemented below
-        }
-        _ => {
-            for (idx, key) in scan_result.iter().enumerate() {
-                emit_json(&serde_json::json!({
-                    "item": key,
-                    "status": "not_yet_implemented",
-                    "operation": format!("{:?}", args.operation),
-                    "index": idx,
-                    "total": total
-                }));
-            }
-            emit_json(&EnrichSummary {
-                summary: true,
-                operation: format!("{:?}", args.operation),
-                items_total: total,
-                completed: 0,
-                failed: 0,
-                skipped: total,
-                cost_usd: 0.0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            });
-            return Ok(());
-        }
-    }
+    // All 13 operations are now implemented (G27 complete).
 
     // Queue setup for resume/retry
     let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
@@ -1131,11 +1094,24 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
             EnrichOperation::EntityDescriptions => "entity",
             _ => "memory",
         };
-        let _ = queue_conn.execute(
+        if let Err(e) = queue_conn.execute(
             "INSERT OR IGNORE INTO queue (item_key, item_type, status) VALUES (?1, ?2, 'pending')",
             rusqlite::params![key, item_type],
-        );
+        ) {
+            tracing::warn!(target: "enrich", error = %e, "queue insert failed");
+        }
         let _ = idx; // suppress unused warning
+    }
+
+    // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
+    // Clamp enforces the range even if the caller bypasses clap validation.
+    let parallelism = args.llm_parallelism.clamp(1, 32) as usize;
+    if parallelism > 1 {
+        tracing::info!(
+            target: "enrich",
+            llm_parallelism = parallelism,
+            "parallel LLM processing with bounded thread pool"
+        );
     }
 
     let mut completed = 0usize;
@@ -1144,6 +1120,8 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
     let mut cost_total = 0.0f64;
     let mut oauth_detected = false;
     let mut backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
+    let rate_limit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+    let enrich_started = std::time::Instant::now();
 
     let provider_timeout = match args.mode {
         EnrichMode::ClaudeCode => args.claude_timeout,
@@ -1155,104 +1133,359 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
         EnrichMode::Codex => args.codex_model.as_deref(),
     };
 
-    loop {
-        // Budget check
-        if let Some(budget) = args.max_cost_usd {
-            if !oauth_detected && cost_total >= budget {
-                tracing::warn!(target: "enrich", spent = cost_total, budget, "budget exceeded, stopping");
-                break;
-            }
+    // G19: when parallelism > 1, spawn bounded worker threads.
+    // Each worker opens its own DB connections (WAL supports concurrent readers + serialized writers).
+    // The queue DB claim is atomic via UPDATE...RETURNING — no external lock needed.
+    if parallelism > 1 {
+        let stdout_mu = parking_lot::Mutex::new(());
+        let budget = args.max_cost_usd;
+        let operation = args.operation.clone();
+        let mode = args.mode.clone();
+        let min_oc = args.min_output_chars;
+        let max_oc = args.max_output_chars;
+        let prompt_tpl = args.prompt_template.as_deref().map(|p| p.to_path_buf());
+
+        struct WorkerResult {
+            completed: usize,
+            failed: usize,
+            skipped: usize,
+            cost: f64,
+            oauth: bool,
         }
 
-        // Dequeue next pending item
-        let pending: Option<(i64, String, String)> = queue_conn
-            .query_row(
-                "UPDATE queue SET status='processing', attempt=attempt+1 \
+        let results: Vec<WorkerResult> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..parallelism)
+                .map(|worker_id| {
+                    let stdout_mu = &stdout_mu;
+                    let paths = &paths;
+                    let namespace = &namespace;
+                    let provider_binary = &provider_binary;
+                    let operation = &operation;
+                    let mode = &mode;
+                    let prompt_tpl = prompt_tpl.as_deref();
+                    s.spawn(move || {
+                        let w_conn = match open_rw(&paths.db) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::error!(target: "enrich", worker = worker_id, error = %e, "worker failed to open DB");
+                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false };
+                            }
+                        };
+                        let w_queue = match open_queue_db(DEFAULT_QUEUE_DB) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::error!(target: "enrich", worker = worker_id, error = %e, "worker failed to open queue DB");
+                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false };
+                            }
+                        };
+                        let mut w_completed = 0usize;
+                        let mut w_failed = 0usize;
+                        let mut w_skipped = 0usize;
+                        let mut w_cost = 0.0f64;
+                        let mut w_oauth = false;
+                        let mut w_backoff = DEFAULT_RATE_LIMIT_WAIT;
+                        let w_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+
+                        loop {
+                            if crate::shutdown_requested() {
+                                tracing::info!(target: "enrich", "shutdown requested, worker stopping");
+                                break;
+                            }
+                            if let Some(b) = budget {
+                                if !w_oauth && w_cost >= b {
+                                    break;
+                                }
+                            }
+                            let pending: Option<(i64, String, String)> = w_queue
+                                .query_row(
+                                    "UPDATE queue SET status='processing', attempt=attempt+1 \
+                                     WHERE id = (SELECT id FROM queue WHERE status='pending' ORDER BY id LIMIT 1) \
+                                     RETURNING id, item_key, item_type",
+                                    [],
+                                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                                )
+                                .ok();
+                            let (queue_id, item_key, _item_type) = match pending {
+                                Some(p) => p,
+                                None => break,
+                            };
+                            let item_started = Instant::now();
+                            let current_index = w_completed + w_failed + w_skipped;
+
+                            let call_result = match operation {
+                                EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, paths),
+                                EnrichOperation::WeightCalibrate => call_weight_calibrate(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::RelationReclassify => call_relation_reclassify(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => call_entity_connect(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityTypeValidate => call_entity_type_validate(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::DescriptionEnrich => call_description_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::DomainClassify => call_domain_classify(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::GraphAudit => call_graph_audit(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::DeepResearchSynth => call_deep_research_synth(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                            };
+
+                            match call_result {
+                                Ok(EnrichItemResult::Done { cost, is_oauth, memory_id, entity_id, entities, rels, chars_before, chars_after }) => {
+                                    if is_oauth { w_oauth = true; }
+                                    w_backoff = DEFAULT_RATE_LIMIT_WAIT;
+                                    let _ = w_queue.execute(
+                                        "UPDATE queue SET status='done', memory_id=?1, entity_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
+                                        rusqlite::params![memory_id, entity_id, entities as i64, rels as i64, cost, item_started.elapsed().as_millis() as i64, queue_id],
+                                    );
+                                    w_completed += 1;
+                                    if !is_oauth { w_cost += cost; }
+                                    let _guard = stdout_mu.lock();
+                                    emit_json(&ItemEvent { item: &item_key, status: "done", memory_id, entity_id, entities: Some(entities), rels: Some(rels), chars_before, chars_after, cost_usd: if is_oauth { None } else { Some(cost) }, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: None, index: current_index, total });
+                                }
+                                Ok(EnrichItemResult::Skipped { reason }) => {
+                                    w_skipped += 1;
+                                    let _ = w_queue.execute("UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2", rusqlite::params![reason, queue_id]);
+                                    let _guard = stdout_mu.lock();
+                                    emit_json(&ItemEvent { item: &item_key, status: "skipped", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: None, index: current_index, total });
+                                }
+                                Err(e) => {
+                                    let err_str = format!("{e}");
+                                    if matches!(e, AppError::RateLimited { .. }) {
+                                        if crate::retry::is_kill_switch_active() {
+                                            tracing::warn!(target: "enrich", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
+                                        } else if std::time::Instant::now() >= w_deadline {
+                                            tracing::error!(target: "enrich", "rate-limit retry deadline (1h) exhausted in worker");
+                                        } else {
+                                            let half = w_backoff / 2;
+                                            let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                                            let actual_wait = half + jitter;
+                                            tracing::warn!(target: "enrich", delay_secs = actual_wait, error_kind = "rate_limited", "rate limited in worker, backing off");
+                                            let _ = w_queue.execute("UPDATE queue SET status='pending' WHERE id=?1", rusqlite::params![queue_id]);
+                                            std::thread::sleep(std::time::Duration::from_secs(actual_wait));
+                                            w_backoff = (w_backoff * 2).min(900);
+                                            continue;
+                                        }
+                                    }
+                                    w_failed += 1;
+                                    let _ = w_queue.execute("UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2", rusqlite::params![err_str, queue_id]);
+                                    let _guard = stdout_mu.lock();
+                                    emit_json(&ItemEvent { item: &item_key, status: "failed", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: Some(err_str), index: current_index, total });
+                                }
+                            }
+                        }
+                        WorkerResult { completed: w_completed, failed: w_failed, skipped: w_skipped, cost: w_cost, oauth: w_oauth }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join().unwrap_or(WorkerResult {
+                        completed: 0,
+                        failed: 0,
+                        skipped: 0,
+                        cost: 0.0,
+                        oauth: false,
+                    })
+                })
+                .collect()
+        });
+
+        for r in &results {
+            completed += r.completed;
+            failed += r.failed;
+            skipped += r.skipped;
+            cost_total += r.cost;
+            oauth_detected |= r.oauth;
+        }
+    } else {
+        // Serial path (parallelism == 1) — original loop
+        loop {
+            if crate::shutdown_requested() {
+                tracing::info!(target: "enrich", "shutdown requested, stopping enrichment");
+                break;
+            }
+
+            // Budget check
+            if let Some(budget) = args.max_cost_usd {
+                if !oauth_detected && cost_total >= budget {
+                    tracing::warn!(target: "enrich", spent = cost_total, budget, "budget exceeded, stopping");
+                    break;
+                }
+            }
+
+            // Dequeue next pending item
+            let pending: Option<(i64, String, String)> = queue_conn
+                .query_row(
+                    "UPDATE queue SET status='processing', attempt=attempt+1 \
                  WHERE id = (SELECT id FROM queue WHERE status='pending' ORDER BY id LIMIT 1) \
                  RETURNING id, item_key, item_type",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
 
-        let (queue_id, item_key, item_type) = match pending {
-            Some(p) => p,
-            None => break,
-        };
+            let (queue_id, item_key, item_type) = match pending {
+                Some(p) => p,
+                None => break,
+            };
 
-        let item_started = Instant::now();
-        let current_index = completed + failed + skipped;
+            let item_started = Instant::now();
+            let current_index = completed + failed + skipped;
 
-        let call_result = match args.operation {
-            EnrichOperation::MemoryBindings => call_memory_bindings(
-                &conn,
-                &namespace,
-                &item_key,
-                &provider_binary,
-                provider_model,
-                provider_timeout,
-                &args.mode,
-            ),
-            EnrichOperation::EntityDescriptions => call_entity_description(
-                &conn,
-                &namespace,
-                &item_key,
-                &provider_binary,
-                provider_model,
-                provider_timeout,
-                &args.mode,
-            ),
-            EnrichOperation::BodyEnrich => call_body_enrich(
-                &conn,
-                &namespace,
-                &item_key,
-                &provider_binary,
-                provider_model,
-                provider_timeout,
-                &args.mode,
-                args.min_output_chars,
-                args.max_output_chars,
-                args.prompt_template.as_deref(),
-                &paths,
-            ),
-            _ => unreachable!("non-implemented ops handled above"),
-        };
-
-        match call_result {
-            Ok(EnrichItemResult::Done {
-                memory_id,
-                entity_id,
-                entities,
-                rels,
-                chars_before,
-                chars_after,
-                cost,
-                is_oauth,
-            }) => {
-                if is_oauth && !oauth_detected {
-                    oauth_detected = true;
-                    tracing::info!(target: "enrich", "OAuth subscription detected — cost_usd omitted from output");
+            let call_result = match args.operation {
+                EnrichOperation::MemoryBindings => call_memory_bindings(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::EntityDescriptions => call_entity_description(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::BodyEnrich => call_body_enrich(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                    args.min_output_chars,
+                    args.max_output_chars,
+                    args.prompt_template.as_deref(),
+                    &paths,
+                ),
+                EnrichOperation::WeightCalibrate => call_weight_calibrate(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::RelationReclassify => call_relation_reclassify(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => {
+                    call_entity_connect(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        &provider_binary,
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    )
                 }
-                backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
+                EnrichOperation::EntityTypeValidate => call_entity_type_validate(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::DescriptionEnrich => call_description_enrich(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::DomainClassify => call_domain_classify(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::GraphAudit => call_graph_audit(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::DeepResearchSynth => call_deep_research_synth(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+                EnrichOperation::BodyExtract => call_body_extract(
+                    &conn,
+                    &namespace,
+                    &item_key,
+                    &provider_binary,
+                    provider_model,
+                    provider_timeout,
+                    &args.mode,
+                ),
+            };
 
-                // Persist depends on the operation
-                let persist_err: Option<String> = match args.operation {
-                    EnrichOperation::MemoryBindings => {
-                        // Bindings already persisted inside call_memory_bindings
-                        None
+            match call_result {
+                Ok(EnrichItemResult::Done {
+                    memory_id,
+                    entity_id,
+                    entities,
+                    rels,
+                    chars_before,
+                    chars_after,
+                    cost,
+                    is_oauth,
+                }) => {
+                    if is_oauth && !oauth_detected {
+                        oauth_detected = true;
+                        tracing::info!(target: "enrich", "OAuth subscription detected — cost_usd omitted from output");
                     }
-                    EnrichOperation::EntityDescriptions => {
-                        // Description already persisted inside call_entity_description
-                        None
-                    }
-                    EnrichOperation::BodyEnrich => {
-                        // Body already persisted inside call_body_enrich
-                        None
-                    }
-                    _ => unreachable!(),
-                };
+                    backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
 
-                let _ = queue_conn.execute(
+                    // Persist depends on the operation
+                    let persist_err: Option<String> = match args.operation {
+                        EnrichOperation::MemoryBindings => {
+                            // Bindings already persisted inside call_memory_bindings
+                            None
+                        }
+                        EnrichOperation::EntityDescriptions => {
+                            // Description already persisted inside call_entity_description
+                            None
+                        }
+                        EnrichOperation::BodyEnrich => {
+                            // Body already persisted inside call_body_enrich
+                            None
+                        }
+                        _ => {
+                            // All G27 operations persist inside their call_* function
+                            None
+                        }
+                    };
+
+                    if let Err(e) = queue_conn.execute(
                     "UPDATE queue SET status='done', memory_id=?1, entity_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
                     rusqlite::params![
                         memory_id,
@@ -1263,30 +1496,104 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                         item_started.elapsed().as_millis() as i64,
                         queue_id
                     ],
-                );
+                ) {
+                        tracing::warn!(target: "enrich", error = %e, "queue done update failed");
+                    }
 
-                if persist_err.is_none() {
-                    completed += 1;
-                    if !is_oauth {
-                        cost_total += cost;
+                    if persist_err.is_none() {
+                        completed += 1;
+                        if !is_oauth {
+                            cost_total += cost;
+                        }
+                        emit_json(&ItemEvent {
+                            item: &item_key,
+                            status: "done",
+                            memory_id,
+                            entity_id,
+                            entities: Some(entities),
+                            rels: Some(rels),
+                            chars_before,
+                            chars_after,
+                            cost_usd: if is_oauth { None } else { Some(cost) },
+                            elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                            error: None,
+                            index: current_index,
+                            total,
+                        });
+                    } else {
+                        failed += 1;
+                        emit_json(&ItemEvent {
+                            item: &item_key,
+                            status: "failed",
+                            memory_id: None,
+                            entity_id: None,
+                            entities: None,
+                            rels: None,
+                            chars_before: None,
+                            chars_after: None,
+                            cost_usd: None,
+                            elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                            error: persist_err,
+                            index: current_index,
+                            total,
+                        });
+                    }
+                }
+                Ok(EnrichItemResult::Skipped { reason }) => {
+                    skipped += 1;
+                    if let Err(e) = queue_conn.execute(
+                    "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                    rusqlite::params![reason, queue_id],
+                ) {
+                        tracing::warn!(target: "enrich", error = %e, "queue skipped update failed");
                     }
                     emit_json(&ItemEvent {
                         item: &item_key,
-                        status: "done",
-                        memory_id,
-                        entity_id,
-                        entities: Some(entities),
-                        rels: Some(rels),
-                        chars_before,
-                        chars_after,
-                        cost_usd: if is_oauth { None } else { Some(cost) },
+                        status: "skipped",
+                        memory_id: None,
+                        entity_id: None,
+                        entities: None,
+                        rels: None,
+                        chars_before: None,
+                        chars_after: None,
+                        cost_usd: None,
                         elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
                         error: None,
                         index: current_index,
                         total,
                     });
-                } else {
+                }
+                Err(e) => {
+                    let err_str = format!("{e}");
+                    if matches!(e, AppError::RateLimited { .. }) {
+                        if crate::retry::is_kill_switch_active() {
+                            tracing::warn!(target: "enrich", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
+                        } else if std::time::Instant::now() >= rate_limit_deadline {
+                            tracing::error!(target: "enrich", total_elapsed_secs = enrich_started.elapsed().as_secs(), "rate-limit retry deadline (1h) exhausted");
+                        } else {
+                            let half = backoff_secs / 2;
+                            let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                            let actual_wait = half + jitter;
+                            tracing::warn!(target: "enrich", delay_secs = actual_wait, error_kind = "rate_limited", "rate limited, backing off");
+                            if let Err(qe) = queue_conn.execute(
+                                "UPDATE queue SET status='pending' WHERE id=?1",
+                                rusqlite::params![queue_id],
+                            ) {
+                                tracing::warn!(target: "enrich", error = %qe, "queue pending update failed");
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(actual_wait));
+                            backoff_secs = (backoff_secs * 2).min(900);
+                            continue;
+                        }
+                    }
+
                     failed += 1;
+                    if let Err(qe) = queue_conn.execute(
+                    "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
+                    rusqlite::params![err_str, queue_id],
+                ) {
+                        tracing::warn!(target: "enrich", error = %qe, "queue failed update failed");
+                    }
                     emit_json(&ItemEvent {
                         item: &item_key,
                         status: "failed",
@@ -1298,72 +1605,16 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                         chars_after: None,
                         cost_usd: None,
                         elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                        error: persist_err,
+                        error: Some(err_str),
                         index: current_index,
                         total,
                     });
                 }
             }
-            Ok(EnrichItemResult::Skipped { reason }) => {
-                skipped += 1;
-                let _ = queue_conn.execute(
-                    "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
-                    rusqlite::params![reason, queue_id],
-                );
-                emit_json(&ItemEvent {
-                    item: &item_key,
-                    status: "skipped",
-                    memory_id: None,
-                    entity_id: None,
-                    entities: None,
-                    rels: None,
-                    chars_before: None,
-                    chars_after: None,
-                    cost_usd: None,
-                    elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                    error: None,
-                    index: current_index,
-                    total,
-                });
-            }
-            Err(e) => {
-                let err_str = format!("{e}");
-                if err_str.contains("RATE_LIMITED") {
-                    tracing::warn!(target: "enrich", wait_seconds = backoff_secs, "rate limited, waiting before retry");
-                    let _ = queue_conn.execute(
-                        "UPDATE queue SET status='pending' WHERE id=?1",
-                        rusqlite::params![queue_id],
-                    );
-                    std::thread::sleep(std::time::Duration::from_secs(backoff_secs));
-                    backoff_secs = (backoff_secs * 2).min(900);
-                    continue;
-                }
 
-                failed += 1;
-                let _ = queue_conn.execute(
-                    "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
-                    rusqlite::params![err_str, queue_id],
-                );
-                emit_json(&ItemEvent {
-                    item: &item_key,
-                    status: "failed",
-                    memory_id: None,
-                    entity_id: None,
-                    entities: None,
-                    rels: None,
-                    chars_before: None,
-                    chars_after: None,
-                    cost_usd: None,
-                    elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                    error: Some(err_str),
-                    index: current_index,
-                    total,
-                });
-            }
+            let _ = item_type; // used via queue schema only
         }
-
-        let _ = item_type; // used via queue schema only
-    }
+    } // end else (serial path)
 
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     let _ = queue_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -1551,19 +1802,52 @@ fn call_body_enrich(
     prompt_template: Option<&Path>,
     paths: &crate::paths::AppPaths,
 ) -> Result<EnrichItemResult, AppError> {
-    let (memory_id, body): (i64, String) = conn.query_row(
-        "SELECT id, COALESCE(body,'') FROM memories WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
-        rusqlite::params![namespace, memory_name],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("memory '{memory_name}' not found")),
-        other => AppError::Database(other),
-    })?;
+    let (memory_id, body, description, memory_type): (i64, String, String, String) = conn
+        .query_row(
+            "SELECT id, COALESCE(body,''), COALESCE(description,''), COALESCE(type,'note') \
+         FROM memories WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
+            rusqlite::params![namespace, memory_name],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::NotFound(format!("memory '{memory_name}' not found"))
+            }
+            other => AppError::Database(other),
+        })?;
 
     let chars_before = body.chars().count();
 
+    // G26: gather graph context for contextualized enrichment
+    let linked_entities: Vec<String> = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT e.name FROM memory_entities me \
+             JOIN entities e ON e.id = me.entity_id \
+             WHERE me.memory_id = ?1 LIMIT 10",
+        )?;
+        let result: Vec<String> = stmt
+            .query_map(rusqlite::params![memory_id], |r| r.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        result
+    };
+
     // Load custom prompt template if provided
     let prompt_prefix = if let Some(tmpl_path) = prompt_template {
+        let file_size = std::fs::metadata(tmpl_path)
+            .map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to stat prompt template: {e}"),
+                ))
+            })?
+            .len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
         std::fs::read_to_string(tmpl_path).map_err(|e| {
             AppError::Io(std::io::Error::new(
                 e.kind(),
@@ -1574,8 +1858,29 @@ fn call_body_enrich(
         BODY_ENRICH_PROMPT_PREFIX.to_string()
     };
 
+    // G26: build contextualized prompt with graph data
+    let context_section = if !linked_entities.is_empty() || !description.is_empty() {
+        let mut ctx = String::new();
+        ctx.push_str(&format!(
+            "\nContext:\n- Memory name: {memory_name}\n- Type: {memory_type}\n"
+        ));
+        if !description.is_empty() {
+            ctx.push_str(&format!("- Description: {description}\n"));
+        }
+        ctx.push_str(&format!("- Domain: {namespace}\n"));
+        if !linked_entities.is_empty() {
+            ctx.push_str(&format!(
+                "- Linked entities: {}\n",
+                linked_entities.join(", ")
+            ));
+        }
+        ctx
+    } else {
+        String::new()
+    };
+
     let prompt = format!(
-        "{prompt_prefix}Target minimum length: {min_output_chars} characters. Maximum: {max_output_chars} characters."
+        "{prompt_prefix}{context_section}\nTarget minimum length: {min_output_chars} characters. Maximum: {max_output_chars} characters."
     );
 
     // The body schema uses a free-form enriched_body field
@@ -1648,14 +1953,33 @@ fn scan_operation(
                 scan_short_body_memories(conn, namespace, args.min_output_chars, args.limit)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
-        // Scan-only operations: return all memories as candidates
-        EnrichOperation::WeightCalibrate
-        | EnrichOperation::RelationReclassify
-        | EnrichOperation::EntityConnect
-        | EnrichOperation::EntityTypeValidate
-        | EnrichOperation::DescriptionEnrich
-        | EnrichOperation::CrossDomainBridges
-        | EnrichOperation::DomainClassify
+        EnrichOperation::WeightCalibrate => {
+            let rows = scan_weight_candidates(conn, namespace, args.limit)?;
+            Ok(rows
+                .into_iter()
+                .map(|(id, _, _, _, _)| id.to_string())
+                .collect())
+        }
+        EnrichOperation::RelationReclassify => {
+            let rows = scan_generic_relations(conn, namespace, args.limit)?;
+            Ok(rows
+                .into_iter()
+                .map(|(id, _, _, _)| id.to_string())
+                .collect())
+        }
+        EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => {
+            let pairs = scan_isolated_entity_pairs(conn, namespace, args.limit)?;
+            Ok(pairs.into_iter().map(|(_, name, _, _)| name).collect())
+        }
+        EnrichOperation::EntityTypeValidate => {
+            let rows = scan_entities_for_type_validation(conn, namespace, args.limit)?;
+            Ok(rows.into_iter().map(|(_, name, _)| name).collect())
+        }
+        EnrichOperation::DescriptionEnrich => {
+            let rows = scan_generic_descriptions(conn, namespace, args.limit)?;
+            Ok(rows.into_iter().map(|(_, name, _)| name).collect())
+        }
+        EnrichOperation::DomainClassify
         | EnrichOperation::GraphAudit
         | EnrichOperation::DeepResearchSynth
         | EnrichOperation::BodyExtract => {
@@ -1710,6 +2034,672 @@ fn find_codex_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> {
     ))
 }
 
+/// G27: Calibrate weight of a single relationship via LLM.
+fn call_weight_calibrate(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let rel_id: i64 = item_key
+        .parse()
+        .map_err(|_| AppError::Validation(format!("invalid relationship id: {item_key}")))?;
+    let (source_name, target_name, relation, current_weight): (String, String, String, f64) = conn
+        .query_row(
+            "SELECT e1.name, e2.name, r.relation, r.weight \
+             FROM relationships r \
+             JOIN entities e1 ON e1.id = r.source_id \
+             JOIN entities e2 ON e2.id = r.target_id \
+             WHERE r.id = ?1",
+            rusqlite::params![rel_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("relationship {rel_id} not found")))?;
+
+    let input_text = format!(
+        "Source: {source_name}\nTarget: {target_name}\nRelation: {relation}\nCurrent weight: {current_weight}"
+    );
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            WEIGHT_CALIBRATE_PROMPT,
+            WEIGHT_CALIBRATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            WEIGHT_CALIBRATE_PROMPT,
+            WEIGHT_CALIBRATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+
+    let calibrated = value
+        .get("calibrated_weight")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| AppError::Validation("LLM result missing 'calibrated_weight'".into()))?;
+
+    conn.execute(
+        "UPDATE relationships SET weight = ?1 WHERE id = ?2",
+        rusqlite::params![calibrated, rel_id],
+    )?;
+
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: None,
+        entities: 0,
+        rels: 1,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27: Reclassify a generic relationship type via LLM.
+fn call_relation_reclassify(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let rel_id: i64 = item_key
+        .parse()
+        .map_err(|_| AppError::Validation(format!("invalid relationship id: {item_key}")))?;
+    let (source_name, target_name, current_relation): (String, String, String) = conn
+        .query_row(
+            "SELECT e1.name, e2.name, r.relation \
+             FROM relationships r \
+             JOIN entities e1 ON e1.id = r.source_id \
+             JOIN entities e2 ON e2.id = r.target_id \
+             WHERE r.id = ?1",
+            rusqlite::params![rel_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("relationship {rel_id} not found")))?;
+
+    let input_text = format!(
+        "Source entity: {source_name}\nTarget entity: {target_name}\nCurrent relation: {current_relation}"
+    );
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            RELATION_RECLASSIFY_PROMPT,
+            RELATION_RECLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            RELATION_RECLASSIFY_PROMPT,
+            RELATION_RECLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+
+    let new_relation = value
+        .get("relation")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("LLM result missing 'relation'".into()))?;
+    let new_strength = value
+        .get("strength")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
+
+    conn.execute(
+        "UPDATE relationships SET relation = ?1, weight = ?2 WHERE id = ?3",
+        rusqlite::params![new_relation, new_strength, rel_id],
+    )?;
+
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: None,
+        entities: 0,
+        rels: 1,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Connect isolated entities via LLM-suggested relationship.
+fn call_entity_connect(
+    conn: &Connection,
+    namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let pairs = scan_isolated_entity_pairs(conn, namespace, Some(1))?;
+    let (e1_id, e1_name, e2_id, e2_name) =
+        match pairs.into_iter().find(|(_, n, _, _)| n == item_key) {
+            Some(p) => p,
+            None => {
+                return Ok(EnrichItemResult::Skipped {
+                    reason: "pair no longer isolated".into(),
+                })
+            }
+        };
+    let input_text = format!("Entity A: {e1_name}\nEntity B: {e2_name}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            ENTITY_CONNECT_PROMPT,
+            ENTITY_CONNECT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            ENTITY_CONNECT_PROMPT,
+            ENTITY_CONNECT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let relation = value
+        .get("relation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    if relation == "none" {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "LLM determined no relationship".into(),
+        });
+    }
+    let strength = value
+        .get("strength")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
+    conn.execute(
+        "INSERT OR IGNORE INTO relationships (namespace, source_id, target_id, relation, weight) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![namespace, e1_id, e2_id, relation, strength],
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: None,
+        entities: 0,
+        rels: 1,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Validate entity type assignment via LLM.
+fn call_entity_type_validate(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (ent_id, ent_name, ent_type): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, name, type FROM entities WHERE name = ?1",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("entity '{item_key}' not found")))?;
+    let input_text = format!("Entity: {ent_name}\nCurrent type: {ent_type}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            ENTITY_TYPE_VALIDATE_PROMPT,
+            ENTITY_TYPE_VALIDATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            ENTITY_TYPE_VALIDATE_PROMPT,
+            ENTITY_TYPE_VALIDATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let validated_type = value
+        .get("validated_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&ent_type);
+    let was_correct = value
+        .get("was_correct")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if !was_correct {
+        conn.execute(
+            "UPDATE entities SET type = ?1 WHERE id = ?2",
+            rusqlite::params![validated_type, ent_id],
+        )?;
+    }
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: Some(ent_id),
+        entities: 1,
+        rels: 0,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Enrich generic memory description via LLM.
+fn call_description_enrich(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (mem_id, body, old_desc): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, body, description FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let snippet: String = body.chars().take(500).collect();
+    let input_text = format!(
+        "Memory name: {item_key}\nCurrent description: {old_desc}\nBody preview: {snippet}"
+    );
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            DESCRIPTION_ENRICH_PROMPT,
+            DESCRIPTION_ENRICH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            DESCRIPTION_ENRICH_PROMPT,
+            DESCRIPTION_ENRICH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let new_desc = value
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&old_desc);
+    conn.execute(
+        "UPDATE memories SET description = ?1 WHERE id = ?2",
+        rusqlite::params![new_desc, mem_id],
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(mem_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: Some(old_desc.len()),
+        chars_after: Some(new_desc.len()),
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Classify memory into domain category via LLM.
+fn call_domain_classify(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (mem_id, body, desc): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, body, description FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let snippet: String = body.chars().take(500).collect();
+    let input_text = format!("Memory: {item_key}\nDescription: {desc}\nBody preview: {snippet}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            DOMAIN_CLASSIFY_PROMPT,
+            DOMAIN_CLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            DOMAIN_CLASSIFY_PROMPT,
+            DOMAIN_CLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let domain = value
+        .get("domain")
+        .and_then(|v| v.as_str())
+        .unwrap_or("uncategorized");
+    let metadata = format!(r#"{{"domain":"{}"}}"#, domain.replace('"', "\\\""));
+    conn.execute(
+        "UPDATE memories SET metadata = ?1 WHERE id = ?2",
+        rusqlite::params![metadata, mem_id],
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(mem_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Audit memory graph quality via LLM.
+fn call_graph_audit(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (mem_id, body, desc): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, body, description FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let snippet: String = body.chars().take(500).collect();
+    let ent_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM memory_entities WHERE memory_id = ?1",
+            rusqlite::params![mem_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let input_text = format!("Memory: {item_key}\nDescription: {desc}\nEntity bindings: {ent_count}\nBody preview: {snippet}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            GRAPH_AUDIT_PROMPT,
+            GRAPH_AUDIT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            GRAPH_AUDIT_PROMPT,
+            GRAPH_AUDIT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let issues = value
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(mem_id),
+        entity_id: None,
+        entities: 0,
+        rels: issues,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Synthesize research findings into graph entities/relationships via LLM.
+fn call_deep_research_synth(
+    conn: &Connection,
+    namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (mem_id, body): (i64, String) = conn
+        .query_row(
+            "SELECT id, body FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let snippet: String = body.chars().take(2000).collect();
+    let input_text = format!("Memory: {item_key}\nBody:\n{snippet}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            DEEP_RESEARCH_SYNTH_PROMPT,
+            DEEP_RESEARCH_SYNTH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            DEEP_RESEARCH_SYNTH_PROMPT,
+            DEEP_RESEARCH_SYNTH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let mut ent_count = 0usize;
+    let mut rel_count = 0usize;
+    if let Some(ents) = value.get("entities").and_then(|v| v.as_array()) {
+        for e in ents {
+            let name = e.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+            let etype_str = e
+                .get("entity_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("concept");
+            let etype: EntityType = etype_str.parse().unwrap_or(EntityType::Concept);
+            if name.len() >= 2 {
+                let ne = NewEntity {
+                    name: name.to_string(),
+                    entity_type: etype,
+                    description: None,
+                };
+                let _ = entities::upsert_entity(conn, namespace, &ne);
+                ent_count += 1;
+            }
+        }
+    }
+    if let Some(rels) = value.get("relationships").and_then(|v| v.as_array()) {
+        for r in rels {
+            let src = r.get("source").and_then(|v| v.as_str()).unwrap_or_default();
+            let tgt = r.get("target").and_then(|v| v.as_str()).unwrap_or_default();
+            if src.is_empty() || tgt.is_empty() {
+                continue;
+            }
+            let rel = r
+                .get("relation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("related");
+            let str_ = r.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5);
+            if let (Some(sid), Some(tid)) = (
+                entities::find_entity_id(conn, namespace, src)?,
+                entities::find_entity_id(conn, namespace, tgt)?,
+            ) {
+                let _ = entities::create_or_fetch_relationship(
+                    conn, namespace, sid, tid, rel, str_, None,
+                );
+                rel_count += 1;
+            }
+        }
+    }
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(mem_id),
+        entity_id: None,
+        entities: ent_count,
+        rels: rel_count,
+        chars_before: None,
+        chars_after: None,
+        cost,
+        is_oauth,
+    })
+}
+
+/// G27 P2: Extract structured body from unstructured text via LLM.
+fn call_body_extract(
+    conn: &Connection,
+    _namespace: &str,
+    item_key: &str,
+    binary: &Path,
+    model: Option<&str>,
+    timeout: u64,
+    mode: &EnrichMode,
+) -> Result<EnrichItemResult, AppError> {
+    let (mem_id, body): (i64, String) = conn
+        .query_row(
+            "SELECT id, body FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            rusqlite::params![item_key],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let input_text = format!("Memory: {item_key}\nBody:\n{body}");
+    let (value, cost, is_oauth) = match mode {
+        EnrichMode::ClaudeCode => call_claude(
+            binary,
+            BODY_EXTRACT_PROMPT,
+            BODY_EXTRACT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Codex => call_codex(
+            binary,
+            BODY_EXTRACT_PROMPT,
+            BODY_EXTRACT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+    };
+    let restructured = value
+        .get("restructured_body")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&body);
+    let chars_before = body.len();
+    let chars_after = restructured.len();
+    let new_hash = blake3::hash(restructured.as_bytes()).to_hex().to_string();
+    conn.execute(
+        "UPDATE memories SET body = ?1, body_hash = ?2, updated_at = unixepoch() WHERE id = ?3",
+        rusqlite::params![restructured, new_hash, mem_id],
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(mem_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: Some(chars_before),
+        chars_after: Some(chars_after),
+        cost,
+        is_oauth,
+    })
+}
+
+/// Scan for pairs of entities that share no direct relationship.
+#[allow(clippy::type_complexity)]
+fn scan_isolated_entity_pairs(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+) -> Result<Vec<(i64, String, i64, String)>, AppError> {
+    let limit_val = limit.unwrap_or(50) as i64;
+    let mut stmt = conn.prepare_cached(
+        "SELECT e1.id, e1.name, e2.id, e2.name FROM entities e1, entities e2 \
+         WHERE e1.namespace = ?1 AND e2.namespace = ?1 AND e1.id < e2.id \
+         AND NOT EXISTS (SELECT 1 FROM relationships r WHERE \
+           (r.source_id = e1.id AND r.target_id = e2.id) OR \
+           (r.source_id = e2.id AND r.target_id = e1.id)) \
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![namespace, limit_val], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Scan for entities with non-validated types (all entities for type audit).
+fn scan_entities_for_type_validation(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+) -> Result<Vec<(i64, String, String)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let sql = format!(
+        "SELECT id, name, type FROM entities WHERE namespace = ?1 ORDER BY id {limit_clause}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params![namespace], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Scan for memories with generic descriptions (ingested, imported, etc).
+fn scan_generic_descriptions(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+) -> Result<Vec<(i64, String, String)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let sql = format!(
+        "SELECT id, name, description FROM memories WHERE namespace = ?1 AND deleted_at IS NULL \
+         AND (description LIKE '%ingested%' OR description LIKE '%imported%' OR description LIKE '%added%' OR length(description) < 30) \
+         ORDER BY id {limit_clause}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params![namespace], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Calls the Codex CLI for a single enrichment item.
 ///
 /// Follows the same contract as `call_claude`: returns `(value, cost_usd, is_oauth=false)`.
@@ -1746,6 +2736,20 @@ fn call_codex(
         }
     }
 
+    #[cfg(windows)]
+    for var in &[
+        "LOCALAPPDATA",
+        "APPDATA",
+        "USERPROFILE",
+        "SystemRoot",
+        "COMSPEC",
+        "PATHEXT",
+    ] {
+        if let Ok(val) = std::env::var(var) {
+            cmd.env(var, val);
+        }
+    }
+
     cmd.arg("exec")
         .arg("--json")
         .arg("--output-schema")
@@ -1759,18 +2763,25 @@ fn call_codex(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(
             e.kind(),
             format!("failed to spawn codex: {e}"),
         ))
     })?;
 
-    // Write prompt via stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(full_prompt.as_bytes());
-    }
+    let stdin_bytes = full_prompt.into_bytes();
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::Validation("failed to open codex stdin".into()))?;
+    let stdin_thread = std::thread::spawn(move || -> Result<(), std::io::Error> {
+        child_stdin.write_all(&stdin_bytes)?;
+        drop(child_stdin);
+        Ok(())
+    });
 
+    let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
 
@@ -1778,6 +2789,18 @@ fn call_codex(
 
     match status {
         Some(exit_status) => {
+            stdin_thread
+                .join()
+                .map_err(|_| AppError::Validation("stdin thread panicked".into()))?
+                .map_err(AppError::Io)?;
+
+            tracing::debug!(
+                target: "process",
+                exit_code = ?exit_status.code(),
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "external process completed"
+            );
+
             let mut stdout_buf = Vec::new();
             if let Some(mut out) = child.stdout.take() {
                 std::io::Read::read_to_end(&mut out, &mut stdout_buf).map_err(AppError::Io)?;
@@ -1787,10 +2810,17 @@ fn call_codex(
                 if let Some(mut err) = child.stderr.take() {
                     std::io::Read::read_to_end(&mut err, &mut stderr_buf).map_err(AppError::Io)?;
                 }
+                let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                tracing::warn!(
+                    target: "enrich",
+                    exit_code = ?exit_status.code(),
+                    stderr = %stderr_str.trim(),
+                    "codex process failed"
+                );
                 return Err(AppError::Validation(format!(
                     "codex exited with code {:?}: {}",
                     exit_status.code(),
-                    String::from_utf8_lossy(&stderr_buf).trim()
+                    stderr_str.trim()
                 )));
             }
             let stdout_str = String::from_utf8(stdout_buf)
@@ -1803,6 +2833,7 @@ fn call_codex(
         None => {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdin_thread.join();
             Err(AppError::Validation(format!(
                 "codex timed out after {timeout_secs} seconds"
             )))
@@ -2004,47 +3035,47 @@ mod tests {
     }
 
     #[test]
-    fn parse_claude_json_output_valid_bindings() {
+    fn parse_claude_output_valid_bindings() {
         let output = r#"[
             {"type":"system","subtype":"init"},
             {"type":"result","is_error":false,"total_cost_usd":0.01,
              "structured_output":{"entities":[{"name":"rust-lang","entity_type":"tool"}],"relationships":[]}}
         ]"#;
-        let (value, cost, is_oauth) =
-            parse_claude_json_output(output).expect("must parse successfully");
-        assert!(value.get("entities").is_some());
-        assert!((cost - 0.01).abs() < f64::EPSILON);
-        assert!(!is_oauth);
+        let result = crate::commands::claude_runner::parse_claude_output(output)
+            .expect("must parse successfully");
+        assert!(result.value.get("entities").is_some());
+        assert!((result.cost_usd - 0.01).abs() < f64::EPSILON);
+        assert!(!result.is_oauth);
     }
 
     #[test]
-    fn parse_claude_json_output_detects_oauth() {
+    fn parse_claude_output_detects_oauth() {
         let output = r#"[
             {"type":"system","subtype":"init","apiKeySource":"none"},
             {"type":"result","is_error":false,"total_cost_usd":0.0,
              "structured_output":{"entities":[],"relationships":[]}}
         ]"#;
-        let (_value, _cost, is_oauth) = parse_claude_json_output(output).unwrap();
-        assert!(is_oauth);
+        let result = crate::commands::claude_runner::parse_claude_output(output).unwrap();
+        assert!(result.is_oauth);
     }
 
     #[test]
-    fn parse_claude_json_output_rate_limit_returns_error() {
+    fn parse_claude_output_rate_limit_returns_error() {
         let output = r#"[
             {"type":"system","subtype":"init"},
             {"type":"result","is_error":true,"error":"rate_limit exceeded"}
         ]"#;
-        let err = parse_claude_json_output(output).unwrap_err();
-        assert!(format!("{err}").contains("RATE_LIMITED"));
+        let err = crate::commands::claude_runner::parse_claude_output(output).unwrap_err();
+        assert!(matches!(err, AppError::RateLimited { .. }));
     }
 
     #[test]
-    fn parse_claude_json_output_auth_error() {
+    fn parse_claude_output_auth_error() {
         let output = r#"[
             {"type":"system","subtype":"init"},
             {"type":"result","is_error":true,"error":"authentication failed"}
         ]"#;
-        let err = parse_claude_json_output(output).unwrap_err();
+        let err = crate::commands::claude_runner::parse_claude_output(output).unwrap_err();
         assert!(format!("{err}").contains("authentication failed"));
     }
 

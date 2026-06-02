@@ -32,13 +32,16 @@ NOTES:\n  \
     Graph matches appear in the `graph_matches` array (separate from `results`).\n  \
     Without --with-graph, `graph_matches` is always empty.")]
 pub struct HybridSearchArgs {
-    #[arg(help = "Hybrid search query (vector KNN + FTS5 BM25 fused via RRF)")]
+    #[arg(
+        allow_hyphen_values = true,
+        help = "Hybrid search query (vector KNN + FTS5 BM25 fused via RRF)"
+    )]
     pub query: String,
     /// Maximum number of fused results to return after RRF combines vector + FTS5 candidates.
     ///
     /// Validated to the inclusive range `1..=4096` (the upper bound matches `sqlite-vec`'s knn
     /// limit). Each underlying search fetches `k * 2` candidates before fusion.
-    #[arg(short = 'k', long, alias = "limit", default_value = "10", value_parser = crate::parsers::parse_k_range)]
+    #[arg(short = 'k', long, aliases = ["limit", "top-k"], default_value = "10", value_parser = crate::parsers::parse_k_range)]
     pub k: usize,
     #[arg(long, default_value = "60")]
     pub rrf_k: u32,
@@ -79,6 +82,7 @@ pub struct HybridSearchItem {
     pub memory_type: String,
     pub description: String,
     pub body: String,
+    pub snippet: String,
     pub combined_score: f64,
     /// Alias of `combined_score` for the documented contract in SKILL.md.
     pub score: f64,
@@ -141,9 +145,25 @@ pub struct HybridSearchResponse {
     pub elapsed_ms: u64,
 }
 
+#[tracing::instrument(skip_all, level = "debug", name = "hybrid_search")]
 pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
+    tracing::debug!(target: "hybrid_search", query = %args.query, k = args.k, "fusing results");
+
+    // G20: reject graph-specific flags when --with-graph is not active
+    if !args.with_graph {
+        if args.max_hops != 2 {
+            return Err(AppError::Validation(
+                "--max-hops requires --with-graph to be active".to_string(),
+            ));
+        }
+        if (args.min_weight - 0.3).abs() > f64::EPSILON {
+            return Err(AppError::Validation(
+                "--min-weight requires --with-graph to be active".to_string(),
+            ));
+        }
+    }
 
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -193,7 +213,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                 let err_msg = e.to_string();
                 let is_malformed = err_msg.contains("malformed") || err_msg.contains("corrupt");
                 if is_malformed {
-                    tracing::warn!("FTS5 index corrupted, attempting auto-rebuild");
+                    tracing::warn!(target: "hybrid_search", "FTS5 index corrupted, attempting auto-rebuild");
                     if conn
                         .execute_batch("INSERT INTO fts_memories(fts_memories) VALUES('rebuild');")
                         .is_ok()
@@ -207,7 +227,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                         ) {
                             Ok(r) => (r, false, None, true),
                             Err(e2) => {
-                                tracing::error!("FTS5 auto-rebuild failed to recover: {e2}");
+                                tracing::error!(target: "hybrid_search", error = %e2, "FTS5 auto-rebuild failed to recover");
                                 (vec![], true, Some(e2.to_string()), true)
                             }
                         }
@@ -215,7 +235,7 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                         (vec![], true, Some(err_msg), false)
                     }
                 } else {
-                    tracing::warn!("FTS5 query failed, falling back to vec-only: {e}");
+                    tracing::warn!(target: "hybrid_search", error = %e, "FTS5 query failed, falling back to vec-only");
                     (vec![], true, Some(err_msg), false)
                 }
             }
@@ -232,7 +252,11 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let rrf_k = args.rrf_k as f64;
 
     // Accumulate combined RRF scores
-    let mut combined_scores: HashMap<i64, f64> = HashMap::new();
+    let mut combined_scores: crate::hash::AHashMap<i64, f64> =
+        crate::hash::AHashMap::with_capacity_and_hasher(
+            vec_results.len() + fts_results.len(),
+            Default::default(),
+        );
 
     for (rank, (memory_id, _)) in vec_results.iter().enumerate() {
         let score = args.weight_vec as f64 * (1.0 / (rrf_k + rank as f64 + 1.0));
@@ -253,7 +277,8 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let top_ids: Vec<i64> = ranked.iter().map(|(id, _)| *id).collect();
 
     // Fetch full data for the top memories
-    let mut memory_data: HashMap<i64, memories::MemoryRow> = HashMap::new();
+    let mut memory_data: crate::hash::AHashMap<i64, memories::MemoryRow> =
+        crate::hash::AHashMap::with_capacity_and_hasher(ranked.len(), Default::default());
     for id in &top_ids {
         if let Some(row) = memories::read_full(&conn, *id)? {
             memory_data.insert(*id, row);
@@ -272,22 +297,26 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
             } else {
                 0.0
             };
-            memory_data.remove(&memory_id).map(|row| HybridSearchItem {
-                memory_id: row.id,
-                name: row.name,
-                namespace: row.namespace,
-                memory_type: row.memory_type,
-                description: row.description,
-                body: row.body,
-                combined_score,
-                score: combined_score,
-                source: "hybrid".to_string(),
-                vec_rank: vec_rank_map.get(&memory_id).copied(),
-                fts_rank: fts_rank_map.get(&memory_id).copied(),
-                rrf_score: Some(combined_score),
-                normalized_score,
-                vec_distance: vec_distance_map.get(&memory_id).copied(),
-                fts_bm25: None,
+            memory_data.remove(&memory_id).map(|row| {
+                let snippet: String = row.body.chars().take(300).collect();
+                HybridSearchItem {
+                    memory_id: row.id,
+                    name: row.name,
+                    namespace: row.namespace,
+                    memory_type: row.memory_type,
+                    description: row.description,
+                    body: row.body,
+                    snippet,
+                    combined_score,
+                    score: combined_score,
+                    source: "hybrid".to_string(),
+                    vec_rank: vec_rank_map.get(&memory_id).copied(),
+                    fts_rank: fts_rank_map.get(&memory_id).copied(),
+                    rrf_score: Some(combined_score),
+                    normalized_score,
+                    vec_distance: vec_distance_map.get(&memory_id).copied(),
+                    fts_bm25: None,
+                }
             })
         })
         .collect();
@@ -453,6 +482,7 @@ mod tests {
             memory_type: "user".to_string(),
             description: "desc".to_string(),
             body: "content".to_string(),
+            snippet: "content".to_string(),
             combined_score: 0.0328,
             score: 0.0328,
             source: "hybrid".to_string(),
@@ -483,6 +513,7 @@ mod tests {
             memory_type: "fact".to_string(),
             description: "desc2".to_string(),
             body: "corpo2".to_string(),
+            snippet: "corpo2".to_string(),
             combined_score: 0.016,
             score: 0.016,
             source: "hybrid".to_string(),
@@ -513,6 +544,7 @@ mod tests {
             memory_type: "entity".to_string(),
             description: "desc3".to_string(),
             body: "corpo3".to_string(),
+            snippet: "corpo3".to_string(),
             combined_score: 0.05,
             score: 0.05,
             source: "hybrid".to_string(),

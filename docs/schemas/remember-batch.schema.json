@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/remember-batch.schema.json",
+  "title": "RememberBatchItemEvent",
+  "description": "Per-item event emitted by `sqlite-graphrag remember-batch` on stdout as NDJSON. Each line represents one memory processed. The final line is a BatchSummary (see remember-batch-summary.schema.json).",
+  "type": "object",
+  "required": ["name", "status", "index"],
+  "additionalProperties": false,
+  "properties": {
+    "name":       { "type": "string", "description": "Normalized kebab-case memory name." },
+    "status":     { "type": "string", "enum": ["indexed", "failed"] },
+    "memory_id":  { "type": "integer", "description": "Present when status=indexed." },
+    "error":      { "type": "string", "description": "Present when status=failed." },
+    "index":      { "type": "integer", "minimum": 0, "description": "Zero-based index of the input line." }
+  }
+}

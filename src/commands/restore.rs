@@ -74,6 +74,7 @@ struct RestoreResponse {
 pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
+    tracing::debug!(target: "restore", name = ?args.name_positional.as_deref().or(args.name.as_deref()), version = ?args.version, "restoring version");
     let name = args
         .name_positional
         .as_deref()
@@ -126,7 +127,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
             let v = last.ok_or_else(|| {
                 AppError::NotFound(errors_msg::memory_not_found(&name, &namespace))
             })?;
-            tracing::info!(
+            tracing::info!(target: "restore",
                 "restore --version omitted; using latest non-restore version: {}",
                 v
             );
@@ -135,7 +136,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
     };
 
     let version_row: (String, String, String, String, String) = {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT name, type, description, body, metadata
              FROM memory_versions
              WHERE memory_id = ?1 AND version = ?2",

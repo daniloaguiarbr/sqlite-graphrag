@@ -11,6 +11,7 @@
     "name":       { "type": "string", "description": "New canonical name after rename." },
     "action":     { "type": "string", "enum": ["renamed"], "description": "Always 'renamed'." },
     "version":    { "type": "integer", "minimum": 1 },
-    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+    "elapsed_ms":   { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." },
+    "ghost_purged": { "type": "boolean", "description": "True when a soft-deleted memory occupying the target name was permanently removed before rename. Present only when ghost purge occurred." }
   }
 }

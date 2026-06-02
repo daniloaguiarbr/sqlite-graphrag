@@ -75,7 +75,7 @@ pub fn ensure_db_ready(paths: &AppPaths) -> Result<(), AppError> {
     let db_existed = paths.db.exists();
 
     if !db_existed {
-        tracing::info!(
+        tracing::info!(target: "storage",
             path = %paths.db.display(),
             schema_version = crate::constants::CURRENT_SCHEMA_VERSION,
             "creating database (auto-init)"
@@ -95,7 +95,7 @@ pub fn ensure_db_ready(paths: &AppPaths) -> Result<(), AppError> {
 
     if current_user_version < target_user_version {
         if db_existed {
-            tracing::warn!(
+            tracing::warn!(target: "storage",
                 from = current_user_version,
                 to = target_user_version,
                 path = %paths.db.display(),
@@ -183,7 +183,7 @@ fn apply_secure_permissions(path: &Path) {
     }
     #[cfg(windows)]
     {
-        tracing::debug!(
+        tracing::debug!(target: "storage",
             path = %path.display(),
             "skipping Unix mode 0o600 on Windows; NTFS DACL default is private-to-user"
         );

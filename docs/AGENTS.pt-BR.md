@@ -29,11 +29,15 @@
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
 
+## Novidades na v1.0.67
+### Novos Comandos
+- `remember-batch` — Cria memórias em lote a partir de NDJSON via stdin em uma única invocação. Elimina a contenção de N processos em paralelo com `remember`. Suporta `--transaction` (tudo ou nada), `--force-merge` (atualizações idempotentes), `--fail-fast`.
+
 ## Novidades na v1.0.65
 ### Novos Comandos
 - `reclassify-relation --from-relation <antigo> --to-relation <novo> --batch --json` — renomeia tipos de relacionamento em massa no grafo; modo individual via `--source A --target B`; filtros opcionais `--filter-source-type` e `--filter-target-type`; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` faz preview
 - `normalize-entities --yes --json` — normaliza todos os nomes de entidade para kebab-case ASCII minúsculo, mesclando colisões automaticamente (ex.: `Claude Code` + `claude-code` viram um nó); `--dry-run` faz preview
-- `enrich --operation <op> --mode claude-code --json` — pipeline de qualidade do grafo aumentada por LLM; 3 operações: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (gera descrições), `body-enrich` (expande corpos curtos); queue DB para resume/retry; `--dry-run` faz preview sem spawnar LLM; saída é NDJSON
+- `enrich --operation <op> --mode claude-code --json` — pipeline de qualidade do grafo aumentada por LLM; 3 operações: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (gera descrições), `body-enrich` (expande corpos curtos); queue DB para resume/retry; `--dry-run` faz preview sem spawnar LLM; `--llm-parallelism <N>` spawna N threads paralelas de worker LLM (padrão 1, máximo 32) para reduzir o tempo de wall clock; saída é NDJSON
 ### Melhorias no Deep Research
 - `deep-research` agora computa embedding separado por sub-query — decomposição era cosmética na v1.0.64
 - `deep-research` funde pools KNN + FTS5 + grafo via RRF em vez de score fixo 0.5 para resultados FTS
@@ -502,6 +506,7 @@ let output = Command::new("sqlite-graphrag")
 - DETECTAR deriva de schema via `debug-schema` em troubleshooting
 - VERIFICAR `mentions_ratio` (float) e `mentions_warning` (string) no `health --json` quando relacionamentos `mentions` dominam o grafo acima de 50%
 - VERIFICAR `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float) e `relation_concentration_warning` (string) quando qualquer tipo de relação excede 40% das arestas (v1.0.65)
+- VERIFICAR `super_hub_count` (int) e `top_hub_entity` (string) reportados quando qualquer entidade excede 50 conexões — indica topologia de grafo que pode degradar a qualidade da travessia
 ### Padrão Correto — Sequência de Bootstrap
 - `sqlite-graphrag init --namespace meu-projeto`
 - `sqlite-graphrag health --json | jaq '.integrity_ok'`
@@ -712,6 +717,7 @@ let output = Command::new("sqlite-graphrag")
 ## CRUD — Read com read e list
 ### OBRIGATÓRIO — Leitura Direta por Nome (read)
 - USAR `read --name <kebab-case>` para fetch O(1) por nome
+- USAR `read --id <N>` para busca direta por `memory_id` inteiro — útil quando pipelines de agente passam IDs obtidos de respostas de `list` ou `remember`
 - PARSEAR campos `body`, `description`, `created_at_iso`, `updated_at_iso`
 - TRATAR exit code 4 como memória inexistente no namespace
 - APLICAR `--tz` para localizar timestamps na saída

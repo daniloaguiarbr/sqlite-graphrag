@@ -170,7 +170,7 @@ pub fn run(args: PruneNerArgs) -> Result<(), AppError> {
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
-    tracing::info!(
+    tracing::info!(target: "prune_ner",
         removed = removed,
         namespace = %namespace,
         entity = ?args.entity,

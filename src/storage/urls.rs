@@ -34,7 +34,7 @@ pub fn insert_urls(conn: &Connection, memory_id: i64, urls: &[MemoryUrl]) -> usi
                 }
             }
             Err(e) => {
-                tracing::warn!("failed to persist url '{}': {e:#}", entry.url);
+                tracing::warn!(target: "storage", url = %entry.url, error = %e, "url persistence failed");
             }
         }
     }
@@ -43,8 +43,9 @@ pub fn insert_urls(conn: &Connection, memory_id: i64, urls: &[MemoryUrl]) -> usi
 
 /// Lists all URLs associated with a memory.
 pub fn list_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<MemoryUrl>, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT url, url_offset FROM memory_urls WHERE memory_id = ?1 ORDER BY id")?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT url, url_offset FROM memory_urls WHERE memory_id = ?1 ORDER BY id",
+    )?;
     let rows = stmt.query_map(rusqlite::params![memory_id], |row| {
         Ok(MemoryUrl {
             url: row.get(0)?,

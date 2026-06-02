@@ -72,6 +72,9 @@ struct RenameResponse {
     name: String,
     action: &'static str,
     version: i64,
+    /// Set to `true` when a soft-deleted ghost occupying the target name was purged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ghost_purged: Option<bool>,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -79,6 +82,7 @@ struct RenameResponse {
 pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let _ = args.format;
+    tracing::debug!(target: "rename", old = ?args.name, new = ?args.new_name, "renaming memory");
     use crate::constants::*;
 
     // Resolve current name from positional or --name/--old flag.
@@ -98,7 +102,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         let lower = raw_new_name.to_lowercase().replace(['_', ' '], "-");
         let trimmed = lower.trim_matches('-').to_string();
         if trimmed != raw_new_name {
-            tracing::warn!(
+            tracing::warn!(target: "rename",
                 original = %raw_new_name,
                 normalized = %trimmed,
                 "new_name auto-normalized to kebab-case"
@@ -126,8 +130,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     }
 
     {
-        let slug_re = regex::Regex::new(crate::constants::NAME_SLUG_REGEX)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("regex: {e}")))?;
+        let slug_re = crate::constants::name_slug_regex();
         if !slug_re.is_match(&normalized_new_name) {
             return Err(AppError::Validation(
                 crate::i18n::validation::new_name_kebab(&normalized_new_name),
@@ -160,6 +163,45 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
     let metadata = row.metadata.clone();
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+    // G16: auto-purge soft-deleted ghost occupying the target name
+    let mut ghost_purged: Option<bool> = None;
+    if let Some((ghost_id, is_deleted)) =
+        memories::find_by_name_any_state(&tx, &namespace, &normalized_new_name)?
+    {
+        if is_deleted {
+            tracing::info!(target: "rename",
+                ghost_id,
+                name = %normalized_new_name,
+                "auto-purging soft-deleted ghost to free target name for rename"
+            );
+            tx.execute(
+                "DELETE FROM memory_versions WHERE memory_id = ?1",
+                rusqlite::params![ghost_id],
+            )?;
+            tx.execute(
+                "DELETE FROM memory_chunks WHERE memory_id = ?1",
+                rusqlite::params![ghost_id],
+            )?;
+            tx.execute(
+                "DELETE FROM memory_entities WHERE memory_id = ?1",
+                rusqlite::params![ghost_id],
+            )?;
+            tx.execute(
+                "DELETE FROM vec_memories WHERE memory_id = ?1",
+                rusqlite::params![ghost_id],
+            )?;
+            tx.execute(
+                "DELETE FROM memories WHERE id = ?1",
+                rusqlite::params![ghost_id],
+            )?;
+            ghost_purged = Some(true);
+        } else if ghost_id != memory_id {
+            return Err(AppError::Duplicate(format!(
+                "target name '{normalized_new_name}' is already occupied by active memory id {ghost_id}"
+            )));
+        }
+    }
 
     let affected = if let Some(ts) = args.expected_updated_at {
         tx.execute(
@@ -214,6 +256,7 @@ pub fn run(args: RenameArgs) -> Result<(), AppError> {
         name: normalized_new_name,
         action: "renamed",
         version: next_v,
+        ghost_purged,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
     })?;
 
