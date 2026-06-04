@@ -247,19 +247,38 @@ mod tests {
 
     #[test]
     fn epoch_to_iso_converts_zero_to_unix_epoch() {
+        // v1.0.68 (test fix): parse the ISO back into a DateTime<FixedOffset>
+        // and compare with chrono::DateTime::UNIX_EPOCH so the assertion is
+        // timezone-agnostic.  The previous `starts_with("1970-01-01T00:00:00")`
+        // assertion leaked the global SQLITE_GRAPHRAG_DISPLAY_TZ from sibling
+        // tests in the same process and failed on hosts where the default
+        // timezone is non-UTC.
         let result = epoch_to_iso(0);
-        assert!(
-            result.starts_with("1970-01-01T00:00:00"),
-            "epoch 0 must map to 1970-01-01T00:00:00, got: {result}"
+        let parsed = chrono::DateTime::parse_from_rfc3339(&result)
+            .unwrap_or_else(|e| panic!("epoch_to_iso(0) returned non-RFC3339 `{result}`: {e}"));
+        assert_eq!(
+            parsed.timestamp(),
+            chrono::DateTime::UNIX_EPOCH.timestamp(),
+            "epoch 0 must map to the Unix epoch instant, got: {result}"
         );
     }
 
     #[test]
     fn epoch_to_iso_converts_known_timestamp() {
+        // v1.0.68 (test fix): 1_705_320_000 = 2024-01-15T12:00:00Z, not
+        // 2024-01-15T00:00:00Z (the previous test asserted the wrong instant).
+        // The fix uses parse + timestamp compare to be timezone-agnostic and
+        // to catch wrong-epoch regressions regardless of host TZ.
         let result = epoch_to_iso(1_705_320_000);
-        assert!(
-            result.starts_with("2024-01-15"),
-            "timestamp 1705320000 must map to 2024-01-15, got: {result}"
+        let parsed = chrono::DateTime::parse_from_rfc3339(&result).unwrap_or_else(|e| {
+            panic!("epoch_to_iso(1705320000) returned non-RFC3339 `{result}`: {e}")
+        });
+        let expected = chrono::DateTime::parse_from_rfc3339("2024-01-15T12:00:00+00:00")
+            .expect("static RFC3339 is valid");
+        assert_eq!(
+            parsed.timestamp(),
+            expected.timestamp(),
+            "timestamp 1705320000 must map to 2024-01-15T12:00:00Z, got: {result}"
         );
     }
 

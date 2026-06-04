@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.67"
+version = "1.0.68"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -20,6 +20,7 @@ exclude = [
     "logs/",
     "memory/",
     "docs_rules/",
+    "docs_prd/",
     "docs/CLAUDE.md",
     "docs/CLAUDE.pt-BR.md",
     "CLAUDE.md",
@@ -107,7 +108,10 @@ wait-timeout = "0.2"
 which = "7"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+# G29 (v1.0.68): pinned exact to 0.59.0 because HANDLE type changed
+# from `isize` (0.48/0.52) to `*mut c_void` (>= 0.59); future patch versions
+# could regress again.  Tracked in Cargo.lock via `cargo update -p windows-sys`.
+windows-sys = { version = "=0.59.0", features = ["Win32_System_Console"] }
 
 # ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
 # pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:

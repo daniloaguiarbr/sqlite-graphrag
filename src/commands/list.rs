@@ -309,10 +309,15 @@ mod tests {
 
     #[test]
     fn updated_at_iso_epoch_zero_yields_valid_utc() {
+        // v1.0.68 (test fix): timezone-agnostic — parse the ISO and compare
+        // the instant with the Unix epoch.
         let iso = crate::tz::epoch_to_iso(0);
-        assert!(
-            iso.starts_with("1970-01-01T00:00:00"),
-            "epoch 0 deve mapear para 1970-01-01, obtido: {iso}"
+        let parsed = chrono::DateTime::parse_from_rfc3339(&iso)
+            .unwrap_or_else(|e| panic!("expected RFC3339, got `{iso}`: {e}"));
+        assert_eq!(
+            parsed.timestamp(),
+            chrono::DateTime::UNIX_EPOCH.timestamp(),
+            "epoch 0 deve mapear para o instante Unix epoch, obtido: {iso}"
         );
         assert!(
             iso.contains('+') || iso.contains('-'),
