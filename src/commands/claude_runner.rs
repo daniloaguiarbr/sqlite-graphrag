@@ -201,6 +201,20 @@ pub fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
 }
 
 /// Builds a `Command` for `claude -p` with least-privilege environment.
+///
+/// G28-A (v1.0.68): respects `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` as a
+/// directory that exists but is empty; when set, we export it as
+/// `CLAUDE_CONFIG_DIR` so Claude Code loads no user-scoped MCP servers
+/// (and no settings.json hooks).  This cuts the typical 8-10 MCP process
+/// tree to zero.  When the env var is unset, behaviour is unchanged.
+///
+/// We deliberately do NOT pass `--strict-mcp-config` or `--mcp-config '{}'`
+/// because GitHub issue [anthropics/claude-code#10787] documents that
+/// Claude Code CLI ignores both flags and always falls back to
+/// `~/.mcp.json` regardless.  The `CLAUDE_CONFIG_DIR` env var is the only
+/// mechanism upstream actually honours.
+///
+/// [anthropics/claude-code#10787]: https://github.com/anthropics/claude-code/issues/10787
 pub fn build_claude_command(
     binary: &Path,
     prompt: &str,
@@ -221,6 +235,26 @@ pub fn build_claude_command(
     for var in ENV_WHITELIST_WINDOWS {
         if let Ok(val) = std::env::var(var) {
             cmd.env(var, val);
+        }
+    }
+
+    // G28-A: if the user has pointed us at an empty config dir, force Claude
+    // Code to use it (which suppresses user-scoped MCP servers and hooks).
+    if let Ok(empty_dir) = std::env::var("SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR") {
+        if std::path::Path::new(&empty_dir).is_dir() {
+            cmd.env("CLAUDE_CONFIG_DIR", &empty_dir);
+            tracing::debug!(
+                target: "claude_runner",
+                "isolating claude subprocess to CLAUDE_CONFIG_DIR={}",
+                empty_dir
+            );
+        } else {
+            tracing::warn!(
+                target: "claude_runner",
+                path = %empty_dir,
+                "SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR is set but path is not a directory; \
+                 ignoring.  MCP isolation will NOT be applied."
+            );
         }
     }
 

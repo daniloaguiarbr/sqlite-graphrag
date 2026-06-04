@@ -294,10 +294,18 @@ mod tests {
 
     #[test]
     fn epoch_zero_yields_valid_iso() {
-        // epoch_to_iso uses chrono-tz with explicit offset (+00:00 for UTC)
+        // v1.0.68 (test fix): timezone-agnostic — parse the ISO and compare
+        // the instant with the Unix epoch.  The previous starts_with check
+        // leaked the SQLITE_GRAPHRAG_DISPLAY_TZ env var from sibling tests
+        // and failed on hosts whose default display timezone is not UTC.
         let iso = crate::tz::epoch_to_iso(0);
-        assert!(iso.starts_with("1970-01-01T00:00:00"), "got: {iso}");
-        assert!(iso.contains("00:00"), "must contain offset, got: {iso}");
+        let parsed = chrono::DateTime::parse_from_rfc3339(&iso)
+            .unwrap_or_else(|e| panic!("expected RFC3339, got `{iso}`: {e}"));
+        assert_eq!(
+            parsed.timestamp(),
+            chrono::DateTime::UNIX_EPOCH.timestamp(),
+            "epoch 0 must map to the Unix epoch instant, got: {iso}"
+        );
     }
 
     #[test]

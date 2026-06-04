@@ -979,6 +979,12 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
     let conn = open_rw(&paths.db)?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
+    // G28-B (v1.0.68): enforce singleton per (job_type, namespace) so two
+    // parallel `enrich` invocations on the same DB cannot co-exist.  This is
+    // the root cause of the 2026-06-03 process-proliferation incident.
+    let _singleton =
+        crate::lock::acquire_job_singleton(crate::lock::JobType::Enrich, &namespace, None)?;
+
     // Validate provider binary upfront
     let provider_binary = match args.mode {
         EnrichMode::ClaudeCode => {
@@ -1111,6 +1117,20 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
             target: "enrich",
             llm_parallelism = parallelism,
             "parallel LLM processing with bounded thread pool"
+        );
+    }
+    // G28-D (v1.0.68): warn above the recommended parallelism ceiling.  Each
+    // worker spawns a `claude -p` subprocess that (without MCP isolation)
+    // typically fan-outs 20+ child processes; 4 workers therefore risk ~80
+    // extra processes.  See gaps.md G28 and the `external-process-audit-v1066`.
+    if parallelism > 4 {
+        tracing::warn!(
+            target: "enrich",
+            llm_parallelism = parallelism,
+            recommended_max = 4,
+            "llm_parallelism above 4 multiplies subprocess fan-out; \
+             consider combining with SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR to \
+             cut MCP children (G28-A)"
         );
     }
 

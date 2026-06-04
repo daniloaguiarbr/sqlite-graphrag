@@ -137,7 +137,10 @@ pub mod hash;
 /// Bilingual message layer for human-facing stderr progress (`--lang en|pt`, `SQLITE_GRAPHRAG_LANG`).
 pub mod i18n;
 
-/// Counting semaphore via lock files to limit parallel invocations (see [`lock::acquire_cli_slot`]).
+/// Counting semaphore via lock files to limit parallel invocations.
+/// Provides `acquire_cli_slot` (counting semaphore) and the G28-B
+/// per-namespace heavy-job singleton `acquire_job_singleton` for
+/// `enrich`, `ingest --mode claude-code`, `ingest --mode codex`.
 pub mod lock;
 
 /// Memory guard: checks RAM availability before loading the ONNX model.

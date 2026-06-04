@@ -1,11 +1,37 @@
 # Changelog
 
+- Read this document in [Portuguese (pt-BR)](CHANGELOG.pt-BR.md).
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+_None yet. v1.0.68 is the latest published release; new commits land in this section until the next version is cut._
+
+## [1.0.68] - 2026-06-03
+
+### Fixed
+- `cargo install sqlite-graphrag` broke on Windows with `error[E0308]: mismatched types` in `src/terminal.rs:29` because `HANDLE` in `windows-sys >= 0.59` is `*mut c_void` (was `isize` in 0.48/0.52).  Replaced `handle != 0 && handle as isize != -1` with the type-safe idiom `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  Also pinned `windows-sys` to `=0.59.0` exact and added CI job `windows-build-check` that runs `cargo check --target x86_64-pc-windows-msvc` on every push (G29).
+- `enrich` and `ingest --mode claude-code|codex` could be invoked in parallel against the same namespace and saturate the host (root cause of the 2026-06-03 276-load-average incident).  Added `lock::acquire_job_singleton` per `(job_type, namespace)` and a new `AppError::JobSingletonLocked { job_type, namespace }` exit-75 error.  A second concurrent invocation now fails fast instead of stacking 4 × N workers × 10 MCP processes (G28-B).
+- `claude_runner::build_claude_command` now respects `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` — when set to an existing empty directory, the subprocess is spawned with `CLAUDE_CONFIG_DIR=<that dir>`, suppressing user-scoped MCP servers and the 8-10-process fan-out they cause.  We deliberately do not pass `--strict-mcp-config` / `--mcp-config '{}'` because [anthropics/claude-code#10787] documents that Claude Code CLI ignores both flags.  `CLAUDE_CONFIG_DIR` is the only mechanism upstream actually honours (G28-A).
+- `retry` module gains a `CircuitBreaker` helper (with `AttemptOutcome::{Success,Transient,HardFailure}` and tests) that `enrich --retry-failed` can use to abort persistent-failure loops.  Transient / rate-limited errors do NOT count toward the threshold, so a provider that recovers is not penalised (G28-D).
+- 3 pre-existing test failures in `src/commands/{history,list,read}.rs` that leaked `SQLITE_GRAPHRAG_DISPLAY_TZ` between parallel test threads and asserted hardcoded `1970-01-01T00:00:00` strings now parse the ISO output via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` for timezone-agnostic assertions.  The full test suite is now green on every timezone (`UTC`, `America/Sao_Paulo`, `Europe/Berlin`, etc.) without per-test setup of the env var.
+
+### Added
+- `retry::CircuitBreaker` (struct + `record` / `is_open` / `reset`) — opt-in helper for bounded retry loops.  Rate-limited and timeout errors are explicitly excluded from the failure count.
+- `lock::acquire_job_singleton(job_type, namespace, wait_seconds)` — process-wide singleton for heavy commands.
+- `constants::JOB_SINGLETON_POLL_INTERVAL_MS = 1000` — backing interval for the singleton polling loop.
+- `errors::AppError::JobSingletonLocked { job_type, namespace }` — exit 75, classified as retryable and with localised PT-BR message.
+- CI job `windows-build-check` runs `cargo check --target x86_64-pc-windows-msvc --lib --all-features` to catch Windows regressions before publish.
+- `tests/terminal_compile_windows.rs` — regression test that the public `terminal::init_console` and `should_use_ansi` stay callable; on Windows it also references the type-safe HANDLE check.
+- `lock::tests` — 3 unit tests covering singleton namespace sanitisation, second-invocation blocking, and per-namespace isolation.
+
+### Changed
+- `enrich` emits a `tracing::warn!` (visible with `-v`) when `llm_parallelism > 4` recommending combining with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep subprocess fan-out manageable (G28-D, non-breaking).
+- `Cargo.toml`: `windows-sys` pinned to `=0.59.0` exact (was range `0.59`).
 
 ## [1.0.67] - 2026-06-01
 

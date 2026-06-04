@@ -482,6 +482,13 @@ pub mod validation {
             )
         }
 
+        pub fn job_singleton_locked(job_type: &str, namespace: &str) -> String {
+            format!(
+                "job {job_type} para o namespace '{namespace}' já está em execução (exit 75); \
+                 aguarde a conclusão ou passe --wait-job-singleton <SEGUNDOS>"
+            )
+        }
+
         pub fn low_memory(available_mb: u64, required_mb: u64) -> String {
             format!(
                 "memória disponível ({available_mb}MB) abaixo do mínimo requerido ({required_mb}MB) \

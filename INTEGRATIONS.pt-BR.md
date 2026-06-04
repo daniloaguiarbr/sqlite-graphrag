@@ -1,5 +1,7 @@
 # Integrações
 
+> Leia este documento em [inglês (EN)](INTEGRATIONS.md)
+
 
 > 21 agentes e 20+ plataformas em um único contrato de CLI
 
@@ -23,6 +25,15 @@
 - `--gliner-variant` em `remember` e `ingest` seleciona o peso ONNX: `fp32` (padrão, melhor qualidade), `fp16`, `int8`, `q4`, `q4f16`. Defina `SQLITE_GRAPHRAG_GLINER_VARIANT` para override persistente.
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
+
+## Novos Comandos e Flags (desde v1.0.68)
+### Ciclo de Vida de Processos (G28)
+- `enrich`, `ingest --mode claude-code` e `ingest --mode codex` agora adquirem um singleton por namespace antes de fazer trabalho real.  Uma segunda invocação concorrente no mesmo banco falha rápido com `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) em vez de empilhar árvores de subprocessos.
+- Env var `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (opt-in) — quando definida para um diretório existente e vazio, o subprocesso do Claude Code é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, suprimindo servidores MCP do escopo user e a fan-out de 8-10 processos.  Este é o único mecanismo que o upstream do Claude Code realmente honra (veja [anthropics/claude-code#10787]).  Deliberadamente NÃO passamos `--strict-mcp-config` nem `--mcp-config '{}'` porque ambos são ignorados.
+- `retry::CircuitBreaker` (API do crate Rust) — helper opt-in com `AttemptOutcome::{Success, Transient, HardFailure}`.  Erros rate-limited e timeout são explicitamente excluídos da contagem.  Use em loops de retry customizados para limitar iterações em falhas persistentes.
+- `enrich` emite `tracing::warn!` (visível com `-v`) quando `--llm-parallelism > 4`, recomendando combinar com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` para manter a fan-out administrável.
+### Build Windows (G29)
+- `cargo install sqlite-graphrag` no Windows agora compila.  O tipo `HANDLE` é tratado de forma type-safe via `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` está fixado em `=0.59.0` exato em `Cargo.toml`.  Novo job de CI `windows-build-check` roda `cargo check --target x86_64-pc-windows-msvc --lib --all-features` em todo push e PR.
 
 ## Novos Comandos e Flags (desde v1.0.67)
 - `remember-batch` cria memórias em lote via NDJSON no stdin em uma única invocação; `--transaction` para atomicidade, `--force-merge` para atualizações idempotentes, `--fail-fast` para parar no primeiro erro

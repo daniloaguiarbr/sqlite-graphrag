@@ -103,6 +103,15 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - Line endings permanecem LF dentro do banco SQLite independente da configuração do console
 - Scripts persistem corretamente entre Windows, Linux e macOS quando salvos em UTF-8
 
+### Tipo HANDLE e o Limite do windows-sys 0.59 (G29, v1.0.68)
+- O crate `windows-sys` mudou o tipo de `HANDLE` entre 0.48/0.52 (`isize`) e 0.59+ (`*mut c_void`); a quebra foi feita pela Microsoft em [windows-rs#171]
+- `cargo install sqlite-graphrag` no Windows quebrou em v1.0.67 com `error[E0308]: mismatched types` em `src/terminal.rs:29:26` porque a comparação `handle != 0 && handle as isize != -1` só era válida para o tipo antigo
+- v1.0.68 substitui a comparação pelo idiom type-safe `!handle.is_null() && handle != INVALID_HANDLE_VALUE`, que funciona para ambas as eras de tipo e também captura o sentinela `INVALID_HANDLE_VALUE` (`(HANDLE)-1`) que é diferente de NULL
+- `windows-sys` está fixado em `=0.59.0` exato em `Cargo.toml:111` para evitar resolução silenciosa para um futuro 0.59.x que possa quebrar o contrato de tipo novamente
+- Novo job de CI `windows-build-check` em `.github/workflows/ci.yml` roda `cargo check --target x86_64-pc-windows-msvc --lib --all-features` em todo push e PR para capturar regressões futuras antes do publish
+- Workaround manual para v1.0.66/v1.0.67 (apenas se você precisa ficar nessas versões): edite `~/.cargo/registry/src/index.crates.io-*/sqlite-graphrag-*/src/terminal.rs`, substitua a linha 29 por `if !handle.is_null() && handle != INVALID_HANDLE_VALUE`, e adicione `INVALID_HANDLE_VALUE` ao `use windows_sys::Win32::Foundation::{...}`.  Depois rode `cargo install --path .` a partir do source corrigido.
+- Referência: `https://docs.rs/windows-sys/0.59.0/windows_sys/Win32/Foundation/type.HANDLE.html` (atual) e `https://docs.rs/windows-sys/0.52.0/windows_sys/Win32/Foundation/type.HANDLE.html` (legado)
+
 
 ## Containers
 ### Imagens glibc — Caminho Oficial Hoje

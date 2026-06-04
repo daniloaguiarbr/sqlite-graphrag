@@ -8,6 +8,8 @@
 
 > Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
 
+- Read this document in [Portuguese (pt-BR)](README.pt-BR.md).
+
 - Portuguese version available at [README.pt-BR.md](README.pt-BR.md)
 - Public package and repository are live on GitHub and crates.io
 - Install the latest published release with `cargo install sqlite-graphrag --locked`
@@ -108,6 +110,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ```
 > **Required flags for `remember`:** `--name`, `--type`, `--description`. Body via `--body "text"`, `--body-file <path>`, or `--body-stdin` (pipe from stdin).
 > **Body limit: 500 KB (512000 bytes).** Larger inputs are rejected with exit code 6 (`limit exceeded`); split into multiple memories or trim before sending.
+> **Windows users (G29):** v1.0.68 is the first release since v1.0.65 that successfully compiles via `cargo install` on Windows. If you must stay on v1.0.66 or v1.0.67, see [docs/CROSS_PLATFORM.md](./docs/CROSS_PLATFORM.md) for the manual workaround.
 - **GraphRAG is enabled by default and runs automatically.** Every subcommand auto-initializes `graphrag.sqlite` in the current working directory if it does not exist. `remember` and `ingest` can extract entities and relationships via local GLiNER zero-shot NER when `--enable-ner` is passed. `recall` and `hybrid-search` auto-spawn the embedding daemon on demand.
 
 ### GLiNER zero-shot NER
@@ -127,6 +130,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Version Highlights
 
+- **v1.0.68**: 2 CRITICAL fixes for Windows + process proliferation.  **(G29)** `cargo install` no Windows was breaking with `error[E0308]` in `src/terminal.rs:29` because `HANDLE` in `windows-sys >= 0.59` is `*mut c_void` (was `isize` in 0.48/0.52).  Replaced with the type-safe idiom `!handle.is_null() && handle != INVALID_HANDLE_VALUE`, pinned `windows-sys` to `=0.59.0` exact, and added CI job `windows-build-check` that runs `cargo check --target x86_64-pc-windows-msvc` on every push.  **(G28-B)** Added `lock::acquire_job_singleton` per `(job_type, namespace)` so two parallel `enrich`/`ingest --mode claude-code|codex` invocations against the same database now fail fast with the new exit-75 `AppError::JobSingletonLocked { job_type, namespace }` instead of stacking 4 × N workers × 10 MCP processes (root cause of the 2026-06-03 276-load-average incident).  **(G28-A)** `claude_runner::build_claude_command` now respects `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` — when set to an empty directory, the subprocess is spawned with `CLAUDE_CONFIG_DIR=<that dir>`, suppressing user-scoped MCP servers and their 8-10-process fan-out.  Deliberately avoids `--strict-mcp-config` / `--mcp-config '{}'` because [anthropics/claude-code#10787] documents that Claude Code CLI ignores both flags.  **(G28-D)** `retry::CircuitBreaker` helper plus a `tracing::warn!` when `--llm-parallelism > 4` (combine with `CLAUDE_CONFIG_DIR` override to keep subprocess fan-out manageable).  Also fixed 3 pre-existing test failures in `src/commands/{history,list,read}.rs` that were leaking the `SQLITE_GRAPHRAG_DISPLAY_TZ` env var between parallel tests.
 - **v1.0.67**: 2 NEW commands: `remember-batch` (NDJSON batch memory creation with `--transaction`/`--force-merge`), `completions` (shell completions for Bash/Zsh/Fish/PowerShell/Elvish); `read --id` for direct memory_id lookup, `enrich --llm-parallelism` for parallel LLM workers, `health` super-hub detection (degree > 50), `edit` skip-embed optimization via body_hash comparison, `rename` ghost purge for soft-deleted name conflicts, flag validation in hybrid-search/recall/ingest, V012 relationship timestamps migration, 24 gap fixes total
 - **v1.0.66**: 35 BUG/GAP fixes including 3 CRITICAL (reclassify-relation crash, evidence chain flooding, link weight), `edit --type` flag, `graph_context` in deep-research, LLM-friendly aliases for graph/list JSON, full doc audit
 - **v1.0.65**: 3 NEW commands: `reclassify-relation` (bulk relationship type renames with UNIQUE collision handling), `normalize-entities` (normalize entity names to kebab-case with auto-merge), `enrich` (LLM-augmented graph quality: memory-bindings, entity-descriptions, body-enrich); CRITICAL deep-research fixes: per-sub-query embeddings (was sharing one), RRF fusion for KNN+FTS5 (was hardcoded 0.5), directed evidence chains (was flat global dump); new deep-research flags `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`; entity name normalization on all write paths; `health` reports relation concentration; `--max-entity-degree` warning on link/remember

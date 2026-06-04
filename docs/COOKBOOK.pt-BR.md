@@ -1921,3 +1921,39 @@ sqlite-graphrag completions fish > ~/.config/fish/completions/sqlite-graphrag.fi
 ### Veja Também
 - Receita "Como Bootstrapar O Banco De Memória Em 60 Segundos"
 - Receita "Como Integrar sqlite-graphrag Com Loop Subprocess Do Claude Code"
+
+
+## Como Limitar a Proliferação de Processos em Enriquecimento com Claude Code (G28, v1.0.68)
+### Problema
+- Rodar `sqlite-graphrag enrich --mode claude-code --llm-parallelism 4` em uma workstation com 10+ servidores MCP configurados tipicamente spawna 4 × 4 workers × 10 MCPs = 160+ processos filhos, o que em um host de 10 CPUs pode saturar o load average a 27× o número de CPUs (incidente real: 2026-06-03).
+- Duas invocações paralelas de `enrich` no mesmo banco agravam o problema e também podem causar deadlock na contenção do SQLite single-writer.
+
+### Solução
+```bash
+# Passo 1: criar um diretório de config vazio uma vez (idempotente)
+mkdir -p /tmp/claude-empty-config
+
+# Passo 2: apontar a CLI para ele (env var, opt-in)
+export SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/tmp/claude-empty-config
+
+# Passo 3: rodar o enriquecimento com paralelismo conservador
+sqlite-graphrag enrich --operation body-enrich --mode claude-code \
+  --llm-parallelism 4 --limit 50 --json
+
+# Passo 4: uma segunda invocação concorrente no mesmo DB falhará rápido:
+sqlite-graphrag enrich --operation memory-bindings --mode claude-code --json
+# → exit 75, erro: "job enrich para o namespace 'global' já está em execução"
+```
+
+### Explicação
+- `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` é honrado por `claude_runner::build_claude_command` em v1.0.68.  O subprocesso é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, que é o único mecanismo que o upstream do Claude Code realmente honra (veja [anthropics/claude-code#10787]).  Deliberadamente NÃO passamos `--strict-mcp-config` nem `mcp-config` porque ambos são ignorados.
+- `enrich` (e `ingest --mode claude-code|codex`) adquirem um singleton por namespace em v1.0.68.  A segunda invocação concorrente recebe `AppError::JobSingletonLocked` (exit 75) em vez de empilhar.
+- Um `tracing::warn!` é emitido quando `--llm-parallelism > 4` recomendando a combinação com o override de env var para manter o host responsivo.
+
+### Variantes
+- Para containers com pouca RAM (≤ 4 GB): adicione `SQLITE_GRAPHRAG_LOW_MEMORY=1` e `--llm-parallelism 1`.
+- Para runners de CI: defina a env var via YAML do workflow e passe `--max-rss-mb 2048` para `ingest --mode claude-code` para abortar cedo em pressão de memória.
+
+### Veja Também
+- Receita "Como integrar sqlite-graphrag com o loop de subprocessos do Claude Code"
+- docs/HOW_TO_USE.pt-BR.md → "Limitando proliferação de processos em execuções com Claude Code (G28, v1.0.68)"

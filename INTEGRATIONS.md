@@ -1,5 +1,7 @@
 # Integrations
 
+> Read this document in [Portuguese (pt-BR)](INTEGRATIONS.pt-BR.md)
+
 
 > 21 agents and 20+ platforms in a single CLI contract
 
@@ -23,6 +25,15 @@
 - `--gliner-variant` on `remember` and `ingest` selects the ONNX weight: `fp32` (default, best quality), `fp16`, `int8`, `q4`, `q4f16`. Set `SQLITE_GRAPHRAG_GLINER_VARIANT` for a persistent override.
 - `SQLITE_GRAPHRAG_GLINER_THRESHOLD` tunes the entity confidence threshold (float, default `0.5`).
 - Entity types now include `organization`, `location`, `date` alongside `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
+
+## New Commands and Flags (since v1.0.68)
+### Process Lifecycle (G28)
+- `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` now acquire a per-namespace singleton before doing real work.  A second concurrent invocation against the same database fails fast with `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) instead of stacking up subprocess trees.
+- `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` env var (opt-in) — when set to an existing empty directory, the Claude Code subprocess is spawned with `CLAUDE_CONFIG_DIR=<that dir>`, suppressing user-scoped MCP servers and their 8-10-process fan-out.  This is the only mechanism upstream Claude Code actually honours (see [anthropics/claude-code#10787]).  We deliberately do NOT pass `--strict-mcp-config` or `--mcp-config '{}'` because both are ignored.
+- `retry::CircuitBreaker` (Rust crate API) — opt-in helper with `AttemptOutcome::{Success, Transient, HardFailure}`.  Rate-limited and timeout errors are explicitly excluded from the failure count.  Use in custom retry loops to cap persistent-failure iterations.
+- `enrich` emits a `tracing::warn!` (visible with `-v`) when `--llm-parallelism > 4`, recommending to combine with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep subprocess fan-out manageable.
+### Windows Build (G29)
+- `cargo install sqlite-graphrag` on Windows now succeeds.  `HANDLE` type is treated type-safely via `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` is pinned to `=0.59.0` exact in `Cargo.toml`.  New CI job `windows-build-check` runs `cargo check --target x86_64-pc-windows-msvc --lib --all-features` on every push and PR.
 
 ## New Commands and Flags (since v1.0.67)
 - `remember-batch` batch-creates memories from NDJSON stdin in a single invocation; `--transaction` for atomicity, `--force-merge` for idempotent updates, `--fail-fast` to stop on first error

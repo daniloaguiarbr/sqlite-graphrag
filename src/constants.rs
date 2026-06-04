@@ -340,6 +340,11 @@ pub const CLI_LOCK_EXIT_CODE: i32 = 75;
 /// invocations attempt to load the ONNX model simultaneously.
 pub const MAX_CONCURRENT_CLI_INSTANCES: usize = 4;
 
+/// G28-B (v1.0.68): polling interval in milliseconds used by
+/// `acquire_job_singleton` between retry attempts when another invocation
+/// already holds the singleton for `(job_type, namespace)`.
+pub const JOB_SINGLETON_POLL_INTERVAL_MS: u64 = 1000;
+
 /// Minimum available memory in MiB required before starting model loading.
 ///
 /// If `sysinfo::System::available_memory() / 1_048_576` falls below this value,

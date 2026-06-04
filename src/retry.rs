@@ -4,7 +4,7 @@
 //! (SQLite BUSY, LLM rate-limit, cold-start) and a [`compute_delay`](crate::retry::compute_delay) function
 //! that applies the configured jitter strategy.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Configures retry behavior for a specific failure domain.
 ///
@@ -191,5 +191,135 @@ mod tests {
                 assert!(d.as_millis() < base as u128);
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Circuit Breaker (G28-D, v1.0.68)
+// ---------------------------------------------------------------------------
+
+/// Outcome of a single retry attempt, used to feed a [`CircuitBreaker`].
+///
+/// We keep this intentionally narrow: rate-limit / timeout errors are
+/// TRANSIENT and should NOT count toward the breaker; everything else
+/// counts as a HARD failure that contributes to opening the breaker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptOutcome {
+    /// Transient error: counts as a successful iteration, does NOT trip the breaker.
+    /// Examples: `AppError::RateLimited`, `AppError::Timeout`, `AppError::DbBusy`.
+    Transient,
+    /// Hard failure: counts toward the breaker's failure threshold.
+    /// Examples: `AppError::Validation`, `AppError::Conflict`,
+    /// `AppError::Embedding`, `AppError::Internal`.
+    HardFailure,
+    /// Successful iteration: resets the consecutive-failure counter.
+    Success,
+}
+
+/// Counts consecutive hard failures and trips open after a threshold.
+///
+/// G28-D (v1.0.68): caps `enrich --retry-failed` and `ingest --retry-failed`
+/// loops so persistent failures (e.g., LLM provider returning the same
+/// 4xx for hours) cannot run unbounded.  After `threshold` consecutive
+/// [`AttemptOutcome::HardFailure`] outcomes, `record` returns `true` and
+/// the caller is expected to abort with `AppError::CircuitBreakerOpen`.
+///
+/// Rate-limited / transient errors are explicitly NOT counted, so a
+/// provider that throttles but eventually recovers will not trip the
+/// breaker.
+#[derive(Debug, Clone)]
+pub struct CircuitBreaker {
+    threshold: u32,
+    cooldown: Duration,
+    consecutive_failures: u32,
+    open_until: Option<Instant>,
+}
+
+impl CircuitBreaker {
+    /// Creates a breaker that opens after `threshold` consecutive hard
+    /// failures and stays open for `cooldown` after the last failure.
+    pub fn new(threshold: u32, cooldown: Duration) -> Self {
+        Self {
+            threshold,
+            cooldown,
+            consecutive_failures: 0,
+            open_until: None,
+        }
+    }
+
+    /// Records one attempt outcome.
+    ///
+    /// Returns `true` when the breaker is now open and the caller must
+    /// abort the job.  Returns `false` when the attempt should continue.
+    pub fn record(&mut self, outcome: AttemptOutcome) -> bool {
+        match outcome {
+            AttemptOutcome::Success | AttemptOutcome::Transient => {
+                self.consecutive_failures = 0;
+                false
+            }
+            AttemptOutcome::HardFailure => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                if self.consecutive_failures >= self.threshold.max(1) {
+                    self.open_until = Some(Instant::now() + self.cooldown);
+                    tracing::error!(
+                        target: "circuit_breaker",
+                        consecutive_failures = self.consecutive_failures,
+                        threshold = self.threshold,
+                        cooldown_secs = self.cooldown.as_secs(),
+                        "circuit breaker opened — aborting job"
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// `true` when the breaker is currently open (and not yet cooled down).
+    pub fn is_open(&self) -> bool {
+        self.open_until
+            .map(|deadline| Instant::now() < deadline)
+            .unwrap_or(false)
+    }
+
+    /// Resets the breaker to closed state.
+    pub fn reset(&mut self) {
+        self.consecutive_failures = 0;
+        self.open_until = None;
+    }
+}
+
+#[cfg(test)]
+mod circuit_breaker_tests {
+    use super::*;
+
+    #[test]
+    fn opens_after_threshold_consecutive_hard_failures() {
+        let mut cb = CircuitBreaker::new(3, Duration::from_secs(60));
+        assert!(!cb.record(AttemptOutcome::HardFailure));
+        assert!(!cb.record(AttemptOutcome::HardFailure));
+        assert!(cb.record(AttemptOutcome::HardFailure));
+        assert!(cb.is_open());
+    }
+
+    #[test]
+    fn ignores_transient_errors() {
+        let mut cb = CircuitBreaker::new(2, Duration::from_secs(60));
+        // 10 transients in a row should never open the breaker.
+        for _ in 0..10 {
+            assert!(!cb.record(AttemptOutcome::Transient));
+        }
+        assert!(!cb.is_open());
+    }
+
+    #[test]
+    fn success_resets_consecutive_failures() {
+        let mut cb = CircuitBreaker::new(3, Duration::from_secs(60));
+        cb.record(AttemptOutcome::HardFailure);
+        cb.record(AttemptOutcome::HardFailure);
+        cb.record(AttemptOutcome::Success);
+        assert!(!cb.record(AttemptOutcome::HardFailure));
+        assert!(!cb.is_open());
     }
 }

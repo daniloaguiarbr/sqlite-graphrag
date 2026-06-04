@@ -9,6 +9,15 @@
 //! [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] milliseconds until the deadline. When it
 //! is `None` or `Some(0)`, a single attempt is made and `Err(AppError::AllSlotsFull)` is
 //! returned immediately if all slots are occupied.
+//!
+//! ## Job-type singleton (G28-B, v1.0.68)
+//!
+//! Heavy long-running jobs (`enrich`, `ingest --mode claude-code`,
+//! `ingest --mode codex`) also acquire a *singleton* lock per `(job_type,
+//! namespace)` via `acquire_job_singleton`.  This guarantees at most one
+//! heavy job per namespace runs at any time, which was the root cause
+//! of the 2026-06-03 process-proliferation incident (4 parallel `enrich`
+//! instances × N workers × 10 MCP servers = ~192 spawned processes).
 // Workload: I/O-bound (flock polling with exponential backoff sleep)
 
 use std::fs::{File, OpenOptions};
@@ -19,8 +28,36 @@ use std::time::{Duration, Instant};
 use directories::ProjectDirs;
 use fs4::fs_std::FileExt;
 
-use crate::constants::{CLI_LOCK_POLL_INTERVAL_MS, MAX_CONCURRENT_CLI_INSTANCES};
+use crate::constants::{
+    CLI_LOCK_POLL_INTERVAL_MS, JOB_SINGLETON_POLL_INTERVAL_MS, MAX_CONCURRENT_CLI_INSTANCES,
+};
 use crate::errors::AppError;
+
+/// Job-type classification for `acquire_job_singleton`.
+///
+/// `Light` is intentionally NOT a variant here because lightweight
+/// commands (`recall`, `stats`, `read`, `list`) share the existing
+/// counting-semaphore in [`acquire_cli_slot`] and do not need a singleton.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobType {
+    /// `enrich` command (LLM-driven entity/relation/body enrichment).
+    Enrich,
+    /// `ingest --mode claude-code` (LLM-curated ingestion).
+    IngestClaudeCode,
+    /// `ingest --mode codex` (OpenAI Codex CLI ingestion).
+    IngestCodex,
+}
+
+impl JobType {
+    /// Returns the kebab-case tag used inside the lock file name.
+    fn tag(self) -> &'static str {
+        match self {
+            JobType::Enrich => "enrich",
+            JobType::IngestClaudeCode => "ingest-claude-code",
+            JobType::IngestCodex => "ingest-codex",
+        }
+    }
+}
 
 /// Returns the lock file path for the given slot.
 ///
@@ -28,8 +65,15 @@ use crate::errors::AppError;
 /// and NFS caches), falling back to the OS default cache directory via
 /// `directories::ProjectDirs`. The slot must be 1-based.
 fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
-    let cache = if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {
-        PathBuf::from(override_dir)
+    let cache = cache_dir()?;
+    std::fs::create_dir_all(&cache)?;
+    Ok(cache.join(format!("cli-slot-{slot}.lock")))
+}
+
+/// Resolves the lock-file directory honouring `SQLITE_GRAPHRAG_CACHE_DIR`.
+fn cache_dir() -> Result<PathBuf, AppError> {
+    if let Some(override_dir) = std::env::var_os("SQLITE_GRAPHRAG_CACHE_DIR") {
+        Ok(PathBuf::from(override_dir))
     } else {
         let dirs = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
             AppError::Io(std::io::Error::new(
@@ -37,10 +81,33 @@ fn slot_path(slot: usize) -> Result<PathBuf, AppError> {
                 "could not determine cache directory for sqlite-graphrag lock files",
             ))
         })?;
-        dirs.cache_dir().to_path_buf()
-    };
+        Ok(dirs.cache_dir().to_path_buf())
+    }
+}
+
+/// Returns the singleton lock file path for a given (job_type, namespace).
+///
+/// Layout: `job-singleton-{tag}-{namespace}.lock` in the same cache dir as
+/// the CLI slots.  The namespace is sanitised to a filesystem-safe slug
+/// (lowercase, hyphens, alphanumeric) and defaults to `default` when empty.
+fn job_singleton_path(job_type: JobType, namespace: &str) -> Result<PathBuf, AppError> {
+    let cache = cache_dir()?;
     std::fs::create_dir_all(&cache)?;
-    Ok(cache.join(format!("cli-slot-{slot}.lock")))
+    let slug = if namespace.is_empty() {
+        "default".to_string()
+    } else {
+        namespace
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    };
+    Ok(cache.join(format!("job-singleton-{}-{slug}.lock", job_type.tag())))
 }
 
 /// Tries to open and exclusively lock the lock file for the given slot.
@@ -121,6 +188,69 @@ pub fn acquire_cli_slot(
     }
 }
 
+/// Acquires a process-wide singleton lock for a heavy job type and namespace.
+///
+/// G28-B (v1.0.68): ensures at most one `enrich`, `ingest --mode
+/// claude-code`, or `ingest --mode codex` runs at a time per namespace.
+/// A second invocation in the same namespace either:
+///
+/// - Returns immediately with `AppError::JobSingletonLocked { job_type,
+///   namespace }` when `wait_seconds` is `None` or `Some(0)`.
+/// - Polls every [`JOB_SINGLETON_POLL_INTERVAL_MS`] ms until the lock
+///   drops or the deadline expires, returning the same error on timeout.
+///
+/// The returned `File` MUST be kept alive until the process exits;
+/// dropping it releases the singleton for the next invocation.
+pub fn acquire_job_singleton(
+    job_type: JobType,
+    namespace: &str,
+    wait_seconds: Option<u64>,
+) -> Result<File, AppError> {
+    let path = job_singleton_path(job_type, namespace)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    if let Err(e) = file.try_lock_exclusive() {
+        if !is_lock_contended(&e) {
+            return Err(AppError::Io(e));
+        }
+        // Already held by another instance.
+        let wait_secs = wait_seconds.unwrap_or(0);
+        if wait_secs == 0 {
+            return Err(AppError::JobSingletonLocked {
+                job_type: job_type.tag().to_string(),
+                namespace: namespace.to_string(),
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(wait_secs);
+        // Drop the failed handle before polling; flock is per-process so we
+        // re-open each attempt to refresh contention state.
+        drop(file);
+        loop {
+            thread::sleep(Duration::from_millis(JOB_SINGLETON_POLL_INTERVAL_MS));
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)?;
+            if file.try_lock_exclusive().is_ok() {
+                return Ok(file);
+            }
+            if Instant::now() >= deadline {
+                return Err(AppError::JobSingletonLocked {
+                    job_type: job_type.tag().to_string(),
+                    namespace: namespace.to_string(),
+                });
+            }
+        }
+    }
+    Ok(file)
+}
+
 /// Tries to acquire any free slot in `1..=max`, returning the first available one.
 ///
 /// Returns `Ok(Some((file, slot)))` if a slot was obtained, `Ok(None)` if all are
@@ -149,5 +279,51 @@ fn is_lock_contended(error: &std::io::Error) -> bool {
     #[cfg(not(windows))]
     {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_ns() -> String {
+        let n = SEQ.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        format!("test-{pid}-{n}")
+    }
+
+    #[test]
+    fn job_singleton_path_sanitises_namespace() {
+        let p = job_singleton_path(JobType::Enrich, "Foo Bar/Baz").expect("path should resolve");
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.contains("enrich"), "got {name}");
+        assert!(name.contains("foo-bar-baz"), "got {name}");
+    }
+
+    #[test]
+    fn job_singleton_blocks_second_invocation_same_namespace() {
+        let ns = unique_ns();
+        let first = acquire_job_singleton(JobType::Enrich, &ns, Some(0))
+            .expect("first acquire should succeed");
+        let second = acquire_job_singleton(JobType::Enrich, &ns, Some(0));
+        assert!(
+            matches!(second, Err(AppError::JobSingletonLocked { .. })),
+            "expected JobSingletonLocked, got {second:?}"
+        );
+        drop(first);
+    }
+
+    #[test]
+    fn job_singleton_allows_different_namespaces() {
+        let ns_a = unique_ns();
+        let ns_b = unique_ns();
+        let first = acquire_job_singleton(JobType::IngestClaudeCode, &ns_a, Some(0))
+            .expect("ns_a should acquire");
+        let second = acquire_job_singleton(JobType::IngestClaudeCode, &ns_b, Some(0))
+            .expect("ns_b should acquire in parallel");
+        drop(first);
+        drop(second);
     }
 }

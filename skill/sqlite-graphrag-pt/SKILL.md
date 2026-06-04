@@ -5,6 +5,8 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 
 
 ## Princípios Fundamentais
+
+- Leia este documento em [inglês (EN)](../sqlite-graphrag-en/SKILL.md).
 ### OBRIGATÓRIO — Filosofia de Uso
 - TRATAR sqlite-graphrag como camada local de memória persistente
 - INVOCAR sempre como subprocesso via `std::process::Command`
@@ -141,6 +143,39 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 ### Padrão Correto — Exemplos de remember-batch
 - `echo '{"name":"a","type":"note","description":"x","body":"hello"}' | sqlite-graphrag remember-batch --json`
 - `cat batch.ndjson | sqlite-graphrag remember-batch --force-merge --json`
+
+
+## Novidades na v1.0.68
+### OBRIGATÓRIO — Governança de Ciclo de Vida de Processos (G28-B)
+- SABER que `enrich`, `ingest --mode claude-code` e `ingest --mode codex` adquirem um singleton por namespace via `lock::acquire_job_singleton(job_type, namespace, wait_seconds)` antes de qualquer trabalho
+- TRATAR `AppError::JobSingletonLocked { job_type, namespace }` (exit 75, retryable) como sinal de que outra invocação está em andamento no mesmo banco
+- NÃO paralelizar esses comandos no mesmo namespace — use a queue DB com `--resume` ou sequencie-os
+- SABER que o design anterior (semáforo compartilhado com todos os comandos CLI) permitia 4 invocações paralelas de `enrich` × 2 workers × 10 servidores MCP = ~192 processos, que é a causa raiz do incidente de load average 276 em 2026-06-03
+### OBRIGATÓRIO — Isolamento MCP via env var (G28-A)
+- DEFINIR `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/caminho/para/dir/vazio` para suprimir servidores MCP do escopo user em subprocessos `claude -p`
+- SABER que o diretório vazio DEVE existir mas não conter arquivos; a CLI define `CLAUDE_CONFIG_DIR=<esse dir>` no subprocesso
+- SABER que o dir vazio é o ÚNICO mecanismo que o upstream do Claude Code realmente honra — [anthropics/claude-code#10787] documenta que `--strict-mcp-config` e `--mcp-config '{}'` são silenciosamente ignorados
+- ESPERAR um `tracing::warn!` quando `--llm-parallelism > 4`, recomendando a combinação com o override `CLAUDE_CONFIG_DIR`
+### OBRIGATÓRIO — Helper de Circuit Breaker (G28-D)
+- USAR `retry::CircuitBreaker::new(threshold, cooldown)` para limitar loops de retry em falhas persistentes em código customizado
+- SABER que `AttemptOutcome::Transient` (de `AppError::RateLimited` ou `AppError::Timeout`) NÃO conta para o threshold de falhas
+- SABER que `AttemptOutcome::HardFailure` (de `AppError::Validation` ou `AppError::Conflict`) conta; após `threshold` hits consecutivos, `record()` retorna `true` e o caller deve abortar
+- CHAMAR `cb.reset()` ao iniciar um novo job para limpar o contador de falhas consecutivas
+### OBRIGATÓRIO — Type Safety do HANDLE no Windows (G29)
+- SABER que v1.0.68 é o primeiro release desde v1.0.65 que compila no Windows via `cargo install`
+- SABER que `windows-sys >= 0.59` define `HANDLE` como `*mut c_void` (era `isize` em 0.48/0.52); `Cargo.toml:111` fixa `=0.59.0` exato
+- ESPERAR que o job de CI `windows-build-check` rode `cargo check --target x86_64-pc-windows-msvc --lib --all-features` em todo push
+- SE um usuário relatar falha de compilação no Windows, redirecione para atualizar para v1.0.68 ou aplicar o patch manual documentado em `docs/CROSS_PLATFORM.pt-BR.md`
+### OBRIGATÓRIO — Correções de Testes (Vazamento de Timezone)
+- SABER que 3 falhas de teste pré-existentes em `src/commands/{history,list,read}.rs` foram corrigidas na v1.0.68
+- SABER que os testes anteriormente vazavam a env var `SQLITE_GRAPHRAG_DISPLAY_TZ` entre threads de teste paralelos e afirmavam strings hardcoded `1970-01-01T00:00:00`
+- ESPERAR que os testes agora parseiem a string ISO via `chrono::DateTime::parse_from_rfc3339` e comparem `timestamp()` contra `DateTime::UNIX_EPOCH` para asserções timezone-agnostic
+- CONFIAR que `cargo test --lib` está verde em todos os fusos horários (`UTC`, `America/Sao_Paulo`, `Europe/Berlin`, etc.) desde a v1.0.68
+### PROIBIDO — Anti-padrões de Ciclo de Vida de Processos (G28)
+- NUNCA rodar múltiplas invocações de `enrich` no mesmo banco simultaneamente — elas saturam o host
+- NUNCA passar `--strict-mcp-config` ou `--mcp-config '{}'` para a CLI do Claude Code — ela ignora ambas (issue #10787)
+- NUNCA burlar o singleton via manipulação direta de arquivos `~/.local/share/sqlite-graphrag/job-singleton-*.lock`
+- NUNCA assumir que `enrich` rodando por 30 minutos significa que travou — enriquecimentos longos são normais
 
 
 ## CRUD — Bulk Ingest com ingest
@@ -700,11 +735,12 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - FILTRAR campos via `jaq` em vez de regex sobre stdout
 - LER apenas campos efetivamente retornados pelo subcomando
 - TRATAR JSON como API versionada por SemVer
-### OBRIGATÓRIO — Contrato JSON de Erros (v1.0.56)
+### OBRIGATÓRIO — Contrato JSON de Erros (v1.0.56, atualizado v1.0.68)
 - TODOS os caminhos de erro agora emitem um objeto JSON no stdout: `{"error": true, "code": N, "message": "..."}`
 - stderr ainda recebe o erro legível por humanos com prefixo descritivo
 - CONSUMIDORES devem verificar o JSON do stdout primeiro (procurar `"error": true`), depois usar o exit code como fallback
 - Aplica-se a TODOS os comandos quando `--json` é passado; sem `--json`, erros vão apenas para stderr
+- Desde a v1.0.68 o envelope `code: 75` tem DOIS templates distintos — ambos mapeiam para o mesmo exit code: template A `job <job_type> for namespace '<namespace>' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>` (emitido por `enrich`, `ingest --mode claude-code`, `ingest --mode codex` quando outra invocação segura o singleton), e template B `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` (exaustão de semáforo legada)
 ### OBRIGATÓRIO — Matriz --json versus --format json
 - `--json` é aceito por TODOS os subcomandos
 - `--format json` aceito apenas em subset com `--format`
@@ -784,7 +820,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `14` igual erro de I/O (arquivo inacessível, permissão, disco cheio)
 - `15` igual banco ocupado (busy), ampliar `--wait-lock`
 - `20` igual erro interno ou falha de serialização JSON
-- `75` igual slots exauridos no ingest ou outro pesado
+- `75` igual slots exauridos no ingest ou outro pesado OU `AppError::JobSingletonLocked` de `enrich`, `ingest --mode claude-code` ou `ingest --mode codex` desde a v1.0.68; o campo `message` embute `job_type` e `namespace` para parsing via regex `job '(\w+)'.*namespace '(\w+)'`
 - `77` igual pressão de RAM, aguardar memória livre
 ### PROIBIDO — Anti-padrões de Erro
 - NUNCA ignorar exit code não-zero como sucesso

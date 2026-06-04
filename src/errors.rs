@@ -115,6 +115,20 @@ pub enum AppError {
     )]
     AllSlotsFull { max: usize, waited_secs: u64 },
 
+    /// A heavy long-running job is already running for this job_type/namespace
+    /// pair. Maps to exit code `75` (the same `EX_TEMPFAIL` code used by the
+    /// CLI semaphore).
+    ///
+    /// G28-B (v1.0.68): ensures at most one `enrich`, `ingest --mode
+    /// claude-code`, or `ingest --mode codex` runs at a time per namespace.
+    /// Use `--wait-job-singleton <SECONDS>` (per-command) to poll until the
+    /// other invocation finishes.
+    #[error(
+        "job {job_type} for namespace '{namespace}' is already running (exit 75); \
+         wait for it to finish or pass --wait-job-singleton <SECONDS>"
+    )]
+    JobSingletonLocked { job_type: String, namespace: String },
+
     /// Available memory is below the minimum required to load the model. Maps to exit code `77`.
     ///
     /// Returned when `sysinfo` reports available memory below
@@ -176,6 +190,7 @@ impl AppError {
             Self::Json(_) => 20,
             Self::LockBusy(_) => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::AllSlotsFull { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
+            Self::JobSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
         }
     }
@@ -201,6 +216,7 @@ impl AppError {
             Self::DbBusy(_)
                 | Self::LockBusy(_)
                 | Self::AllSlotsFull { .. }
+                | Self::JobSingletonLocked { .. }
                 | Self::LowMemory { .. }
                 | Self::RateLimited { .. }
                 | Self::Timeout { .. }
@@ -295,6 +311,10 @@ impl AppError {
             Self::Json(e) => pt::json(&e.to_string()),
             Self::LockBusy(msg) => pt::lock_busy(msg),
             Self::AllSlotsFull { max, waited_secs } => pt::all_slots_full(*max, *waited_secs),
+            Self::JobSingletonLocked {
+                job_type,
+                namespace,
+            } => pt::job_singleton_locked(job_type, namespace),
             Self::LowMemory {
                 available_mb,
                 required_mb,

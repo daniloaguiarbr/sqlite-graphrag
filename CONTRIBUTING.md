@@ -84,6 +84,9 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Treat `init`, `remember`, `recall`, and `hybrid-search` as heavy-memory commands during manual validation
 - Start heavy-command validation with `--max-concurrency 1` and scale only after measuring RSS and swap behavior
 - JAMAIS issue real HTTP requests or touch real filesystem paths outside a `TempDir` in tests
+- Run `cargo test --lib lock::tests retry::circuit_breaker_tests` after touching `lock.rs` or `retry.rs` to exercise the new v1.0.68 singleton and circuit-breaker helpers
+- Run `cargo test --test terminal_compile_windows` after touching `src/terminal.rs` to confirm the public surface stays callable; the dedicated CI job `windows-build-check` runs the full cross-platform type check
+- Test assertions involving timestamps MUST be timezone-agnostic — parse ISO via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` instead of hardcoded `1970-01-01T00:00:00` strings; this rule was added after a `SQLITE_GRAPHRAG_DISPLAY_TZ` leak in v1.0.66/v1.0.67 made three pre-existing tests flaky
 
 
 ## Documentation
@@ -116,6 +119,31 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Maintainers tag the release commit as `vX.Y.Z` using `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
 - Pushing the tag triggers `.github/workflows/release.yml` which builds release artifacts and GitHub release assets
 - Final publication to crates.io is done manually with `cargo publish --locked`
+
+## Recent Releases
+### v1.0.68 - 2026-06-03 — Process Lifecycle Governance and Windows Compile Fix
+- **G28-A** MCP server isolation via `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (subprocess receives `CLAUDE_CONFIG_DIR=<empty dir>`; `--strict-mcp-config` and `--mcp-config '{}'` are ignored upstream per anthropics/claude-code#10787)
+- **G28-B** `lock::acquire_job_singleton(JobType, namespace, wait_seconds)` plus `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) integrated into `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` to prevent process proliferation against the same database
+- **G28-D** `retry::CircuitBreaker` helper with `AttemptOutcome::{Success, Transient, HardFailure}`; rate-limited and timeout errors are explicitly excluded from the failure count; `enrich` emits a `tracing::warn!` when `--llm-parallelism > 4`
+- **G29** `src/terminal.rs` rewritten with `!handle.is_null() && handle != INVALID_HANDLE_VALUE` so `cargo install sqlite-graphrag` succeeds on Windows; `windows-sys` pinned to `=0.59.0` exact; new CI job `windows-build-check` runs `cargo check --target x86_64-pc-windows-msvc --lib --all-features` on every push
+- **Test Fixes** three pre-existing timezone-leak failures in `src/commands/{history,list,read}.rs` fixed via `chrono::DateTime::parse_from_rfc3339` + `DateTime::UNIX_EPOCH` comparison
+- **Documentation** new ADRs `adr-008-process-lifecycle-singleton`, `adr-009-windows-sys-handle-pinning`, `adr-010-mcp-isolation-claude-config-dir`; `SKILL.md` EN+PT, `AGENTS.md` EN+PT, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `INTEGRATIONS.md` EN+PT, `MIGRATION.md` EN+PT, `TESTING.md` EN+PT, `HOW_TO_USE.md` EN+PT, `CROSS_PLATFORM.md` EN+PT, `COOKBOOK.md` EN+PT updated with the v1.0.68 section; `docs/schemas/error-envelope.schema.json` updated to document the second `code: 75` template
+- **CI** new `windows-build-check` job; `language-check` job retained from prior release
+- 692 lib tests + 2 integration tests pass; 0 warnings under `clippy -- -D warnings` and `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"`
+- See `gaps.md` for the full resolution history and `CHANGELOG.md` for the v1.0.68 entry
+
+## Mandatory Pre-Push Checklist (since v1.0.68)
+- [ ] `cargo fmt --all --check` is clean
+- [ ] `cargo check --all-targets` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` reports zero warnings
+- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` reports zero warnings
+- [ ] `cargo test --lib` reports 692 passed, 0 failed
+- [ ] `cargo test --test terminal_compile_windows` reports 2 passed
+- [ ] PR title is in English and follows Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`, `build:`, `perf:`)
+- [ ] No `Co-authored-by: ...` trailer for any AI agent (Claude, Codex, GPT, Copilot, Cursor, Gemini, Anthropic, OpenAI)
+- [ ] CHANGELOG entries added under `[Unreleased]` in BOTH `CHANGELOG.md` and `CHANGELOG.pt-BR.md`
+- [ ] If touching `windows-sys` or any FFI crate, run `cargo check --target x86_64-pc-windows-msvc --lib --all-features` locally
+- [ ] If touching `lock.rs` or `retry.rs`, run `cargo test --lib lock::tests retry::circuit_breaker_tests`
 
 
 ## Recognition

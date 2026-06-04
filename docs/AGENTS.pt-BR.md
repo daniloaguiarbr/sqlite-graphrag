@@ -29,6 +29,17 @@
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
 
+## Novidades na v1.0.68
+### Correções de Proliferação de Processos (G28)
+- `enrich`, `ingest --mode claude-code` e `ingest --mode codex` agora adquirem um singleton por namespace via `lock::acquire_job_singleton(job_type, namespace, wait_seconds)`.  Uma segunda invocação concorrente no mesmo banco falha rápido com `AppError::JobSingletonLocked { job_type, namespace }` (código de saída 75, classificado como retryable).  Isso previne o incidente de load average 276 de 2026-06-03 onde 4 invocações paralelas de `enrich` × 2 workers × 10 servidores MCP geraram ~192 processos.
+- `claude_runner::build_claude_command` agora respeita a env var `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`.  Quando definida para um diretório existente e vazio, o subprocesso é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, suprimindo servidores MCP do escopo user e a fan-out de 8-10 processos.  Deliberadamente evita `--strict-mcp-config` e `--mcp-config '{}'` porque [anthropics/claude-code#10787] documenta que o Claude Code CLI ignora ambas as flags.
+- Struct `retry::CircuitBreaker` adicionada com `AttemptOutcome::{Success, Transient, HardFailure}`.  Erros rate-limited e timeout são explicitamente excluídos da contagem, então um provider que se recupera não é penalizado.  Use-a em loops de retry customizados para limitar iterações em falhas persistentes.
+- `enrich` emite `tracing::warn!` (visível com `-v`) quando `--llm-parallelism > 4`, recomendando combinar com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` para manter a fan-out administrável.
+### Correção de Build Windows (G29)
+- `cargo install sqlite-graphrag` no Windows agora compila.  v1.0.66 e v1.0.67 quebravam com `error[E0308]: mismatched types` em `src/terminal.rs:29` porque `HANDLE` em `windows-sys >= 0.59` é `*mut c_void` (era `isize` em 0.48/0.52).  Substituímos o idiom unsafe por `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` está fixado em `=0.59.0` exato, e o CI agora roda `cargo check --target x86_64-pc-windows-msvc` em todo push.
+### Correções de Testes
+- 3 falhas de teste pré-existentes em `src/commands/{history,list,read}.rs` vazavam a env var `SQLITE_GRAPHRAG_DISPLAY_TZ` entre testes paralelos; corrigidas parseando a saída RFC3339 e comparando `timestamp()` contra `DateTime::UNIX_EPOCH` em vez de afirmar strings hardcoded `1970-01-01T00:00:00`.
+
 ## Novidades na v1.0.67
 ### Novos Comandos
 - `remember-batch` — Cria memórias em lote a partir de NDJSON via stdin em uma única invocação. Elimina a contenção de N processos em paralelo com `remember`. Suporta `--transaction` (tudo ou nada), `--force-merge` (atualizações idempotentes), `--fail-fast`.

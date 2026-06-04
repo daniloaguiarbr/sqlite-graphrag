@@ -230,6 +230,11 @@ sqlite-graphrag reclassify --name authentication --description "JWT-based authen
 - Output is NDJSON: phase events, per-item events (status: `done`/`failed`/`skipped`/`preview`), and summary line
 - Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 
+### Capping process proliferation on Claude Code runs (G28, v1.0.68)
+- Set `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/path/to/empty/dir` before invoking `enrich` or `ingest --mode claude-code` to suppress user-scoped MCP servers.  The empty directory must exist but contain no files; the CLI sets `CLAUDE_CONFIG_DIR=<that dir>` on the subprocess, which is the only mechanism upstream Claude Code actually honours (see [anthropics/claude-code#10787]).  We deliberately do NOT pass `--strict-mcp-config` or `--mcp-config '{}'` because Claude Code CLI ignores both.
+- Two `enrich` invocations on the same database now fail fast: the second one returns exit code 75 with `AppError::JobSingletonLocked { job_type: "enrich", namespace }` instead of stacking on top of the first.  Use the existing queue DB and `--resume` instead of running multiple invocations in parallel.
+- A `tracing::warn!` is emitted when `--llm-parallelism > 4`.  Each worker spawns a `claude -p` subprocess; without MCP isolation the typical fan-out is 8-20 extra child processes per worker.  Combine with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep the host responsive.
+
 
 ## Configuration and Namespace Notes
 ### Namespace Default

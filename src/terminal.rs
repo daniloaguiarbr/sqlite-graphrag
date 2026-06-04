@@ -10,6 +10,7 @@ pub fn init_console() {
 
 #[cfg(windows)]
 fn init_windows_console() {
+    use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Console::{
         GetConsoleMode, GetStdHandle, SetConsoleCP, SetConsoleMode, SetConsoleOutputCP,
         ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
@@ -20,13 +21,19 @@ fn init_windows_console() {
     // context before any output occurs.  GetStdHandle returns
     // INVALID_HANDLE_VALUE on failure (checked below); SetConsoleMode failure
     // is silently tolerated so the CLI degrades to plain text.
+    // G29 (v1.0.68): HANDLE was `isize` in windows-sys <= 0.52 and became
+    // `*mut c_void` in >= 0.59; the previous comparison `handle != 0 &&
+    // handle as isize != -1` only worked for the old type and now fails
+    // compilation.  Replaced with the type-safe idiom `!handle.is_null() &&
+    // handle != INVALID_HANDLE_VALUE`, which works for both type eras and
+    // also catches the distinct INVALID_HANDLE_VALUE sentinel ((HANDLE)-1).
     unsafe {
         SetConsoleOutputCP(CP_UTF8);
         SetConsoleCP(CP_UTF8);
 
         for handle_id in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            let handle = GetStdHandle(handle_id);
-            if handle != 0 && handle as isize != -1 {
+            let handle: HANDLE = GetStdHandle(handle_id);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
                 let mut mode: u32 = 0;
                 if GetConsoleMode(handle, &mut mode) != 0 {
                     let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
