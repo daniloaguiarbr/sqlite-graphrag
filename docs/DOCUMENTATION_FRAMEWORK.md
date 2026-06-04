@@ -40,7 +40,7 @@
 - NUNCA use `NOME-pt.md` sem o `-BR` completo
 
 
-## Camada 1 — Pasta Raiz (19 arquivos de documentação + 3 licenças + 4 configs)
+## Camada 1 — Pasta Raiz (18 arquivos MD + 2 pares de templates + 3 licenças + 4 configs)
 
 ### OBRIGATÓRIO — Inventário Completo da Raiz — Documentação Bilíngue
 - `README.md` + `README.pt-BR.md` — Porta de entrada do projeto
@@ -395,23 +395,32 @@
 
 ## Omissões Detectadas no Projeto Modelo — Gaps Estruturais
 
-### GAP — README.md e README.pt-BR.md NÃO contêm cross-reference bilíngue
-- O README.md NÃO contém link para README.pt-BR.md na primeira linha útil
-- O README.pt-BR.md NÃO contém link para README.md na primeira linha útil
-- TODOS os outros pares bilíngues (CONTRIBUTING, SECURITY, etc.) CONTÊM o cross-reference
+### STATUS LEGADO — Gaps identificados e corrigidos em versões anteriores
+- As três omissões abaixo foram DETECTADAS e CORRIGIDAS antes do v1.0.68
+- Mantidas aqui como referência histórica do que o framework exige
+- Projetos novos DEVEM satisfazer as três regras desde o primeiro release
+- Esta seção NÃO descreve o estado atual do projeto; o estado atual está em `gaps.md`
+
+### STATUS LEGADO — README.md e README.pt-BR.md NÃO continham cross-reference bilíngue
+- O README.md NÃO continha link para README.pt-BR.md na primeira linha útil
+- O README.pt-BR.md NÃO continha link para README.md na primeira linha útil
+- TODOS os outros pares bilíngues (CONTRIBUTING, SECURITY, etc.) já continham o cross-reference
 - REGRA: README.md DEVE conter `Read this document in [Portuguese (pt-BR)](README.pt-BR.md).` após badges
 - REGRA: README.pt-BR.md DEVE conter `Leia este documento em [inglês (EN)](README.md).` após badges
+- CORREÇÃO aplicada no projeto modelo antes do v1.0.68
 
-### GAP — INTEGRATIONS.md e INTEGRATIONS.pt-BR.md NÃO contêm cross-reference bilíngue
-- O INTEGRATIONS.md NÃO contém link para INTEGRATIONS.pt-BR.md
-- O INTEGRATIONS.pt-BR.md NÃO contém link para INTEGRATIONS.md
+### STATUS LEGADO — INTEGRATIONS.md e INTEGRATIONS.pt-BR.md NÃO continham cross-reference bilíngue
+- O INTEGRATIONS.md NÃO continha link para INTEGRATIONS.pt-BR.md
+- O INTEGRATIONS.pt-BR.md NÃO continha link para INTEGRATIONS.md
 - REGRA: INTEGRATIONS.md DEVE conter `Read this document in [Portuguese (pt-BR)](INTEGRATIONS.pt-BR.md).`
 - REGRA: INTEGRATIONS.pt-BR.md DEVE conter `Leia este documento em [inglês (EN)](INTEGRATIONS.md).`
+- CORREÇÃO aplicada no projeto modelo antes do v1.0.68
 
-### GAP — Ausência de GitHub Issue e PR Templates
-- O projeto NÃO contém `.github/ISSUE_TEMPLATE/` com templates de bug report e feature request
-- O projeto NÃO contém `.github/PULL_REQUEST_TEMPLATE.md` com checklist de PR
+### STATUS LEGADO — Ausência de GitHub Issue e PR Templates
+- O projeto NÃO continha `.github/ISSUE_TEMPLATE/` com templates de bug report e feature request
+- O projeto NÃO continha `.github/PULL_REQUEST_TEMPLATE.md` com checklist de PR
 - REGRA: TODO projeto open-source DEVE conter templates de issue e PR no GitHub
+- CORREÇÃO aplicada no projeto modelo antes do v1.0.68 — ver `gaps.md` entrada de resolução v1.0.68
 
 
 ## Camada Auxiliar — CI/CD Workflows (.github/workflows/)
@@ -485,33 +494,39 @@
 ## Checklist de Conformidade para Novos Projetos
 
 ### OBRIGATÓRIO — Antes do Primeiro Release
-- [ ] LICENSE + LICENSE-MIT + LICENSE-APACHE criados com textos completos
-- [ ] README.md + README.pt-BR.md criados com todas as seções obrigatórias e 5 badges
-- [ ] CHANGELOG.md + CHANGELOG.pt-BR.md criados com formato Keep a Changelog
-- [ ] CONTRIBUTING.md + CONTRIBUTING.pt-BR.md criados com fluxo completo
-- [ ] CODE_OF_CONDUCT.md + CODE_OF_CONDUCT.pt-BR.md criados com Contributor Covenant 2.1
-- [ ] SECURITY.md + SECURITY.pt-BR.md criados com SLAs definidas
-- [ ] INTEGRATIONS.md + INTEGRATIONS.pt-BR.md criados com catálogo inicial
-- [ ] llms.txt + llms.pt-BR.txt criados com resumo compacto
-- [ ] llms-full.txt criado com documentação inline completa
-- [ ] gaps.md criado com primeira rodada de acceptance testing
-- [ ] docs/AGENTS.md + docs/AGENTS.pt-BR.md criados com referência autocontida
-- [ ] docs/COOKBOOK.md + docs/COOKBOOK.pt-BR.md criados com receitas iniciais
-- [ ] docs/CROSS_PLATFORM.md + docs/CROSS_PLATFORM.pt-BR.md criados com targets
-- [ ] docs/HOW_TO_USE.md + docs/HOW_TO_USE.pt-BR.md criados com guia narrativo
-- [ ] docs/MIGRATION.md + docs/MIGRATION.pt-BR.md criados (mesmo que vazio para v1)
-- [ ] docs/TESTING.md + docs/TESTING.pt-BR.md criados com estratégia de testes
-- [ ] docs/schemas/README.md criado bilíngue inline com índice de schemas
-- [ ] docs/schemas/*.schema.json criados para cada subcomando com saída JSON
-- [ ] skill/<projeto>-en/SKILL.md criado com referência operacional completa
-- [ ] skill/<projeto>-pt/SKILL.md criado espelhando versão EN
-- [ ] .github/workflows/ci.yml criado com pipeline de validação multi-OS
-- [ ] .github/workflows/release.yml criado com pipeline de publicação em tags
-- [ ] .github/ISSUE_TEMPLATE/ criado com templates de bug e feature request
-- [ ] .github/PULL_REQUEST_TEMPLATE.md criado com checklist de validação
-- [ ] TODOS os cross-references entre idiomas verificados em TODOS os pares
-- [ ] NENHUM arquivo de documentação sem par bilíngue
-- [ ] NENHUM README ou INTEGRATIONS sem link para versão no outro idioma
+- [x] LICENSE + LICENSE-MIT + LICENSE-APACHE criados com textos completos
+- [x] README.md + README.pt-BR.md criados com todas as seções obrigatórias e 5 badges
+- [x] CHANGELOG.md + CHANGELOG.pt-BR.md criados com formato Keep a Changelog
+- [x] CONTRIBUTING.md + CONTRIBUTING.pt-BR.md criados com fluxo completo
+- [x] CODE_OF_CONDUCT.md + CODE_OF_CONDUCT.pt-BR.md criados com Contributor Covenant 2.1
+- [x] SECURITY.md + SECURITY.pt-BR.md criados com SLAs definidas
+- [x] INTEGRATIONS.md + INTEGRATIONS.pt-BR.md criados com catálogo inicial
+- [x] llms.txt + llms.pt-BR.txt criados com resumo compacto
+- [x] llms-full.txt criado com documentação inline completa
+- [x] gaps.md criado com primeira rodada de acceptance testing
+- [x] docs/AGENTS.md + docs/AGENTS.pt-BR.md criados com referência autocontida
+- [x] docs/COOKBOOK.md + docs/COOKBOOK.pt-BR.md criados com receitas iniciais
+- [x] docs/CROSS_PLATFORM.md + docs/CROSS_PLATFORM.pt-BR.md criados com targets
+- [x] docs/HOW_TO_USE.md + docs/HOW_TO_USE.pt-BR.md criados com guia narrativo
+- [x] docs/MIGRATION.md + docs/MIGRATION.pt-BR.md criados (mesmo que vazio para v1)
+- [x] docs/TESTING.md + docs/TESTING.pt-BR.md criados com estratégia de testes
+- [x] docs/schemas/README.md criado bilíngue inline com índice de schemas
+- [x] docs/schemas/*.schema.json criados para cada subcomando com saída JSON
+- [x] skill/<projeto>-en/SKILL.md criado com referência operacional completa
+- [x] skill/<projeto>-pt/SKILL.md criado espelhando versão EN
+- [x] .github/workflows/ci.yml criado com pipeline de validação multi-OS
+- [x] .github/workflows/release.yml criado com pipeline de publicação em tags
+- [x] .github/ISSUE_TEMPLATE/ criado com templates de bug e feature request
+- [x] .github/PULL_REQUEST_TEMPLATE.md criado com checklist de validação
+- [x] TODOS os cross-references entre idiomas verificados em TODOS os pares
+- [x] NENHUM arquivo de documentação sem par bilíngue
+- [x] NENHUM README ou INTEGRATIONS sem link para versão no outro idioma
+
+### OBRIGATÓRIO — Quando o Checklist Está 100% Concluído
+- MARQUE cada item como `[x]` no checklist acima
+- A remoção de qualquer item só é permitida quando ele vira legado documentado em `gaps.md`
+- Projetos que herdam o template DEVEM copiar o checklist já marcado como ponto de partida
+- ADICIONE novos itens quando o framework ganhar regras; nunca remova itens marcados como concluídos
 
 ### OBRIGATÓRIO — A Cada Release
 - [ ] CHANGELOG.md + CHANGELOG.pt-BR.md atualizados com mudanças da versão

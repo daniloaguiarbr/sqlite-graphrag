@@ -69,6 +69,19 @@
 - Unit tests in `src/commands/ingest_claude.rs` cover terminal_reason parsing, OAuth detection via apiKeySource, and body size pre-validation
 - Unit tests in `src/commands/rename.rs` and `src/commands/rename_entity.rs` cover same-name rejection with exit 1
 
+### v1.0.68 Regression Tests
+#### Windows HANDLE Type Fix (G29)
+- `tests/terminal_compile_windows.rs` is a new integration test that runs on every platform: confirms `terminal::init_console` and `should_use_ansi` stay callable from outside the crate
+- On Windows, the test additionally references the type-safe `HANDLE.is_null() + INVALID_HANDLE_VALUE` check; if the type contract regresses, `cargo check --target x86_64-pc-windows-msvc` in the `windows-build-check` CI job fails before this test is reached
+- The new CI job is the canonical regression check; the integration test is the local pre-publish sanity probe
+#### Job Singleton (G28-B)
+- Three unit tests in `src/lock.rs::tests`: `job_singleton_path_sanitises_namespace` (verifies kebab-case slug from arbitrary input), `job_singleton_blocks_second_invocation_same_namespace` (verifies `AppError::JobSingletonLocked` on second acquire), `job_singleton_allows_different_namespaces` (verifies per-namespace isolation)
+- Run via `cargo test --lib lock::tests` (no `#[serial]` because the per-namespace unique IDs in each test isolate them from shared-state interference)
+#### Circuit Breaker (G28-D)
+- Three unit tests in `src/retry.rs::circuit_breaker_tests`: `opens_after_threshold_consecutive_hard_failures`, `ignores_transient_errors`, `success_resets_consecutive_failures`.  These validate the AttemptOutcome classification that distinguishes `AppError::RateLimited` and `AppError::Timeout` (Transient) from `AppError::Validation` and `AppError::Conflict` (HardFailure)
+#### Timezone Pre-Existing Fixes
+- Three pre-existing test failures were fixed in `src/commands/{history,list,read}.rs`: tests now parse the ISO string via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` instead of asserting the hardcoded `1970-01-01T00:00:00` prefix.  This makes the assertions timezone-agnostic so the test suite is green regardless of `SQLITE_GRAPHRAG_DISPLAY_TZ` env var setting
+
 ### v1.0.67 New Command Tests
 - `remember-batch` tests in `src/commands/remember_batch.rs`: serialization tests for BatchItemEvent and BatchSummary
 - `completions` command: tested via `cargo run -- completions bash` smoke test

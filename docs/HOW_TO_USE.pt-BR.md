@@ -217,6 +217,11 @@ sqlite-graphrag recall "$QUERY_USUARIO" --k 5 --json \
 - Saída é NDJSON: eventos de fase, eventos por item (status: `done`/`failed`/`skipped`/`preview`) e linha de resumo
 - Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
 
+### Limitando proliferação de processos em execuções com Claude Code (G28, v1.0.68)
+- Defina `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/caminho/para/dir/vazio` antes de invocar `enrich` ou `ingest --mode claude-code` para suprimir servidores MCP do escopo user.  O diretório vazio precisa existir mas não conter arquivos; a CLI define `CLAUDE_CONFIG_DIR=<esse dir>` no subprocesso, que é o único mecanismo que o upstream do Claude Code realmente honra (veja [anthropics/claude-code#10787]).  Deliberadamente NÃO passamos `--strict-mcp-config` nem `--mcp-config '{}'` porque a CLI do Claude Code ignora ambas.
+- Duas invocações de `enrich` no mesmo banco agora falham rápido: a segunda retorna exit code 75 com `AppError::JobSingletonLocked { job_type: "enrich", namespace }` em vez de empilhar em cima da primeira.  Use a queue DB existente e `--resume` em vez de rodar múltiplas invocações em paralelo.
+- Um `tracing::warn!` é emitido quando `--llm-parallelism > 4`.  Cada worker spawna um subprocesso `claude -p`; sem isolamento MCP a fan-out típica é 8-20 processos filhos extras por worker.  Combine com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` para manter o host responsivo.
+
 
 ## Configuração e Notas de Namespace
 ### Namespace Padrão

@@ -26,6 +26,7 @@ secrets.toml
 /MEMORY.md
 memory/
 docs_rules/
+docs_prd/
 ralph-loop.local.md
 
 # IDE

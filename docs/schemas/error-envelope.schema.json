@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/error-envelope.schema.json",
   "title": "ErrorEnvelope",
-  "description": "Structured error envelope emitted to stdout by any sqlite-graphrag subcommand when --json is active and a handled error occurs. The process exits with a non-zero code matching the 'code' field.",
+  "description": "Structured error envelope emitted to stdout by any sqlite-graphrag subcommand when --json is active and a handled error occurs. The process exits with a non-zero code matching the 'code' field. Since v1.0.68 the `code: 75` envelope can also be emitted by the new `AppError::JobSingletonLocked { job_type, namespace }` variant (G28-B); the `message` field embeds the `job_type` and `namespace` values as quoted strings so agents can parse them with a simple regex (`job '(\\w+)'.*namespace '(\\w+)'`). For full programmatic access to variant fields, agents should branch on `code` and call the corresponding subcommand with `--dry-run` or inspect the namespace before retrying.",
   "type": "object",
   "required": ["error", "code", "message"],
   "additionalProperties": false,
   "properties": {
     "error":   { "type": "boolean", "const": true, "description": "Always true; signals to consumers that this line is an error envelope, not a success response." },
-    "code":    { "type": "integer", "description": "Exit code that the process will return, matching the sqlite-graphrag exit code table (e.g. 4 = not found, 9 = duplicate, 10 = database error)." },
-    "message": { "type": "string", "description": "Human-readable English description of the error." }
+    "code":    { "type": "integer", "description": "Exit code that the process will return, matching the sqlite-graphrag exit code table (e.g. 4 = not found, 9 = duplicate, 10 = database error, 75 = all concurrency slots occupied OR job singleton locked since v1.0.68)." },
+    "message": { "type": "string", "description": "Human-readable English description of the error. For `code: 75` since v1.0.68 the message follows the template 'job <job_type> for namespace \\'<namespace>\\' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>' when emitted by `enrich`, `ingest --mode claude-code`, or `ingest --mode codex`; the slot-saturation template 'all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75)' is the legacy shape and still emitted for commands that do NOT have a job singleton." }
   }
 }

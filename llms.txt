@@ -4,6 +4,8 @@
 
 27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
+- Read this document in [Portuguese (pt-BR)](llms.pt-BR.txt).
+
 
 ## Primary Documentation
 ### Canonical English sources for LLM ingestion
@@ -120,9 +122,18 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster sub
 - `14` filesystem I/O error: cache directory not writable, nonexistent ingest target directory
 - `15` database busy after retries: wait and retry
 - `20` internal or JSON serialization error
-- `75` EX_TEMPFAIL: all concurrency slots busy, retry with backoff
+- `75` EX_TEMPFAIL: all concurrency slots busy OR job singleton locked, retry with backoff
 - `77` available RAM below minimum required to load embedding model
 
+
+## What Changed in v1.0.68
+### Critical fixes (G28 + G29)
+- v1.0.68 is the first release since v1.0.65 that compiles on Windows via `cargo install`.  v1.0.66 and v1.0.67 broke with `error[E0308]` in `src/terminal.rs:29` because `HANDLE` in `windows-sys >= 0.59` is `*mut c_void` (was `isize` in 0.48/0.52).  Fix: `!handle.is_null() && handle != INVALID_HANDLE_VALUE` plus `windows-sys` pinned to `=0.59.0` exact, plus CI job `windows-build-check`.
+- `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` now acquire a per-namespace singleton via `lock::acquire_job_singleton(job_type, namespace, wait_seconds)`.  A second concurrent invocation on the same database returns `AppError::JobSingletonLocked { job_type, namespace }` (exit 75, retryable) instead of stacking 4 × N workers × 10 MCP servers.
+- `claude_runner::build_claude_command` now respects `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (opt-in).  When set to an empty directory, the subprocess is spawned with `CLAUDE_CONFIG_DIR=<that dir>`, suppressing user-scoped MCP servers.  This is the only mechanism Claude Code actually honours — `--strict-mcp-config` and `--mcp-config '{}'` are silently ignored per [anthropics/claude-code#10787].
+- `enrich` emits a `tracing::warn!` when `--llm-parallelism > 4`, recommending the combination with `CLAUDE_CONFIG_DIR` override.
+- `retry::CircuitBreaker` helper added with `AttemptOutcome::{Success, Transient, HardFailure}`.  Rate-limited and timeout errors are explicitly excluded from the failure count.
+- 3 pre-existing test failures in `src/commands/{history,list,read}.rs` fixed (timezone-agnostic assertions).
 
 ## Optional References
 ### Supplementary materials for deeper context
@@ -135,7 +146,7 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster sub
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.67 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.68 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
 - Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module

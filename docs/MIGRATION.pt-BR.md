@@ -1,5 +1,7 @@
 # Guia de Migração — neurographrag para sqlite-graphrag
 
+> Leia este documento em [inglês (EN)](MIGRATION.md).  Volte para o [README.md](../README.md) principal para a referência completa de comandos.
+
 - Este guia cobre o rename do legado `neurographrag` para `sqlite-graphrag v1.0.27`
 - O projeto renomeado preserva o mesmo conjunto central de funcionalidades do legado `neurographrag v2.3.0`
 - O crate e o repositório públicos já existem; use o checkout local apenas para validar mudanças não lançadas
@@ -72,6 +74,17 @@ sqlite-graphrag namespace-detect
 - `warn_if_non_canonical` agora emite warnings em `unlink` e `related` (antes apenas em `link`, `remember`, `ingest`)
 - Funções `errors_msg::*` sempre retornam inglês; JSON stdout é contrato de API determinístico somente em inglês
 - Exportação de grafo registra edges órfãs via `tracing::warn!` em vez de ignorá-las silenciosamente
+
+### v1.0.68 — 2 correções CRÍTICAS: build Windows (G29) e proliferação de processos (G28)
+- CORREÇÃO (G29) `cargo install sqlite-graphrag` no Windows agora compila.  v1.0.66 e v1.0.67 quebravam com `error[E0308]: mismatched types` em `src/terminal.rs:29` porque `HANDLE` em `windows-sys >= 0.59` é `*mut c_void` (era `isize` em 0.48/0.52).  Se você pulou v1.0.66 e v1.0.67 por causa da falha no Windows, esta é a primeira versão que compila no Windows desde v1.0.65.
+- ADICIONADO (G28-B) `AppError::JobSingletonLocked { job_type, namespace }` (exit 75, classificado como retryable).  `enrich`, `ingest --mode claude-code` e `ingest --mode codex` agora adquirem um singleton por namespace antes de qualquer trabalho, então duas invocações concorrentes no mesmo banco falham rápido em vez de empilhar.  Atualize pipelines que antes rodavam múltiplos `enrich` em paralelo para usar a queue DB e `--resume`, ou sequencie-os.
+- ADICIONADO (G28-A) env var `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (opt-in).  Quando definida para um diretório existente e vazio, o subprocesso do Claude Code é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, suprimindo servidores MCP do escopo user e a fan-out de 8-10 processos.  Defina esta var quando você tem muitos MCPs configurados mas quer uma árvore de subprocessos enxuta.
+- ADICIONADO (G28-D) struct `retry::CircuitBreaker` com `AttemptOutcome::{Success, Transient, HardFailure}`.  Erros rate-limited e timeout são explicitamente excluídos da contagem de falhas.  Opt-in para loops de retry customizados; os paths de retry internos continuam usando suas `RetryConfig` ajustadas por domínio.
+- ALTERADO (G28-D, não-breaking) `enrich` emite `tracing::warn!` quando `--llm-parallelism > 4`.  O padrão de 1 não mudou; usuários existentes rodando paralelismo > 1 veem o warning no stderr mas a operação completa normalmente.
+- ALTERADO (G29) `windows-sys` fixado em `=0.59.0` exato em `Cargo.toml`.  Versões de patch futuras na linha 0.59.x exigirão bump manual; isso é intencional para prevenir regressão silenciosa no tipo `HANDLE`.
+- ADICIONADO job de CI `windows-build-check` que roda `cargo check --target x86_64-pc-windows-msvc --lib --all-features` em todo push e PR.
+- CORREÇÃO de 3 falhas de teste pré-existentes (`src/commands/{history,list,read}.rs`) que vazavam a env var `SQLITE_GRAPHRAG_DISPLAY_TZ` entre testes paralelos; os testes agora são timezone-agnostic.
+- Sem migrações de banco em v1.0.68; `sqlite-graphrag migrate --json` é no-op.
 
 ### v1.0.67 — 2 NOVOS comandos, 24 correções de gaps, remember-batch, completions, migração V012
 - NOVO comando `remember-batch` para criação em lote de memórias via NDJSON no stdin

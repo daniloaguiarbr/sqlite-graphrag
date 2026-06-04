@@ -10,6 +10,30 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
+_Nenhuma ainda. v1.0.68 é a versão publicada mais recente; novos commits entram nesta seção até a próxima versão ser cortada._
+
+## [1.0.68] - 2026-06-03
+
+### Corrigido
+- `cargo install sqlite-graphrag` quebrava no Windows com `error[E0308]: mismatched types` em `src/terminal.rs:29` porque `HANDLE` em `windows-sys >= 0.59` é `*mut c_void` (era `isize` em 0.48/0.52).  Substituímos `handle != 0 && handle as isize != -1` pelo idiom type-safe `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  Também fixamos `windows-sys` em `=0.59.0` exato e adicionamos o job de CI `windows-build-check` que roda `cargo check --target x86_64-pc-windows-msvc` em todo push (G29).
+- `enrich` e `ingest --mode claude-code|codex` podiam ser invocados em paralelo no mesmo namespace e saturar a máquina (causa raiz do incidente de load average 276 em 2026-06-03).  Adicionamos `lock::acquire_job_singleton` por `(job_type, namespace)` e a nova variante `AppError::JobSingletonLocked { job_type, namespace }` com exit 75.  Uma segunda invocação concorrente agora falha rápido em vez de empilhar 4 × N workers × 10 processos MCP (G28-B).
+- `claude_runner::build_claude_command` agora respeita `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` — quando definido para um diretório existente e vazio, o subprocesso é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, suprimindo servidores MCP do escopo user e a fan-out de 8-10 processos que eles causam.  Deliberadamente NÃO passamos `--strict-mcp-config` / `--mcp-config '{}'` porque [anthropics/claude-code#10787] documenta que o Claude Code CLI ignora ambas as flags.  `CLAUDE_CONFIG_DIR` é o único mecanismo que o upstream honra (G28-A).
+- O módulo `retry` ganha um helper `CircuitBreaker` (com `AttemptOutcome::{Success,Transient,HardFailure}` e testes) que `enrich --retry-failed` pode usar para abortar loops de falha persistente.  Erros transient / rate-limited NÃO contam para o threshold, então um provider que se recupera não é penalizado (G28-D).
+- 3 falhas de teste pré-existentes em `src/commands/{history,list,read}.rs` que vazavam a env var `SQLITE_GRAPHRAG_DISPLAY_TZ` entre threads de teste paralelos e afirmavam strings hardcoded `1970-01-01T00:00:00` agora parseiam a saída ISO via `chrono::DateTime::parse_from_rfc3339` e comparam `timestamp()` contra `DateTime::UNIX_EPOCH` para asserções timezone-agnostic.  A suíte de testes completa agora fica verde em todo fuso horário (`UTC`, `America/Sao_Paulo`, `Europe/Berlin`, etc.) sem necessidade de setup por teste da env var.
+
+### Adicionado
+- `retry::CircuitBreaker` (struct + `record` / `is_open` / `reset`) — helper opt-in para loops de retry limitados.  Erros rate-limited e timeout são explicitamente excluídos da contagem.
+- `lock::acquire_job_singleton(job_type, namespace, wait_seconds)` — singleton de processo para comandos pesados.
+- `constants::JOB_SINGLETON_POLL_INTERVAL_MS = 1000` — intervalo de polling do singleton.
+- `errors::AppError::JobSingletonLocked { job_type, namespace }` — exit 75, classificado como retryable e com mensagem PT-BR localizada.
+- Job de CI `windows-build-check` que roda `cargo check --target x86_64-pc-windows-msvc --lib --all-features` para capturar regressões Windows antes do publish.
+- `tests/terminal_compile_windows.rs` — teste de regressão para `terminal::init_console` e `should_use_ansi`; no Windows também referencia a checagem type-safe de HANDLE.
+- `lock::tests` — 3 testes unitários cobrindo sanitização de namespace, bloqueio da segunda invocação e isolamento por namespace.
+
+### Alterado
+- `enrich` emite `tracing::warn!` (visível com `-v`) quando `llm_parallelism > 4`, recomendando combinar com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` para manter a fan-out de subprocessos administrável (G28-D, não-breaking).
+- `Cargo.toml`: `windows-sys` fixado em `=0.59.0` exato (era range `0.59`).
+
 ## [1.0.67] - 2026-06-01
 
 ### Adicionado

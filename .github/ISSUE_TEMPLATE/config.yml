@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: sqlite-graphrag documentation
+    url: https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENTS.md
+    about: Read the full agent integration guide, command reference, and exit code table before opening an issue.
+  - name: sqlite-graphrag GitHub Discussions
+    url: https://github.com/daniloaguiarbr/sqlite-graphrag/discussions
+    about: Open-ended Q&A, integration help, and architecture discussions live here. Use Discussions instead of Issues for "how do I…" questions.
+  - name: sqlite-graphrag Security Advisories
+    url: https://github.com/daniloaguiarbr/sqlite-graphrag/security/advisories
+    about: Report security vulnerabilities privately via GitHub Security Advisories. Do NOT open a public issue for suspected CVEs.
+  - name: sqlite-graphrag Roadmap and CHANGELOG
+    url: https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CHANGELOG.md
+    about: Check the CHANGELOG for known issues already fixed in recent releases before opening a duplicate report.

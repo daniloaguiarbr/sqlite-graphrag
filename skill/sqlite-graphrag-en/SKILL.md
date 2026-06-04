@@ -5,6 +5,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 
 
 ## Fundamental Principles
+
+- Read this document in [Portuguese (pt-BR)](../sqlite-graphrag-pt/SKILL.md).
 ### REQUIRED — Usage Philosophy
 - TREAT sqlite-graphrag as a local persistent memory layer
 - INVOKE always as a subprocess via `std::process::Command`
@@ -141,6 +143,39 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### Correct Pattern — remember-batch Examples
 - `echo '{"name":"a","type":"note","description":"x","body":"hello"}' | sqlite-graphrag remember-batch --json`
 - `cat batch.ndjson | sqlite-graphrag remember-batch --force-merge --json`
+
+
+## New in v1.0.68
+### REQUIRED — Process Lifecycle Governance (G28-B)
+- KNOW that `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` acquire a per-namespace singleton via `lock::acquire_job_singleton(job_type, namespace, wait_seconds)` before any work
+- TREAT `AppError::JobSingletonLocked { job_type, namespace }` (exit 75, retryable) as a signal that another invocation is in progress on the same database
+- DO NOT parallelise these commands against the same namespace — use the queue DB with `--resume` or sequence them
+- KNOW that the previous design (semaphore shared with all CLI commands) allowed 4 concurrent `enrich` invocations × 2 workers × 10 MCP servers = ~192 processes, which is the root cause of the 2026-06-03 276-load-average incident
+### REQUIRED — MCP Isolation via env var (G28-A)
+- SET `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/path/to/empty/dir` to suppress user-scoped MCP servers in `claude -p` subprocesses
+- KNOW that the empty directory MUST exist but contain no files; the CLI sets `CLAUDE_CONFIG_DIR=<that dir>` on the subprocess
+- KNOW that the empty dir is the ONLY mechanism upstream Claude Code actually honours — [anthropics/claude-code#10787] documents that `--strict-mcp-config` and `--mcp-config '{}'` are silently ignored
+- EXPECT a `tracing::warn!` when `--llm-parallelism > 4`, recommending the combination with `CLAUDE_CONFIG_DIR` override
+### REQUIRED — Circuit Breaker Helper (G28-D)
+- USE `retry::CircuitBreaker::new(threshold, cooldown)` to cap persistent-failure retry loops in custom code
+- KNOW that `AttemptOutcome::Transient` (from `AppError::RateLimited` or `AppError::Timeout`) does NOT count toward the failure threshold
+- KNOW that `AttemptOutcome::HardFailure` (from `AppError::Validation` or `AppError::Conflict`) counts; after `threshold` consecutive hits, `record()` returns `true` and the caller should abort
+- CALL `cb.reset()` when starting a new job to clear the consecutive-failure counter
+### REQUIRED — Windows HANDLE Type Safety (G29)
+- KNOW that v1.0.68 is the first release since v1.0.65 that compiles on Windows via `cargo install`
+- KNOW that `windows-sys >= 0.59` defines `HANDLE` as `*mut c_void` (was `isize` in 0.48/0.52); `Cargo.toml:111` pins `=0.59.0` exact
+- EXPECT a `windows-build-check` CI job to run `cargo check --target x86_64-pc-windows-msvc --lib --all-features` on every push
+- IF a user reports a Windows compile failure, redirect them to upgrade to v1.0.68 or apply the manual patch documented in `docs/CROSS_PLATFORM.md`
+### REQUIRED — Test Fixes (Timezone Leak)
+- KNOW that 3 pre-existing test failures in `src/commands/{history,list,read}.rs` are fixed in v1.0.68
+- KNOW that the tests previously leaked `SQLITE_GRAPHRAG_DISPLAY_TZ` between parallel test threads and asserted hardcoded `1970-01-01T00:00:00` strings
+- EXPECT the tests to now parse the ISO string via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` for timezone-agnostic assertions
+- TRUST that `cargo test --lib` is green on all timezones (`UTC`, `America/Sao_Paulo`, `Europe/Berlin`, etc.) since v1.0.68
+### FORBIDDEN — Process Lifecycle Anti-patterns (G28)
+- NEVER run multiple `enrich` invocations on the same database concurrently — they will saturate the host
+- NEVER pass `--strict-mcp-config` or `--mcp-config '{}'` to Claude Code CLI — it ignores both (issue #10787)
+- NEVER bypass the singleton via direct file manipulation of `~/.local/share/sqlite-graphrag/job-singleton-*.lock`
+- NEVER assume that `enrich` running for 30 minutes means it's stuck — long enrichments are normal
 
 
 ## CRUD — Bulk Ingest with ingest
@@ -700,11 +735,12 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - FILTER fields via `jaq` instead of regex on stdout
 - READ only fields actually returned by the subcommand
 - TREAT JSON as a SemVer-versioned API
-### REQUIRED — Error JSON Contract (v1.0.56)
+### REQUIRED — Error JSON Contract (v1.0.56, updated v1.0.68)
 - ALL error paths now emit a JSON object on stdout: `{"error": true, "code": N, "message": "..."}`
 - stderr still receives the human-readable error with a descriptive prefix
 - CONSUMERS must check `stdout` JSON first (look for `"error": true`), then fall back to the exit code
 - This applies to ALL commands when `--json` is passed; without `--json` errors go only to stderr
+- Since v1.0.68 the `code: 75` envelope has TWO distinct templates — both map to the same exit code: template A `job <job_type> for namespace '<namespace>' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>` (emitted by `enrich`, `ingest --mode claude-code`, `ingest --mode codex` when another invocation holds the singleton), and template B `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` (legacy semaphore exhaustion)
 ### REQUIRED — --json vs --format json Matrix
 - `--json` is accepted by ALL subcommands
 - `--format json` accepted only in a subset with `--format`
@@ -784,7 +820,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `14` equals I/O error (inaccessible file, permission, disk full)
 - `15` equals database busy; widen `--wait-lock`
 - `20` equals internal error or JSON serialization failure
-- `75` equals exhausted slots in ingest or other heavy command
+- `75` equals exhausted slots in ingest or other heavy command OR `AppError::JobSingletonLocked` from `enrich`, `ingest --mode claude-code`, or `ingest --mode codex` since v1.0.68; the `message` field embeds `job_type` and `namespace` for parsing via `job '(\w+)'.*namespace '(\w+)'` regex
 - `77` equals RAM pressure; wait for free memory
 ### FORBIDDEN — Error Anti-patterns
 - NEVER ignore a non-zero exit code as success

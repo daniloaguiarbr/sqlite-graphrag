@@ -77,6 +77,13 @@
 - Per-file events in claude-code mode include `entities`, `rels`, and `cost_usd` fields not present in normal ingest
 - `--mode codex` (added in v1.0.62) reuses the same NDJSON schema format as `--mode claude-code` — no separate codex schemas needed
 - Codex mode emits the same PhaseEvent, FileEvent, and Summary shapes; agents validating claude-code output can reuse those schemas unchanged
+
+### Error Envelope Changes in v1.0.68 (G28-B)
+- The `error-envelope.schema.json` `message` field for `code: 75` now has two distinct templates, both routed to the same exit code
+- Template A (new since v1.0.68, G28-B): `job <job_type> for namespace '<namespace>' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>` — emitted by `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` when a concurrent invocation holds the singleton
+- Template B (legacy): `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` — emitted by the counting semaphore for any other command
+- Agents can disambiguate the two with a regex on `message`: matches `^job ` for Template A and `^all ` for Template B
+- The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
@@ -116,6 +123,13 @@
 - Eventos por arquivo no modo claude-code incluem campos `entities`, `rels` e `cost_usd` não presentes na ingestão normal
 - `--mode codex` (adicionado na v1.0.62) reutiliza o mesmo formato NDJSON do `--mode claude-code` — nenhum schema codex separado é necessário
 - Modo Codex emite os mesmos shapes de PhaseEvent, FileEvent e Summary; agentes que validam saída claude-code podem reutilizar esses schemas sem alteração
+
+### Error Envelope Changes in v1.0.68 (G28-B)
+- The `error-envelope.schema.json` `message` field for `code: 75` now has two distinct templates, both routed to the same exit code
+- Template A (new since v1.0.68, G28-B): `job <job_type> for namespace '<namespace>' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>` — emitted by `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` when a concurrent invocation holds the singleton
+- Template B (legacy): `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` — emitted by the counting semaphore for any other command
+- Agents can disambiguate the two with a regex on `message`: matches `^job ` for Template A and `^all ` for Template B
+- The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
 - `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`

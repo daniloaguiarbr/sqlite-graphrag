@@ -3,7 +3,7 @@
 
 > Persistent memory for 27 AI agents in a single 25 MB Rust binary
 
-- Read the Portuguese version at [AGENTS.pt-BR.md](AGENTS.pt-BR.md)
+- Read this document in [Portuguese (pt-BR)](AGENTS.pt-BR.md).
 
 
 ## CLI Flag Aliases (since v1.0.35)
@@ -28,6 +28,17 @@
 - `merge-entities --names "a,b,c" --into <target> --json` — merges two or more source entities into a target entity; all edges from source nodes are redirected to the target; source nodes are deleted after merge
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
+
+## New in v1.0.68
+### Process Proliferation Fixes (G28)
+- `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` now acquire a per-namespace singleton via `lock::acquire_job_singleton(job_type, namespace, wait_seconds)`.  A second concurrent invocation against the same database fails fast with `AppError::JobSingletonLocked { job_type, namespace }` (exit code 75, classified as retryable).  This prevents the 2026-06-03 276-load-average incident where 4 parallel `enrich` invocations × 2 workers × 10 MCP servers spawned ~192 processes.
+- `claude_runner::build_claude_command` now respects the `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` env var.  When set to an existing empty directory, the subprocess is spawned with `CLAUDE_CONFIG_DIR=<that dir>`, suppressing user-scoped MCP servers and their 8-10-process fan-out.  Deliberately avoids `--strict-mcp-config` and `--mcp-config '{}'` because [anthropics/claude-code#10787] documents that Claude Code CLI ignores both flags.
+- `retry::CircuitBreaker` struct added with `AttemptOutcome::{Success, Transient, HardFailure}`.  Rate-limited and timeout errors are explicitly excluded from the failure count, so a provider that recovers is not penalised.  Use it in custom retry loops to cap persistent-failure iterations.
+- `enrich` emits a `tracing::warn!` (visible with `-v`) when `--llm-parallelism > 4`, recommending to combine with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep subprocess fan-out manageable.
+### Windows Build Fix (G29)
+- `cargo install sqlite-graphrag` on Windows now succeeds.  v1.0.66 and v1.0.67 broke with `error[E0308]: mismatched types` in `src/terminal.rs:29` because `HANDLE` in `windows-sys >= 0.59` is `*mut c_void` (was `isize` in 0.48/0.52).  Replaced the unsafe idiom with `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` is pinned to `=0.59.0` exact, and CI now runs `cargo check --target x86_64-pc-windows-msvc` on every push.
+### Test Fixes
+- 3 pre-existing test failures in `src/commands/{history,list,read}.rs` were leaking the `SQLITE_GRAPHRAG_DISPLAY_TZ` env var between parallel tests; fixed by parsing RFC3339 output and comparing `timestamp()` against `DateTime::UNIX_EPOCH` instead of asserting hardcoded `1970-01-01T00:00:00` strings.
 
 ## New in v1.0.67
 ### New Commands
