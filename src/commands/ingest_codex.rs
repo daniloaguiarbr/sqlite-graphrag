@@ -614,6 +614,12 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
         )));
     }
 
+    // G28-B (v1.0.68): acquire singleton before doing real work so two
+    // parallel `ingest --mode codex` invocations cannot co-exist.
+    let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+    let _singleton =
+        crate::lock::acquire_job_singleton(crate::lock::JobType::IngestCodex, &early_ns, None)?;
+
     // Stage 1: Validate binary
     let codex_binary = find_codex_binary(args.codex_binary.as_deref())?;
     let version = validate_codex_version(&codex_binary)?;

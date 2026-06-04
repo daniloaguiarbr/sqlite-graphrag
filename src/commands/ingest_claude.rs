@@ -574,6 +574,15 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         )));
     }
 
+    // G28-B (v1.0.68): acquire singleton before doing real work so two
+    // parallel `ingest --mode claude-code` invocations cannot co-exist.
+    let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+    let _singleton = crate::lock::acquire_job_singleton(
+        crate::lock::JobType::IngestClaudeCode,
+        &early_ns,
+        None,
+    )?;
+
     // Stage 1: Validate
     let claude_binary = find_claude_binary(args.claude_binary.as_deref())?;
     let version = validate_claude_version(&claude_binary)?;
