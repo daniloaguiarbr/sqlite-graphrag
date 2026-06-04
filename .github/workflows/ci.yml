@@ -128,6 +128,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-features
 
+  # G29 (v1.0.68): cross-compile check to catch HANDLE-type regressions on
+  # Windows before publish.  Host arch on the runner is x86_64, so x86_64-pc-
+  # windows-msvc catches the type check without needing the full Windows
+  # linker (lib.exe) installed.
+  windows-build-check:
+    name: Windows MSVC cross-compile (G29)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check --target x86_64-pc-windows-msvc
+        run: timeout 600 cargo check --target x86_64-pc-windows-msvc --lib --all-features
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
