@@ -8,15 +8,18 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # v1.0.69: opt into Node.js 24 runtime ahead of the 2026-06-16 default
+  # migration (see ci.yml for the full rationale).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   validate:
     name: Validate (cargo publish dry-run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo publish --dry-run --allow-dirty
 
   build-matrix:
@@ -57,7 +60,7 @@ jobs:
           # macos-13 is the Intel runner; macos-latest is now Apple Silicon.
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -67,7 +70,7 @@ jobs:
         if: matrix.use-cross != true
         run: rustup target add ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
         with:
           key: ${{ matrix.target }}
 
@@ -106,7 +109,7 @@ jobs:
           7z a "$pkg_name.zip" "$pkg_name"
           certutil -hashfile "$pkg_name.zip" SHA256 > "$pkg_name.zip.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: sqlite-graphrag-${{ matrix.target }}
           path: |
@@ -122,9 +125,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts/
 
@@ -177,9 +180,9 @@ jobs:
     needs: publish-github-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: |
           echo "crates.io publication is intentionally manual for sqlite-graphrag"
           echo "run 'cargo login' once locally and then 'cargo publish' when you are ready"

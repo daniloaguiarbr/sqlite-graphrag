@@ -49,9 +49,35 @@ impl Language {
                 );
             }
         }
-        // Priority 2: cross-platform locale detection via native OS APIs.
-        // Windows: GetUserDefaultLocaleName; macOS: CFLocaleCopyCurrent;
-        // Linux/BSD: reads POSIX vars (LC_ALL > LC_MESSAGES > LANG).
+        // Priority 2: POSIX locale precedence LC_ALL > LC_MESSAGES > LANG.
+        // We read these via std::env (not via sys_locale) because:
+        // (a) `sys_locale::get_locale()` calls into native OS APIs (CFLocaleCopyCurrent
+        //     on macOS, GetUserDefaultLocaleName on Windows) which cache the
+        //     system locale and IGNORE env vars set at runtime by tests;
+        // (b) POSIX specifies LC_ALL > LC_MESSAGES > LANG ordering and an
+        //     unrecognised LC_ALL value must stop iteration (fall back to
+        //     English default).
+        for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Ok(v) = std::env::var(var) {
+                if v.is_empty() {
+                    continue;
+                }
+                let lower = v.to_lowercase();
+                if lower.starts_with("pt") {
+                    return Language::Portuguese;
+                }
+                if lower.starts_with("en") {
+                    return Language::English;
+                }
+                // Unrecognised value in a higher-precedence variable stops
+                // iteration per POSIX.1-2017 §8.2.
+                if var == "LC_ALL" {
+                    return Language::English;
+                }
+            }
+        }
+        // Priority 3: cross-platform locale detection via native OS APIs.
+        // Only reached when no POSIX env var is set.
         if let Some(locale) = sys_locale::get_locale() {
             let lower = locale.to_lowercase();
             if lower.starts_with("pt") {

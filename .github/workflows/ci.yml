@@ -9,13 +9,18 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # v1.0.69: opt into Node.js 24 runtime ahead of the 2026-06-16 default
+  # migration. Runner warning spam is also a confirmed bug
+  # (actions/runner#4295), so we additionally pin every JavaScript action
+  # to a major version that targets Node 24 (checkout@v5, cache@v5, etc.).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -29,11 +34,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -44,11 +49,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Cache embedding ONNX models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/sqlite-graphrag/models
@@ -88,11 +93,11 @@ jobs:
     name: Slow Contract Suites
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Cache embedding ONNX models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/sqlite-graphrag/models
@@ -112,9 +117,9 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -123,9 +128,9 @@ jobs:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.88
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo check --all-features
 
   # G29 (v1.0.68): cross-compile check to catch HANDLE-type regressions on
@@ -136,11 +141,11 @@ jobs:
     name: Windows MSVC cross-compile (G29)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: cargo check --target x86_64-pc-windows-msvc
         run: timeout 600 cargo check --target x86_64-pc-windows-msvc --lib --all-features
 
@@ -148,9 +153,9 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo install cargo-audit --locked
       - run: cargo audit
 
@@ -158,9 +163,9 @@ jobs:
     name: Dependency Policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - run: cargo install cargo-deny --locked
       - run: cargo deny check advisories licenses bans sources
 
@@ -168,9 +173,9 @@ jobs:
     name: Unsafe Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Install cargo-geiger
         run: cargo install cargo-geiger --locked || true
       - name: Audit unsafe density
@@ -182,11 +187,11 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Install cargo-nextest and llvm-cov
         run: |
           cargo install cargo-nextest --version 0.9.114 --locked
@@ -195,7 +200,7 @@ jobs:
         env:
           RUST_TEST_THREADS: "2"
         run: cargo llvm-cov nextest --profile heavy --features slow-tests --lcov --output-path lcov.info
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: coverage-lcov
           path: lcov.info
@@ -205,7 +210,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Check commit messages for agent co-authors
@@ -223,9 +228,9 @@ jobs:
     name: Cargo audit (vulnerabilities + unmaintained advisories)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Run cargo audit
@@ -247,7 +252,7 @@ jobs:
     name: Language policy (English-only outside i18n)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Forbid Portuguese in /// doc comments
@@ -313,9 +318,9 @@ jobs:
     name: Loom Concurrency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Run loom tests
         env:
           RUSTFLAGS: "--cfg sqlite_graphrag_loom"
@@ -328,11 +333,11 @@ jobs:
     name: Miri Unsafe Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Run miri on pure-Rust unsafe tests
         run: |
           cargo +nightly miri test -- \
@@ -344,11 +349,11 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.8
       - name: Download baseline artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: bench-baseline
           path: target/criterion
@@ -358,7 +363,7 @@ jobs:
           RUST_TEST_THREADS: "2"
         run: timeout 900 cargo bench --bench regression_baseline -- --quick
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bench-baseline
           path: target/criterion
@@ -368,7 +373,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-careful
       - run: timeout 600 cargo +nightly careful test -- --test-threads=2
@@ -377,7 +382,7 @@ jobs:
     name: CHANGELOG version sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Verify CHANGELOG matches Cargo.toml version
         run: |
           CARGO_VERSION=$(grep -m 1 '^version = ' Cargo.toml | cut -d '"' -f 2)
@@ -393,15 +398,15 @@ jobs:
           fi
           echo "OK: both CHANGELOGs have [$CARGO_VERSION] entry"
 
-  coverage:
+  coverage-threshold:
     name: Coverage threshold
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@v2
       - name: Generate coverage
         run: cargo llvm-cov --text --output-path coverage.txt
       - name: Enforce 75% threshold

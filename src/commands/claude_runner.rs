@@ -48,6 +48,7 @@ const ENV_WHITELIST_WINDOWS: &[&str] = &[
 ];
 
 /// Default virtual memory limit for LLM subprocesses (4 GiB).
+#[cfg(target_os = "linux")]
 const DEFAULT_SUBPROCESS_MEMORY_LIMIT_MB: u64 = 4096;
 
 // G28-C (v1.0.69): process lifecycle. The G28 gap asks for
