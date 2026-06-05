@@ -9,7 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_None yet. v1.0.69 is the latest in-progress release; new commits land in this section until the next version is cut._
+_None yet. v1.0.70 is the latest in-progress release; new commits land in this section until the next version is cut._
+
+## [1.0.70] - 2026-06-05
+
+### Fixed
+
+- **i18n POSIX locale precedence**: `Language::from_env_or_locale()` in `src/i18n.rs:34` now implements manual POSIX precedence `LC_ALL > LC_MESSAGES > LANG` via `std::env::var()` instead of calling `sys_locale::get_locale()` directly. The previous implementation ignored env vars set at runtime because `CFLocaleCopyCurrent()` (macOS) and `GetUserDefaultLocaleName` (Windows) cache the system locale. Three i18n tests now pass: `fallback_english_when_env_absent`, `posix_precedence_lc_all_overrides_lang`, `posix_precedence_lc_all_unrecognized_stops_iteration`.
+
+- **GitHub Actions Node 24 migration**: All JavaScript actions in `.github/workflows/ci.yml` and `.github/workflows/release.yml` upgraded ahead of the 2026-06-16 default Node 24 migration and 2026-09-16 Node 20 removal. `actions/checkout@v4` → `@v5`, `actions/cache@v4` → `@v5`, `actions/upload-artifact@v4` → `@v5`, `actions/download-artifact@v4` → `@v5`, `taiki-e/install-action` → `@v2`, `Swatinem/rust-cache` pinned to `@v2.8` (no v3 GA). Added `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` in env global of both workflows as defense-in-depth.
+
+- **Duplicate job key in ci.yml**: Renamed the second `coverage:` job at `ci.yml:396` to `coverage-threshold:`. GitHub Actions schema strict validation was rejecting the workflow with `'coverage' is already defined` at line 396 col 3, blocking all 21 jobs from running.
+
+- **dead_code warning in claude_runner.rs**: Added `#[cfg(target_os = "linux")]` to the `DEFAULT_SUBPROCESS_MEMORY_LIMIT_MB` constant (value 4096) at `src/commands/claude_runner.rs:51`. The constant was only referenced from the Linux-only `spawn_with_memory_limit` function and produced `dead_code` warnings on macOS and Windows builds. Resolved without using `#[allow(dead_code)]` (forbidden by `docs_rules`).
+
+### Validation
+
+- 745 lib tests pass (was 742 pass + 3 fail), 0 failed, 3 ignored
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings
+- `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features`: 0 warnings
+- `cargo audit`: 0 vulnerabilities (2 allowed: RUSTSEC-2024-0436 paste unmaintained, RUSTSEC-2025-0119 tokenizers unmaintained)
+- `cargo deny check advisories licenses bans sources`: all ok
+- `cargo publish --dry-run --allow-dirty`: 268 files, 0 sensitive
+- `cargo package --list --allow-dirty`: no `.env`/`.pem`/`.key`/`credentials`/`docs_rules`/`.claude`/`.serena`/`CLAUDE.md`/`AGENTS.md`
 
 ## [1.0.69] - 2026-06-05
 

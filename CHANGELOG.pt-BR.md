@@ -10,7 +10,29 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
-_Nenhuma ainda. v1.0.69 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+_Nenhuma ainda. v1.0.70 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+
+## [1.0.70] - 2026-06-05
+
+### Corrigido
+
+- **Precedência POSIX de locale no i18n**: `Language::from_env_or_locale()` em `src/i18n.rs:34` agora implementa precedência POSIX manual `LC_ALL > LC_MESSAGES > LANG` via `std::env::var()` em vez de chamar `sys_locale::get_locale()` diretamente. A implementação anterior ignorava variáveis de ambiente setadas em runtime porque `CFLocaleCopyCurrent()` (macOS) e `GetUserDefaultLocaleName` (Windows) cacheiam o locale do sistema. Três testes de i18n agora passam: `fallback_english_when_env_absent`, `posix_precedence_lc_all_overrides_lang`, `posix_precedence_lc_all_unrecognized_stops_iteration`.
+
+- **Migração Node 24 em GitHub Actions**: Todas as ações JavaScript em `.github/workflows/ci.yml` e `.github/workflows/release.yml` atualizadas antes da migração default para Node 24 em 2026-06-16 e remoção do Node 20 em 2026-09-16. `actions/checkout@v4` → `@v5`, `actions/cache@v4` → `@v5`, `actions/upload-artifact@v4` → `@v5`, `actions/download-artifact@v4` → `@v5`, `taiki-e/install-action` → `@v2`, `Swatinem/rust-cache` pinado em `@v2.8` (sem v3 GA). Adicionado `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` no env global de ambos os workflows como cinto-e-suspensórios.
+
+- **Chave de job duplicada em ci.yml**: Renomeado o segundo job `coverage:` em `ci.yml:396` para `coverage-threshold:`. O validador estrito de schema do GitHub Actions rejeitava o workflow com `'coverage' is already defined` na linha 396 coluna 3, bloqueando todos os 21 jobs de rodarem.
+
+- **Aviso de dead_code em claude_runner.rs**: Adicionado `#[cfg(target_os = "linux")]` à constante `DEFAULT_SUBPROCESS_MEMORY_LIMIT_MB` (valor 4096) em `src/commands/claude_runner.rs:51`. A constante era referenciada apenas pela função Linux-only `spawn_with_memory_limit` e gerava avisos de `dead_code` em builds de macOS e Windows. Resolvido sem usar `#[allow(dead_code)]` (proibido pelas `docs_rules`).
+
+### Validação
+
+- 745 testes lib passam (eram 742 pass + 3 fail), 0 falharam, 3 ignorados
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings
+- `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features`: 0 warnings
+- `cargo audit`: 0 vulnerabilidades (2 permitidas: RUSTSEC-2024-0436 paste unmaintained, RUSTSEC-2025-0119 tokenizers unmaintained)
+- `cargo deny check advisories licenses bans sources`: tudo ok
+- `cargo publish --dry-run --allow-dirty`: 268 arquivos, 0 sensíveis
+- `cargo package --list --allow-dirty`: sem `.env`/`.pem`/`.key`/`credentials`/`docs_rules`/`.claude`/`.serena`/`CLAUDE.md`/`AGENTS.md`
 
 ## [1.0.69] - 2026-06-05
 
