@@ -228,7 +228,7 @@ pub fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
 ///
 /// G28-A (v1.0.68) + OAuth-only hardening (v1.0.69, mandated by gaps.md
 /// lines 41-49): the command ALWAYS uses the OAuth flow. The flag set
-/// is the canonical one documented in gaps.md Correção A:
+/// is the canonical one documented in gaps.md Fix A:
 ///
 /// ```text
 /// claude -p "TAREFA" \

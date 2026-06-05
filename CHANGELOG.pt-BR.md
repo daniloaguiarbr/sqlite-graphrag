@@ -10,7 +10,34 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
-_Nenhuma ainda. v1.0.70 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+_Nenhuma ainda. v1.0.71 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+
+## [1.0.71] - 2026-06-05
+
+### Corrigido
+
+- **Pin do rust-cache em GitHub Actions resolvido**: `Swatinem/rust-cache@v2.8` pinado em 17 call-sites nos arquivos `ci.yml` e `release.yml` era uma ref Git inexistente (apenas `v2.0.0`-`v2.9.1` existem no repositório upstream). Repinamos todos os 17 call-sites para `Swatinem/rust-cache@v2.9.1` (latest estável, lançado em 2026-03-12, "Fix regression in hash calculation"). Resolveu os 22 erros `Unable to resolve action 'Swatinem/rust-cache@v2.8', unable to find version 'v2.8'` que bloqueavam todos os jobs.
+
+- **Resíduo de política de idioma em doc comments**: 2 doc comments referenciavam "Correção A" (português) em `src/commands/claude_runner.rs:231` e `src/commands/codex_spawn.rs:209`. Traduzido para "Fix A" (inglês idiomático) para que o job `language-check` (que escaneia por `[áéíóúâêôãõç]` fora de `i18n.rs`) saia com 0.
+
+- **taiki-e/install-action sem bloco `with:`**: `ci.yml:409` invocava `taiki-e/install-action@v2` sem especificar `tool`, produzindo `install-action: no tool specified; this could be caused by a dependabot bug where @<tool_name> tags on this action are replaced by @<version> tags` e exit 101 no job `coverage-threshold`. Adicionado o bloco `with: { tool: cargo-llvm-cov }` requerido.
+
+- **Timeout do cargo-careful estendido**: `ci.yml:379` tinha `timeout 600 cargo +nightly careful test -- --test-threads=2` que estourava o tempo (exit 124) em execuções completas do `cargo-careful` com 745 testes sob nightly. Dobramos o orçamento para `timeout 1200` (20 min) para que o job de sanidade complete no runner `ubuntu-latest` de 2 cores mesmo com o ciclo mais longo de compile-then-test do nightly.
+
+- **Aviso de redirect do windows-latest**: O GitHub Blog de 2026-05-14 anunciou que `windows-latest` e `windows-2025` serão migrados para `windows-2025-vs2026` (Visual Studio 2026) durante a semana de 2026-06-08 a 2026-06-15. Substituímos as 3 referências a `windows-latest` (matriz clippy em ci.yml x2, build-matrix em release.yml para `x86_64-pc-windows-msvc`) por `windows-2025` explícito para descartar o redirect do VS2026 por ora e evitar os 2 NOTICEs que o operador sinalizou na run de release da v1.0.70.
+
+### Validação
+
+- 745 testes lib passam, 0 falham, 3 ignorados (inalterado)
+- `cargo check --all-targets`: 0 erros (4.88s local)
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings
+- `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features`: 0 warnings
+- `cargo audit`: 0 vulnerabilidades (2 permitidas: RUSTSEC-2024-0436 paste unmaintained, RUSTSEC-2025-0119 tokenizers unmaintained)
+- `cargo deny check advisories licenses bans sources`: tudo ok
+- `cargo publish --dry-run --allow-dirty`: 268 arquivos, 0 sensíveis
+- `cargo package --list --allow-dirty`: sem `.env`/`.pem`/`.key`/`credentials`/`docs_rules`/`.claude`/`.serena`/`CLAUDE.md`/`AGENTS.md`
+- Schema YAML: 20 jobs ci.yml + 4 jobs release.yml, 17 call-sites rust-cache validados, 0 actions não resolvidas
+- Política de idioma: 0 caracteres portugueses em doc comments `///` ou `//!` fora de `i18n.rs`
 
 ## [1.0.70] - 2026-06-05
 

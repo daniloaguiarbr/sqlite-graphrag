@@ -206,7 +206,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
 ///
 /// G31 + OAuth-only hardening (v1.0.69, mandated by gaps.md lines 41-49):
 /// the command ALWAYS uses the OAuth `auth.json` flow. The flag set is
-/// the canonical one documented in gaps.md Correção A:
+/// the canonical one documented in gaps.md Fix A:
 ///
 /// ```text
 /// codex exec \

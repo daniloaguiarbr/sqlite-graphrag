@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.8
+      - uses: Swatinem/rust-cache@v2.9.1
       - run: cargo publish --dry-run --allow-dirty
 
   build-matrix:
@@ -43,7 +43,7 @@ jobs:
             os: macos-latest
             use-cross: false
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: windows-2025
             use-cross: false
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
@@ -70,7 +70,7 @@ jobs:
         if: matrix.use-cross != true
         run: rustup target add ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2.8
+      - uses: Swatinem/rust-cache@v2.9.1
         with:
           key: ${{ matrix.target }}
 
@@ -182,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.8
+      - uses: Swatinem/rust-cache@v2.9.1
       - run: |
           echo "crates.io publication is intentionally manual for sqlite-graphrag"
           echo "run 'cargo login' once locally and then 'cargo publish' when you are ready"
