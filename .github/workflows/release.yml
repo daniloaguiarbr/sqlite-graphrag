@@ -111,7 +111,7 @@ jobs:
           7z a "$pkg_name.zip" "$pkg_name"
           certutil -hashfile "$pkg_name.zip" SHA256 > "$pkg_name.zip.sha256"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: sqlite-graphrag-${{ matrix.target }}
           path: |

@@ -3,6 +3,28 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.73] - 2026-06-05
+
+### Corrigido
+
+- **`linker 'clang' not found` em `Build aarch64-unknown-linux-gnu` (cross + Docker)**: a action `cross` cria um contêiner isolado a partir de `ghcr.io/cross-rs/aarch64-unknown-linux-gnu` e executa `cargo build` dentro dele. A imagem base do contêiner NÃO vem com `clang` nem `mold`. A composite action `install-mold-linker` no host instala esses binários apenas no runner do GitHub Actions, não dentro do contêiner cross. O bloco `pre-build` no `Cross.toml` instalava apenas `libssl-dev` + `pkg-config`, deixando o rustc incapaz de localizar `clang` para os build scripts de `proc-macro2`, `quote` e `libc`. Exit code 101. Adicionados `clang`, `mold` e `lld` ao `apt install` do `pre-build` para `[target.aarch64-unknown-linux-gnu]`, além de symlinks `ln -sf` em `/usr/local/bin` para que o contêiner cross os localize via `$PATH` independentemente da tag da imagem base.
+
+- **Avisos de depreciação do Node.js 20 em 4 callsites de `actions/upload-artifact@v5`**: a variável `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` forçava a action v5 (que declara Node 20 no manifesto) a rodar em Node 24, produzindo 4 avisos idênticos de depreciação (`actions/upload-artifact@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/`). Promovidos todos os 3 callsites para `actions/upload-artifact@v6` (1 em `release.yml`, 2 em `ci.yml`). A v6 declara Node 24 como runtime padrão e elimina o aviso. Os nomes de artefato (`coverage-lcov`, `bench-baseline`, `sqlite-graphrag-${{ matrix.target }}`) são únicos em todo o workflow, portanto a breaking change da v6 (proibição de múltiplos uploads com mesmo nome em um run) não se aplica.
+
+- **Avisos de tap não confiável do Homebrew em `Build aarch64-apple-darwin`**: o passo macOS em `install-mold-linker/action.yml` executava `brew update` em um ambiente com `aws/tap`, `azure/bicep` e `hashicorp/tap` registrados, porém sem confiança explícita. O Homebrew 5.2.0/6.0.0 tornará `HOMEBREW_REQUIRE_TAP_TRUST=1` o padrão, e o texto do aviso estava ficando ruidoso (`brew install mold` dispara avisos estilo `brew doctor` para os taps não confiáveis, mesmo que nenhum deles seja usado). Definido `HOMEBREW_NO_REQUIRE_TAP_TRUST=1` no bloco `env` do passo macOS. Nenhum dos taps removidos é necessário para `brew install mold`.
+
+### Informativo
+
+- **Redirecionamento `windows-2025` para `windows-2025-vs2026` em 15 de junho de 2026**: aviso de uma linha do runner `windows-2025` durante `Build x86_64-pc-windows-msvc` anunciando o redirecionamento automático iminente. O build em si é bem-sucedido; o aviso fica registrado para planejamento futuro. Nenhuma alteração de código é necessária para a v1.0.73; uma release posterior trocará a label do runner após a data de corte.
+
+### Validação
+
+- Schema YAML: `python3 -c "import yaml; yaml.safe_load(...)"` válido para `ci.yml` (20 jobs), `release.yml` (4 jobs), `action.yml`
+- Schema TOML: `python3 tomllib.load(Cross.toml)` válido; array `pre-build` possui 6 entradas
+- Migração `actions/upload-artifact@v6`: 3/3 callsites atualizados, sem colisões de `name:` em todo o workflow
+- `Cross.toml` pre-build: 3 novos pacotes apt (`clang`, `mold`, `lld`) + 3 symlinks; imagem do contêiner será recacheada pelo cross-rs no primeiro run
+- Passo macOS da composite action: bloco `env` estendido com `HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"`
+
 Todas as mudanças notáveis deste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),

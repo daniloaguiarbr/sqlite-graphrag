@@ -1,6 +1,16 @@
+# v1.0.73: install clang + mold + lld to satisfy `.cargo/config.toml`'s
+# `linker = "clang"` + `rustflags = ["-C", "link-arg=-fuse-ld=mold"]`
+# which is mounted into the cross container via the project volume.
+# Without these, rustc fails with `error: linker 'clang' not found`
+# when building `proc-macro2`/`quote`/`libc` build scripts.
+# Symlink `clang`/`mold`/`ld.lld` into /usr/local/bin so the cross
+# container picks them up via $PATH regardless of the base image.
 [target.aarch64-unknown-linux-gnu]
 pre-build = [
   "dpkg --add-architecture $CROSS_DEB_ARCH",
   "apt-get update",
-  "apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH pkg-config"
+  "apt-get install --assume-yes clang mold lld libssl-dev:$CROSS_DEB_ARCH pkg-config",
+  "ln -sf /usr/bin/clang /usr/local/bin/clang",
+  "ln -sf /usr/bin/mold /usr/local/bin/mold",
+  "ln -sf /usr/bin/ld.lld /usr/local/bin/ld.lld"
 ]
