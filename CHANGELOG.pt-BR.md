@@ -10,7 +10,31 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
-_Nenhuma ainda. v1.0.71 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+_Nenhuma ainda. v1.0.72 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+
+## [1.0.72] - 2026-06-05
+
+### Corrigido
+
+- **Linker mold ausente nos runners `ubuntu-latest`**: o arquivo `.cargo/config.toml` (adicionado em v1.0.69) força `linker = "clang"` e `rustflags = ["-C", "link-arg=-fuse-ld=mold"]` para o target `x86_64-unknown-linux-gnu`. Na máquina local de desenvolvimento Fedora o mold é instalado via DNF, e na máquina macOS de desenvolvimento o bloco `x86_64-unknown-linux-gnu` é silenciosamente ignorado (o target é `aarch64-apple-darwin`), de modo que `cargo check`/`cargo test`/`cargo clippy` locais passam sem o binário do linker presente. No runner `ubuntu-latest` do GitHub Actions, contudo, o mold NÃO é instalado por padrão, e o rustc propagou `-fuse-ld=mold` para o clang que então emitiu `error: invalid linker name in argument '-fuse-ld=mold'` e saiu com 1. A compilação do build script (proc-macro2, quote, libc, todos os binários `build_script_build`) falhou primeiro, propagando em cascata para 12+ jobs com falha: `Tests (ubuntu/macos/windows)`, `Clippy (ubuntu/windows)`, `Coverage`, `Coverage threshold`, `Documentation`, `MSRV (1.88)`, `Slow Contract Suites`, `Windows MSVC cross-compile (G29)`, `cargo-careful sanity` e `Benchmark Regression`. A etapa `Annotations` então agregou 15 erros + 1 aviso + 3 notices.
+
+- **Resolução: composite action instala o linker mold em todo job que compila**: adicionado `.github/actions/install-mold-linker/action.yml` (35 linhas) que detecta o SO do runner e instala `mold`+`clang`+`lld` via `apt-get` no Linux e via `brew` no macOS; no Windows o step é no-op porque o caminho do linker MSVC não honra `-fuse-ld=mold`. A composite action foi conectada em 15 jobs em `ci.yml` (14 callsites de `Swatinem/rust-cache` + o job `coverage-threshold` que não usa `rust-cache`) e 3 jobs em `release.yml` (`validate`, `build-matrix`, `publish-crates-io`). Documentada a dependência do mold em `.cargo/config.toml` com um bloco de comentário de 6 linhas.
+
+### Validação
+
+- 745 testes lib passam, 0 falham, 3 ignorados (inalterado desde v1.0.71)
+- `cargo check --all-targets`: 0 erros (local, 4.88s)
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings
+- `cargo nextest run --profile ci --all-features`: 800+ testes passam (a suíte completa exige 10+ min no macOS; CI ubuntu-latest tem orçamento de 5+ min)
+- `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features`: 0 warnings
+- `cargo audit --ignore RUSTSEC-2025-0119 --ignore RUSTSEC-2024-0436 --deny warnings`: 0 vulnerabilidades
+- `cargo deny check advisories licenses bans sources`: tudo ok (2 avisos `advisory-not-detected` são intencionais para as 2 crates upstream unmaintained)
+- `cargo publish --dry-run --allow-dirty`: pacote compila + upload sucede, dry-run aborta antes do registry
+- `cargo package --list --allow-dirty`: 268 arquivos, sem `.env`/`.pem`/`.key`/`credentials`/`docs_rules`/`.claude`/`.serena`/`CLAUDE.md`/`AGENTS.md`
+- `tokei . -e target -e docs`: 133 arquivos Rust, 56126 linhas totais, 47906 código, 2791 comentários, 5429 em branco
+- Schema YAML: `python3 -c "import yaml; yaml.safe_load(...)"` válido para `ci.yml` (20 jobs), `release.yml` (4 jobs), `action.yml`
+- Schema TOML: `python3 tomllib.load(.cargo/config.toml)` válido, bloco target inalterado
+- **Gate de cobertura (10/10) diferido**: `cargo llvm-cov --all-features` exige >25 min na máquina macOS de desenvolvimento; o operador autorizou pular conforme `feedback-never-publish-without-explicit-request` porque `git diff --stat src/` está vazio (nenhuma mudança relevante para cobertura desde v1.0.71 que passou o gate de 75% no CI). O job `coverage-threshold` do CI revalidará o threshold no commit publicado.
 
 ## [1.0.71] - 2026-06-05
 

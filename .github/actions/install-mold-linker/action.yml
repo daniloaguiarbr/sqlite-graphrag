@@ -1,0 +1,47 @@
+name: Install mold linker
+
+description: >-
+  Installs the mold linker on Linux/macOS runners to keep the
+  `[target.x86_64-unknown-linux-gnu]` rustflags in `.cargo/config.toml`
+  functional. On Linux it installs via apt; on macOS via Homebrew. The
+  composite action is a no-op on Windows because the MSVC linker path does
+  not honor `-fuse-ld=mold`. A subsequent `cargo build` step still falls back
+  to the default `ld` when mold is unavailable, but installation removes the
+  upstream error spam of "invalid linker name in argument '-fuse-ld=mold'".
+
+inputs:
+  version:
+    description: Pin to a specific mold release; defaults to the apt/brew stable channel.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install mold on Ubuntu
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v mold >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mold clang lld
+        fi
+        mold --version
+
+    - name: Install mold on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v mold >/dev/null 2>&1; then
+          brew update
+          brew install mold
+        fi
+        mold --version
+
+    - name: Skip mold on Windows
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "mold is not used on Windows MSVC targets; skipping"
