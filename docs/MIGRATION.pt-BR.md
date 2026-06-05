@@ -153,10 +153,11 @@ sqlite-graphrag namespace-detect
 - G02-G10: validação de versão, variáveis de ambiente no Windows, contador de skipped, cap de 10MB, normalização de nomes, warnings de entidade, WAL queue, WAL checkpoint, schema additionalProperties
 - Sem migração de schema necessária — compatível com bancos existentes
 
-> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> **Autenticação:** OAuth é o ÚNICO fluxo de credencial aceito. Chaves de API são PROIBIDAS.
 > `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
-> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
-> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.
+> `--mode codex` lê autenticação de dispositivo via `codex login` (OpenAI ChatGPT).
+> Definir `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente ABORTA o spawn com `AppError::Validation` e código de saída 1. A flag `--bare` (que também exigiria uma chave de API) foi REMOVIDA de todo caminho executável.
+> Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa.
 
 ### v1.0.61 — 15 correções de bugs no ingest --mode claude-code
 
@@ -320,6 +321,31 @@ sqlite-graphrag namespace-detect
 - Se você alterou paths, reapointe o binário legado para o arquivo de banco anterior antes de retestar
 
 ## Veja Também
+
+## v1.0.68 para v1.0.69 (atual)
+### Mudanças Comportamentais
+- Os caminhos de spawn de `claude -p` e `codex exec` agora ABORTAM com `AppError::Validation` (exit code 1) quando `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas no ambiente. O fluxo OAuth é o ÚNICO mecanismo de credencial aceito. Veja `docs/decisions/adr-0011-oauth-only-enforcement.md`.
+- A flag `--bare` para `claude -p` foi REMOVIDA de todo caminho executável. Ela aparece apenas em documentação explicando por que é proibida (gaps.md:49).
+- `enrich --operation body-enrich` não falha mais com `CHECK constraint failed: source IN ('agent','user','system','import','sync')`. O body-enrich agora tem sucesso 100% e persiste via source `agent`.
+### Novas Flags CLI
+- `enrich` ganha `--preflight-check`, `--fallback-mode <codex|claude-code>`, `--rate-limit-buffer <SEGUNDOS>`, `--preserve-threshold <FLOAT>`, `--names <NOME>`, `--names-file <CAMINHO>`.
+- `enrich` e `ingest` ganham `--wait-job-singleton <SEGUNDOS>` e `--force-job-singleton` (a flag de espera referenciada em mensagens de erro antigas finalmente existe).
+- `optimize` ganha `--fts-dry-run`, `--fts-progress <SEGUNDOS>` e `--yes`.
+- `backup` ganha `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-progress <PAGES>`, `--backup-no-sleep`. Padrões melhorados em 25x (1000/5ms vs 100/50ms).
+### Novos Subcomandos
+- `vec orphan-list --json` lista cada vetor órfão com `vector_hash`.
+- `vec purge-orphan --yes --dry-run` deleta órfãos de `vec_memories`, `vec_entities`, `vec_chunks` em uma única transação.
+- `vec stats --json` reporta contagens de linhas e órfãos.
+- `codex-models --json` e `codex-models --suggest <substring>` expõem a lista branca de modelos ChatGPT Pro OAuth.
+### Ação do Operador Necessária para Usuários de Chave de API
+- Operadores que dependem de `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` devem migrar para OAuth.
+- Para Claude: `claude login` uma vez e remova a env var do seu shell rc.
+- Para Codex: `codex login` ou `codex login --device-auth` uma vez e remova a env var.
+- O script wrapper `~/.local/bin/codex-clean` vira legado; você pode `rm` após o upgrade.
+### Nenhuma Migração de Banco Necessária
+- Sem mudanças de schema em v1.0.69. O bump de versão em `Cargo.toml` de 1.0.68 para 1.0.69 é a única mudança em tempo de deploy.
+- Novos módulos: `src/memory_source.rs`, `src/preservation.rs`, `src/reaper.rs`, `src/system_load.rs`, `src/commands/codex_spawn.rs`, `src/commands/vec.rs`. Todos aditivos.
+- 7 novos ADRs documentam cada decisão arquitetural. Veja `docs/decisions/adr-0011-0018-*.md`.
 - `README.md` para o caminho atual de instalação e orientações de release
 - `CHANGELOG.md` para a linhagem legada e as notas da release renomeada
 - `docs/HOW_TO_USE.md` para exemplos atuais de comandos

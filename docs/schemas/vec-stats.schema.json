@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/schemas/vec-stats.schema.json",
+  "title": "vec stats response (v1.0.69)",
+  "description": "Response shape of `sqlite-graphrag vec stats --json`. Added in v1.0.69 as part of G39 to expose row counts and orphan counts across the three vec tables.",
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string"
+    },
+    "vec_memories": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total rows in vec_memories"
+    },
+    "vec_memories_orphaned": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Rows in vec_memories whose parent memory is soft-deleted or missing"
+    },
+    "vec_entities": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vec_entities_orphaned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vec_chunks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vec_chunks_orphaned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "namespace",
+    "vec_memories",
+    "vec_memories_orphaned",
+    "vec_entities",
+    "vec_entities_orphaned",
+    "vec_chunks",
+    "vec_chunks_orphaned",
+    "elapsed_ms"
+  ],
+  "additionalProperties": false
+}

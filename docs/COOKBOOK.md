@@ -1755,10 +1755,11 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 - Queue DB `.ingest-queue.sqlite` enables resume/retry across sessions
 - Subprocess runs with `env_clear()` + selective injection for security hardening
 
-> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> **Authentication:** OAuth is the ONLY accepted credential flow. API keys are PROHIBITED.
 > `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
-> `--mode codex` reads device auth from `codex auth login` (OpenAI).
-> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
+> `--mode codex` reads device auth from `codex login` (OpenAI ChatGPT).
+> Defining `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment ABORTS the spawn with `AppError::Validation` and exit code 1. The `--bare` flag (which would also demand an API key) is REMOVED from all executable code paths.
+> See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale.
 
 
 ## How To Reclassify Relationship Types In Bulk (v1.0.65)

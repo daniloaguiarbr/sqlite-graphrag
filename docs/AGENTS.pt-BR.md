@@ -719,10 +719,56 @@ let output = Command::new("sqlite-graphrag")
 - `sqlite-graphrag ingest ./docs --mode codex --codex-timeout 600 --json`
 - `sqlite-graphrag ingest ./docs --mode codex --codex-binary /usr/local/bin/codex --json`
 ### Nota de Autenticação
-> **Autenticação:** OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
+> **Autenticação:** OAuth é o ÚNICO fluxo de credenciais aceito. Chaves de API são PROIBIDAS.
 > `--mode claude-code` lê OAuth de `~/.claude/.credentials.json` (Claude Pro/Max/Team).
-> `--mode codex` lê autenticação de dispositivo via `codex auth login` (OpenAI).
-> Chaves de API (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) são opcionais e aceleram o startup do subprocesso.
+> `--mode codex` lê autenticação de dispositivo via `codex auth login` (ChatGPT Pro da OpenAI).
+> Definir `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente ABORTA o spawn com `AppError::Validation` e exit code 1. A flag `--bare` (que também exigiria uma chave de API) foi REMOVIDA de todos os caminhos executáveis.
+
+
+## Novidades na v1.0.69
+### Enforcement OAuth-Only (MUDANÇA COMPORTAMENTAL — OBRIGATÓRIO)
+- O spawn de `claude -p` e `codex exec` agora ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem presentes no ambiente. O fluxo OAuth (assinatura Claude Pro/Max, device auth do ChatGPT Pro) é o ÚNICO mecanismo de credencial aceito. Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa.
+- A flag `--bare` (que exige `ANTHROPIC_API_KEY` e desabilita OAuth) foi REMOVIDA de todo caminho executável. Ela aparece apenas em documentação explicando por que é proibida.
+- `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` estão INTENCIONALMENTE AUSENTES dos whitelists de `env_clear` em `claude_runner.rs`, `codex_spawn.rs` e `ingest_claude.rs`. Defesa em profundidade: mesmo se um refator futuro mover o guard OAuth-only, a variável nunca alcança o filho.
+- Quatro novos testes (`#[serial_test::serial(env)]`) validam o conjunto canônico de flags e o comportamento de abort em `src/commands/claude_runner.rs:574-666` e `src/commands/codex_spawn.rs:684-758`.
+- Migração: qualquer operador que dependa de `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` deve migrar para OAuth. A mensagem de erro é acionável e aponta para o fluxo de login OAuth.
+### Correções de Proliferação de Processos (G28)
+- `claude_runner::build_claude_command` SEMPRE passa `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions` (sobrepondo o comportamento da v1.0.68 que citava o issue #10787 e evitava essas flags). O comentário da v1.0.68 estava errado: as flags estão presentes no código. O comentário da v1.0.69 alinha com a realidade e adiciona defesa em profundidade via guard OAuth-only.
+- `run_claude` envia `SIGTERM` no timeout antes do `Child` ser descartado, para que processos filhos MCP não sobrevivam ao pai.
+- Novo `src/reaper.rs` varre `/proc` no startup, mata qualquer órfão `claude`/`codex` com `PPID=1` e idade maior que 60 segundos. Invocado do `main` ANTES de qualquer trabalho.
+- Novo `src/system_load.rs` fornece `load_average_one`, `ncpus` e `is_system_saturated`; `enrich` aborta o spawn quando `load_average_one() > 2 * ncpus` e a nova flag `--max-load-check` estiver setada (padrão true).
+- `retry::CircuitBreaker` é integrado no loop de workers com `breaker.record(AttemptOutcome::HardFailure)`; o loop aborta após `--circuit-breaker-threshold` falhas consecutivas (padrão 5, 0 desabilita).
+### Singleton Escopado por `db_hash` (G30)
+- `lock::acquire_job_singleton(job_type, namespace, db_path, wait_seconds, force)`. O nome do arquivo de lock é `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock` onde `db_hash` são os primeiros 12 caracteres hex de `blake3(canonicalize(db_path))`. Duas invocações concorrentes de `enrich` em bancos DIFERENTES não colidem mais.
+- Novas flags CLI `--wait-job-singleton <SEGUNDOS>` e `--force-job-singleton` em `enrich` e `ingest`. A mensagem de erro que antes referenciava uma flag `--wait-job-singleton` inexistente agora é acionável.
+### Helper de Spawn do Codex Unificado (G31+G32+G33)
+- Novo `src/commands/codex_spawn.rs` (~700 linhas, 11 testes) possui o pipeline canônico de spawn, o parser JSONL e a validação de modelo ChatGPT Pro OAuth. Tanto `enrich --mode codex` quanto `ingest --mode codex` consomem o mesmo helper, eliminando a divergência que motivou o wrapper externo `~/.local/bin/codex-clean`.
+- Lista branca de modelos ChatGPT Pro OAuth: `codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`. A validação roda ANTES de o subprocesso ser iniciado; um modelo inválido retorna `AppError::Validation` listando os valores aceitos e o match fuzzy mais próximo.
+- Novo subcomando de topo `codex-models --json` expõe a lista, contagem e modelo padrão. `codex-models --suggest <substring>` retorna o match mais próximo via substring ou Levenshtein.
+- O schema JSON foi movido de `/tmp` para `paths::AppPaths::cache_dir().join("schemas")` para sobreviver a reboots e viver em um diretório trusted.
+- O novo comando canônico inclui a flag de endurecimento OAuth-only `-c mcp_servers='{}'` e `--ask-for-approval never`.
+### Portão de Preservação Jaccard (G29)
+- Nova flag `--preserve-threshold <FLOAT>` em `enrich` (padrão 0.7). O novo módulo `src/preservation.rs` (10 testes) computa similaridade Jaccard trigrama entre corpos original e enriquecido. Se `score < threshold`, o corpo enriquecido é rejeitado com `EnrichItemResult::PreservationFailed` e NÃO é persistido.
+- Idempotência via `blake3::hash`: quando `old_hash == new_hash`, o corpo é pulado com o motivo `"enriched body hash matches original (blake3:{hash}); idempotency skip"`. Reprocessar a mesma memória é seguro.
+### Enum MemorySource (G29)
+- Novo `src/memory_source.rs` (~180 linhas, 8 testes) define um enum type-safe dos cinco valores do CHECK-constraint: `Agent`, `User`, `System`, `Import`, `Sync`. `TryFrom<&str>` retorna `AppError::Validation` listando os valores aceitos.
+- O guard runtime `pub fn validate_source(raw: &str) -> Result<&'static str, AppError>` é chamado de `memories::insert` e `memories::update`. Os call-sites existentes ainda usam `String` para compatibilidade binária; o enum é a fundação para a migração da v1.0.70.
+### Flags de Endurecimento do FTS5 (G36)
+- `optimize` faz pré-verificação da saúde do FTS5 via `check_fts_functional` ANTES de reconstruir. Um índice saudável não é mais reconstruído (economiza ~10 minutos em um banco de 4.3 GB).
+- Novas flags: `--fts-dry-run` (exit 1 se reconstrução recomendada), `--fts-progress <N>` (polling em background da contagem de linhas de `fts_memories` a cada N segundos, padrão 30, 0 desabilita), `--yes` (reservada para compatibilidade futura).
+- `OptimizeResponse` expõe `fts_rebuilt`, `fts_skipped_functional`, `fts_unhealthy` e `fts_rows_indexed` para observabilidade.
+### Tratamento de Órfãos do vec (G39)
+- Nova família de subcomandos `vec orphan-list`, `vec purge-orphan --yes --dry-run`, `vec stats --json`. `vec purge-orphan` purga TRÊS tabelas: `vec_memories`, `vec_entities` e `vec_chunks` em uma única transação.
+- Novo hook em `src/commands/forget.rs:88-99` chama `memories::delete_vec` ANTES do soft-delete, prevenindo novos órfãos no estado estável.
+### Endurecimento do Backup (G38)
+- Padrões mudaram de `run_to_completion(100, 50ms)` para `run_to_completion(1000, 5ms)` (25x mais rápido em 4.3 GB).
+- Novas flags: `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-progress <PAGES>`, `--backup-no-sleep`.
+### Enriquecimento Seletivo (G37)
+- Novas flags `--names <NOME>` (delimitado por vírgula) e `--names-file <CAMINHO>` (um nome por linha, comentários `#` aceitos) em `enrich`. Operadores agora podem reprocessar uma única memória sem varrer o conjunto completo.
+### Preflight e Fallback (G35)
+- Novas flags `--preflight-check`, `--fallback-mode <codex|claude-code>` e `--rate-limit-buffer <SEGUNDOS>` em `enrich`. A sondagem de preflight emite um ping de 1 turno antes de varrer N candidatos; em rate limit do Claude, aborta com erro claro (ou troca para `--fallback-mode`).
+### Aviso de Worker por Modo (G34)
+- O aviso `llm_parallelism > 4` é condicional ao modo: Claude avisa em 5, Codex avisa em 17, Codex 5..16 fica silencioso (validado em 1161 itens, 0 falhas em produção).
 
 
 ## CRUD — Read com read e list

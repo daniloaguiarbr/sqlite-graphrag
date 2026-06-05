@@ -10,7 +10,44 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec
 
 ## [Sem Versão]
 
-_Nenhuma ainda. v1.0.68 é a versão publicada mais recente; novos commits entram nesta seção até a próxima versão ser cortada._
+_Nenhuma ainda. v1.0.69 é a versão em progresso; novos commits entram nesta seção até a próxima versão ser cortada._
+
+## [1.0.69] - 2026-06-05
+
+### Corrigido
+
+- **G28 (CRÍTICA)** Proliferação de processos ao iniciar a CLI. Três mudanças reforçadas eliminam a causa raiz: (a) `claude_runner::build_claude_command` AGORA SEMPRE passa `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions`, garantindo que o subprocesso Claude nunca herde servidores MCP do escopo do usuário; a variável de ambiente `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` continua disponível para isolamento total. (b) `run_claude` envia `SIGTERM` no timeout antes do `Child` ser descartado, para que processos filhos MCP não sobrevivam ao pai. (c) Novo `src/reaper.rs` varre `/proc` no startup, mata qualquer órfão `claude`/`codex` com `PPID=1` e idade maior que 60 segundos, e o reaper é invocado do `main` ANTES de qualquer trabalho. A suíte de 4 testes do reaper (`orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`) executa em menos de 30 segundos no host de teste.
+- **G29** `enrich --operation body-enrich` abortava 100% das invocações com `CHECK constraint failed: source IN ('agent','user','system','import','sync')`. O bug era o literal `source: "enrich".to_string()` em `src/commands/enrich.rs:902`, que violava a constraint CHECK do SQLite. Substituído por `source: "agent".to_string()` mais metadados estruturados `{operation, orig_chars, new_chars}` (hotfix do G29).
+- **G29 (trilha de auditoria)** `persist_enriched_body` estava contornando o histórico imutável de versões. Cada body-enrich agora insere uma nova linha em `memory_versions` com `change_reason='edit'` ANTES da atualização, de modo que `history --name <X>` lista tanto o corpo original quanto o enriquecido, e `restore --version N` pode reverter ao estado pré-enrich.
+- **G31** `enrich --mode codex` estava sem cinco flags críticas de endurecimento em comparação com `ingest --mode codex` (`--ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules`). Extraído o pipeline de spawn para `src/commands/codex_spawn.rs` para que AMBOS os call-sites consumam o mesmo comando canônico.
+- **G32** `enrich --mode codex` estava chamando `serde_json::from_str` no stdout bruto, mas `codex exec --json` emite JSONL. O novo helper `parse_codex_jsonl` itera linha a linha, escolhe o último `item.completed` do tipo `agent_message` e extrai o uso do último evento `turn.completed` populado. Fonte única de verdade, compartilhada por `enrich` e `ingest --mode codex`.
+- **G33** `enrich --mode codex --codex-model <nome>` era rejeitado silenciosamente APÓS consumir um turno OAuth. O novo helper `validate_codex_model` verifica `--codex-model` contra a lista branca do ChatGPT Pro OAuth (`codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`) ANTES de o subprocesso ser iniciado.
+- **G34** O aviso `llm_parallelism > 4` era emitido em `mode=codex` (que não gera filhos MCP) com a mesma severidade de `mode=claude-code`. O aviso agora é condicional ao modo: Claude avisa em 5, Codex avisa em 17, Codex 5..16 fica silencioso (validado em 1161 itens, 0 falhas em produção).
+- **G36** `optimize` reconstruía o índice FTS5 incondicionalmente, mesmo quando `fts check` reportava que o índice já estava saudável. O comportamento padrão agora é pular a reconstrução quando o índice passa na verificação de integridade. Operadores ainda podem forçar a reconstrução com `--no-fts-skip-when-functional`. A resposta agora expõe `fts_rebuilt`, `fts_skipped_functional`, `fts_unhealthy` para observabilidade.
+- **G38** `backup` usava por padrão `run_to_completion(100, Duration::from_millis(50), None)`, o que em um banco de 4.3 GB levava cerca de 9 minutos só de sleep. Os novos padrões são `run_to_completion(1000, Duration::from_millis(5), None)` (≈25x mais rápido) e a resposta agora reporta `pages_copied` e `step_size`. Operadores podem ajustar com `--backup-step-size`, `--backup-step-sleep-ms` e `--backup-no-sleep`.
+- **G39** `vec_memories_orphaned` era reportado por `health` sem caminho de remediação. Os novos comandos `vec orphan-list`, `vec purge-orphan --yes` e `vec stats --json` fecham o ciclo. `vec purge-orphan` exige `--yes` para evitar perda acidental; `--dry-run` é suportado.
+
+### Adicionado
+
+- **G30** O lock singleton agora tem escopo por `(job_type, namespace, db_hash)`. Duas invocações concorrentes de `enrich` em bancos DIFERENTES não colidem mais; o mesmo banco continua serializando. O `db_hash` são os primeiros 12 caracteres hex de `blake3(canonicalize(db_path))`.
+- **G30+G09** Novas flags CLI `--wait-job-singleton <SEGUNDOS>` (sondagem pelo lock) e `--force-job-singleton` (quebra um lock obsoleto de uma invocação que travou) em `enrich` e `ingest`. A mensagem de erro que antes referenciava uma flag inexistente `--wait-job-singleton` agora é acionável.
+- **G35** Novas flags `--preflight-check`, `--fallback-mode <codex|claude-code>` e `--rate-limit-buffer <SEGUNDOS>` em `enrich`. A sondagem de preflight emite um ping de 1 turno antes de varrer N candidatos; em rate limit do Claude, aborta com erro claro (ou troca para `--fallback-mode`). Padrão desligado para manter `--dry-run` e fluxos de CI com custo zero.
+- **G37** Novas flags `--names <NOME>` e `--names-file <CAMINHO>` em `enrich` para selecionar um subconjunto específico de nomes de memória. `--names-file` aceita comentários `#` e linhas em branco. Combinado com `--names` como união quando ambos estão setados.
+- **G14 (refatoração)** Extraído o módulo `codex_spawn`: pipeline de spawn, parser JSONL e validação de modelo ChatGPT Pro OAuth vivem em um só lugar (`src/commands/codex_spawn.rs`) com 8 testes unitários cobrindo casos de borda do parser, detecção de rate limit e presença de flags do comando.
+- **G14 (refatoração)** Extraída a família de subcomandos `vec`: `vec orphan-list`, `vec purge-orphan --yes --dry-run`, `vec stats --json`.
+- `src/memory_source.rs` — enum type-safe dos cinco valores CHECK-constraint de `memories.source`. `TryFrom<&str>` retorna `AppError::Validation` listando os valores aceitos. 8 testes unitários cobrem caminhos válido/inválido/vazio/display/serialização. Os call-sites existentes ainda usam `String` por compatibilidade; o enum é a fundação para a migração da v1.0.70.
+- **OAuth-only enforcement (mudança COMPORTAMENTAL crítica)**. O spawn de `claude -p` e `codex exec` AGORA ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidos no ambiente. A flag `--bare` foi REMOVIDA de todos os caminhos executáveis (era PROIBIDA por gaps.md:49). Variáveis sensíveis foram EXCLUÍDAS dos whitelists de `env_clear()`. 4 testes `#[serial_test::serial(env)]` validam presença de todas as flags canônicas e o aborto. Detalhes em `docs/decisions/adr-0011-oauth-only-enforcement.md`.
+
+### Alterado
+
+- Assinatura de `lock::acquire_job_singleton` ganha os parâmetros `db_path: &Path` e `force: bool`. O nome do arquivo de lock agora é `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock`, de modo que o cache do SO pode ser compartilhado entre bancos.
+- `backup::BackupResponse` adiciona os campos `pages_copied` e `step_size`. Compatível com versões anteriores: consumidores existentes que ignoram campos desconhecidos continuam funcionando.
+- `optimize::OptimizeResponse` adiciona os campos `fts_skipped_functional` e `fts_unhealthy`.
+- `lock::db_path_hash` é `pub`, para que chamadores possam computar o hash sem adquirir o lock.
+- O ambiente de spawn do `claude_runner` agora inclui as mesmas variáveis whitelisted do spawn do codex (consistência de caminho para usuários com configurações personalizadas restritas).
+- **G36 (novas flags)** `--fts-dry-run`, `--fts-progress <N>` e `--yes` adicionadas a `optimize`. `--fts-dry-run` sai com código 1 quando o índice FTS5 precisa de reconstrução. `--fts-progress` emite polling de linhas a cada N segundos (padrão 30, 0 desabilita). `--yes` está reservada para automação futura.
+- **G29 (idempotência blake3)** `call_body_enrich` calcula `blake3::hash` do corpo original e do enriquecido. Se os hashes forem iguais, retorna `EnrichItemResult::Skipped` com motivo `"enriched body hash matches original (blake3:{hash}); idempotency skip"`. Reprocessamento seguro.
+- **G29 (preservação Jaccard)** Nova flag `--preserve-threshold <FLOAT>` (padrão 0.7). Módulo `src/preservation.rs` com 10 testes calcula similaridade Jaccard trigrama UTF-8 entre corpo original e enriquecido. Se similaridade menor que o threshold, marca `status='preservation_failed'` e NÃO persiste.
 
 ## [1.0.68] - 2026-06-03
 

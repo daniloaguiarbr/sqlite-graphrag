@@ -25,6 +25,10 @@ fn main() -> std::process::ExitCode {
 
     sqlite_graphrag::terminal::init_console();
 
+    // G28: reap orphan LLM subprocesses from a previous crashed invocation
+    // BEFORE doing any work. The scan is a no-op on non-Unix platforms.
+    let _reaper_report = sqlite_graphrag::reaper::scan_and_kill_orphans();
+
     // Limit the ONNX Runtime thread pool to 1 intra-op and 1 inter-op thread per instance,
     // preventing parallel invocations from spawning dozens of threads each.
     // Must be set BEFORE fastembed initializes the ONNX session.
@@ -311,6 +315,18 @@ fn main() -> std::process::ExitCode {
         sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
         sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
         sqlite_graphrag::cli::Commands::Fts(args) => commands::fts::run(args),
+        sqlite_graphrag::cli::Commands::Vec(args) => commands::vec::run(args),
+        sqlite_graphrag::cli::Commands::CodexModels => {
+            let models = commands::codex_spawn::list_codex_models();
+            let payload = serde_json::json!({
+                "action": "codex_models",
+                "count": models.len(),
+                "models": models,
+                "default": "gpt-5.5",
+            });
+            println!("{payload}");
+            Ok(())
+        }
         sqlite_graphrag::cli::Commands::PruneRelations(args) => {
             commands::prune_relations::run(args)
         }

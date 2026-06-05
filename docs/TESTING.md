@@ -248,6 +248,30 @@
 
 
 ## References
+
+## v1.0.69 Test Inventory
+### Test Count Delta
+- v1.0.68 baseline: 692 tests passing.
+- v1.0.69 final: 745 tests passing (+53).
+- 0 failures, 3 ignored (loom tests gated by `#[cfg(sqlite_graphrag_loom)]`).
+### New Tests by Module
+- `src/commands/claude_runner.rs`: +4 OAuth-only conformance tests (`build_command_oauth_only_mandatory_flags`, `build_command_aborts_when_anthropic_api_key_set`, and 2 more) marked `#[serial_test::serial(env)]` to serialise env mutation.
+- `src/commands/codex_spawn.rs`: +4 OAuth-only conformance tests parallel to claude, plus 11 tests for the spawn helper itself (parser edge cases, model validation, command flag presence).
+- `src/commands/ingest_claude.rs`: existing tests updated to expect the canonical OAuth-only flag set.
+- `src/preservation.rs`: 10 tests for `jaccard_similarity` (boundary conditions, trigrams, empty strings, Unicode) and `PreservationVerdict` (Preserved, Rejected, Unchanged variants).
+- `src/memory_source.rs`: 8 tests for `as_str`, `TryFrom<&str>` (valid and invalid), `Display`, and serialisation.
+- `src/reaper.rs`: 4 tests (`orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`).
+- `src/system_load.rs`: 5 tests for `load_average_one`, `ncpus`, and `is_system_saturated`.
+- `src/commands/vec.rs`: 3 tests for `vec orphan-list`, `vec purge-orphan`, and `vec stats`.
+- `src/commands/optimize.rs`: 1 new test for `OptimizeResponse` field set; existing 2 tests updated.
+- `src/lock.rs`: 6 tests (namespace sanitisation, second-invocation blocking, per-namespace isolation, db_hash determinism, db_hash divergence, force flag).
+### Serialised Tests
+- All 8 OAuth-only tests are marked `#[serial_test::serial(env)]` because they mutate the global environment via `unsafe { std::env::set_var(...) }` and `unsafe { std::env::remove_var(...) }`. Running them in parallel would race.
+- The `serial_test` crate (already a project dependency) provides the attribute; the tests are auto-discovered by `cargo nextest run` with serial execution semantics.
+### Test Runtime
+- Full suite runtime on the reference host: ~10 seconds for the 745 tests.
+- The OAuth-only group adds ~0.04 seconds (env mutation is fast).
+- Loom tests are NOT included in the default count; they are gated and must be run via `scripts/test-loom.sh`.
 - loom crate documentation: `https://docs.rs/loom/latest/loom/`
 - loom GitHub repository: `https://github.com/tokio-rs/loom`
 - cargo-nextest documentation: `https://nexte.st/`

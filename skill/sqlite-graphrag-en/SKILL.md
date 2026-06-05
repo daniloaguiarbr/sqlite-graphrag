@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, offline embeddings, fastembed, sqlite-vec, multilingual-e5, KNN search, memory-safe copy, FTS5 and vec fusion. Auto-invokes even without explicit mention when user describes agent losing context between sessions or wants an offline vector database in Rust. Keywords memory RAG GraphRAG SQLite vector embeddings Claude Codex Cursor Windsurf offline local persistent graph entity.
+description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, offline embeddings, fastembed, sqlite-vec, multilingual-e5, KNN search, memory-safe copy, FTS5 and vec fusion. Auto-invokes even without explicit mention when user describes agent losing context between sessions or wants an offline vector database in Rust. MUST also trigger on OAuth-only enforcement, v1.0.69 migration, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, codex-spawn helper, vec orphan handling, or any G28-G39 gap remediation. Keywords memory RAG GraphRAG SQLite vector embeddings Claude Codex Cursor Windsurf offline local persistent graph entity OAuth-only v1.0.69.
 ---
 
 
@@ -178,6 +178,140 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER assume that `enrich` running for 30 minutes means it's stuck — long enrichments are normal
 
 
+## New in v1.0.69
+### REQUIRED — OAuth-Only Enforcement (CRITICAL behaviour change)
+- KNOW that v1.0.69 is the first release where OAuth is the ONLY accepted credential flow
+- KNOW that `claude_runner::build_claude_command` ALWAYS passes 7 hardening flags: `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema` plus 2 from `codex_spawn::build_codex_command` (G28-A, G31)
+- KNOW that spawn ABORTS with `AppError::Validation` (exit 1) if `ANTHROPIC_API_KEY` is set in the environment
+- KNOW that spawn ABORTS with `AppError::Validation` (exit 1) if `OPENAI_API_KEY` is set in the environment
+- KNOW that the `--bare` flag (which would demand an API key) is REMOVED from all executable code paths; it appears only in documentation explaining why it is forbidden
+- KNOW that `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are EXCLUDED from the env-clear whitelist (defense in depth)
+- KNOW that 4 `#[serial_test::serial(env)]` tests in `claude_runner.rs` and 4 in `codex_spawn.rs` validate the canonical flag set and the abort behaviour
+- REFERENCE `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale
+- OPERATORS using API keys MUST migrate to OAuth (Claude Pro/Max or OpenAI ChatGPT Pro) before upgrading
+### REQUIRED — Orphan Reaper (G28-C)
+- KNOW that `src/reaper.rs::scan_and_kill_orphans()` walks `/proc` at startup BEFORE any work
+- KNOW that the reaper kills any `claude` or `codex` orphan with `PPID=1` and age > 60 seconds
+- KNOW that `ORPHAN_MIN_AGE_SECS=60` and `ORPHAN_SCAN_TARGETS=["claude", "codex"]` are the constants
+- TRUST that the 4-test reaper suite runs in <30s on Linux (`orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`)
+- The reaper is called from `main.rs` startup, BEFORE the CLI dispatches to any subcommand
+### REQUIRED — System Load and Circuit Breaker (G28-D)
+- KNOW that `src/system_load.rs` exposes `load_average_one()`, `ncpus()`, and `is_system_saturated(threshold)`
+- KNOW that `is_system_saturated` defaults to threshold `2.0 × ncpus`
+- USE `load_average_one()` to decide whether to enqueue a new enrich or wait — load is Mutex-cached with 1s throttle to avoid hammering `/proc/loadavg`
+- KNOW that `retry::CircuitBreaker::new(threshold, cooldown)` caps persistent-failure retry loops
+- KNOW that `AttemptOutcome::Transient` (rate limit, timeout) does NOT count toward the failure threshold
+- KNOW that `AttemptOutcome::HardFailure` (validation, conflict) counts; after `threshold` consecutive hits, `record()` returns `true` and the caller aborts
+- CALL `cb.reset()` when starting a new job to clear the consecutive-failure counter
+### REQUIRED — MemorySource enum and Source Validation (G29)
+- KNOW that `src/memory_source.rs` defines a type-safe enum with 5 values: `agent`, `user`, `system`, `import`, `sync`
+- KNOW that `MemorySource::TryFrom(&str)` returns `AppError::Validation` listing the accepted values
+- KNOW that `validate_source()` is the runtime guard called in `storage/memories.rs::insert` and `update`
+- KNOW that 8 unit tests cover valid/invalid/empty/display/serialisation paths
+- REFERENCE `docs/decisions/adr-0012-memory-source-enum.md` for the migration plan
+### REQUIRED — Preservation Gate and Idempotency (G29)
+- KNOW that `src/preservation.rs` defines `jaccard_similarity(a: &str, b: &str) -> f64` (trigram-based, UTF-8 safe via `char_indices`)
+- KNOW that `PreservationVerdict` enum has `Preserved { score, threshold }`, `Rejected { score, threshold }`, and `Unchanged { byte_len }` variants
+- KNOW that the default preservation threshold is `0.7` and is enforced on every `enrich --operation body-enrich`
+- KNOW that blake3-based idempotency skip compares the old and new body hashes BEFORE the Jaccard check
+- KNOW that 10 unit tests cover Jaccard edge cases (empty, single char, identical, threshold boundary, Unicode)
+- REFERENCE `docs/decisions/adr-0015-preservation-gate.md`
+### REQUIRED — Scripts Deprecation (G29 Passo 6)
+- KNOW that `scripts/legacy/` directory contains the deprecated Python workaround `expand-curtas.py` plus a README.md explaining why it was retired
+- KNOW that `scripts/legacy/` is added to `.gitignore` to prevent CI from re-running it
+- USE `enrich --operation body-enrich` directly instead of the Python wrapper
+### REQUIRED — Singleton Lock Scoped by db_hash (G30)
+- KNOW that `lock::acquire_job_singleton` signature gains `db_path: &Path` and `force: bool` parameters
+- KNOW that the lock file name is now `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock`
+- KNOW that the `db_hash` is the first 12 hex chars of `blake3(canonicalize(db_path))`
+- KNOW that `lock::db_path_hash` is `pub` so callers can compute the hash without acquiring the lock
+- USE new flags `--wait-job-singleton <SECONDS>` (poll for the lock) and `--force-job-singleton` (break a stale lock)
+- Two concurrent `enrich` invocations against DIFFERENT databases no longer collide; the same database still serialises
+- The error message that previously referenced a non-existent `--wait-job-singleton` flag is now actionable
+- REFERENCE `docs/decisions/adr-0013-singleton-scoped-by-db-hash.md`
+### REQUIRED — Unified codex_spawn Helper (G31+G32+G33)
+- KNOW that `src/commands/codex_spawn.rs` (~700 lines, 11 tests) unifies the spawn pipeline, JSONL parser, and ChatGPT Pro OAuth model validation
+- KNOW that BOTH `enrich --mode codex` and `ingest --mode codex` consume the same canonical command (was divergent, motivated the `~/.local/bin/codex-clean` wrapper)
+- KNOW that the 7 hardening flags are: `--json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules` PLUS `-c mcp_servers='{}' --ask-for-approval never`
+- KNOW that `parse_codex_jsonl` iterates `for line in stdout.lines()` and picks the last `item.completed` of type `agent_message`
+- KNOW that `validate_codex_model` checks `--codex-model` against the ChatGPT Pro OAuth whitelist BEFORE the subprocess is spawned
+- ACCEPT only these 5 models: `codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`
+- DEFAULT `--codex-model` is `gpt-5.5`
+- REFERENCE `docs/decisions/adr-0014-codex-spawn-helper.md`
+### REQUIRED — Conditional LLM Parallelism Warning (G34)
+- KNOW that the `llm_parallelism > 4` warning is now conditional to the spawn mode
+- Claude mode warns at 5 (high severity)
+- Codex 5..16 is silent (Codex does not spawn MCP children)
+- Codex warns at 17 (medium severity)
+- VALIDATED at 1161 items, 0 failures in production
+### REQUIRED — Preflight Check and Fallback Mode (G35)
+- USE `--preflight-check` on `enrich` to issue a 1-turn ping before scanning N candidates
+- USE `--fallback-mode <codex|claude-code>` to switch mode automatically on rate limit
+- USE `--rate-limit-buffer <SECONDS>` to reserve budget for graceful shutdown
+- DEFAULT off to keep `--dry-run` and CI flows zero-cost
+- On a Claude rate limit the preflight ABORTS with a clear error OR switches to `--fallback-mode`
+### REQUIRED — Selective Enrichment (G37)
+- USE `--names <NAME>` (repeatable) on `enrich` to select a specific subset of memory names
+- USE `--names-file <PATH>` on `enrich` to read names from a file (accepts `#` comments and blank lines)
+- COMBINE `--names` and `--names-file` as a union when both are set
+- KNOW that `scan_unbound_memories(conn, namespace, limit, name_filter: &[String])` uses `WHERE m.name IN (?2, ?3, ...)` for safe parameterised query
+### REQUIRED — FTS5 Hardening Flags (G36)
+- USE `optimize --fts-dry-run` to preview what the FTS5 rebuild would do
+- USE `optimize --fts-progress <N>` to print progress every N seconds
+- USE `optimize --yes` to skip the interactive confirmation
+- KNOW that `optimize` now pre-checks `fts check` and SKIPS the rebuild when the index passes integrity-check
+- USE `optimize --no-fts-skip-when-functional` to force a rebuild even when FTS5 is healthy
+- KNOW that `OptimizeResponse` exposes `fts_rebuilt`, `fts_skipped_functional`, `fts_unhealthy`, `fts_rows_indexed`
+- KNOW that the FTS5 progress thread uses `crate::storage::connection::open_ro(&db_path)` in a SEPARATE thread (rusqlite::Connection is not Send)
+- REFERENCE `docs/decisions/adr-0016-fts5-hardening-flags.md`
+### REQUIRED — Backup 25x Speedup (G38)
+- KNOW that the new defaults are `run_to_completion(1000, Duration::from_millis(5), None)` — 25x faster than the previous 100/50ms
+- USE `--backup-step-size <N>` to tune the number of pages per step
+- USE `--backup-step-sleep-ms <N>` to tune the sleep between steps
+- USE `--backup-no-sleep` to disable inter-step sleep entirely (use with caution on SSDs)
+- KNOW that `BackupResponse` adds `pages_copied` and `step_size` fields
+- KNOW that the loop is MANUAL because `Backup::step()` returns `StepResult` which is `#[non_exhaustive]`
+### REQUIRED — vec Subcommand Family (G39)
+- USE `vec orphan-list --json` to list all orphaned memory vectors (no corresponding memory row)
+- USE `vec purge-orphan --yes --dry-run` to PREVIEW purge without removing
+- USE `vec purge-orphan --yes` to PERMANENTLY purge orphans from the 3 vec tables (`vec_memories`, `vec_entities`, `vec_chunks`)
+- USE `vec stats --json` to inspect vec table health (row counts per table, orphan ratio, last vacuum timestamp)
+- KNOW that `forget` now calls `delete_vec` BEFORE `soft_delete` to prevent creating new vec orphans
+- KNOW that the 3-test suite covers orphan-list, purge-orphan, and stats (all use in-memory SQLite for isolation)
+- REFERENCE `docs/decisions/adr-0017-vec-orphan-handling.md`
+### REQUIRED — 4 New JSON Schemas (v1.0.69)
+- KNOW that 4 new schemas were added to `docs/schemas/`:
+  - `vec-orphan-list.schema.json` — list of orphaned memory vectors
+  - `vec-purge-orphan.schema.json` — purge response
+  - `vec-stats.schema.json` — vec table health statistics
+  - `codex-models.schema.json` — ChatGPT Pro OAuth model whitelist response
+- ALL follow the project convention `"additionalProperties": false`
+- INDEXED in `docs/schemas/README.md` (which has its own v1.0.69 entry pointing back to G33 + G39)
+### REQUIRED — 8 New ADRs (v1.0.69)
+- KNOW that 8 new Architecture Decision Records live in `docs/decisions/`:
+  - `adr-0011-oauth-only-enforcement.md` — full rationale for the OAuth-only mandate
+  - `adr-0012-memory-source-enum.md` — type-safe enum migration plan
+  - `adr-0013-singleton-scoped-by-db-hash.md` — BLAKE3 hashing of the database path
+  - `adr-0014-codex-spawn-helper.md` — DRY refactor of codex spawn pipeline
+  - `adr-0015-preservation-gate.md` — Jaccard preservation + blake3 idempotency
+  - `adr-0016-fts5-hardening-flags.md` — FTS5 dry-run, progress, and thread separation
+  - `adr-0017-vec-orphan-handling.md` — vec subcommand family + forget hook
+  - `adr-0018-v1-0-69-status.md` — executive status of gap closure
+### REQUIRED — Test Suite Growth
+- KNOW that v1.0.69 adds 53 tests to the suite (692 → 745)
+- KNOW that 0 tests fail and 3 are ignored
+- KNOW that 8 ADRs document the architectural decisions behind the 53 new tests
+- KNOW that 4 of the new tests are `#[serial_test::serial(env)]` to validate OAuth-only env var enforcement
+### FORBIDDEN — v1.0.69 Anti-patterns
+- NEVER pass `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment — the spawn will ABORT
+- NEVER use `--bare` flag — it has been REMOVED from all executable code paths
+- NEVER pass `gpt-4*`, `o4-mini`, or `gpt-5-codex` as `--codex-model` — these are rejected by ChatGPT Pro OAuth
+- NEVER run `enrich` in parallel against the same database even with the new singleton — wait for the singleton or use `--wait-job-singleton`
+- NEVER call `reaper::scan_and_kill_orphans()` from a child process — only the main process at startup
+- NEVER pass `--llm-parallelism > 4` for Claude mode without combining with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`
+- NEVER call `optimize` without checking `fts stats` first if you only want to verify health (use `fts check` instead)
+
+
 ## CRUD — Bulk Ingest with ingest
 ### REQUIRED — When to Use ingest
 - USE `ingest <DIR>` to import entire directories as memories
@@ -279,7 +413,11 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Re-ingesting the same directory UPDATES existing memories (force-merge) instead of failing with UNIQUE constraint
 - Cold-start `--json-schema` failure automatically retried once after 2s delay (workaround for Claude Code Issue #23265)
 - Subprocess runs with `env_clear()` + selective injection for security hardening
-- Uses `--bare` when `ANTHROPIC_API_KEY` is set (faster startup, no plugins); `--dangerously-skip-permissions` + `--settings '{"hooks":{}}'` for OAuth users (since v1.0.64: hooks disabled to prevent turn consumption)
+- OAuth is the ONLY accepted credential flow for `claude -p` (since v1.0.69)
+- ALWAYS passes `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions` (7 hardening flags; `--bare` REMOVED from all executable code paths in v1.0.69)
+- ABORT spawn with `AppError::Validation` if `ANTHROPIC_API_KEY` is set in the environment (OAuth-only enforcement, v1.0.69)
+- `ANTHROPIC_API_KEY` is excluded from the env-clear whitelist as defense in depth (v1.0.69)
+- 4 `#[serial_test::serial(env)]` tests validate the canonical flag set and the abort behaviour (v1.0.69)
 - NDJSON per-file events include `entities` (count), `rels` (count), `cost_usd` fields; since v1.0.64 `cost_usd` is omitted for OAuth users (subscription, not billed per API call)
 - Summary includes `entities_total`, `rels_total`, `cost_usd` totals; `--max-cost-usd` is ignored with warning for OAuth users (since v1.0.64)
 - Since v1.0.64: files exceeding 512 KB body cap are skipped BEFORE LLM extraction with `status: "skipped"` to avoid wasting tokens

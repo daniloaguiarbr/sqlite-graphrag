@@ -19,3 +19,7 @@ test-quick = "nextest run --profile default"
 test-ci = "nextest run --profile ci"
 test-heavy = "nextest run --profile heavy"
 test-loom = "nextest run --profile heavy -E 'test(/^loom_/)'"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

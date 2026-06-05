@@ -258,6 +258,16 @@ pub struct IngestArgs {
         help = "Timeout in seconds for each codex exec invocation (default: 300)"
     )]
     pub codex_timeout: u64,
+
+    /// G30: poll for the job singleton every second for up to N seconds
+    /// when another invocation holds the lock. Default: 0 (fail fast).
+    #[arg(long, value_name = "SECONDS")]
+    pub wait_job_singleton: Option<u64>,
+
+    /// G30: force acquisition of the singleton lock by removing a stale
+    /// lock file from a previously crashed invocation.
+    #[arg(long, default_value_t = false)]
+    pub force_job_singleton: bool,
 }
 
 /// Extraction mode for the ingest pipeline.

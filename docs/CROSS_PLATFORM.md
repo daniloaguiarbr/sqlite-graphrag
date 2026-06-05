@@ -207,3 +207,13 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - Binary discovery follows: `--codex-binary` flag, `SQLITE_GRAPHRAG_CODEX_BINARY` env var, then PATH lookup
 - On Windows, searches for `codex.exe` in PATH with `PATHEXT` extension resolution
 - Subprocess uses `env_clear()` with platform-specific variable whitelist including Windows vars via `#[cfg(windows)]`
+
+
+## OAuth-Only Authentication Across Platforms (v1.0.69)
+### Behaviour Change Applies Identically on Every OS
+- The `claude -p` and `codex exec` spawn ABORTS with `AppError::Validation` (exit code 1) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are defined in the environment, on Linux glibc, aarch64 GNU, macOS, and Windows targets alike
+- OAuth is the ONLY accepted credential mechanism across every published target
+- The `--bare` flag is REMOVED from all executable code paths in every build variant
+- Migration: run `claude login` (Claude Pro/Max) or `codex login` (ChatGPT Pro) once on each host and remove the env var from the shell rc
+- Defence-in-depth: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are INTENTIONALLY ABSENT from the `env_clear` whitelists on every platform; even if a future refactor moves the OAuth-only guard, the variable never reaches the child
+- See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale and `src/commands/claude_runner.rs:574-666` and `src/commands/codex_spawn.rs:684-758` for the four OAuth-only conformance tests on each binary

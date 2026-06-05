@@ -34,7 +34,6 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Instant;
 
 // ---------------------------------------------------------------------------
@@ -452,6 +451,80 @@ pub struct EnrichArgs {
     /// Database path override.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+
+    /// G30: poll for the job singleton every second for up to N seconds
+    /// when another invocation holds the lock. Default: 0 (fail fast).
+    #[arg(long, value_name = "SECONDS")]
+    pub wait_job_singleton: Option<u64>,
+
+    /// G30: force acquisition of the singleton lock by removing a stale
+    /// lock file from a previously crashed invocation. Use only when you
+    /// are certain no other `enrich`/`ingest` is running.
+    #[arg(long, default_value_t = false)]
+    pub force_job_singleton: bool,
+
+    /// G37: select a specific subset of memory names to enrich instead of
+    /// the full candidate set. Comma-separated, e.g. `--names a,b,c`.
+    /// Empty when omitted (processes all candidates).
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    pub names: Vec<String>,
+
+    /// G37: read the subset of memory names from a file (one per line).
+    /// Lines starting with `#` and empty lines are ignored. Combined with
+    /// `--names` (union) when both are set.
+    #[arg(long, value_name = "PATH")]
+    pub names_file: Option<PathBuf>,
+
+    /// G35: probe the LLM provider with a 1-turn ping before processing
+    /// the batch. Aborts with a clear error if the rate-limit window is
+    /// closed (avoids burning N turns only to fail on item 1).
+    #[arg(long, default_value_t = false)]
+    pub preflight_check: bool,
+
+    /// G35: if a preflight probe or in-flight call hits the Claude rate
+    /// limit, fall back to `--fallback-mode` (typically `codex`) instead
+    /// of failing the batch. Ignored when `--mode` is already `codex`.
+    #[arg(long, value_enum)]
+    pub fallback_mode: Option<EnrichMode>,
+
+    /// G35: number of seconds before the OAuth rate-limit reset at which
+    /// the preflight probe should refuse to start. Default 300 (5 min).
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    pub rate_limit_buffer: u64,
+
+    /// G28-D: refuse to start when the 1-minute load average exceeds
+    /// `2 × ncpus` (or `SQLITE_GRAPHRAG_MAX_LOAD_PER_NCPU` if set).
+    /// Set to false to skip the check on contended CI runners.
+    #[arg(long, default_value_t = true)]
+    pub max_load_check: bool,
+
+    /// G28-D: when the system is saturated, abort the job after this
+    /// many consecutive HardFailure outcomes. Default 5.
+    #[arg(long, value_name = "N", default_value_t = 5)]
+    pub circuit_breaker_threshold: u32,
+
+    /// G29 Passo 4: minimum trigram-Jaccard similarity between the
+    /// original body and the LLM-rewritten body for the rewrite to be
+    /// accepted. Scores below the threshold are rejected and emitted as
+    /// `EnrichItemResult::PreservationFailed`. Default 0.7 (per the G29
+    /// gap specification). Ignored when `--operation` is not
+    /// `body-enrich`.
+    #[arg(long, value_name = "FLOAT", default_value_t = 0.7)]
+    pub preserve_threshold: f64,
+
+    /// G33 Passo 3: when set, validate `--codex-model` against the
+    /// ChatGPT Pro OAuth accepted-model list and abort with a
+    /// suggestion when the value is unknown. Default true (fail fast
+    /// to avoid burning OAuth turns). Set to false to opt out.
+    #[arg(long, default_value_t = true)]
+    pub codex_model_validate: bool,
+
+    /// G33 Passo 3: when set together with an invalid `--codex-model`,
+    /// automatically substitute the supplied default (e.g. `gpt-5.5`)
+    /// instead of aborting. The substitution is recorded in the NDJSON
+    /// stream as `provider_substituted: true` for traceability.
+    #[arg(long, value_name = "MODEL")]
+    pub codex_model_fallback: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -586,40 +659,292 @@ fn call_claude(
 }
 
 // ---------------------------------------------------------------------------
+// Preflight probe (G35) — single-turn ping to verify the LLM provider
+// ---------------------------------------------------------------------------
+
+/// Result of a single preflight ping (G35).
+enum PreflightOutcome {
+    /// The provider accepted the ping without rate-limit or other errors.
+    Healthy,
+    /// The provider rejected the ping due to OAuth rate limit. The
+    /// `suggestion` field is a human hint that callers can embed in the
+    /// user-facing error.
+    RateLimited {
+        reason: String,
+        suggestion: &'static str,
+    },
+    /// Any other provider error (binary missing, auth failure, etc.).
+    Error(AppError),
+}
+
+/// Probes the configured LLM provider with a 1-turn ping.
+///
+/// - Claude: `claude -p "ping" --max-turns 1 --strict-mcp-config --mcp-config '{}'`
+/// - Codex:  `codex exec -c mcp_servers='{}' "ping" --json`
+///
+/// The probe intentionally avoids spawning any MCP server children (G28-A)
+/// to keep its own process footprint at the minimum.
+fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
+    let timeout = std::time::Duration::from_secs(args.rate_limit_buffer.max(60));
+
+    match args.mode {
+        EnrichMode::ClaudeCode => {
+            let bin = match find_claude_binary(args.claude_binary.as_deref()) {
+                Ok(b) => b,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            let mut cmd = std::process::Command::new(&bin);
+            cmd.env_clear();
+            for var in &["PATH", "HOME", "USER"] {
+                if let Ok(val) = std::env::var(var) {
+                    cmd.env(var, val);
+                }
+            }
+            cmd.arg("-p")
+                .arg("ping")
+                .arg("--max-turns")
+                .arg("1")
+                .arg("--strict-mcp-config")
+                .arg("--mcp-config")
+                .arg("{}")
+                .arg("--dangerously-skip-permissions")
+                .arg("--settings")
+                .arg("{\"hooks\":{}}")
+                .arg("--output-format")
+                .arg("json")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let child = match super::claude_runner::spawn_with_memory_limit(&mut cmd) {
+                Ok(c) => c,
+                Err(e) => {
+                    return PreflightOutcome::Error(AppError::Io(e));
+                }
+            };
+            let output = match wait_with_timeout(child, timeout) {
+                Ok(out) => out,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("hit your session limit")
+                    || stderr.contains("rate_limit")
+                    || stderr.contains("429")
+                {
+                    return PreflightOutcome::RateLimited {
+                        reason: stderr.trim().to_string(),
+                        suggestion:
+                            "wait for the OAuth window to reset or use --fallback-mode codex",
+                    };
+                }
+                return PreflightOutcome::Error(AppError::Validation(format!(
+                    "preflight probe failed: {stderr}",
+                    stderr = stderr.trim()
+                )));
+            }
+            PreflightOutcome::Healthy
+        }
+        EnrichMode::Codex => {
+            let bin = match find_codex_binary(args.codex_binary.as_deref()) {
+                Ok(b) => b,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            super::codex_spawn::validate_codex_model(args.codex_model.as_deref())
+                .map_err(PreflightOutcome::Error)
+                .ok();
+            let schema = "{}";
+            let schema_path = match super::codex_spawn::trusted_schema_path() {
+                Ok(p) => p,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            let spawn_args = super::codex_spawn::CodexSpawnArgs {
+                binary: &bin,
+                prompt: "ping",
+                json_schema: schema,
+                input_text: "",
+                model: args.codex_model.as_deref(),
+                timeout_secs: args.rate_limit_buffer.max(60),
+                schema_path: schema_path.clone(),
+            };
+            let mut cmd = super::codex_spawn::build_codex_command(&spawn_args);
+            let child = match super::claude_runner::spawn_with_memory_limit(&mut cmd) {
+                Ok(c) => c,
+                Err(e) => return PreflightOutcome::Error(AppError::Io(e)),
+            };
+            let output = match wait_with_timeout(child, timeout) {
+                Ok(out) => out,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            let _ = std::fs::remove_file(&schema_path);
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("rate_limit")
+                    || stderr.contains("429")
+                    || stderr.contains("Too Many Requests")
+                {
+                    return PreflightOutcome::RateLimited {
+                        reason: stderr.trim().to_string(),
+                        suggestion: "wait for the rate-limit window to reset",
+                    };
+                }
+                return PreflightOutcome::Error(AppError::Validation(format!(
+                    "preflight probe failed: {stderr}",
+                    stderr = stderr.trim()
+                )));
+            }
+            PreflightOutcome::Healthy
+        }
+    }
+}
+
+/// Cross-platform wait with timeout (no extra crate dependency).
+fn wait_with_timeout(
+    mut child: std::process::Child,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, AppError> {
+    use wait_timeout::ChildExt;
+    let start = std::time::Instant::now();
+    let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(AppError::Validation(format!(
+            "preflight probe timed out after {}s",
+            start.elapsed().as_secs()
+        )));
+    }
+    let mut stdout = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        std::io::Read::read_to_end(&mut out, &mut stdout).map_err(AppError::Io)?;
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        std::io::Read::read_to_end(&mut err, &mut stderr).map_err(AppError::Io)?;
+    }
+    let exit = status.unwrap();
+    Ok(std::process::Output {
+        status: exit,
+        stdout,
+        stderr,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // SCAN helpers — SQL queries that find items needing enrichment
 // ---------------------------------------------------------------------------
 
 /// Returns memories without any `memory_entities` binding.
 ///
-/// These are the targets for `memory-bindings` enrichment.
+/// These are the targets for `memory-bindings` enrichment. When `name_filter`
+/// is non-empty, restricts the scan to the given names (G37); unknown names
+/// are silently skipped (the caller can detect them by comparing
+/// requested vs. returned).
 fn scan_unbound_memories(
     conn: &Connection,
     namespace: &str,
     limit: Option<usize>,
+    name_filter: &[String],
 ) -> Result<Vec<(i64, String, String)>, AppError> {
     let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
-    let sql = format!(
-        "SELECT m.id, m.name, m.body
-         FROM memories m
-         WHERE m.namespace = ?1
-           AND m.deleted_at IS NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-           )
-         ORDER BY m.id
-         {limit_clause}"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params![namespace], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT m.id, m.name, m.body
+             FROM memories m
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+               )
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        // Build a parameterised IN clause: ?2, ?3, ..., ?{1+n}
+        let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT m.id, m.name, m.body
+             FROM memories m
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND m.name IN ({in_clause})
+               AND NOT EXISTS (
+                   SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+               )
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+        params_vec.push(&namespace);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// Reads a list of memory names from a UTF-8 text file (G37).
+///
+/// Empty lines and lines beginning with `#` are skipped. Returns a
+/// de-duplicated, order-preserving list of trimmed names.
+fn read_names_file(path: &Path) -> Result<Vec<String>, AppError> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        AppError::Validation(format!("failed to read names file {}: {e}", path.display()))
+    })?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Resolves the union of `--names` and `--names-file` (G37).
+fn resolve_name_filter(args: &EnrichArgs) -> Result<Vec<String>, AppError> {
+    let mut combined: Vec<String> = args.names.clone();
+    if let Some(p) = &args.names_file {
+        let from_file = read_names_file(p)?;
+        for n in from_file {
+            if !combined.contains(&n) {
+                combined.push(n);
+            }
+        }
+    }
+    Ok(combined)
 }
 
 /// Returns entities with NULL or empty description.
@@ -899,9 +1224,36 @@ fn persist_enriched_body(
         body: new_body.to_string(),
         body_hash,
         session_id: None,
-        source: "enrich".to_string(),
-        metadata: serde_json::Value::Object(serde_json::Map::new()),
+        source: "agent".to_string(),
+        metadata: serde_json::json!({
+            "operation": "body-enrich",
+            "orig_chars": old_body.chars().count(),
+            "new_chars": new_body.chars().count(),
+        }),
     };
+
+    // G29 audit: insert a new immutable version BEFORE the update so the
+    // enriched body is reachable through `history --name <X>` and
+    // `restore --version N` can roll back to the pre-enrich state.
+    let next_version = crate::storage::versions::next_version(conn, memory_id)?;
+    let version_metadata = serde_json::json!({
+        "operation": "body-enrich",
+        "orig_chars": old_body.chars().count(),
+        "new_chars": new_body.chars().count(),
+    })
+    .to_string();
+    crate::storage::versions::insert_version(
+        conn,
+        memory_id,
+        next_version,
+        memory_name,
+        &memory_type,
+        &description,
+        new_body,
+        &version_metadata,
+        Some("enrich"),
+        "edit",
+    )?;
 
     memories::update(conn, memory_id, &new_memory, None)?;
     memories::sync_fts_after_update(
@@ -979,13 +1331,23 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
     let conn = open_rw(&paths.db)?;
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
 
-    // G28-B (v1.0.68): enforce singleton per (job_type, namespace) so two
-    // parallel `enrich` invocations on the same DB cannot co-exist.  This is
-    // the root cause of the 2026-06-03 process-proliferation incident.
-    let _singleton =
-        crate::lock::acquire_job_singleton(crate::lock::JobType::Enrich, &namespace, None)?;
+    // G28-B (v1.0.68) + G30 (v1.0.69): enforce singleton per
+    // (job_type, namespace, db_hash) so two parallel `enrich` invocations
+    // on the same DB cannot co-exist, but concurrent enrich on different
+    // databases works as expected. The force flag (--force) breaks a
+    // stale lock from a previously crashed invocation.
+    let wait_secs = args.wait_job_singleton;
+    let force_flag = args.force_job_singleton;
+    let _singleton = crate::lock::acquire_job_singleton(
+        crate::lock::JobType::Enrich,
+        &namespace,
+        &paths.db,
+        wait_secs,
+        force_flag,
+    )?;
 
     // Validate provider binary upfront
+    let _effective_mode: EnrichMode = args.mode.clone();
     let provider_binary = match args.mode {
         EnrichMode::ClaudeCode => {
             let bin = find_claude_binary(args.claude_binary.as_deref())?;
@@ -1015,6 +1377,66 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
             bin
         }
     };
+
+    // G28-D: refuse to start when the system is saturated. This check
+    // is BEFORE preflight so we never spend an OAuth turn on a host
+    // that is already at the limit.
+    if args.max_load_check && !args.dry_run && crate::system_load::is_system_saturated() {
+        let load = crate::system_load::load_average_one();
+        let n = crate::system_load::ncpus();
+        return Err(AppError::Validation(format!(
+            "system load average {load:.2} exceeds 2x ncpus ({n}); \
+             pass --no-max-load-check to override (not recommended)"
+        )));
+    }
+
+    // G35: preflight probe — issue a single ping turn to verify the
+    // provider is healthy before scanning N candidates. If the probe
+    // fails with a rate-limit error, optionally fall back to a
+    // different mode (typically codex) instead of failing the entire
+    // batch. The probe itself consumes 1 OAuth turn, so it stays
+    // opt-in (default off) to keep --dry-run and CI flows zero-cost.
+    if args.preflight_check && !args.dry_run {
+        let preflight_result = run_preflight_probe(args);
+        match preflight_result {
+            PreflightOutcome::Healthy => {
+                tracing::info!(target: "enrich", mode = ?args.mode, "preflight probe healthy");
+            }
+            PreflightOutcome::RateLimited { reason, suggestion } => {
+                if let Some(fallback) = args.fallback_mode.clone() {
+                    if fallback != args.mode {
+                        // G35 (v1.0.69): the mid-batch mode switch is
+                        // intentionally NOT applied because it would
+                        // desynchronise the per-item rate-limit wait
+                        // state (rate-limited items in the worker are
+                        // timed against the original provider). Instead
+                        // we abort cleanly so the operator can re-invoke
+                        // with `--mode {fallback:?}`. This guarantees no
+                        // OAuth window is wasted and no partial state
+                        // is left in the queue.
+                        return Err(AppError::Validation(format!(
+                            "preflight detected rate limit on {mode:?}: {reason}; \
+                             re-invoke with `--mode {fallback:?}` to use the fallback provider",
+                            mode = args.mode
+                        )));
+                    }
+                    return Err(AppError::Validation(format!(
+                        "preflight detected rate limit on {mode:?}: {reason}; \
+                         --fallback-mode matches --mode, no recovery possible",
+                        mode = args.mode
+                    )));
+                }
+                return Err(AppError::Validation(format!(
+                    "preflight detected rate limit on {mode:?}: {reason}; \
+                     {suggestion}; pass --fallback-mode codex to recover",
+                    mode = args.mode
+                )));
+            }
+            PreflightOutcome::Error(e) => {
+                return Err(e);
+            }
+        }
+    }
 
     // SCAN phase
     let scan_result = scan_operation(&conn, &namespace, args)?;
@@ -1119,19 +1541,38 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
             "parallel LLM processing with bounded thread pool"
         );
     }
-    // G28-D (v1.0.68): warn above the recommended parallelism ceiling.  Each
-    // worker spawns a `claude -p` subprocess that (without MCP isolation)
-    // typically fan-outs 20+ child processes; 4 workers therefore risk ~80
-    // extra processes.  See gaps.md G28 and the `external-process-audit-v1066`.
+    // G28-D (v1.0.68) + G34 (v1.0.69): warn above the recommended parallelism
+    // ceiling. The threshold and message depend on the LLM mode because
+    // Claude Code spawns MCP children (G28-A) while Codex does not.
     if parallelism > 4 {
-        tracing::warn!(
-            target: "enrich",
-            llm_parallelism = parallelism,
-            recommended_max = 4,
-            "llm_parallelism above 4 multiplies subprocess fan-out; \
-             consider combining with SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR to \
-             cut MCP children (G28-A)"
-        );
+        match args.mode {
+            EnrichMode::ClaudeCode => {
+                tracing::warn!(
+                    target: "enrich",
+                    llm_parallelism = parallelism,
+                    recommended_max = 4,
+                    mode = "claude-code",
+                    "llm_parallelism above 4 multiplies Claude Code subprocess fan-out; \
+                     consider combining with SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR \
+                     to cut MCP children (G28-A)"
+                );
+            }
+            EnrichMode::Codex if parallelism > 16 => {
+                tracing::warn!(
+                    target: "enrich",
+                    llm_parallelism = parallelism,
+                    recommended_max = 16,
+                    mode = "codex",
+                    "llm_parallelism above 16 risks OAuth rate-limit on Codex; \
+                     consider --llm-parallelism 8 for safer concurrency"
+                );
+            }
+            EnrichMode::Codex => {
+                // No warning: codex does not spawn MCP children and was
+                // validated at parallelism 8 in production (1161 items,
+                // 0 failures) per the 2026-06-04 session audit.
+            }
+        }
     }
 
     let mut completed = 0usize;
@@ -1205,6 +1646,15 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                         let mut w_oauth = false;
                         let mut w_backoff = DEFAULT_RATE_LIMIT_WAIT;
                         let w_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                        // G28-D: per-worker circuit breaker that aborts the
+                        // loop after `circuit_breaker_threshold` consecutive
+                        // HardFailure outcomes (transient/rate-limited errors
+                        // do NOT count, so a recovering provider is not
+                        // penalised).
+                        let mut w_breaker = crate::retry::CircuitBreaker::new(
+                            args.circuit_breaker_threshold.max(1),
+                            std::time::Duration::from_secs(60),
+                        );
 
                         loop {
                             if crate::shutdown_requested() {
@@ -1235,7 +1685,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                             let call_result = match operation {
                                 EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
                                 EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, paths),
+                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths),
                                 EnrichOperation::WeightCalibrate => call_weight_calibrate(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
                                 EnrichOperation::RelationReclassify => call_relation_reclassify(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
                                 EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => call_entity_connect(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
@@ -1257,6 +1707,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                                     );
                                     w_completed += 1;
                                     if !is_oauth { w_cost += cost; }
+                                    // G28-D: count success; resets breaker.
+                                    let _ = w_breaker
+                                        .record(crate::retry::AttemptOutcome::Success);
                                     let _guard = stdout_mu.lock();
                                     emit_json(&ItemEvent { item: &item_key, status: "done", memory_id, entity_id, entities: Some(entities), rels: Some(rels), chars_before, chars_after, cost_usd: if is_oauth { None } else { Some(cost) }, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: None, index: current_index, total });
                                 }
@@ -1265,6 +1718,37 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                                     let _ = w_queue.execute("UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2", rusqlite::params![reason, queue_id]);
                                     let _guard = stdout_mu.lock();
                                     emit_json(&ItemEvent { item: &item_key, status: "skipped", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: None, index: current_index, total });
+                                }
+                                Ok(EnrichItemResult::PreservationFailed { score, threshold, chars_before, chars_after }) => {
+                                    // G29 Passo 4: worker mirror of the
+                                    // serial path. Counted as a soft
+                                    // skip so the queue surface shows
+                                    // a quality issue rather than a
+                                    // transport failure.
+                                    w_skipped += 1;
+                                    let reason = format!(
+                                        "preservation_failed: jaccard={score:.3} threshold={threshold:.3} (orig={chars_before} chars, new={chars_after} chars)"
+                                    );
+                                    let _ = w_queue.execute(
+                                        "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                                        rusqlite::params![reason, queue_id],
+                                    );
+                                    let _guard = stdout_mu.lock();
+                                    emit_json(&ItemEvent {
+                                        item: &item_key,
+                                        status: "preservation_failed",
+                                        memory_id: None,
+                                        entity_id: None,
+                                        entities: None,
+                                        rels: None,
+                                        chars_before: Some(chars_before),
+                                        chars_after: Some(chars_after),
+                                        cost_usd: None,
+                                        elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                                        error: Some(reason),
+                                        index: current_index,
+                                        total,
+                                    });
                                 }
                                 Err(e) => {
                                     let err_str = format!("{e}");
@@ -1288,6 +1772,16 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                                     let _ = w_queue.execute("UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2", rusqlite::params![err_str, queue_id]);
                                     let _guard = stdout_mu.lock();
                                     emit_json(&ItemEvent { item: &item_key, status: "failed", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: Some(err_str), index: current_index, total });
+                                    // G28-D: count hard failure against breaker.
+                                    let breaker_opened = w_breaker
+                                        .record(crate::retry::AttemptOutcome::HardFailure);
+                                    if breaker_opened {
+                                        tracing::error!(target: "enrich",
+                                            consecutive_failures = w_breaker.consecutive_failures(),
+                                            "circuit breaker opened — aborting worker"
+                                        );
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1381,6 +1875,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     args.min_output_chars,
                     args.max_output_chars,
                     args.prompt_template.as_deref(),
+                    args.preserve_threshold,
                     &paths,
                 ),
                 EnrichOperation::WeightCalibrate => call_weight_calibrate(
@@ -1583,6 +2078,44 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                         total,
                     });
                 }
+                Ok(EnrichItemResult::PreservationFailed {
+                    score,
+                    threshold,
+                    chars_before,
+                    chars_after,
+                }) => {
+                    // G29 Passo 4: the LLM rewrite diverged too far from
+                    // the original body. Count as a soft failure (not
+                    // `failed`) so the queue surfaces it as a quality
+                    // issue, not a transport error. The reason is
+                    // structured so the operator can audit why a body
+                    // was rejected.
+                    skipped += 1;
+                    let reason = format!(
+                        "preservation_failed: jaccard={score:.3} threshold={threshold:.3} (orig={chars_before} chars, new={chars_after} chars)"
+                    );
+                    if let Err(qe) = queue_conn.execute(
+                        "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                        rusqlite::params![reason, queue_id],
+                    ) {
+                        tracing::warn!(target: "enrich", error = %qe, "queue preservation_failed update failed");
+                    }
+                    emit_json(&ItemEvent {
+                        item: &item_key,
+                        status: "preservation_failed",
+                        memory_id: None,
+                        entity_id: None,
+                        entities: None,
+                        rels: None,
+                        chars_before: Some(chars_before),
+                        chars_after: Some(chars_after),
+                        cost_usd: None,
+                        elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                        error: Some(reason),
+                        index: current_index,
+                        total,
+                    });
+                }
                 Err(e) => {
                     let err_str = format!("{e}");
                     if matches!(e, AppError::RateLimited { .. }) {
@@ -1674,6 +2207,16 @@ enum EnrichItemResult {
     },
     Skipped {
         reason: String,
+    },
+    /// G29 Passo 4 (v1.0.69): the LLM rewrite diverged from the original
+    /// body beyond the configured `--preserve-threshold` and was rejected
+    /// before persistence. The trigram-Jaccard score and threshold are
+    /// emitted in the NDJSON stream for operator audit.
+    PreservationFailed {
+        score: f64,
+        threshold: f64,
+        chars_before: usize,
+        chars_after: usize,
     },
 }
 
@@ -1820,6 +2363,7 @@ fn call_body_enrich(
     min_output_chars: usize,
     max_output_chars: usize,
     prompt_template: Option<&Path>,
+    preserve_threshold: f64,
     paths: &crate::paths::AppPaths,
 ) -> Result<EnrichItemResult, AppError> {
     let (memory_id, body, description, memory_type): (i64, String, String, String) = conn
@@ -1920,6 +2464,43 @@ fn call_body_enrich(
 
     let chars_after = enriched_body.chars().count();
 
+    // G29 Passo 4 (v1.0.69): preservation check. Before persisting, run
+    // a trigram-Jaccard similarity between the original body and the
+    // LLM-rewritten body. When the score falls below
+    // `args.preserve_threshold` (default 0.7 per the G29 gap), reject the
+    // rewrite as a likely hallucination. The result is recorded in the
+    // NDJSON stream so operators can audit what the LLM tried to do.
+    let threshold = preserve_threshold;
+    let verdict =
+        crate::preservation::PreservationVerdict::evaluate(&body, enriched_body, threshold);
+    if !verdict.is_accepted() {
+        return Ok(EnrichItemResult::PreservationFailed {
+            score: match verdict {
+                crate::preservation::PreservationVerdict::Preserved { score, .. } => score,
+                crate::preservation::PreservationVerdict::Rejected { score, .. } => score,
+                crate::preservation::PreservationVerdict::Unchanged { .. } => 1.0,
+            },
+            threshold,
+            chars_before,
+            chars_after,
+        });
+    }
+
+    // G29 Passo 5 (v1.0.69): idempotency via blake3 hash. Before persisting,
+    // compare the hash of the original body against the hash of the enriched
+    // body. Identical hashes mean the LLM produced a byte-for-byte identical
+    // body (rare but possible) — treat as `Skipped` so re-running the batch
+    // is safe and the queue does not get re-persisted entries.
+    let old_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+    let new_hash = blake3::hash(enriched_body.as_bytes()).to_hex().to_string();
+    if old_hash == new_hash {
+        return Ok(EnrichItemResult::Skipped {
+            reason: format!(
+                "enriched body hash matches original (blake3:{old_hash}); idempotency skip"
+            ),
+        });
+    }
+
     // Only persist if the enriched body is genuinely longer
     if chars_after <= chars_before {
         return Ok(EnrichItemResult::Skipped {
@@ -1959,9 +2540,11 @@ fn scan_operation(
     namespace: &str,
     args: &EnrichArgs,
 ) -> Result<Vec<String>, AppError> {
+    // G37: resolve --names + --names-file once and apply to every scan path.
+    let name_filter = resolve_name_filter(args)?;
     match args.operation {
         EnrichOperation::MemoryBindings => {
-            let rows = scan_unbound_memories(conn, namespace, args.limit)?;
+            let rows = scan_unbound_memories(conn, namespace, args.limit, &name_filter)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::EntityDescriptions => {
@@ -2733,55 +3316,23 @@ fn call_codex(
 ) -> Result<(serde_json::Value, f64, bool), AppError> {
     use wait_timeout::ChildExt;
 
-    let full_prompt = format!("{prompt}\n\n{input_text}");
-    let schema_file = {
-        let tmp = std::env::temp_dir().join(format!("enrich-schema-{}.json", std::process::id()));
-        std::fs::write(&tmp, json_schema).map_err(AppError::Io)?;
-        tmp
+    // G31+G32+G33 (v1.0.69): validate the model BEFORE spawn, write the
+    // schema to a trusted cache path (not /tmp), and reuse the
+    // consolidated JSONL parser. See `codex_spawn.rs` for the canonical
+    // hardening rationale.
+    super::codex_spawn::validate_codex_model(model)?;
+    let schema_file = super::codex_spawn::trusted_schema_path()?;
+
+    let args = super::codex_spawn::CodexSpawnArgs {
+        binary,
+        prompt,
+        json_schema,
+        input_text,
+        model,
+        timeout_secs,
+        schema_path: schema_file.clone(),
     };
-
-    let mut cmd = Command::new(binary);
-    cmd.env_clear();
-    for var in &[
-        "PATH",
-        "HOME",
-        "USER",
-        "OPENAI_API_KEY",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    #[cfg(windows)]
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    cmd.arg("exec")
-        .arg("--json")
-        .arg("--output-schema")
-        .arg(&schema_file);
-
-    if let Some(m) = model {
-        cmd.arg("--model").arg(m);
-    }
-
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut cmd = super::codex_spawn::build_codex_command(&args);
 
     let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(
@@ -2790,6 +3341,7 @@ fn call_codex(
         ))
     })?;
 
+    let full_prompt = format!("{prompt}\n\n{input_text}");
     let stdin_bytes = full_prompt.into_bytes();
     let mut child_stdin = child
         .stdin
@@ -2804,7 +3356,6 @@ fn call_codex(
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
-
     let _ = std::fs::remove_file(&schema_file);
 
     match status {
@@ -2845,9 +3396,25 @@ fn call_codex(
             }
             let stdout_str = String::from_utf8(stdout_buf)
                 .map_err(|_| AppError::Validation("codex stdout is not valid UTF-8".into()))?;
-            let value: serde_json::Value = serde_json::from_str(&stdout_str).map_err(|e| {
-                AppError::Validation(format!("failed to parse codex output as JSON: {e}"))
-            })?;
+            // G32: use the JSONL parser, NOT serde_json::from_str on the
+            // entire stdout (codex emits one event per line).
+            let result = super::codex_spawn::parse_codex_jsonl(&stdout_str)?;
+            // Wrap the extraction as a JSON object so downstream code
+            // (which expects a single `serde_json::Value`) keeps working.
+            // `ExtractedUrl` lacks `Serialize` so we project to a
+            // serde-friendly vector.
+            let urls: Vec<serde_json::Value> = result
+                .extraction
+                .urls
+                .iter()
+                .map(|u| serde_json::json!({"url": u.url, "offset": u.offset}))
+                .collect();
+            let value = serde_json::json!({
+                "entities": result.extraction.entities,
+                "relationships": result.extraction.relationships,
+                "urls": urls,
+                "extraction_method": result.extraction.extraction_method,
+            });
             Ok((value, 0.0, false))
         }
         None => {
@@ -2930,7 +3497,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_unbound_memories(&conn, "global", None).unwrap();
+        let results = scan_unbound_memories(&conn, "global", None, &[]).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, "test-mem");
     }
@@ -2966,7 +3533,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_unbound_memories(&conn, "global", None).unwrap();
+        let results = scan_unbound_memories(&conn, "global", None, &[]).unwrap();
         assert!(results.is_empty(), "bound memory must not appear in scan");
     }
 

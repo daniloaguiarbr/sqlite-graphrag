@@ -248,6 +248,30 @@
 
 
 ## Referências
+
+## Inventário de Testes da v1.0.69
+### Delta de Contagem de Testes
+- Linha de base v1.0.68: 692 testes passando.
+- v1.0.69 final: 745 testes passando (+53).
+- 0 falhas, 3 ignorados (testes loom gateados por `#[cfg(sqlite_graphrag_loom)]`).
+### Novos Testes por Módulo
+- `src/commands/claude_runner.rs`: +4 testes de conformidade OAuth-only (`build_command_oauth_only_mandatory_flags`, `build_command_aborts_when_anthropic_api_key_set`, e mais 2) marcados `#[serial_test::serial(env)]` para serializar mutação de env.
+- `src/commands/codex_spawn.rs`: +4 testes de conformidade OAuth-only paralelos ao claude, mais 11 testes para o helper de spawn em si (casos de borda do parser, validação de modelo, presença de flags de comando).
+- `src/commands/ingest_claude.rs`: testes existentes atualizados para esperar o conjunto canônico de flags OAuth-only.
+- `src/preservation.rs`: 10 testes para `jaccard_similarity` (condições de borda, trigramas, strings vazias, Unicode) e `PreservationVerdict` (variantes Preserved, Rejected, Unchanged).
+- `src/memory_source.rs`: 8 testes para `as_str`, `TryFrom<&str>` (válido e inválido), `Display` e serialização.
+- `src/reaper.rs`: 4 testes (`orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`).
+- `src/system_load.rs`: 5 testes para `load_average_one`, `ncpus` e `is_system_saturated`.
+- `src/commands/vec.rs`: 3 testes para `vec orphan-list`, `vec purge-orphan` e `vec stats`.
+- `src/commands/optimize.rs`: 1 novo teste para o conjunto de campos de `OptimizeResponse`; 2 testes existentes atualizados.
+- `src/lock.rs`: 6 testes (sanitização de namespace, bloqueio de segunda invocação, isolamento por namespace, determinismo de db_hash, divergência de db_hash, flag force).
+### Testes Serializados
+- Todos os 8 testes OAuth-only são marcados `#[serial_test::serial(env)]` porque mutam o ambiente global via `unsafe { std::env::set_var(...) }` e `unsafe { std::env::remove_var(...) }`. Rodá-los em paralelo causaria race.
+- A crate `serial_test` (já é dependência do projeto) fornece o atributo; os testes são auto-descobertos por `cargo nextest run` com semântica de execução serial.
+### Tempo de Execução dos Testes
+- Tempo total da suíte completa no host de referência: ~10 segundos para os 745 testes.
+- O grupo OAuth-only adiciona ~0.04 segundos (mutação de env é rápida).
+- Testes loom NÃO estão incluídos na contagem padrão; são gateados e devem ser rodados via `scripts/test-loom.sh`.
 - Documentação da crate loom: `https://docs.rs/loom/latest/loom/`
 - Repositório GitHub do loom: `https://github.com/tokio-rs/loom`
 - Documentação do cargo-nextest: `https://nexte.st/`

@@ -146,6 +146,11 @@ pub mod lock;
 /// Memory guard: checks RAM availability before loading the ONNX model.
 pub mod memory_guard;
 
+/// Type-safe enumeration of the five `memories.source` CHECK constraint values.
+/// Replaces the footgun `pub source: String` to prevent G29-style regressions.
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod memory_source;
+
 /// Namespace resolution with precedence between flag, environment and markers.
 pub mod namespace;
 
@@ -154,6 +159,9 @@ pub mod output;
 
 /// Dual-format argument parser: accepts Unix epoch and RFC 3339.
 pub mod parsers;
+
+/// G29 Passo 4: preservation checks (Jaccard trigram) for LLM-enriched bodies.
+pub mod preservation;
 
 /// Filesystem paths for the project-local database and app support directories.
 pub mod paths;
@@ -166,6 +174,13 @@ pub mod signals;
 
 /// Centralized retry infrastructure with exponential backoff and half-jitter.
 pub mod retry;
+
+/// G28: orphan-process reaper that runs at CLI startup.
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod reaper;
+
+/// G28-D: system load average observation (pre-spawn saturation check).
+pub mod system_load;
 
 /// Persistence layer: memories, entities, chunks and version history.
 pub mod storage;

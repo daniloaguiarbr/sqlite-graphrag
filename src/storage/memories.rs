@@ -178,12 +178,18 @@ pub fn find_by_hash(
 /// Returns `Err(AppError::Database)` on insertion failure and
 /// `Err(AppError::Json)` if metadata serialization fails.
 pub fn insert(conn: &Connection, m: &NewMemory) -> Result<i64, AppError> {
+    // G29 Passo 2 (v1.0.69): runtime guard for the CHECK constraint on
+    // `source`. Even though `MemorySource` is the typed future, every
+    // legacy `NewMemory { source: "..." }` literal still flows through
+    // this function; validating here keeps the footgun from regressing
+    // for callers that have not yet migrated to the enum.
+    let validated_source = crate::memory_source::validate_source(&m.source)?;
     conn.execute(
         "INSERT INTO memories (namespace, name, type, description, body, body_hash, session_id, source, metadata)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             m.namespace, m.name, m.memory_type, m.description, m.body,
-            m.body_hash, m.session_id, m.source,
+            m.body_hash, m.session_id, validated_source,
             serde_json::to_string(&m.metadata)?
         ],
     )?;
@@ -210,6 +216,11 @@ pub fn update(
     m: &NewMemory,
     expected_updated_at: Option<i64>,
 ) -> Result<bool, AppError> {
+    // G29 Passo 2 (v1.0.69): runtime guard for the CHECK constraint on
+    // `source`. Mirrors `insert` so `body-enrich` and other mutations
+    // cannot reintroduce the historical "enrich" literal that broke
+    // `body-enrich` in v1.0.55 - v1.0.68.
+    let validated_source = crate::memory_source::validate_source(&m.source)?;
     let affected = if let Some(ts) = expected_updated_at {
         conn.execute(
             "UPDATE memories SET type=?2, description=?3, body=?4, body_hash=?5,
@@ -222,7 +233,7 @@ pub fn update(
                 m.body,
                 m.body_hash,
                 m.session_id,
-                m.source,
+                validated_source,
                 serde_json::to_string(&m.metadata)?,
                 ts
             ],
@@ -239,7 +250,7 @@ pub fn update(
                 m.body,
                 m.body_hash,
                 m.session_id,
-                m.source,
+                validated_source,
                 serde_json::to_string(&m.metadata)?
             ],
         )?

@@ -66,6 +66,10 @@
 | `remember-batch` (summary) | `remember-batch-summary.schema.json` |
 | `export` (per-memory line) | `export-memory-line.schema.json` |
 | `export` (summary) | `export-summary.schema.json` |
+| `vec orphan-list` (v1.0.69) | `vec-orphan-list.schema.json` |
+| `vec purge-orphan` (v1.0.69) | `vec-purge-orphan.schema.json` |
+| `vec stats` (v1.0.69) | `vec-stats.schema.json` |
+| `codex-models` (v1.0.69) | `codex-models.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Commands Without JSON Schemas
 - `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies
@@ -130,6 +134,14 @@
 - Template B (legacy): `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` — emitted by the counting semaphore for any other command
 - Agents can disambiguate the two with a regex on `message`: matches `^job ` for Template A and `^all ` for Template B
 - The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
+### Schemas Adicionados na v1.0.69 (G33 + G39)
+- `vec-orphan-list.schema.json` cobre `sqlite-graphrag vec orphan-list --json`; lista cada linha órfã com `vector_hash` e `kind` (`memory` | `entity` | `chunk`).
+- `vec-purge-orphan.schema.json` cobre `sqlite-graphrag vec purge-orphan --yes --json`; emite contagens de purga por tabela para `vec_memories`, `vec_entities` e `vec_chunks`.
+- `vec-stats.schema.json` cobre `sqlite-graphrag vec stats --json`; emite contagens de linhas mais contagens de órfãos nas três tabelas vec.
+- `codex-models.schema.json` cobre `sqlite-graphrag codex-models --json`; emite a lista branca de modelos ChatGPT Pro OAuth, o modelo padrão e um campo opcional `suggestion` quando `--suggest <substring>` é usado.
+- Os quatro novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto.
+- Schemas existentes (`optimize.schema.json`, `enrich-*.schema.json`, `backup.schema.json`) permanecem inalterados em shape; os novos campos v1.0.69 (`fts_progress_polls`, `enrich_preservation_score`, `backup_step_sleep_ms`) vivem dentro de seus objetos existentes como campos opcionais.
+
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
 - `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`

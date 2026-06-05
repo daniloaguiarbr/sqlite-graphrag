@@ -102,7 +102,7 @@
 Authentication: OAuth works out of the box for both modes — no API key needed.
 --mode claude-code reads OAuth from ~/.claude/.credentials.json (Claude Pro/Max/Team).
 --mode codex reads device auth from codex auth login (OpenAI).
-API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) are optional and provide faster subprocess startup.
+API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Validation. OAuth is the ONLY accepted credential flow.
 
 
 ## Exit Codes

@@ -276,64 +276,36 @@ fn extract_with_codex(
 ) -> Result<(ExtractionResult, Option<CodexUsage>), AppError> {
     use wait_timeout::ChildExt;
 
-    let mut cmd = Command::new(binary);
+    // G31 Passo C (v1.0.69): delegate command construction to the shared
+    // `codex_spawn::build_codex_command` helper so `enrich` and `ingest` stay
+    // perfectly aligned on the canonical seven hardening flags. The local
+    // function still owns the stdin pump + JSONL parsing (see below).
+    let _ = timeout_secs; // currently unused; consumed by the helper when it spawns the process
+    let _ = file_content; // pumped into stdin below, see `stdin_pump` thread
+    let _ = schema_file; // helper reuses the temp file at the given path
+    let prompt = String::new(); // empty prompt — helper appends file_content via args.input_text
+    let mut cmd = crate::commands::codex_spawn::build_codex_command(
+        &crate::commands::codex_spawn::CodexSpawnArgs {
+            binary,
+            prompt: &prompt,
+            json_schema: "", // caller writes the schema directly via `schema_file`
+            input_text: "",
+            model,
+            timeout_secs,
+            schema_path: schema_file.to_path_buf(),
+        },
+    );
 
-    cmd.env_clear();
-    for var in &[
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "TERM",
-        "LANG",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_RUNTIME_DIR",
-        "XDG_CACHE_HOME",
-        "OPENAI_API_KEY",
-        "CODEX_ACCESS_TOKEN",
-        "CODEX_HOME",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "DYLD_FALLBACK_LIBRARY_PATH",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    #[cfg(windows)]
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    cmd.arg("exec")
-        .arg("--json")
-        .arg("--output-schema")
-        .arg(schema_file)
-        .arg("--ephemeral")
-        .arg("--skip-git-repo-check")
-        .arg("--sandbox")
-        .arg("read-only")
-        .arg("--ignore-user-config")
-        .arg("--ignore-rules");
-
-    if let Some(m) = model {
-        cmd.arg("-m").arg(m);
-    }
-
-    // `-` means: read the prompt from stdin (Paperclip pattern)
-    cmd.arg("-");
+    // `build_codex_command` writes the JSON schema to `schema_path` and
+    // appends `input_text` to the prompt via Paperclip stdin. For `ingest`
+    // we want the schema content already on disk (the caller pre-wrote
+    // EXTRACTION_SCHEMA_CODEX into the named tempfile), and the document
+    // content goes through stdin via a dedicated thread (see below). Strip
+    // the file the helper just rewrote — our caller pre-wrote it.
+    let _ = std::fs::write(
+        schema_file,
+        crate::commands::ingest_codex::EXTRACTION_SCHEMA_CODEX,
+    );
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -614,11 +586,19 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
         )));
     }
 
-    // G28-B (v1.0.68): acquire singleton before doing real work so two
-    // parallel `ingest --mode codex` invocations cannot co-exist.
+    // G28-B (v1.0.68) + G30 (v1.0.69): acquire singleton before doing real
+    // work so two parallel `ingest --mode codex` invocations cannot co-exist
+    // on the same database. Scope includes the database hash so concurrent
+    // ingest against different databases is allowed.
     let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
-    let _singleton =
-        crate::lock::acquire_job_singleton(crate::lock::JobType::IngestCodex, &early_ns, None)?;
+    let early_paths = AppPaths::resolve(args.db.as_deref())?;
+    let _singleton = crate::lock::acquire_job_singleton(
+        crate::lock::JobType::IngestCodex,
+        &early_ns,
+        &early_paths.db,
+        args.wait_job_singleton,
+        args.force_job_singleton,
+    )?;
 
     // Stage 1: Validate binary
     let codex_binary = find_codex_binary(args.codex_binary.as_deref())?;

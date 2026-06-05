@@ -21,7 +21,7 @@
 // Workload: I/O-bound (flock polling with exponential backoff sleep)
 
 use std::fs::{File, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -85,12 +85,35 @@ fn cache_dir() -> Result<PathBuf, AppError> {
     }
 }
 
-/// Returns the singleton lock file path for a given (job_type, namespace).
+/// Computes a short, filesystem-safe hash of the database path so two distinct
+/// databases (e.g. `/tmp/a.sqlite` and `/tmp/b.sqlite`) get distinct lock
+/// files in the shared cache directory. First 12 hex chars of BLAKE3 are
+/// sufficient for collision avoidance across the local filesystem.
+pub fn db_path_hash(db_path: &Path) -> String {
+    let canonical = db_path
+        .canonicalize()
+        .unwrap_or_else(|_| db_path.to_path_buf());
+    let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
+    hash.to_hex().to_string()[..12].to_string()
+}
+
+/// Returns the singleton lock file path for a given (job_type, namespace, db_hash).
 ///
-/// Layout: `job-singleton-{tag}-{namespace}.lock` in the same cache dir as
-/// the CLI slots.  The namespace is sanitised to a filesystem-safe slug
-/// (lowercase, hyphens, alphanumeric) and defaults to `default` when empty.
-fn job_singleton_path(job_type: JobType, namespace: &str) -> Result<PathBuf, AppError> {
+/// Layout: `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock` in the same
+/// cache dir as the CLI slots. The namespace is sanitised to a filesystem-safe
+/// slug (lowercase, hyphens, alphanumeric) and defaults to `default` when
+/// empty. The `db_hash` is the BLAKE3 prefix returned by [`db_path_hash`].
+///
+/// G30 (v1.0.69): the previous implementation ignored the database path
+/// entirely, so two concurrent `enrich` invocations against different
+/// `graphrag.sqlite` files (production vs. test) collided on the same
+/// cache-dir lock. The db_hash scope makes the singleton per-database while
+/// still sharing the same cache dir.
+pub fn job_singleton_path(
+    job_type: JobType,
+    namespace: &str,
+    db_hash: &str,
+) -> Result<PathBuf, AppError> {
     let cache = cache_dir()?;
     std::fs::create_dir_all(&cache)?;
     let slug = if namespace.is_empty() {
@@ -107,7 +130,15 @@ fn job_singleton_path(job_type: JobType, namespace: &str) -> Result<PathBuf, App
             })
             .collect::<String>()
     };
-    Ok(cache.join(format!("job-singleton-{}-{slug}.lock", job_type.tag())))
+    let safe_hash: String = db_hash
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(16)
+        .collect();
+    Ok(cache.join(format!(
+        "job-singleton-{}-{slug}-{safe_hash}.lock",
+        job_type.tag()
+    )))
 }
 
 /// Tries to open and exclusively lock the lock file for the given slot.
@@ -204,9 +235,26 @@ pub fn acquire_cli_slot(
 pub fn acquire_job_singleton(
     job_type: JobType,
     namespace: &str,
+    db_path: &Path,
     wait_seconds: Option<u64>,
+    force: bool,
 ) -> Result<File, AppError> {
-    let path = job_singleton_path(job_type, namespace)?;
+    let db_hash = db_path_hash(db_path);
+    let path = job_singleton_path(job_type, namespace, &db_hash)?;
+
+    // G30+G09: when --force is set, attempt to break a stale lock by
+    // detecting and removing a pre-existing lock file. This is a last
+    // resort: only enabled by an explicit operator flag. A real orphan
+    // lock from a previous crash leaves a 0-byte file behind, which the
+    // next non-forced caller would still try to lock.
+    if force && path.exists() {
+        tracing::warn!(target: "lock",
+            path = %path.display(),
+            "force=true; removing pre-existing singleton lock file"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -296,18 +344,24 @@ mod tests {
 
     #[test]
     fn job_singleton_path_sanitises_namespace() {
-        let p = job_singleton_path(JobType::Enrich, "Foo Bar/Baz").expect("path should resolve");
+        let p = job_singleton_path(JobType::Enrich, "Foo Bar/Baz", "abc123def456")
+            .expect("path should resolve");
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(name.contains("enrich"), "got {name}");
         assert!(name.contains("foo-bar-baz"), "got {name}");
+        assert!(
+            name.contains("abc123def456"),
+            "must embed db_hash: got {name}"
+        );
     }
 
     #[test]
     fn job_singleton_blocks_second_invocation_same_namespace() {
         let ns = unique_ns();
-        let first = acquire_job_singleton(JobType::Enrich, &ns, Some(0))
+        let db = std::env::temp_dir().join(format!("test-{}.sqlite", unique_ns()));
+        let first = acquire_job_singleton(JobType::Enrich, &ns, &db, Some(0), false)
             .expect("first acquire should succeed");
-        let second = acquire_job_singleton(JobType::Enrich, &ns, Some(0));
+        let second = acquire_job_singleton(JobType::Enrich, &ns, &db, Some(0), false);
         assert!(
             matches!(second, Err(AppError::JobSingletonLocked { .. })),
             "expected JobSingletonLocked, got {second:?}"
@@ -319,11 +373,44 @@ mod tests {
     fn job_singleton_allows_different_namespaces() {
         let ns_a = unique_ns();
         let ns_b = unique_ns();
-        let first = acquire_job_singleton(JobType::IngestClaudeCode, &ns_a, Some(0))
+        let db_a = std::env::temp_dir().join(format!("test-a-{}.sqlite", unique_ns()));
+        let db_b = std::env::temp_dir().join(format!("test-b-{}.sqlite", unique_ns()));
+        let first = acquire_job_singleton(JobType::IngestClaudeCode, &ns_a, &db_a, Some(0), false)
             .expect("ns_a should acquire");
-        let second = acquire_job_singleton(JobType::IngestClaudeCode, &ns_b, Some(0))
+        let second = acquire_job_singleton(JobType::IngestClaudeCode, &ns_b, &db_b, Some(0), false)
             .expect("ns_b should acquire in parallel");
         drop(first);
         drop(second);
+    }
+
+    #[test]
+    fn job_singleton_scoped_by_db_hash() {
+        // G30: two databases, same namespace, different content. Both locks
+        // should succeed because the db_hash differs.
+        let ns = unique_ns();
+        let db_a = std::env::temp_dir().join(format!("test-x-{}.sqlite", unique_ns()));
+        let db_b = std::env::temp_dir().join(format!("test-y-{}.sqlite", unique_ns()));
+        let first = acquire_job_singleton(JobType::Enrich, &ns, &db_a, Some(0), false)
+            .expect("db_a should acquire");
+        let second = acquire_job_singleton(JobType::Enrich, &ns, &db_b, Some(0), false)
+            .expect("db_b should acquire independently (G30 fix)");
+        drop(first);
+        drop(second);
+    }
+
+    #[test]
+    fn db_path_hash_is_stable_for_same_path() {
+        let p = std::env::temp_dir().join("hashing-test.sqlite");
+        let h1 = db_path_hash(&p);
+        let h2 = db_path_hash(&p);
+        assert_eq!(h1, h2, "same path must produce same hash");
+        assert_eq!(h1.len(), 12, "BLAKE3 prefix must be 12 hex chars");
+    }
+
+    #[test]
+    fn db_path_hash_differs_for_different_paths() {
+        let a = std::env::temp_dir().join("hash-a.sqlite");
+        let b = std::env::temp_dir().join("hash-b.sqlite");
+        assert_ne!(db_path_hash(&a), db_path_hash(&b));
     }
 }

@@ -354,6 +354,11 @@ pub enum Commands {
     Export(export::ExportArgs),
     /// FTS5 full-text search index management (rebuild or check)
     Fts(fts::FtsArgs),
+    /// Vector index maintenance (orphan detection, purge, stats) — G39
+    Vec(vec::VecArgs),
+    /// List codex OAuth models accepted by ChatGPT Pro (G33).
+    #[command(name = "codex-models")]
+    CodexModels,
     /// Bulk-delete all relationships of a given type (e.g. mentions)
     PruneRelations(prune_relations::PruneRelationsArgs),
     /// Remove NER bindings (memory_entities rows) for an entity or all entities

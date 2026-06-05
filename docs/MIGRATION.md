@@ -153,10 +153,11 @@ sqlite-graphrag namespace-detect
 - G02-G10: version validation, Windows env vars, skipped counter, 10MB cap, name normalization, entity warnings, WAL queue, WAL checkpoint, schema additionalProperties
 - No schema migration needed — compatible with existing databases
 
-> **Authentication:** OAuth works out of the box for both modes — no API key needed.
+> **Authentication:** OAuth is the ONLY accepted credential flow. API keys are PROHIBITED.
 > `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
-> `--mode codex` reads device auth from `codex auth login` (OpenAI).
-> API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional and provide faster subprocess startup.
+> `--mode codex` reads device auth from `codex login` (OpenAI ChatGPT).
+> Defining `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment ABORTS the spawn with `AppError::Validation` and exit code 1. The `--bare` flag (which would also demand an API key) is REMOVED from all executable code paths.
+> See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale.
 
 ### v1.0.61 — 15 bug fixes for ingest --mode claude-code
 
@@ -341,6 +342,31 @@ sqlite-graphrag namespace-detect
 - If you changed paths, point the legacy binary back to the previous database file before retrying
 
 ## See Also
+
+## v1.0.68 to v1.0.69 (current)
+### Behaviour Changes
+- The `claude -p` and `codex exec` spawn paths now ABORT with `AppError::Validation` (exit code 1) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are defined in the environment. The OAuth flow is the ONLY accepted credential mechanism. See `docs/decisions/adr-0011-oauth-only-enforcement.md`.
+- The `--bare` flag for `claude -p` is REMOVED from all executable code paths. It appears only in documentation explaining why it is forbidden (gaps.md:49).
+- `enrich --operation body-enrich` no longer fails with `CHECK constraint failed: source IN ('agent','user','system','import','sync')`. The body-enrich now succeeds 100% and persists via the `agent` source.
+### New CLI Flags
+- `enrich` gains `--preflight-check`, `--fallback-mode <codex|claude-code>`, `--rate-limit-buffer <SECONDS>`, `--preserve-threshold <FLOAT>`, `--names <NAME>`, `--names-file <PATH>`.
+- `enrich` and `ingest` gain `--wait-job-singleton <SECONDS>` and `--force-job-singleton` (the wait flag referenced in older error messages finally exists).
+- `optimize` gains `--fts-dry-run`, `--fts-progress <SECONDS>`, and `--yes`.
+- `backup` gains `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-progress <PAGES>`, `--backup-no-sleep`. Defaults improved 25x (1000/5ms vs 100/50ms).
+### New Subcommands
+- `vec orphan-list --json` lists each orphan vector with `vector_hash`.
+- `vec purge-orphan --yes --dry-run` deletes orphans from `vec_memories`, `vec_entities`, `vec_chunks` in a single transaction.
+- `vec stats --json` reports row counts and orphan counts.
+- `codex-models --json` and `codex-models --suggest <substring>` expose the ChatGPT Pro OAuth model whitelist.
+### Operator Action Required for API Key Users
+- Operators currently relying on `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` must migrate to OAuth.
+- For Claude: `claude login` once and remove the env var from your shell rc.
+- For Codex: `codex login` or `codex login --device-auth` once and remove the env var.
+- The `~/.local/bin/codex-clean` wrapper script becomes legacy; you can `rm` it after upgrading.
+### No Database Migration Required
+- No schema changes in v1.0.69. The `Cargo.toml` version bump from 1.0.68 to 1.0.69 is the only deployment-time change.
+- New modules: `src/memory_source.rs`, `src/preservation.rs`, `src/reaper.rs`, `src/system_load.rs`, `src/commands/codex_spawn.rs`, `src/commands/vec.rs`. All additive.
+- 7 new ADRs document every architectural decision. See `docs/decisions/adr-0011-0018-*.md`.
 - `README.md` for the current installation path and release guidance
 - `CHANGELOG.md` for legacy lineage and renamed release notes
 - `docs/HOW_TO_USE.md` for current command examples

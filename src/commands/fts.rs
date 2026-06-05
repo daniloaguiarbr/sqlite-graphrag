@@ -239,6 +239,34 @@ fn run_stats(args: FtsStatsArgs) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Public helper: returns `true` when the FTS5 module is loadable AND the
+/// `fts_memories` virtual table exists AND a wildcard MATCH query succeeds.
+///
+/// Used by [`crate::commands::optimize`] to skip the (potentially minute-long)
+/// FTS5 rebuild when the index is already healthy. Also used by `health` and
+/// by future `vec check` implementations.
+///
+/// # Errors
+/// Returns `Err(AppError::Database)` only when the connection cannot be opened
+/// for reasons unrelated to FTS5 itself (permission denied, corrupted file).
+/// A missing FTS5 module or table is reported as `Ok(false)`.
+pub fn check_fts_functional(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fts_memories'",
+            [],
+            |r| r.get::<_, i64>(0).map(|v| v > 0),
+        )
+        .unwrap_or(false);
+    if !table_exists {
+        return Ok(false);
+    }
+    let liveness = conn
+        .execute_batch("SELECT * FROM fts_memories('*') LIMIT 0;")
+        .is_ok();
+    Ok(liveness)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

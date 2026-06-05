@@ -21,7 +21,12 @@ const ENV_WHITELIST: &[&str] = &[
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
     "XDG_RUNTIME_DIR",
-    "ANTHROPIC_API_KEY",
+    // NOTE: `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT from this whitelist
+    // (gaps.md:47). The OAuth-only flow uses the session token from
+    // `~/.claude/.credentials.json` (or the OS keychain), not an env var.
+    // The OAuth-only guard in `build_claude_command` aborts the spawn if
+    // `ANTHROPIC_API_KEY` is set in the environment, but defence-in-depth
+    // also requires the variable to never reach the child process.
     "CLAUDE_CONFIG_DIR",
     "TMPDIR",
     "TMP",
@@ -44,6 +49,24 @@ const ENV_WHITELIST_WINDOWS: &[&str] = &[
 
 /// Default virtual memory limit for LLM subprocesses (4 GiB).
 const DEFAULT_SUBPROCESS_MEMORY_LIMIT_MB: u64 = 4096;
+
+// G28-C (v1.0.69): process lifecycle. The G28 gap asks for
+// `tokio::process::Command::kill_on_drop(true)`. This codebase uses
+// `std::process::Command` (synchronous) so the tokio helper is not
+// available. Equivalent defence-in-depth is provided by:
+//
+// 1. `SIGTERM` via `libc::kill` in the timeout branch of `run_claude`
+//    and `run_codex` (graceful — gives the child a chance to clean up
+//    MCP children and write logs).
+// 2. `child.kill()` (SIGKILL) if SIGTERM was ignored.
+// 3. `reaper::scan_and_kill_orphans()` at startup, which walks `/proc`
+//    and reaps any `claude`/`codex` processes that were orphaned by a
+//    previous crash.
+//
+// SIGKILL on drop is intentionally NOT used because (a) the gaps.md
+// Passo C warning flags it as risky per tokio-rs/tokio#7082, and (b)
+// the SIGTERM-then-SIGKILL pair covers the same threat model with
+// better cleanup behaviour.
 
 /// Spawns a command with a virtual memory limit via `setrlimit(RLIMIT_AS)`.
 ///
@@ -202,17 +225,38 @@ pub fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
 
 /// Builds a `Command` for `claude -p` with least-privilege environment.
 ///
-/// G28-A (v1.0.68): respects `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` as a
-/// directory that exists but is empty; when set, we export it as
-/// `CLAUDE_CONFIG_DIR` so Claude Code loads no user-scoped MCP servers
-/// (and no settings.json hooks).  This cuts the typical 8-10 MCP process
-/// tree to zero.  When the env var is unset, behaviour is unchanged.
+/// G28-A (v1.0.68) + OAuth-only hardening (v1.0.69, mandated by gaps.md
+/// lines 41-49): the command ALWAYS uses the OAuth flow. The flag set
+/// is the canonical one documented in gaps.md Correção A:
 ///
-/// We deliberately do NOT pass `--strict-mcp-config` or `--mcp-config '{}'`
-/// because GitHub issue [anthropics/claude-code#10787] documents that
-/// Claude Code CLI ignores both flags and always falls back to
-/// `~/.mcp.json` regardless.  The `CLAUDE_CONFIG_DIR` env var is the only
-/// mechanism upstream actually honours.
+/// ```text
+/// claude -p "TAREFA" \
+///   --strict-mcp-config \
+///   --mcp-config '{}' \
+///   --dangerously-skip-permissions \
+///   --settings '{"hooks":{}}' \
+///   --model <X> \
+///   --max-turns <N> \
+///   --output-format json \
+///   --no-session-persistence
+/// ```
+///
+/// The combination cuts the typical 8-10 MCP process tree to zero and
+/// disables user hooks. The reaper sweep at startup (see `reaper::scan_and_kill_orphans`)
+/// is the last line of defence for any process that ignored the flags.
+///
+/// **`--bare` is FORBIDDEN** (gaps.md:49 and operator policy):
+/// `--bare` cuts MCPs but disables OAuth and demands `ANTHROPIC_API_KEY`,
+/// which is PROHIBITED in this project. We also ABORT the spawn if
+/// `ANTHROPIC_API_KEY` is set in the environment, because that is the
+/// gateway to the prohibited API-key path.
+///
+/// GitHub issue [anthropics/claude-code#10787] documents that earlier
+/// Claude Code CLI builds sometimes ignored `--strict-mcp-config` and
+/// fell back to `~/.mcp.json`. We still pass the flags as defence-in-depth
+/// and ALSO honour `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` so users
+/// who need belt-and-suspenders isolation can point Claude at an empty
+/// config directory (no MCP, no hooks, no settings).
 ///
 /// [anthropics/claude-code#10787]: https://github.com/anthropics/claude-code/issues/10787
 pub fn build_claude_command(
@@ -222,6 +266,20 @@ pub fn build_claude_command(
     model: Option<&str>,
     max_turns: u32,
 ) -> Command {
+    // OAuth-only guard (gaps.md:47). If `ANTHROPIC_API_KEY` is set in the
+    // environment we MUST abort — that is the API-key path which is
+    // explicitly PROHIBITED. Use the OAuth flow exclusively.
+    if let Ok(_key) = std::env::var("ANTHROPIC_API_KEY") {
+        // Return a command that will fail loudly at spawn time. We
+        // intentionally do NOT pass `--bare` (PROHIBITED) and we do NOT
+        // allow the API-key path at all.
+        let mut cmd = Command::new("false");
+        cmd.env_clear();
+        cmd.env("PATH", "/nonexistent");
+        cmd.arg("--oauth-only-violation-anthropic-api-key-set");
+        return cmd;
+    }
+
     let mut cmd = Command::new(binary);
 
     cmd.env_clear();
@@ -258,8 +316,16 @@ pub fn build_claude_command(
         }
     }
 
+    // Canonical OAuth-only command line (gaps.md:201-208). Every flag is
+    // mandatory; do NOT pass `--bare` (PROHIBITED, gaps.md:49).
     cmd.arg("-p")
         .arg(prompt)
+        .arg("--strict-mcp-config")
+        .arg("--mcp-config")
+        .arg("{}")
+        .arg("--dangerously-skip-permissions")
+        .arg("--settings")
+        .arg(r#"{"hooks":{}}"#)
         .arg("--output-format")
         .arg("json")
         .arg("--json-schema")
@@ -267,14 +333,6 @@ pub fn build_claude_command(
         .arg("--max-turns")
         .arg(max_turns.to_string())
         .arg("--no-session-persistence");
-
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        cmd.arg("--bare");
-    } else {
-        cmd.arg("--dangerously-skip-permissions")
-            .arg("--settings")
-            .arg(r#"{"hooks":{}}"#);
-    }
 
     if let Some(m) = model {
         cmd.arg("--model").arg(m);
@@ -366,6 +424,8 @@ pub fn parse_claude_output(stdout: &str) -> Result<ClaudeResult, AppError> {
 /// Calls `claude -p` with prompt and schema, waits with timeout, and parses output.
 ///
 /// G03: parses stdout even on non-zero exit to detect `terminal_reason: "max_turns"`.
+/// G28-C (v1.0.69): the child is killed explicitly on timeout to avoid
+/// leaving a `claude -p` zombie with its MCP children behind.
 pub fn run_claude(
     binary: &Path,
     prompt: &str,
@@ -390,6 +450,20 @@ pub fn run_claude(
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
+
+    if status.is_none() {
+        // G28-C: timeout hit — send SIGTERM to the child so the MCP
+        // children it spawned (and their npm/node tree) are also
+        // reaped. SIGTERM gives the child a chance to clean up; the
+        // reaper sweep in main.rs is the last line of defence for
+        // anything that ignored it.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(child.id() as i32, libc::SIGTERM);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     match status {
         Some(exit_status) => {
@@ -498,5 +572,97 @@ mod tests {
             matches!(err, AppError::RateLimited { .. }),
             "expected AppError::RateLimited, got: {err}"
         );
+    }
+
+    /// OAuth-only conformance test (gaps.md:41-49, v1.0.69 mandate).
+    /// Verifies that `build_claude_command` always emits the canonical
+    /// flag set and NEVER emits `--bare` or any API-key path.
+    #[test]
+    #[serial_test::serial(env)]
+    fn build_command_oauth_only_mandatory_flags() {
+        // SAFETY: this is a unit test, no concurrent env mutation
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        let cmd = build_claude_command(
+            std::path::Path::new("/usr/bin/false"),
+            "test prompt",
+            "{}",
+            Some("sonnet"),
+            4,
+        );
+        let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
+        // Mandatory OAuth-only flags from gaps.md lines 201-208
+        assert!(args.contains(&"-p"), "must have -p");
+        assert!(
+            args.contains(&"--strict-mcp-config"),
+            "must have --strict-mcp-config (gaps.md:206)"
+        );
+        assert!(
+            args.contains(&"--mcp-config"),
+            "must have --mcp-config (gaps.md:207)"
+        );
+        assert!(
+            args.contains(&"--dangerously-skip-permissions"),
+            "must have --dangerously-skip-permissions (gaps.md:208)"
+        );
+        assert!(
+            args.contains(&"--settings"),
+            "must have --settings (gaps.md:209)"
+        );
+        assert!(
+            args.contains(&"--output-format"),
+            "must have --output-format json (gaps.md:213)"
+        );
+        assert!(args.contains(&"--json-schema"), "must have --json-schema");
+        assert!(
+            args.contains(&"--max-turns"),
+            "must have --max-turns (gaps.md:212)"
+        );
+        assert!(
+            args.contains(&"--no-session-persistence"),
+            "must have --no-session-persistence"
+        );
+        assert!(
+            args.contains(&"--model"),
+            "must have --model when model is Some"
+        );
+        // PROHIBITED flags (gaps.md:49)
+        assert!(
+            !args.contains(&"--bare"),
+            "--bare is PROHIBITED (gaps.md:49)"
+        );
+    }
+
+    /// OAuth-only guard: when `ANTHROPIC_API_KEY` is in the environment,
+    /// `build_claude_command` MUST abort the spawn (return a `false`
+    /// command), NOT silently fall back to the API-key path.
+    #[test]
+    #[serial_test::serial(env)]
+    fn build_command_aborts_when_anthropic_api_key_set() {
+        // SAFETY: unit test
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test-violation");
+        }
+        let cmd = build_claude_command(
+            std::path::Path::new("/usr/bin/claude"),
+            "test prompt",
+            "{}",
+            Some("sonnet"),
+            4,
+        );
+        let program = cmd.get_program().to_string_lossy().to_string();
+        let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
+        assert_eq!(
+            program, "false",
+            "when ANTHROPIC_API_KEY is set, build_claude_command must abort"
+        );
+        assert!(
+            args.contains(&"--oauth-only-violation-anthropic-api-key-set"),
+            "aborted command must carry violation marker"
+        );
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
     }
 }

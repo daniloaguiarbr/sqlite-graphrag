@@ -63,3 +63,4 @@ gaps.md
 # Fuzzing artifacts
 fuzz/corpus/
 fuzz/artifacts/
+scripts/legacy/

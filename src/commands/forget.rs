@@ -86,6 +86,19 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         None => ("not_found", false, None, None),
         Some((id, Some(existing))) => ("already_deleted", false, Some(existing), Some(id)),
         Some((id, None)) => {
+            // G39 Passo 4 (v1.0.69): remove the embedding vector BEFORE the
+            // soft-delete so we do not leave a `vec_memories` row that will
+            // show up as `vec_memories_orphaned` in `health --json`. The
+            // operation is best-effort: a failure is logged but does not
+            // abort the soft-delete (the user-visible action is the same).
+            if let Err(e) = memories::delete_vec(&conn, id) {
+                tracing::warn!(
+                    target: "forget",
+                    memory_id = id,
+                    error = %e,
+                    "vec cleanup before soft-delete failed — orphan vector may be left",
+                );
+            }
             let ok = memories::soft_delete(&conn, &namespace, &name)?;
             if !ok {
                 // Race: row was concurrently soft-deleted between probe and update.

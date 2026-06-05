@@ -9,7 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_None yet. v1.0.68 is the latest published release; new commits land in this section until the next version is cut._
+_None yet. v1.0.69 is the latest in-progress release; new commits land in this section until the next version is cut._
+
+## [1.0.69] - 2026-06-05
+
+### Fixed
+- **G28 (CRÍTICA)** Process proliferation at CLI startup. Three reinforcing changes close the root cause: (a) `claude_runner::build_claude_command` now ALWAYS passes `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions` so the Claude subprocess never inherits user-scoped MCP servers; the env var `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` remains available for full isolation. (b) `run_claude` sends `SIGTERM` on timeout before the Child is dropped, so MCP children don't survive the parent. (c) New `src/reaper.rs` walks `/proc` at startup, kills any `claude`/`codex` orphan with `PPID=1` and age > 60s, and the reaper is invoked from `main` BEFORE any work. The 4-test reaper suite (`orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`) runs in <30s on the test host.
+- **G29** `enrich --operation body-enrich` aborted 100% of invocations with `CHECK constraint failed: source IN ('agent','user','system','import','sync')`. The bug was a literal `source: "enrich".to_string()` in `src/commands/enrich.rs:902` that violated the SQLite CHECK constraint. Replaced with `source: "agent".to_string()` plus structured metadata `{operation, orig_chars, new_chars}` (G29 hotfix).
+- **G29 audit** `persist_enriched_body` was bypassing the immutable version history. Every body-enrich now inserts a new `memory_versions` row with `change_reason='edit'` BEFORE the update, so `history --name <X>` lists both the original and enriched bodies and `restore --version N` can roll back to the pre-enrich state.
+- **G31** `enrich --mode codex` was missing five critical hardening flags compared to `ingest --mode codex` (`--ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules`). Extracted the spawn pipeline into `src/commands/codex_spawn.rs` so BOTH call-sites consume the same canonical command.
+- **G32** `enrich --mode codex` was calling `serde_json::from_str` on the raw stdout, but `codex exec --json` emits JSONL. The new `parse_codex_jsonl` helper iterates line by line, picks the last `item.completed` of type `agent_message`, and extracts usage from the last populated `turn.completed` event. Single source of truth, shared by `enrich` and `ingest --mode codex`.
+- **G33** `enrich --mode codex --codex-model <name>` was rejected silently AFTER spending an OAuth turn. The new `validate_codex_model` helper checks `--codex-model` against the ChatGPT Pro OAuth whitelist (`codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`) BEFORE the subprocess is spawned.
+- **G34** The `llm_parallelism > 4` warning was emitted in `mode=codex` (which does not spawn MCP children) with the same severity as `mode=claude-code`. The warning is now conditional to the mode: Claude warns at 5, Codex warns at 17, Codex 5..16 is silent (validated at 1161 items, 0 failures in production).
+- **G36** `optimize` rebuilt the FTS5 index unconditionally even when `fts check` reported the index was already healthy. The default behaviour is now to skip the rebuild when the index passes integrity-check. Operators can still force a rebuild with `--no-fts-skip-when-functional`. The response now exposes `fts_rebuilt`, `fts_skipped_functional`, `fts_unhealthy` for observability.
+- **G38** `backup` defaulted to `run_to_completion(100, Duration::from_millis(50), None)` which on a 4.3 GB database took ~9 minutes purely on sleep. The new defaults are `run_to_completion(1000, Duration::from_millis(5), None)` (~25x speedup) and the response now reports `pages_copied` and `step_size`. Operators can tune with `--backup-step-size`, `--backup-step-sleep-ms`, and `--backup-no-sleep`.
+- **G39** `vec_memories_orphaned` was reported by `health` with no remediation path. The new `vec orphan-list` / `vec purge-orphan --yes` / `vec stats --json` commands close the loop. `vec purge-orphan` requires `--yes` to prevent accidental loss; `--dry-run` is supported.
+
+### Added
+- **G30** Singleton lock is now scoped per `(job_type, namespace, db_hash)`. Two concurrent `enrich` invocations against DIFFERENT databases no longer collide; the same database still serialises. The `db_hash` is the first 12 hex chars of `blake3(canonicalize(db_path))`.
+- **G30+G09** New CLI flags `--wait-job-singleton <SECONDS>` (poll for the lock) and `--force-job-singleton` (break a stale lock from a previously crashed invocation) on `enrich` and `ingest`. The error message that previously referenced a non-existent `--wait-job-singleton` flag is now actionable.
+- **G35** New flags `--preflight-check`, `--fallback-mode <codex|claude-code>`, and `--rate-limit-buffer <SECONDS>` on `enrich`. The preflight probe issues a 1-turn ping before scanning N candidates; on a Claude rate limit it aborts with a clear error (or switches to `--fallback-mode`). Default off to keep `--dry-run` and CI flows zero-cost.
+- **G37** New flags `--names <NAME>` and `--names-file <PATH>` on `enrich` to select a specific subset of memory names. `--names-file` accepts `#` comments and blank lines. Combined with `--names` as a union when both are set.
+- **G14 (refactor)** Extracted `codex_spawn` module: spawn pipeline, JSONL parser, and ChatGPT Pro OAuth model validation live in one place (`src/commands/codex_spawn.rs`) with 8 unit tests covering parser edge cases, rate-limit detection, and command-flag presence.
+- **G14 (refactor)** Extracted `vec` subcommand family: `vec orphan-list`, `vec purge-orphan --yes --dry-run`, `vec stats --json`.
+- `src/memory_source.rs` — type-safe enum of the five `memories.source` CHECK-constraint values. `TryFrom<&str>` returns `AppError::Validation` listing the accepted values. 8 unit tests cover valid/invalid/empty/display/serialisation paths. The existing call-sites still use `String` for compatibility; the enum is the foundation for the v1.0.70 migration.
+
+### Changed
+- `lock::acquire_job_singleton` signature gains `db_path: &Path` and `force: bool` parameters. The lock file name is now `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock` so the OS cache dir can be shared across databases.
+- `backup::BackupResponse` adds `pages_copied` and `step_size` fields. Backward-compatible: existing consumers that ignore unknown fields keep working.
+- `optimize::OptimizeResponse` adds `fts_skipped_functional` and `fts_unhealthy` fields.
+- `lock::db_path_hash` is `pub` so callers can compute the hash without acquiring the lock.
+- `claude_runner` spawn env now includes the same whitelisted env vars as the codex spawn (path consistency for users with strict custom configs).
 
 ## [1.0.68] - 2026-06-03
 

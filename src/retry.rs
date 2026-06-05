@@ -288,6 +288,13 @@ impl CircuitBreaker {
         self.consecutive_failures = 0;
         self.open_until = None;
     }
+
+    /// Returns the number of consecutive HardFailure outcomes observed
+    /// since the last success or reset. Public so callers can include
+    /// the value in their abort log line.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
 }
 
 #[cfg(test)]

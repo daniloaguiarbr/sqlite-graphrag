@@ -101,7 +101,7 @@
 Autenticação: OAuth funciona automaticamente em ambos os modos — nenhuma chave de API necessária.
 --mode claude-code lê OAuth de ~/.claude/.credentials.json (Claude Pro/Max/Team).
 --mode codex lê autenticação de dispositivo via codex auth login (OpenAI).
-Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) são opcionais e aceleram o startup do subprocesso.
+Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORTAM o spawn com AppError::Validation. OAuth é o ÚNICO fluxo de credencial aceito.
 
 
 ## Exit Codes

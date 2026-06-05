@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/schemas/vec-purge-orphan.schema.json",
+  "title": "vec purge-orphan response (v1.0.69)",
+  "description": "Response shape of `sqlite-graphrag vec purge-orphan --yes --json`. Added in v1.0.69 as part of G39. Purges orphans from vec_memories, vec_entities, and vec_chunks in a single transaction.",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["purged", "dry_run"],
+      "description": "Whether the purge was actually applied or merely previewed"
+    },
+    "purged": {
+      "type": "object",
+      "description": "Per-table counts of rows deleted (or that WOULD be deleted under --dry-run)",
+      "properties": {
+        "vec_memories": { "type": "integer", "minimum": 0 },
+        "vec_entities": { "type": "integer", "minimum": 0 },
+        "vec_chunks": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["vec_memories", "vec_entities", "vec_chunks"],
+      "additionalProperties": false
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": ["action", "purged", "namespace", "elapsed_ms"],
+  "additionalProperties": false
+}

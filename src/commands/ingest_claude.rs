@@ -258,10 +258,16 @@ fn validate_claude_version(binary: &Path) -> Result<String, AppError> {
 
 /// Invokes `claude -p` for a single file and returns the extraction result.
 ///
-/// Uses `wait-timeout` for cross-platform subprocess timeout, `env_clear()`
-/// for least-privilege environment, and `--bare` when `ANTHROPIC_API_KEY`
-/// is available (faster startup) vs `--dangerously-skip-permissions` for
-/// OAuth users.
+/// OAuth-only enforcement (gaps.md:41-49, v1.0.69 mandate):
+///
+/// - `wait-timeout` for cross-platform subprocess timeout.
+/// - `env_clear()` for least-privilege environment.
+/// - OAuth-only flow: NO `--bare` (PROHIBITED, gaps.md:49), no API-key path.
+/// - Mandatory hardening: `--strict-mcp-config --mcp-config '{}'` to zero
+///   MCP servers, and `--settings '{"hooks":{}}'` to disable hooks.
+/// - If `ANTHROPIC_API_KEY` is set in the environment we ABORT the spawn
+///   (return a `false` command with a violation marker) — API-key path is
+///   PROHIBITED in this project.
 fn extract_with_claude(
     binary: &Path,
     file_content: &[u8],
@@ -269,6 +275,23 @@ fn extract_with_claude(
     timeout_secs: u64,
 ) -> Result<(ExtractionResult, f64, bool), AppError> {
     use wait_timeout::ChildExt;
+
+    // OAuth-only guard (gaps.md:47). If `ANTHROPIC_API_KEY` is set in the
+    // environment we MUST abort — that is the API-key path which is
+    // explicitly PROHIBITED. Use the OAuth flow exclusively.
+    if let Ok(_key) = std::env::var("ANTHROPIC_API_KEY") {
+        let mut cmd = Command::new("false");
+        cmd.env_clear();
+        cmd.env("PATH", "/nonexistent");
+        cmd.arg("--oauth-only-violation-anthropic-api-key-set");
+        return Err(AppError::Validation(
+            "ANTHROPIC_API_KEY is set in the environment; \
+             sqlite-graphrag operates exclusively with OAuth (Pro/Max) and \
+             the API-key path is PROHIBITED (gaps.md:47). Unset the variable \
+             and re-run with `claude login` already completed in this session."
+                .to_string(),
+        ));
+    }
 
     let mut cmd = Command::new(binary);
 
@@ -283,7 +306,7 @@ fn extract_with_claude(
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
         "XDG_RUNTIME_DIR",
-        "ANTHROPIC_API_KEY",
+        // NOTE: `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT (gaps.md:47).
         "CLAUDE_CONFIG_DIR",
         "TMPDIR",
         "TMP",
@@ -311,8 +334,16 @@ fn extract_with_claude(
         }
     }
 
+    // Canonical OAuth-only command line (gaps.md:201-208 + 211-213).
+    // `--bare` is PROHIBITED (gaps.md:49) — never emitted.
     cmd.arg("-p")
         .arg(EXTRACTION_PROMPT)
+        .arg("--strict-mcp-config")
+        .arg("--mcp-config")
+        .arg("{}")
+        .arg("--dangerously-skip-permissions")
+        .arg("--settings")
+        .arg(r#"{"hooks":{}}"#)
         .arg("--output-format")
         .arg("json")
         .arg("--json-schema")
@@ -320,14 +351,6 @@ fn extract_with_claude(
         .arg("--max-turns")
         .arg("7")
         .arg("--no-session-persistence");
-
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        cmd.arg("--bare");
-    } else {
-        cmd.arg("--dangerously-skip-permissions")
-            .arg("--settings")
-            .arg(r#"{"hooks":{}}"#);
-    }
 
     if let Some(m) = model {
         cmd.arg("--model").arg(m);
@@ -574,13 +597,18 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
         )));
     }
 
-    // G28-B (v1.0.68): acquire singleton before doing real work so two
-    // parallel `ingest --mode claude-code` invocations cannot co-exist.
+    // G28-B (v1.0.68) + G30 (v1.0.69): acquire singleton before doing real
+    // work so two parallel `ingest --mode claude-code` invocations cannot
+    // co-exist on the same database. Scope includes the database hash so
+    // concurrent ingest against different databases is allowed.
     let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+    let early_paths = AppPaths::resolve(args.db.as_deref())?;
     let _singleton = crate::lock::acquire_job_singleton(
         crate::lock::JobType::IngestClaudeCode,
         &early_ns,
-        None,
+        &early_paths.db,
+        args.wait_job_singleton,
+        args.force_job_singleton,
     )?;
 
     // Stage 1: Validate

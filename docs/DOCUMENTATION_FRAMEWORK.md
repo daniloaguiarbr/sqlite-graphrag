@@ -186,6 +186,7 @@
 - `docs/TESTING.md` + `docs/TESTING.pt-BR.md` — Guia de testes e estratégia de QA
 - `docs/schemas/README.md` — Índice e documentação dos JSON Schemas (bilíngue inline)
 - `docs/schemas/*.schema.json` — Um schema JSON Draft 2020-12 por subcomando
+- `docs/decisions/adr-NNNN-*.md` — Architectural Decision Records (ADRs) documentando decisões de design v1.0.x
 
 ### Objetivo e Entrega de Cada Arquivo da Pasta docs/
 
@@ -533,13 +534,19 @@
 - [ ] README.md + README.pt-BR.md atualizados se houver novos comandos ou variáveis
 - [ ] docs/AGENTS.md + docs/AGENTS.pt-BR.md atualizados se houver mudanças de contrato JSON
 - [ ] docs/COOKBOOK.md + docs/COOKBOOK.pt-BR.md atualizados se houver novas receitas
+- [ ] docs/HOW_TO_USE.md + docs/HOW_TO_USE.pt-BR.md atualizados com novas flags e subcomandos
+- [ ] docs/MIGRATION.md + docs/MIGRATION.pt-BR.md atualizados com breaking changes e guia de upgrade
+- [ ] docs/TESTING.md + docs/TESTING.pt-BR.md atualizados com novos testes adicionados
+- [ ] docs/CROSS_PLATFORM.md + docs/CROSS_PLATFORM.pt-BR.md atualizados se houver mudanças multiplataforma
 - [ ] docs/schemas/*.schema.json atualizados se houver mudanças de output JSON
 - [ ] docs/schemas/README.md atualizado se houver novos schemas
+- [ ] docs/decisions/adr-NNNN-*.md criado para cada decisão arquitetural nova
 - [ ] skill/*/SKILL.md atualizados se houver mudanças operacionais
 - [ ] llms.txt + llms.pt-BR.txt atualizados se houver mudanças na proposta de valor
 - [ ] llms-full.txt atualizado para refletir estado atual completo
 - [ ] gaps.md atualizado com nova rodada de acceptance testing
 - [ ] INTEGRATIONS.md + INTEGRATIONS.pt-BR.md atualizados se houver novas integrações
+- [ ] TODAS as seções "Authentication" e "API keys" revisadas para refletir a OAuth-only enforcement (v1.0.69+)
 
 
 ## Contagem de Referência — Métricas do Projeto Modelo
