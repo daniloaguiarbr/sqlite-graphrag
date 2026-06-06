@@ -413,10 +413,15 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         ));
     }
     if args.skip_extraction && !args.enable_ner {
-        return Err(AppError::Validation(
-            "--skip-extraction is deprecated since v1.0.45 and has no effect; remove this flag"
-                .to_string(),
-        ));
+        // v1.0.74: revert to v1.0.45 hidden no-op behavior. The v1.0.67
+        // commit (9ddb17b) promoted this to a hard validation error, which
+        // broke the "kept as a hidden no-op for backwards compatibility"
+        // promise documented in CHANGELOG v1.0.45 and started failing
+        // 5+ CI jobs whose E2E tests use this flag to skip the
+        // GLiNER-ONNX model download in CI environments.
+        tracing::warn!(
+            "--skip-extraction is deprecated since v1.0.45 and has no effect (NER is disabled by default); remove this flag to silence the warning"
+        );
     }
     let gliner_variant: crate::extraction::GlinerVariant =
         args.gliner_variant.parse().unwrap_or_else(|e| {

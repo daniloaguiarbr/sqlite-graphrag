@@ -14,9 +14,18 @@
 //! orphaned, AND (c) are older than the threshold. A short-lived CLI
 //! that is just starting up is left alone.
 
+// v1.0.74: gate the orphan-reaper internals behind `cfg(unix)` so the
+// constants and the `Duration` import are not flagged as dead code on
+// Windows. The tests that reference them also need the same gate so the
+// Windows test compilation does not break (the tests assert the values
+// match the contract documented in CHANGELOG G28).
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 const ORPHAN_MIN_AGE_SECS: u64 = 60;
+
+#[cfg(unix)]
 const ORPHAN_SCAN_TARGETS: &[&str] = &["claude", "codex"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +217,7 @@ mod tests {
         assert_eq!(r.failed, 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn orphan_min_age_is_one_minute() {
         // G28: the threshold of 60s is the safety margin that prevents
@@ -216,6 +226,7 @@ mod tests {
         assert_eq!(ORPHAN_MIN_AGE_SECS, 60);
     }
 
+    #[cfg(unix)]
     #[test]
     fn orphan_targets_include_claude_and_codex() {
         assert!(ORPHAN_SCAN_TARGETS.contains(&"claude"));

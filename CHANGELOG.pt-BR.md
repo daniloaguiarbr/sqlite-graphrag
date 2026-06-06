@@ -3,6 +3,26 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.74] - 2026-06-05
+
+### Corrigido
+
+- **Compatibilidade no-op do `--skip-extraction` restaurada (promessa v1.0.45 honrada)**: a v1.0.67 (commit 9ddb17b) promoveu a depreciação de `--skip-extraction` de `tracing::warn!` para um `AppError::Validation` hard em `src/commands/remember.rs:415-417` e `src/commands/ingest.rs:1057-1059`. Isso quebrou a promessa do CHANGELOG v1.0.45 de "kept as a hidden no-op for backwards compatibility" e começou a falhar 5 jobs do CI (Slow Contract Suites, Tests ubuntu/macos, Coverage threshold, cargo-careful sanity) cujos testes E2E usam a flag para pular o download do modelo GLiNER-ONNX. Revertido para `tracing::warn!` com mensagem que espelha o texto da v1.0.45 acrescido de uma dica para remover a flag.
+
+- **`Windows MSVC cross-compile (G29)` falhou com `error[E0463]: can't find crate for 'core'`**: a action `dtolnay/rust-toolchain@stable` executa internamente `rustup toolchain install stable --target x86_64-pc-windows-msvc --profile minimal`, mas `--profile minimal` ignora `--target`, então a cross stdlib nunca é baixada. O build falhava em `cfg-if` e `libc` (os primeiros crates compilados para o target estrangeiro). Adicionado um step explícito `rustup target add x86_64-pc-windows-msvc --toolchain stable` após a action de toolchain para garantir a instalação confiável da cross stdlib.
+
+- **`Miri Unsafe Validation` falhou com `can't call foreign function 'mi_malloc_aligned' on OS 'linux'`**: `mimalloc` (o alocador global definido em `src/main.rs:3-4`) chama `mi_malloc_aligned`, função que o Miri não consegue modelar. Adicionado `RUSTFLAGS="--cfg sqlite_graphrag_miri"` ao job Miri e gateado o `#[global_allocator]` com `#[cfg(not(sqlite_graphrag_miri))]`. O step do Miri agora usa o alocador padrão do Linux enquanto binários de produção continuam com o ganho de velocidade do mimalloc. Registrado o novo cfg em `[lints.rust].unexpected_cfgs.check-cfg`.
+
+- **Três erros de `-D warnings` em `Tests (windows-2025)` e `Clippy (windows-2025)`**: `RUSTFLAGS=-D warnings` transformou os avisos de dead-code em `src/reaper.rs:17` (`unused import: std::time::Duration`), `:19` (`ORPHAN_MIN_AGE_SECS is never used`) e `:20` (`ORPHAN_SCAN_TARGETS is never used`) em erros hard no Windows, onde os internals do reaper são `#[cfg(unix)]`. Gateado os três itens com `#[cfg(unix)]` e os dois testes que os referenciam com `#[cfg(unix)] #[test]`. O build no Windows não flagra mais como dead-code itens que não pode usar.
+
+### Validação
+
+- `cargo check --all-targets`: 0 erros
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings
+- `cargo fmt --all --check`: 0 diferenças
+- Schema YAML: `python3 -c "import yaml; yaml.safe_load(...)"` válido para `ci.yml` (20 jobs), `release.yml` (4 jobs), `action.yml`
+- Schema TOML: `python3 tomllib.load(Cross.toml, Cargo.toml)` válido
+
 ## [1.0.73] - 2026-06-05
 
 ### Corrigido

@@ -1,5 +1,14 @@
 //! Process entry point: signal handling, language/timezone init, dispatch.
 
+// v1.0.74: gate the mimalloc global allocator behind a cfg so the
+// Miri Unsafe Validation job (which passes
+// `RUSTFLAGS="--cfg sqlite_graphrag_miri"`) can run the unsafe
+// `f32_to_bytes` and `controlled_batch_plan` tests. mimalloc's
+// `mi_malloc_aligned` is a foreign function that Miri cannot model
+// (`error: unsupported operation: can't call foreign function
+// 'mi_malloc_aligned' on OS 'linux'`). The default Linux allocator is
+// used during Miri runs; production binaries still get mimalloc.
+#[cfg(not(sqlite_graphrag_miri))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

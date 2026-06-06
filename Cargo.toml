@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.73"
+version = "1.0.74"
 edition = "2021"
 rust-version = "1.88"
 description = "Local GraphRAG memory for LLMs in a single SQLite file"
@@ -177,4 +177,4 @@ opt-level = 1
 opt-level = 2
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)', 'cfg(sqlite_graphrag_miri)'] }
