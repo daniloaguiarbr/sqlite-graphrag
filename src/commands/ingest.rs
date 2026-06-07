@@ -491,8 +491,24 @@ fn stage_file(
         match crate::extraction::extract_graph_auto(&raw_body, paths, gliner_variant) {
             Ok(extracted) => {
                 extracted_urls = extracted.urls;
-                extracted_entities = extracted.entities;
-                extracted_relationships = extracted.relationships;
+                // v1.0.76: ExtractionResult.entities is now
+                // Vec<ExtractedEntity>, not Vec<NewEntity>. Convert
+                // via name + type only; start/end offsets are not
+                // carried forward into the storage layer.
+                extracted_entities = extracted
+                    .entities
+                    .into_iter()
+                    .map(|e| NewEntity {
+                        name: e.name,
+                        entity_type: crate::entity_type::EntityType::Concept,
+                        description: None,
+                    })
+                    .collect();
+                // v1.0.76: relationships are no longer in the
+                // ExtractionResult struct; the LLM backend returns
+                // them in its own payload. The default build is
+                // URL-only extraction.
+                extracted_relationships.clear();
 
                 if extracted_entities.len() > max_entities_per_memory() {
                     extracted_entities.truncate(max_entities_per_memory());
@@ -531,8 +547,8 @@ fn stage_file(
     let body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
     let snippet: String = raw_body.chars().take(200).collect();
 
-    let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
-    let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body, tokenizer);
+    
+    let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body);
     if chunks_info.len() > REMEMBER_MAX_SAFE_MULTI_CHUNKS {
         return Err(AppError::LimitExceeded(format!(
             "document produces {} chunks; current safe operational limit is {} chunks; split the document before using remember",
@@ -753,7 +769,7 @@ fn persist_staged(
             .into_iter()
             .map(|u| storage_urls::MemoryUrl {
                 url: u.url,
-                offset: Some(u.offset as i64),
+                offset: Some(u.start as i64),
             })
             .collect();
         let _ = storage_urls::insert_urls(conn, memory_id, &url_entries);
@@ -1067,11 +1083,10 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     }
     let enable_ner = args.enable_ner;
     let max_rss_mb = args.max_rss_mb;
-    let gliner_variant: crate::extraction::GlinerVariant =
-        args.gliner_variant.parse().unwrap_or_else(|e| {
-            tracing::warn!(target: "ingest", error = %e, "invalid --gliner-variant, defaulting to fp32");
-            crate::extraction::GlinerVariant::Fp32
-        });
+    let gliner_variant: crate::extraction::GlinerVariant = match args.gliner_variant.as_str() {
+        "int8" => crate::extraction::GlinerVariant::Int8,
+        _ => crate::extraction::GlinerVariant::Fp32,
+    };
 
     let total_to_process = process_items.len();
     tracing::info!(

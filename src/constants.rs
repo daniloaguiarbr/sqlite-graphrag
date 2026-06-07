@@ -409,14 +409,14 @@ pub const DUPLICATE_EXIT_CODE: i32 = 9;
 /// `CURRENT_SCHEMA_VERSION`) is stored in the `schema_meta` table and exposed via
 /// `health --json`/`stats --json`. Bumping migrations does NOT change this constant.
 /// Refinery uses its own `refinery_schema_history` table for migration bookkeeping.
-pub const SCHEMA_USER_VERSION: i64 = 49;
+pub const SCHEMA_USER_VERSION: i64 = 50;
 
 /// Current schema version, equal to the highest migration number in `migrations/Vnnn__*.sql`.
 ///
 /// Added in v1.0.27 as a runtime and test sanity check.
 /// Must be bumped in sync with new Refinery migrations; the unit test
 /// `schema_version_matches_migrations_count` validates this automatically.
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 
 #[cfg(test)]
 mod tests_schema_version {

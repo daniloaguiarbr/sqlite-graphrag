@@ -8,7 +8,6 @@
 
 use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS, EMBEDDING_DIM};
 use text_splitter::{ChunkConfig, MarkdownSplitter};
-use tokenizers::Tokenizer;
 
 // Conservative heuristic to reduce the risk of underestimating the real token count
 // in Markdown, code, and multilingual text. The previous value (4 chars/token) allowed
@@ -151,16 +150,25 @@ pub fn split_into_chunks_by_token_offsets(
 /// Splits body into chunks using MarkdownSplitter with a real tokenizer.
 /// Respects Markdown semantic boundaries (H1-H6, paragraphs, blocks).
 /// For plain text without Markdown markers, falls back to paragraph and sentence breaks.
-pub fn split_into_chunks_hierarchical(body: &str, tokenizer: &Tokenizer) -> Vec<Chunk> {
+///
+/// v1.0.76: the `tokenizer` parameter was removed. The chunker now uses the
+/// char-based heuristic (`CHARS_PER_TOKEN = 2`) which is the same heuristic
+/// the rest of the codebase uses for `Chunk::token_count_approx`.
+pub fn split_into_chunks_hierarchical(body: &str) -> Vec<Chunk> {
     if body.is_empty() {
         return Vec::new();
     }
 
-    let config = ChunkConfig::new(CHUNK_SIZE_TOKENS)
-        .with_sizer(tokenizer)
-        .with_overlap(CHUNK_OVERLAP_TOKENS)
+    // v1.0.76: text_splitter 0.30.1's `ChunkConfig::new` defaults to a
+    // char-count sizer when no explicit sizer is set. The default chunk
+    // size is in characters, not tokens, so we scale `CHUNK_SIZE_TOKENS`
+    // by `CHARS_PER_TOKEN` to keep the chunk size roughly equivalent.
+    let char_chunk_size = CHUNK_SIZE_TOKENS * CHARS_PER_TOKEN;
+    let char_overlap = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
+    let config = ChunkConfig::new(char_chunk_size)
+        .with_overlap(char_overlap)
         .expect(
-            "compile-time invariant: CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_SIZE_TOKENS",
+            "compile-time invariant: CHUNK_OVERLAP must be smaller than chunk size",
         );
 
     let splitter = MarkdownSplitter::new(config);

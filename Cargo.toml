@@ -67,8 +67,11 @@ semver = { version = "1", features = ["serde"] }
 ahash = "0.8"
 mimalloc = { version = "0.1", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace", "backup"] }
-sqlite-vec = "0.1.9"
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# v1.0.76: sqlite-vec REMOVED. All vector search now runs in pure Rust over a
+# `memory_embeddings(memory_id, embedding BLOB, source)` table, with cosine
+# similarity computed on demand. This eliminates a heavy build-time dep and
+# the `load_extension` runtime cost. The `vec` command is now an alias for
+# inspecting the embeddings table.
 clap = { version = "4.6", features = ["derive", "env"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
@@ -85,7 +88,7 @@ fastrand = "2"
 fs4 = { version = "0.9", features = ["sync"] }
 interprocess = "2"
 regex = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "macros", "process"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
@@ -100,35 +103,36 @@ constant_time_eq = "=0.4.2"
 parking_lot = "0.12"
 libc = "0.2"
 rayon = "1.10"
-text-splitter = { version = "0.30.1", features = ["markdown", "tokenizers"] }
-huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, features = ["ureq"] }
+text-splitter = { version = "0.30.1", default-features = false, features = ["markdown"] }
+# v1.0.76: fastembed, ort, ndarray, tokenizers, hf-hub removed from the
+# default build. Embedding generation is now LLM headless only (claude
+# code / codex CLI OAuth). The default build is a small, fast Rust
+# binary that delegates generation to external processes. Enable the
+# `embedding-legacy` feature ONLY for the transition window; the
+# feature is removed in v1.1.0.
 unicode-normalization = "0.1.25"
-ndarray = { version = "0.16" }
 tempfile = "3"
 sys-locale = "0.3"
 wait-timeout = "0.2"
 which = "7"
+
+# v1.0.76: legacy fastembed / ort / tokenizers are pulled in ONLY when
+# the corresponding feature is enabled. The default build has none of
+# these crates in the dependency graph.
+fastembed = { version = "5.13.4", default-features = false, optional = true, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
+ort = { version = "=2.0.0-rc.12", default-features = false, optional = true, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
+ndarray = { version = "0.16", optional = true }
+tokenizers = { version = "0.22", default-features = false, optional = true, features = ["onig"] }
+huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, optional = true, features = ["ureq"] }
+# Cargo's `dep:` syntax uses the manifest name, not the package rename.
+# We document the rename in a comment so the feature wiring stays
+# unambiguous: the `huggingface-hub` line above IS the `hf-hub` crate.
 
 [target.'cfg(windows)'.dependencies]
 # G29 (v1.0.68): pinned exact to 0.59.0 because HANDLE type changed
 # from `isize` (0.48/0.52) to `*mut c_void` (>= 0.59); future patch versions
 # could regress again.  Tracked in Cargo.lock via `cargo update -p windows-sys`.
 windows-sys = { version = "=0.59.0", features = ["Win32_System_Console"] }
-
-# ort bumped to =2.0.0-rc.12 in v1.0.43 (applied); fastembed bumped to 5.13.4 which
-# pins ort=2.0.0-rc.12 upstream. Migration required in `src/embedder.rs`:
-#   `ort::execution_providers::CPU` -> `ort::ep::CPU` (namespace reshuffle in rc.12).
-# Note: rc.12 lacks a musl prebuilt (verified 2026-05-03 via
-# https://github.com/pykeio/ort/blob/v2.0.0-rc.12/ort-sys/build/download/dist.txt),
-# so the musl release target was dropped in v1.0.42 (HIGH 1).
-[target.'cfg(not(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu")))'.dependencies]
-fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
-
-# aarch64-linux-gnu uses load-dynamic; same ort/fastembed versions as above.
-[target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))'.dependencies]
-fastembed = { version = "5.13.4", default-features = false, features = ["hf-hub-rustls-tls", "ort-load-dynamic", "image-models"] }
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -171,18 +175,26 @@ debug = 1
 slow-tests = []
 # Enable parking_lot deadlock detection thread (10s polling interval).
 deadlock-detection = ["parking_lot/deadlock_detection"]
-# v1.0.75 — LLM-only migration
-# Opt-in feature: when enabled, the default extraction backend becomes
-# LLM headless (claude code / codex CLI) and the legacy fastembed pipeline
-# is replaced by stubs. The full build (default) keeps v1.0.74 behaviour.
+# v1.0.76 — Default LLM-only build
+# The default build (no features) is the LLM-only build: it does NOT pull in
+# fastembed / ort / ndarray / tokenizers / hf-hub. All embedding generation,
+# NER, and vector search run in pure Rust over the embeddings table, with
+# generation delegated to claude code / codex CLI headless (OAuth, no MCP,
+# no hooks). The CLI is one-shot; there is no daemon.
 llm-only = []
-# Recognised by `cfg!(feature = "embedding-legacy")` checks in src/lock.rs.
-# The default build keeps the fastembed pipeline always-on (so the feature
-# itself is a no-op alias); an operator who really wants the LLM-only path
-# passes `--no-default-features --features llm-only`.
-embedding-legacy = []
-# Full binary with both backends (default in v1.0.75)
-full = []
+# v1.0.76 — Legacy fastembed pipeline
+# Opt-in for the transition window. Enables fastembed + ort + ndarray +
+# tokenizers + hf-hub. Will be REMOVED in v1.1.0; do not depend on this in
+# new code. Users on this feature should migrate to LLM-only by running
+# `sqlite-graphrag migrate --to-llm-only` and rebuilding with --no-default-features.
+embedding-legacy = ["dep:fastembed", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:huggingface-hub"]
+# v1.0.76 — Legacy GLiNER NER
+# Opt-in for the transition window. Enables the ONNX GLiNER model loader
+# for automatic NER. Will be REMOVED in v1.1.0; users should rely on the
+# LLM extraction backend (claude / codex) via ExtractionBackend::Llm.
+ner-legacy = ["dep:ort", "dep:ndarray"]
+# Full binary with everything (default in v1.0.74, removed in v1.1.0).
+full = ["embedding-legacy", "ner-legacy"]
 
 [profile.dev]
 opt-level = 1

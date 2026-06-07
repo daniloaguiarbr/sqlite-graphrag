@@ -113,13 +113,12 @@ pub fn upsert_entity(conn: &Connection, namespace: &str, e: &NewEntity) -> Resul
     Ok(id)
 }
 
-/// Replaces the vector row for an entity in `vec_entities`.
+/// Replaces the vector row for an entity in `entity_embeddings`.
 ///
-/// vec0 virtual tables do not honour `INSERT OR REPLACE` when the primary key
-/// already exists — they raise a UNIQUE constraint error instead of silently
-/// replacing the row. The workaround is an explicit DELETE before INSERT so
-/// that the insert never conflicts. `embedding` must have length
-/// [`crate::constants::EMBEDDING_DIM`].
+/// v1.0.76: sqlite-vec was removed. Embeddings live in a regular BLOB-backed
+/// table; cosine similarity is computed in pure Rust on demand. The
+/// `entity_type` and `name` arguments are accepted for API compatibility
+/// but are not stored — the entities table is the source of truth.
 ///
 /// # Errors
 ///
@@ -128,22 +127,27 @@ pub fn upsert_entity_vec(
     conn: &Connection,
     entity_id: i64,
     namespace: &str,
-    entity_type: EntityType,
+    _entity_type: EntityType,
     embedding: &[f32],
-    name: &str,
+    _name: &str,
 ) -> Result<(), AppError> {
-    // Both statements wrapped in with_busy_retry: WAL concurrency can cause
-    // SQLITE_BUSY on vec0 virtual table writes when multiple CLI instances run.
     let embedding_bytes = f32_to_bytes(embedding);
     with_busy_retry(|| {
         conn.execute(
-            "DELETE FROM vec_entities WHERE entity_id = ?1",
+            "DELETE FROM entity_embeddings WHERE entity_id = ?1",
             params![entity_id],
         )?;
         conn.execute(
-            "INSERT INTO vec_entities(entity_id, namespace, type, embedding, name)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![entity_id, namespace, entity_type, &embedding_bytes, name],
+            "INSERT INTO entity_embeddings(entity_id, namespace, embedding, source, model, dim)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                entity_id,
+                namespace,
+                &embedding_bytes,
+                "llm-headless",
+                crate::constants::SQLITE_GRAPHRAG_VERSION,
+                crate::constants::EMBEDDING_DIM as i64,
+            ],
         )?;
         Ok(())
     })
@@ -538,7 +542,7 @@ pub fn delete_entities_by_ids(conn: &Connection, entity_ids: &[i64]) -> Result<u
     }
     let mut removed = 0usize;
     for id in entity_ids {
-        // vec0 lacks FK CASCADE — clean vec_entities explicitly.
+        // FK CASCADE on entity_embeddings handles cleanup automatically.
         let _ = conn.execute("DELETE FROM vec_entities WHERE entity_id = ?1", params![id]);
         let affected = conn.execute("DELETE FROM entities WHERE id = ?1", params![id])?;
         removed += affected;
@@ -646,11 +650,17 @@ pub fn delete_relationships_by_relation(
     Ok((total_deleted, entity_ids))
 }
 
-/// Searches the `vec_entities` virtual table for the k nearest neighbours.
+/// Searches the `entity_embeddings` table for the k nearest neighbours
+/// using pure-Rust cosine similarity.
+///
+/// v1.0.76: sqlite-vec was removed. The full table scan + in-process
+/// cosine is O(N × D) per call. For namespaces with more than ~10k
+/// entities, the operator should rely on FTS5 (`hybrid-search`) for
+/// coarse filtering before reaching this function.
 ///
 /// # Errors
 ///
-/// - [`AppError::Database`] — SQLite or sqlite-vec query failure.
+/// - [`AppError::Database`] — SQLite query failure.
 /// - [`AppError::Embedding`] — invalid or mismatched embedding dimension.
 pub fn knn_search(
     conn: &Connection,
@@ -658,18 +668,38 @@ pub fn knn_search(
     namespace: &str,
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
-    let bytes = f32_to_bytes(embedding);
+    if embedding.len() != crate::constants::EMBEDDING_DIM {
+        return Err(AppError::Embedding(format!(
+            "knn_search embedding has {} dims, expected {}",
+            embedding.len(),
+            crate::constants::EMBEDDING_DIM
+        )));
+    }
     let mut stmt = conn.prepare_cached(
-        "SELECT entity_id, distance FROM vec_entities
-         WHERE embedding MATCH ?1 AND namespace = ?2
-         ORDER BY distance LIMIT ?3",
+        "SELECT entity_id, embedding FROM entity_embeddings WHERE namespace = ?1",
     )?;
-    let rows = stmt
-        .query_map(params![bytes, namespace, k as i64], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
+    let mut scored: Vec<(i64, f32)> = stmt
+        .query_map(params![namespace], |r| {
+            let id: i64 = r.get(0)?;
+            let bytes: Vec<u8> = r.get(1)?;
+            Ok((id, bytes))
         })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        .filter_map(|row| {
+            row.ok().and_then(|(id, bytes)| {
+                let stored = crate::embedder::bytes_to_f32(&bytes);
+                if stored.len() != embedding.len() {
+                    return None;
+                }
+                let score = crate::similarity::cosine_similarity(embedding, &stored);
+                Some((id, score))
+            })
+        })
+        .collect();
+    // `cosine_similarity` returns a value in [-1.0, 1.0]; 1.0 is the
+    // best match. Sort descending and truncate to `k`.
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(k);
+    Ok(scored)
 }
 
 #[cfg(test)]
@@ -791,7 +821,7 @@ mod tests {
         assert!(result.is_ok(), "first insertion must succeed");
 
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
             params![entity_id],
             |r| r.get(0),
         )?;
@@ -831,7 +861,7 @@ mod tests {
         );
 
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
             params![entity_id],
             |r| r.get(0),
         )?;
@@ -851,8 +881,8 @@ mod tests {
             upsert_entity_vec(&conn, entity_id, "global", EntityType::Project, &emb, &nome)?;
         }
 
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))?;
-        assert_eq!(count, 3, "must have three distinct rows in vec_entities");
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM entity_embeddings", [], |r| r.get(0))?;
+        assert_eq!(count, 3, "must have three distinct rows in entity_embeddings");
         Ok(())
     }
 
@@ -945,7 +975,7 @@ mod tests {
         )?;
 
         let count_antes: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
             params![entity_id],
             |r| r.get(0),
         )?;
@@ -954,13 +984,13 @@ mod tests {
         delete_entities_by_ids(&conn, &[entity_id])?;
 
         let count_depois: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_entities WHERE entity_id = ?1",
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
             params![entity_id],
             |r| r.get(0),
         )?;
         assert_eq!(
             count_depois, 0,
-            "vec_entities deve ser limpo junto com entities"
+            "entity_embeddings deve ser limpo junto com entities"
         );
         Ok(())
     }

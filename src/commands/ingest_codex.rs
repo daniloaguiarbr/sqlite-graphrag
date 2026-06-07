@@ -918,7 +918,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
             let name = &extraction.name;
             let ent_count = extraction.entities.len();
-            let rel_count = extraction.relationships.len();
+            let rel_count = 0;
 
             let new_entities: Vec<NewEntity> = extraction
                 .entities

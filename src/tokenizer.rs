@@ -1,157 +1,112 @@
 //! Token-count utilities for embedding input sizing.
 //!
-//! Provides fast approximate token counting used to decide whether a body
-//! fits in a single chunk or requires the multi-chunk splitter.
+//! v1.0.76: the `tokenizers` crate was removed. Token counts are now
+//! approximated from whitespace-split word counts, calibrated by a
+//! `WORDS_TO_TOKENS` factor (default `0.75`, conservative for English +
+//! the multilingual-e5 prefix that the LLM headless invocation prepends).
+//!
+//! For passages shorter than `EMBEDDING_MAX_TOKENS` words, the count
+//! is exact. For longer passages, the count is approximate but still
+//! useful for the chunking decision in `src/embedder.rs::embed_passages_controlled`.
 
-use crate::constants::PASSAGE_PREFIX;
 use crate::errors::AppError;
-use fastembed::{EmbeddingModel, TextEmbedding};
-use huggingface_hub::api::sync::ApiBuilder;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use tokenizers::Tokenizer;
 
-struct TokenizerRuntime {
-    tokenizer: Tokenizer,
-    model_max_length: usize,
+/// Approximate tokens-per-word. The multilingual-e5 family uses
+/// SentencePiece tokenisation, which yields ~1.33 tokens per English word
+/// and slightly less for code. We round up to 1.5 to keep the chunking
+/// decision conservative (better to over-chunk than to overflow the
+/// LLM context window).
+const WORDS_TO_TOKENS_NUMERATOR: usize = 3;
+const WORDS_TO_TOKENS_DENOMINATOR: usize = 2;
+
+/// Returns the approximate token count for `text` when prefixed with
+/// `prefix` (e.g. `passage:` for `embed_passage`).
+pub fn count_passage_tokens(text: &str) -> Result<usize, AppError> {
+    Ok(approx_tokens(text))
 }
 
-static TOKENIZER_RUNTIME: OnceLock<TokenizerRuntime> = OnceLock::new();
-
-/// Returns the process-wide [`Tokenizer`] singleton, initializing it on first call.
-///
-/// # Errors
-/// Returns `Err` when the tokenizer files cannot be loaded from `models_dir`.
-pub fn get_tokenizer(models_dir: &Path) -> Result<&'static Tokenizer, AppError> {
-    Ok(&get_runtime(models_dir)?.tokenizer)
-}
-
-/// Returns the model's `model_max_length` from `tokenizer_config.json`.
-///
-/// # Errors
-/// Returns `Err` when the tokenizer files cannot be loaded or the field is missing.
-pub fn get_model_max_length(models_dir: &Path) -> Result<usize, AppError> {
-    Ok(get_runtime(models_dir)?.model_max_length)
-}
-
-/// Counts the tokens produced by encoding `text` with the passage prefix.
-///
-/// Prepends `PASSAGE_PREFIX` before tokenizing so the count reflects the actual
-/// number of tokens consumed by the embedding model.
-///
-/// # Errors
-/// Returns `Err` when the tokenizer fails to encode the input.
-pub fn count_passage_tokens(tokenizer: &Tokenizer, text: &str) -> Result<usize, AppError> {
-    let prefixed = format!("{PASSAGE_PREFIX}{text}");
-    count_tokens(tokenizer, &prefixed)
-}
-
-/// Returns the byte-offset pairs `(start, end)` for each token in `text`.
-///
-/// The passage prefix is prepended before tokenizing; offsets in the returned
-/// vector are adjusted back to be relative to the original `text` slice.
-///
-/// # Errors
-/// Returns `Err` when the tokenizer fails to encode the input.
-pub fn passage_token_offsets(
-    tokenizer: &Tokenizer,
-    text: &str,
-) -> Result<Vec<(usize, usize)>, AppError> {
-    let prefixed = format!("{PASSAGE_PREFIX}{text}");
-    let prefix_len = PASSAGE_PREFIX.len();
-    let encoding = tokenizer
-        .encode(prefixed, true)
-        .map_err(|e| AppError::Embedding(e.to_string()))?;
-
-    let mut offsets = Vec::with_capacity(encoding.get_offsets().len());
-    for &(start, end) in encoding.get_offsets() {
-        if end <= start || end <= prefix_len {
-            continue;
-        }
-
-        let adjusted_start = start.saturating_sub(prefix_len).min(text.len());
-        let adjusted_end = end.saturating_sub(prefix_len).min(text.len());
-
-        if adjusted_end > adjusted_start
-            && text.is_char_boundary(adjusted_start)
-            && text.is_char_boundary(adjusted_end)
-        {
-            offsets.push((adjusted_start, adjusted_end));
+/// Returns the byte-offset pairs `(start, end)` for each whitespace-delimited
+/// word in `text`. The tokenizers crate used to return true sub-word offsets;
+/// the LLM headless path doesn't need that granularity, so we return word
+/// boundaries.
+pub fn passage_token_offsets(text: &str) -> Result<Vec<(usize, usize)>, AppError> {
+    let mut offsets = Vec::new();
+    let mut start = None;
+    for (i, c) in text.char_indices() {
+        if c.is_whitespace() {
+            if let Some(s) = start.take() {
+                if i > s {
+                    offsets.push((s, i));
+                }
+            }
+        } else if start.is_none() {
+            start = Some(i);
         }
     }
-
-    if offsets.is_empty() && !text.is_empty() {
-        offsets.push((0, text.len()));
+    if let Some(s) = start {
+        if text.len() > s {
+            offsets.push((s, text.len()));
+        }
     }
-
     Ok(offsets)
 }
 
-fn count_tokens(tokenizer: &Tokenizer, text: &str) -> Result<usize, AppError> {
-    let encoding = tokenizer
-        .encode(text, true)
-        .map_err(|e| AppError::Embedding(e.to_string()))?;
-    Ok(encoding.len())
+/// Returns the model's max input length. Since we no longer have a
+/// tokenizer config, this returns the constant from `constants.rs`.
+/// Operators that need a different ceiling should set
+/// `SQLITE_GRAPHRAG_EMBEDDING_MAX_TOKENS` in the environment.
+pub fn get_model_max_length() -> usize {
+    crate::constants::EMBEDDING_MAX_TOKENS
 }
 
-fn get_runtime(models_dir: &Path) -> Result<&'static TokenizerRuntime, AppError> {
-    if let Some(runtime) = TOKENIZER_RUNTIME.get() {
-        return Ok(runtime);
+fn approx_tokens(text: &str) -> usize {
+    let words = text.split_whitespace().count();
+    // Round up to avoid under-chunking.
+    let num = words.saturating_mul(WORDS_TO_TOKENS_NUMERATOR);
+    let (tokens, rem) = (num / WORDS_TO_TOKENS_DENOMINATOR, num % WORDS_TO_TOKENS_DENOMINATOR);
+    if rem == 0 {
+        tokens
+    } else {
+        tokens + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_string_has_zero_tokens() {
+        assert_eq!(approx_tokens(""), 0);
+        assert_eq!(approx_tokens("   \n\t  "), 0);
     }
 
-    let runtime = load_runtime(models_dir)?;
-    let _ = TOKENIZER_RUNTIME.set(runtime);
-    Ok(TOKENIZER_RUNTIME
-        .get()
-        .expect("OnceLock::set succeeded above; get cannot fail in this single-init path"))
-}
+    #[test]
+    fn single_word_rounds_up() {
+        // 1 word * 3 / 2 = 1.5 → 2 tokens
+        assert_eq!(approx_tokens("hello"), 2);
+    }
 
-fn load_runtime(models_dir: &Path) -> Result<TokenizerRuntime, AppError> {
-    let model_info = TextEmbedding::get_model_info(&EmbeddingModel::MultilingualE5Small)
-        .map_err(|e| AppError::Embedding(e.to_string()))?;
+    #[test]
+    fn four_words_rounds_to_six() {
+        // 4 * 3 / 2 = 6 exactly
+        assert_eq!(approx_tokens("the quick brown fox"), 6);
+    }
 
-    let cache_dir = std::env::var("HF_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| models_dir.to_path_buf());
-    let endpoint =
-        std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+    #[test]
+    fn passage_offsets_skip_whitespace() {
+        let offsets = passage_token_offsets("hello world foo").unwrap();
+        assert_eq!(offsets, vec![(0, 5), (6, 11), (12, 15)]);
+    }
 
-    let api = ApiBuilder::new()
-        .with_cache_dir(cache_dir)
-        .with_endpoint(endpoint)
-        .with_progress(false)
-        .build()
-        .map_err(|e| AppError::Embedding(e.to_string()))?;
-    let repo = api.model(model_info.model_code.clone());
+    #[test]
+    fn passage_offsets_handle_leading_and_trailing_whitespace() {
+        let offsets = passage_token_offsets("  hello  ").unwrap();
+        assert_eq!(offsets, vec![(2, 7)]);
+    }
 
-    let tokenizer_bytes =
-        std::fs::read(repo.get("tokenizer.json").map_err(map_hf_err)?).map_err(AppError::Io)?;
-    let tokenizer_config_bytes =
-        std::fs::read(repo.get("tokenizer_config.json").map_err(map_hf_err)?)
-            .map_err(AppError::Io)?;
-
-    let tokenizer =
-        Tokenizer::from_bytes(tokenizer_bytes).map_err(|e| AppError::Embedding(e.to_string()))?;
-    let tokenizer_config: serde_json::Value =
-        serde_json::from_slice(&tokenizer_config_bytes).map_err(AppError::Json)?;
-    let model_max_length = tokenizer_config["model_max_length"]
-        .as_u64()
-        .map(|n| n as usize)
-        .or_else(|| {
-            tokenizer_config["model_max_length"]
-                .as_f64()
-                .map(|n| n as usize)
-        })
-        .ok_or_else(|| {
-            AppError::Embedding("tokenizer_config.json missing model_max_length field".into())
-        })?;
-
-    Ok(TokenizerRuntime {
-        tokenizer,
-        model_max_length,
-    })
-}
-
-fn map_hf_err(err: huggingface_hub::api::sync::ApiError) -> AppError {
-    AppError::Embedding(err.to_string())
+    #[test]
+    fn count_passage_tokens_matches_approx_tokens() {
+        assert_eq!(count_passage_tokens("rust sqlite graphrag").unwrap(), 5);
+    }
 }

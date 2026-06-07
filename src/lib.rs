@@ -177,6 +177,11 @@ pub mod paths;
 /// SQLite pragma helpers applied on every connection.
 pub mod pragmas;
 
+/// v1.0.76: in-process vector similarity helpers. Replaces the
+/// `sqlite-vec` KNN API with pure-Rust cosine over the BLOB-backed
+/// `memory_embeddings` / `entity_embeddings` tables.
+pub mod similarity;
+
 /// Cross-platform signal handling: SIGINT, SIGTERM, SIGHUP.
 pub mod signals;
 

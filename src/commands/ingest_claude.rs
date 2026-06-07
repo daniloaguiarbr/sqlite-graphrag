@@ -733,7 +733,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     ensure_db_ready(&paths)?;
     let conn = open_rw(&paths.db)?;
-    let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
+    
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let memory_type_str = args.r#type.as_str().to_string();
 
@@ -915,7 +915,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             );
             let name = &normalized_name;
             let ent_count = extraction.entities.len();
-            let rel_count = extraction.relationships.len();
+            let rel_count = 0;
 
             let new_entities: Vec<NewEntity> = extraction
                 .entities
@@ -1054,7 +1054,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             let body_text = String::from_utf8_lossy(&file_content).into_owned();
             let snippet: String = body_text.chars().take(200).collect();
             let chunks_info =
-                crate::chunking::split_into_chunks_hierarchical(&body_text, tokenizer);
+                crate::chunking::split_into_chunks_hierarchical(&body_text);
 
             let embedding_result = if chunks_info.len() <= 1 {
                 crate::daemon::embed_passage_or_local(&paths.models, &body_text)

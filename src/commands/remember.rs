@@ -423,19 +423,31 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             "--skip-extraction is deprecated since v1.0.45 and has no effect (NER is disabled by default); remove this flag to silence the warning"
         );
     }
-    let gliner_variant: crate::extraction::GlinerVariant =
-        args.gliner_variant.parse().unwrap_or_else(|e| {
-            tracing::warn!(target: "remember", error = %e, "invalid --gliner-variant, defaulting to fp32");
-            crate::extraction::GlinerVariant::Fp32
-        });
+    let gliner_variant: crate::extraction::GlinerVariant = match args.gliner_variant.as_str() {
+        "int8" => crate::extraction::GlinerVariant::Int8,
+        _ => crate::extraction::GlinerVariant::Fp32,
+    };
     if args.enable_ner && graph.entities.is_empty() && !raw_body.trim().is_empty() {
         match crate::extraction::extract_graph_auto(&raw_body, &paths, gliner_variant) {
             Ok(extracted) => {
-                extraction_method = Some(extracted.extraction_method.clone());
+                // v1.0.76: ExtractionResult is URL + entity + elapsed_ms;
+                // the LLM ExtractionBackend returns typed relationships
+                // separately. The default build is URL-only extraction.
+                extraction_method = Some("url-regex".to_string());
                 extracted_urls = extracted.urls;
-                graph.entities = extracted.entities;
-                graph.relationships = extracted.relationships;
-                relationships_truncated = extracted.relationships_truncated;
+                // Convert ExtractedEntity → NewEntity (no offsets,
+                // type defaults to Concept).
+                graph.entities = extracted
+                    .entities
+                    .into_iter()
+                    .map(|e| NewEntity {
+                        name: e.name,
+                        entity_type: crate::entity_type::EntityType::Concept,
+                        description: None,
+                    })
+                    .collect();
+                graph.relationships.clear();
+                relationships_truncated = false;
 
                 if graph.entities.len() > max_entities_per_memory() {
                     graph.entities.truncate(max_entities_per_memory());
@@ -579,10 +591,9 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
         ),
     );
 
-    let tokenizer = crate::tokenizer::get_tokenizer(&paths.models)?;
-    let model_max_length = crate::tokenizer::get_model_max_length(&paths.models)?;
-    let total_passage_tokens = crate::tokenizer::count_passage_tokens(tokenizer, &raw_body)?;
-    let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body, tokenizer);
+    let model_max_length = crate::tokenizer::get_model_max_length();
+    let total_passage_tokens = crate::tokenizer::count_passage_tokens(&raw_body)?;
+    let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body);
     let chunks_created = chunks_info.len();
     // For single-chunk bodies the memory row itself stores the content and no
     // entry is appended to `memory_chunks` (see line ~545). For multi-chunk
@@ -904,7 +915,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             .into_iter()
             .map(|u| storage_urls::MemoryUrl {
                 url: u.url,
-                offset: Some(u.offset as i64),
+                offset: Some(u.start as i64),
             })
             .collect();
         storage_urls::insert_urls(&conn, memory_id, &url_entries)

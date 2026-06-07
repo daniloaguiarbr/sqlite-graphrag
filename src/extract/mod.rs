@@ -130,9 +130,11 @@ pub type SharedBackend = Arc<dyn ExtractionBackend>;
 pub mod composite_backend;
 pub mod embedding_backend;
 pub mod llm_backend;
+pub mod llm_embedding;
 pub mod none_backend;
 
 pub use composite_backend::{backend_from_kind, default_backend, CompositeBackend};
 pub use embedding_backend::EmbeddingBackend;
 pub use llm_backend::{LlmBackend, LlmExtractorConfig};
+pub use llm_embedding::{EmbeddingFlavour, LlmEmbedding, EMBEDDING_DIM as LLM_EMBEDDING_DIM};
 pub use none_backend::NoneBackend;

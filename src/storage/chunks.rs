@@ -69,12 +69,18 @@ pub fn upsert_chunk_vec(
     embedding: &[f32],
 ) -> Result<(), AppError> {
     conn.execute(
-        "INSERT OR REPLACE INTO vec_chunks(rowid, memory_id, chunk_idx, embedding)
+        "INSERT OR REPLACE INTO chunk_embeddings(chunk_id, memory_id, embedding, source, model, dim)
          VALUES (
              (SELECT id FROM memory_chunks WHERE memory_id = ?1 AND chunk_idx = ?2),
-             ?1, ?2, ?3
+             ?1, ?3, 'llm-headless', ?4, ?5
          )",
-        params![memory_id, chunk_idx, f32_to_bytes(embedding)],
+        params![
+            memory_id,
+            chunk_idx,
+            f32_to_bytes(embedding),
+            crate::constants::SQLITE_GRAPHRAG_VERSION,
+            crate::constants::EMBEDDING_DIM as i64,
+        ],
     )?;
     Ok(())
 }
@@ -92,22 +98,39 @@ pub fn knn_search_chunks(
     embedding: &[f32],
     k: usize,
 ) -> Result<Vec<(i64, i32, f32)>, AppError> {
-    let bytes = f32_to_bytes(embedding);
-    let mut stmt = conn.prepare_cached(
-        "SELECT memory_id, chunk_idx, distance FROM vec_chunks
-         WHERE embedding MATCH ?1
-         ORDER BY distance LIMIT ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![bytes, k as i64], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i32>(1)?,
-                r.get::<_, f32>(2)?,
-            ))
+    if embedding.len() != crate::constants::EMBEDDING_DIM {
+        return Err(AppError::Embedding(format!(
+            "knn_search_chunks embedding has {} dims, expected {}",
+            embedding.len(),
+            crate::constants::EMBEDDING_DIM
+        )));
+    }
+    // v1.0.76: full table scan + in-process cosine similarity. The
+    // `chunk_embeddings` table no longer has a `distance` column;
+    // similarity is computed in Rust.
+    let mut stmt =
+        conn.prepare_cached("SELECT chunk_id, memory_id, embedding FROM chunk_embeddings")?;
+    let mut scored: Vec<(i64, i32, f32)> = stmt
+        .query_map([], |r| {
+            let chunk_id: i64 = r.get(0)?;
+            let memory_id: i64 = r.get(1)?;
+            let bytes: Vec<u8> = r.get(2)?;
+            Ok((chunk_id, memory_id, bytes))
         })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        .filter_map(|row| {
+            row.ok().and_then(|(_, memory_id, bytes)| {
+                let stored = crate::embedder::bytes_to_f32(&bytes);
+                if stored.len() != embedding.len() {
+                    return None;
+                }
+                let score = crate::similarity::cosine_similarity(embedding, &stored);
+                Some((memory_id, 0, score))
+            })
+        })
+        .collect();
+    scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(k);
+    Ok(scored)
 }
 
 pub fn get_chunks_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<Chunk>, AppError> {

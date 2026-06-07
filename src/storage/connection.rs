@@ -1,41 +1,21 @@
 //! SQLite connection setup with PRAGMAs and 0600 permissions.
 //!
-//! Opens (or creates) the database file, loads the `sqlite-vec` extension,
-//! applies WAL/journal PRAGMAs, and enforces 0600 file permissions on Unix.
+//! v1.0.76: opens (or creates) the database file. The `sqlite-vec` extension
+//! was REMOVED; vector similarity is now computed in pure Rust over the
+//! `memory_embeddings(memory_id, embedding BLOB, source)` table. WAL/journal
+//! PRAGMAs and 0600 file permissions on Unix are unchanged.
 
 use crate::errors::AppError;
 use crate::paths::AppPaths;
 use crate::pragmas::{apply_connection_pragmas, apply_init_pragmas, ensure_wal_mode};
 use rusqlite::Connection;
-use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
-use std::sync::OnceLock;
 
-static VEC_EXTENSION_REGISTERED: OnceLock<()> = OnceLock::new();
-
-/// Register sqlite-vec GLOBALLY before any connection is opened.
-///
-/// Idempotent: subsequent calls are no-ops thanks to `OnceLock`. Safe to invoke from
-/// both the binary entry point (`main.rs`) and library helpers like `ensure_db_ready`
-/// so unit tests that exercise CRUD handlers do not need to pre-register the extension.
-pub fn register_vec_extension() {
-    VEC_EXTENSION_REGISTERED.get_or_init(|| {
-        // SAFETY: sqlite3_auto_extension is a C FFI function that registers a callback
-        // invoked when SQLite opens any new connection. Soundness assumptions:
-        // 1. `sqlite3_vec_init` has the exact ABI signature `extern "C" fn(...) -> i32`
-        //    expected by SQLite's auto-extension API (verified by sqlite-vec crate).
-        // 2. The transmute from `*const ()` to the expected fn pointer is valid because
-        //    both have identical layout on supported platforms (Linux, macOS, Windows).
-        // 3. `OnceLock::get_or_init` guarantees this closure runs at most once across
-        //    all threads; the auto-extension list is mutated exactly one time.
-        #[allow(clippy::missing_transmute_annotations)]
-        unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite3_vec_init as *const (),
-            )));
-        }
-    });
-}
+/// v1.0.76: no-op stub. Kept for source compatibility with callers that
+/// still call `register_vec_extension()` during auto-init. The actual
+/// extension registration is gone; the function is now a marker that
+/// the LLM-only build does not need any vector extension.
+pub fn register_vec_extension() {}
 
 pub fn open_rw(path: &Path) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;

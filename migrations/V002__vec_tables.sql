@@ -1,26 +1,8 @@
--- sqlite-vec must be loaded before this migration runs
--- partition key columns enable filtered KNN (max 4 partition keys)
+-- v1.0.76: vec tables no longer created. The V013 migration drops them
+-- for existing databases and replaces them with the `memory_embeddings`
+-- BLOB-backed tables. Cosine similarity is computed in pure Rust.
+--
+-- This file is kept (no-op) for migration numbering stability; it must
+-- remain in the migrations directory to preserve the v2 -> v13 gap.
 
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-    memory_id  INTEGER PRIMARY KEY,
-    namespace  TEXT partition key,
-    type       TEXT partition key,
-    embedding  float[384] distance_metric=cosine,
-    +name      TEXT,
-    +snippet   TEXT
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_entities USING vec0(
-    entity_id  INTEGER PRIMARY KEY,
-    namespace  TEXT partition key,
-    type       TEXT partition key,
-    embedding  float[384] distance_metric=cosine,
-    +name      TEXT
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-    rowid      INTEGER PRIMARY KEY,
-    memory_id  INTEGER partition key,
-    chunk_idx  INTEGER,
-    embedding  float[384] distance_metric=cosine
-);
+SELECT 1;

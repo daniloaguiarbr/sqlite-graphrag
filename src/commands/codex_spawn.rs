@@ -513,28 +513,41 @@ pub fn parse_extraction_text(text: &str) -> Result<ExtractionResult, AppError> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|u| {
-                    Some(ExtractedUrl {
-                        url: u.get("url")?.as_str()?.to_string(),
-                        offset: u.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                    })
+                    let url = u.get("url")?.as_str()?.to_string();
+                    let start = u.get("start").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let end = u
+                        .get("end")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(start as u64) as usize;
+                    Some(ExtractedUrl { url, start, end })
                 })
                 .collect()
         })
         .unwrap_or_default();
 
+    // v1.0.76: ExtractionResult no longer carries relationships or
+    // relationships_truncated fields; those are LLM backend output
+    // (see `ExtractionOutput` in src/extract/mod.rs). The default
+    // build extracts URLs + entities only; relationships are an
+    // LLM-side concern.
+    //
+    // Convert `NewEntity` (storage-side) to `ExtractedEntity`
+    // (extraction-side). The LLM payload doesn't include byte offsets
+    // (the chunker is responsible for that), so start/end are 0.
+    let entities_ext: Vec<crate::extraction::ExtractedEntity> = entities
+        .into_iter()
+        .map(|e| crate::extraction::ExtractedEntity {
+            name: e.name,
+            entity_type: e.entity_type.as_str().to_string(),
+            start: 0,
+            end: 0,
+        })
+        .collect();
+
     Ok(ExtractionResult {
-        entities,
-        relationships,
-        relationships_truncated: obj
-            .get("relationships_truncated")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        extraction_method: obj
-            .get("extraction_method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("codex")
-            .to_string(),
+        entities: entities_ext,
         urls,
+        elapsed_ms: 0,
     })
 }
 
@@ -552,12 +565,13 @@ mod tests {
 
     #[test]
     fn parse_codex_jsonl_extracts_last_agent_message() {
+        // v1.0.76: relationships are no longer carried in the
+        // ExtractionResult struct (they belong to the LLM ExtractionBackend
+        // payload, not the URL-only default build). The default test
+        // validates the entity extraction path only.
         let result = parse_codex_jsonl(SAMPLE_JSONL).expect("parse must succeed");
         assert_eq!(result.extraction.entities.len(), 1);
         assert_eq!(result.extraction.entities[0].name, "alpha");
-        assert_eq!(result.extraction.relationships.len(), 1);
-        assert_eq!(result.extraction.relationships[0].relation, "uses");
-        assert!((result.extraction.relationships[0].strength - 0.7).abs() < 1e-6);
     }
 
     #[test]

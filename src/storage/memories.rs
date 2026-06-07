@@ -1,7 +1,7 @@
 //! Persistence layer for the `memories` table and its vector companion.
 //!
 //! Functions here encapsulate every SQL statement touching `memories`,
-//! `vec_memories` and the FTS5 `fts_memories` shadow table. Callers receive
+//! `memory_embeddings` and the FTS5 `fts_memories` shadow table. Callers receive
 //! typed [`MemoryRow`] or [`NewMemory`] values and never build SQL strings.
 
 use crate::embedder::f32_to_bytes;
@@ -258,11 +258,13 @@ pub fn update(
     Ok(affected == 1)
 }
 
-/// Replaces the vector row for a memory in `vec_memories`.
+/// Replaces the vector row for a memory in `memory_embeddings`.
 ///
-/// `sqlite-vec` virtual tables do not implement `INSERT OR REPLACE`, so the
-/// existing row is deleted first and a fresh vector is inserted. Callers
-/// must pass an `embedding` with length [`crate::constants::EMBEDDING_DIM`].
+/// v1.0.76: sqlite-vec was removed. Embeddings live in a regular BLOB-backed
+/// table; cosine similarity is computed in pure Rust on demand. The
+/// `memory_type`, `name`, and `snippet` arguments are accepted for API
+/// compatibility but are not stored — the FTS5 shadow table is the
+/// source of truth for textual metadata.
 ///
 /// # Errors
 ///
@@ -271,48 +273,47 @@ pub fn upsert_vec(
     conn: &Connection,
     memory_id: i64,
     namespace: &str,
-    memory_type: &str,
+    _memory_type: &str,
     embedding: &[f32],
-    name: &str,
-    snippet: &str,
+    _name: &str,
+    _snippet: &str,
 ) -> Result<(), AppError> {
-    // sqlite-vec virtual tables do not support INSERT OR REPLACE semantics.
-    // Must delete the existing row first, then insert.  Both statements are
-    // wrapped in `with_busy_retry` because WAL-mode concurrent writers can
-    // cause SQLITE_BUSY on vec0 virtual table writes.
     let embedding_bytes = f32_to_bytes(embedding);
     with_busy_retry(|| {
         conn.execute(
-            "DELETE FROM vec_memories WHERE memory_id = ?1",
+            "DELETE FROM memory_embeddings WHERE memory_id = ?1",
             params![memory_id],
         )?;
         conn.execute(
-            "INSERT INTO vec_memories(memory_id, namespace, type, embedding, name, snippet)
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 memory_id,
                 namespace,
-                memory_type,
                 &embedding_bytes,
-                name,
-                snippet
+                "llm-headless",
+                crate::constants::SQLITE_GRAPHRAG_VERSION,
+                crate::constants::EMBEDDING_DIM as i64,
             ],
         )?;
         Ok(())
     })
 }
 
-/// Deletes the vector row for `memory_id` from `vec_memories`.
+/// Deletes the vector row for `memory_id` from `memory_embeddings`.
 ///
-/// Called during `forget` and `purge` to keep the vector table consistent
-/// with the logical state of `memories`.
+/// Called during `forget` and `purge` to keep the embeddings table
+/// consistent with the logical state of `memories`. FK CASCADE on
+/// `memory_embeddings.memory_id` handles the common case, but this
+/// function exists so callers can delete the embedding first
+/// (preserving the row in `memories` for audit).
 ///
 /// # Errors
 ///
 /// Returns `Err(AppError::Database)` on any `rusqlite` failure.
 pub fn delete_vec(conn: &Connection, memory_id: i64) -> Result<(), AppError> {
     conn.execute(
-        "DELETE FROM vec_memories WHERE memory_id = ?1",
+        "DELETE FROM memory_embeddings WHERE memory_id = ?1",
         params![memory_id],
     )?;
     Ok(())
@@ -468,7 +469,7 @@ pub fn list(
     }
 }
 
-/// Runs a KNN search over `vec_memories`, optionally restricted to namespaces.
+/// Runs a KNN search over `memory_embeddings`, optionally restricted to namespaces.
 ///
 /// # Arguments
 ///
@@ -491,121 +492,85 @@ pub fn knn_search(
     memory_type: Option<&str>,
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
-    let bytes = f32_to_bytes(embedding);
-
-    match namespaces.len() {
-        0 => {
-            // No namespace filter — search all namespaces.
-            if let Some(mt) = memory_type {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ?1 AND type = ?2 \
-                     ORDER BY distance LIMIT ?3",
-                )?;
-                let rows = stmt
-                    .query_map(params![bytes, mt, k as i64], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            } else {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ?1 \
-                     ORDER BY distance LIMIT ?2",
-                )?;
-                let rows = stmt
-                    .query_map(params![bytes, k as i64], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            }
-        }
-        1 => {
-            // Fast single-namespace path (preserved from previous implementation).
-            let ns = &namespaces[0];
-            if let Some(mt) = memory_type {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ?1 AND namespace = ?2 AND type = ?3 \
-                     ORDER BY distance LIMIT ?4",
-                )?;
-                let rows = stmt
-                    .query_map(params![bytes, ns, mt, k as i64], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            } else {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ?1 AND namespace = ?2 \
-                     ORDER BY distance LIMIT ?3",
-                )?;
-                let rows = stmt
-                    .query_map(params![bytes, ns, k as i64], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            }
-        }
-        _ => {
-            // Multiple explicit namespaces: build IN clause with positional placeholders.
-            // rusqlite does not support array binding, so we generate "?,?,..." manually.
-            let placeholders = (0..namespaces.len())
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(",");
-            if let Some(mt) = memory_type {
-                let query = format!(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ? AND type = ? AND namespace IN ({placeholders}) \
-                     ORDER BY distance LIMIT ?"
-                );
-                let mut stmt = conn.prepare(&query)?;
-                // Params: [bytes, mt, ns0, ns1, ..., k]
-                let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> =
-                    vec![Box::new(bytes), Box::new(mt.to_string())];
-                for ns in namespaces {
-                    raw_params.push(Box::new(ns.clone()));
-                }
-                raw_params.push(Box::new(k as i64));
-                let param_refs: Vec<&dyn rusqlite::ToSql> =
-                    raw_params.iter().map(|b| b.as_ref()).collect();
-                let rows = stmt
-                    .query_map(param_refs.as_slice(), |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            } else {
-                let query = format!(
-                    "SELECT memory_id, distance FROM vec_memories \
-                     WHERE embedding MATCH ? AND namespace IN ({placeholders}) \
-                     ORDER BY distance LIMIT ?"
-                );
-                let mut stmt = conn.prepare(&query)?;
-                // Params: [bytes, ns0, ns1, ..., k]
-                let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(bytes)];
-                for ns in namespaces {
-                    raw_params.push(Box::new(ns.clone()));
-                }
-                raw_params.push(Box::new(k as i64));
-                let param_refs: Vec<&dyn rusqlite::ToSql> =
-                    raw_params.iter().map(|b| b.as_ref()).collect();
-                let rows = stmt
-                    .query_map(param_refs.as_slice(), |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, f32>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            }
-        }
+    if embedding.len() != crate::constants::EMBEDDING_DIM {
+        return Err(AppError::Embedding(format!(
+            "knn_search embedding has {} dims, expected {}",
+            embedding.len(),
+            crate::constants::EMBEDDING_DIM
+        )));
     }
+    // v1.0.76: full table scan + in-process cosine similarity. The
+    // `memory_embeddings` table no longer has a `distance` column or a
+    // `type` column (the namespace/type filters were dropped for the
+    // BLOB-backed table — they live on the `memories` table). The
+    // cosine result is converted to a "distance" so callers that read
+    // `distance` keep working unchanged.
+
+    // Build the SQL once with the namespace IN clause shape.
+    let placeholders = (0..namespaces.len())
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = if namespaces.is_empty() {
+        "SELECT memory_id, embedding, namespace FROM memory_embeddings".to_string()
+    } else {
+        format!(
+            "SELECT memory_id, embedding, namespace FROM memory_embeddings \
+             WHERE namespace IN ({placeholders})"
+        )
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    for ns in namespaces {
+        raw_params.push(Box::new(ns.clone()));
+    }
+    let param_refs: Vec<&dyn rusqlite::ToSql> =
+        raw_params.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        let id: i64 = r.get(0)?;
+        let bytes: Vec<u8> = r.get(1)?;
+        let ns: String = r.get(2)?;
+        Ok((id, bytes, ns))
+    })?;
+
+    // Optionally restrict to a memory type by joining against the
+    // `memories` table on the fly.
+    let type_filter = memory_type.map(|t| t.to_string());
+    let mut candidates: Vec<(i64, f32)> = Vec::new();
+    for row in rows {
+        let (id, bytes, ns) = row?;
+        let stored = crate::embedder::bytes_to_f32(&bytes);
+        if stored.len() != embedding.len() {
+            continue;
+        }
+        let sim = crate::similarity::cosine_similarity(embedding, &stored);
+        let dist = crate::similarity::similarity_to_distance(sim);
+        if let Some(mt) = &type_filter {
+            // Look up the memory's type via a per-row check. For very
+            // large candidate sets this should be batched; for the
+            // v1.0.76 default namespace size (<10k memories) the
+            // per-row lookup is acceptable.
+            let actual: Option<String> = conn
+                .query_row(
+                    "SELECT type FROM memories WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .ok();
+            if actual.as_deref() != Some(mt.as_str()) {
+                continue;
+            }
+        }
+        let _ = ns; // namespace already filtered at SQL level
+        candidates.push((id, dist));
+    }
+    // Sort by distance ascending (best matches first).
+    candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.truncate(k);
+    Ok(candidates)
 }
 
+/// Fetches a live memory by `(namespace, name)` and returns all columns.
 /// Fetches a live memory by primary key and returns all columns.
 ///
 /// Mirrors [`read_by_name`] but keyed on `rowid` for use after a KNN search.
@@ -1114,7 +1079,7 @@ mod tests {
         )?;
 
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = ?1",
             params![id],
             |r| r.get(0),
         )?;
@@ -1123,7 +1088,7 @@ mod tests {
         delete_vec(&conn, id)?;
 
         let count_after: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = ?1",
             params![id],
             |r| r.get(0),
         )?;
@@ -1144,7 +1109,7 @@ mod tests {
         upsert_vec(&conn, id, "global", "user", &emb2, "mem-vec-upsert", "s2")?;
 
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?1",
+            "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = ?1",
             params![id],
             |r| r.get(0),
         )?;
