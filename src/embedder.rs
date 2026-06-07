@@ -91,10 +91,7 @@ pub fn get_embedder(_models_dir: &Path) -> Result<&'static Mutex<LlmEmbedding>, 
 
 /// Embeds a single passage for storage. Delegates to the configured LLM
 /// headless (claude code / codex). Returns a 384-dim f32 vector.
-pub fn embed_passage(
-    embedder: &Mutex<LlmEmbedding>,
-    text: &str,
-) -> Result<Vec<f32>, AppError> {
+pub fn embed_passage(embedder: &Mutex<LlmEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let mut guard = embedder.lock();
     let result = guard.embed_passage(text)?;
     Ok(normalise_dim(result))
@@ -103,10 +100,7 @@ pub fn embed_passage(
 /// Embeds a single query for similarity search. Same model and dim as
 /// `embed_passage`; the only difference is the LLM-side prompt prefix
 /// that the headless invocation uses to disambiguate.
-pub fn embed_query(
-    embedder: &Mutex<LlmEmbedding>,
-    text: &str,
-) -> Result<Vec<f32>, AppError> {
+pub fn embed_query(embedder: &Mutex<LlmEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let mut guard = embedder.lock();
     let result = guard.embed_query(text)?;
     Ok(normalise_dim(result))
@@ -129,13 +123,12 @@ pub fn embed_passages_controlled(
     let mut current_padded = 0usize;
     for (text, &tokens) in texts.iter().zip(token_counts.iter()) {
         let padded = tokens.saturating_add(8);
-        if current_padded + padded > crate::constants::REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS
-            || group.len() >= crate::constants::REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS
+        if (current_padded + padded > crate::constants::REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS
+            || group.len() >= crate::constants::REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS)
+            && !group.is_empty()
         {
-            if !group.is_empty() {
-                flush_group(&mut output, &mut group, embedder)?;
-                current_padded = 0;
-            }
+            flush_group(&mut output, &mut group, embedder)?;
+            current_padded = 0;
         }
         group.push(text);
         current_padded += padded;

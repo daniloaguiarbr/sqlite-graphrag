@@ -1,16 +1,57 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/enrich-phase.schema.json",
-  "title": "EnrichPhaseEvent",
-  "description": "Phase event emitted by `sqlite-graphrag enrich` on stdout (NDJSON). Two events per run: 'validate' (checks LLM provider binary) and 'scan' (discovers items to enrich). Fields beyond 'phase' are present only when relevant to the phase.",
-  "type": "object",
-  "required": ["phase"],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Phase event emitted by `sqlite-graphrag enrich` on stdout (NDJSON). Two events per run: 'validate' (checks LLM provider binary) and 'scan' (discovers items to enrich). Fields beyond 'phase' are present only when relevant to the phase.",
   "properties": {
-    "phase":         { "type": "string",           "enum": ["validate", "scan"], "description": "Phase name: validate (checks LLM provider) or scan (counts pending items)." },
-    "binary_path":   { "type": ["string", "null"], "description": "Filesystem path of the detected LLM provider binary. Present in validate phase." },
-    "version":       { "type": ["string", "null"], "description": "Detected LLM provider version string. Present in validate phase for Claude Code; null for Codex." },
-    "items_total":   { "type": ["integer", "null"], "minimum": 0, "description": "Total items found by the scan. Present in scan phase." },
-    "items_pending": { "type": ["integer", "null"], "minimum": 0, "description": "Items still pending processing. Present in scan phase." }
-  }
+    "binary_path": {
+      "description": "Filesystem path of the detected LLM provider binary. Present in validate phase.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "items_pending": {
+      "description": "Items still pending processing. Present in scan phase.",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "items_total": {
+      "description": "Total items found by the scan. Present in scan phase.",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "llm_parallelism": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "phase": {
+      "description": "Phase name: validate (checks LLM provider) or scan (counts pending items).",
+      "enum": [
+        "validate",
+        "scan"
+      ],
+      "type": "string"
+    },
+    "version": {
+      "description": "Detected LLM provider version string. Present in validate phase for Claude Code; null for Codex.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "phase"
+  ],
+  "title": "EnrichPhaseEvent",
+  "type": "object"
 }

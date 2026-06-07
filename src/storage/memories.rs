@@ -524,8 +524,7 @@ pub fn knn_search(
     for ns in namespaces {
         raw_params.push(Box::new(ns.clone()));
     }
-    let param_refs: Vec<&dyn rusqlite::ToSql> =
-        raw_params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::ToSql> = raw_params.iter().map(|b| b.as_ref()).collect();
     let rows = stmt.query_map(param_refs.as_slice(), |r| {
         let id: i64 = r.get(0)?;
         let bytes: Vec<u8> = r.get(1)?;

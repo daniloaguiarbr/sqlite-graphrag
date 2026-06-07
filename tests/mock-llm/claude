@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Mock claude code CLI for the v1.0.76 LLM-only test suite.
+#
+# The real `claude` binary requires OAuth login and a network round-trip to
+# Anthropic. Tests must run hermetically on CI runners, so we substitute a
+# shell script that always returns a deterministic 384-dim zero vector.
+#
+# The shape is fixed because the LlmEmbedding caller
+# (src/extract/llm_embedding.rs::EmbeddingResponse) always deserialises a
+# struct with one field: `embedding: Vec<f32>`. Tests that need entity
+# extraction JSON should mock at a higher level or call the library API
+# directly; this script is dedicated to the embedding path.
+
+set -euo pipefail
+
+ZEROS=$(python3 -c "import json,sys; sys.stdout.write(json.dumps([0.0]*384))")
+printf '{"embedding":%s}\n' "$ZEROS"
+
+exit 0

@@ -881,8 +881,12 @@ mod tests {
             upsert_entity_vec(&conn, entity_id, "global", EntityType::Project, &emb, &nome)?;
         }
 
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM entity_embeddings", [], |r| r.get(0))?;
-        assert_eq!(count, 3, "must have three distinct rows in entity_embeddings");
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM entity_embeddings", [], |r| r.get(0))?;
+        assert_eq!(
+            count, 3,
+            "must have three distinct rows in entity_embeddings"
+        );
         Ok(())
     }
 

@@ -14,6 +14,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tempfile::TempDir;
 
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -25,11 +28,13 @@ fn bin_path() -> PathBuf {
 /// Creates an isolated TempDir and initializes the database before returning.
 fn setup_db() -> TempDir {
     let tmp = TempDir::new().expect("TempDir failed");
+    let mock_dir = common::mock_llm_path();
     let status = Command::new(bin_path())
         .arg("init")
         .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env("PATH", common::prepend_path(&mock_dir))
         .status()
         .expect("init failed");
     assert!(status.success(), "init deve ter sucesso: {status:?}");
@@ -38,10 +43,12 @@ fn setup_db() -> TempDir {
 
 /// Builds a Command for the binary with full isolation.
 fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
+    let mock_dir = common::mock_llm_path();
     let mut cmd = Command::new(bin_path());
     cmd.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+        .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
+        .env("PATH", common::prepend_path(&mock_dir));
     cmd
 }
 

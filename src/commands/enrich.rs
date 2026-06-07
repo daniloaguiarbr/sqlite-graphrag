@@ -1269,7 +1269,7 @@ fn persist_enriched_body(
 
     // Re-embed for recall accuracy
     let snippet: String = new_body.chars().take(200).collect();
-    
+
     let chunks_info = crate::chunking::split_into_chunks_hierarchical(new_body);
     let embedding_result = if chunks_info.len() <= 1 {
         crate::daemon::embed_passage_or_local(&paths.models, new_body)

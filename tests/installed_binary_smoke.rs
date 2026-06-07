@@ -32,6 +32,9 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -113,6 +116,7 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
+        let mock_dir = common::mock_llm_path();
         let mut c = Command::new(&self.bin);
         c.env(
             "SQLITE_GRAPHRAG_DB_PATH",
@@ -121,17 +125,20 @@ impl Env {
         c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
         c.env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
         c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+        c.env("PATH", common::prepend_path(&mock_dir));
         c.arg("--skip-memory-guard");
         c
     }
 
     fn cmd_default_db_in_tmp_dir(&self) -> Command {
+        let mock_dir = common::mock_llm_path();
         let mut c = Command::new(&self.bin);
         c.current_dir(self.tmp.path());
         c.env_remove("SQLITE_GRAPHRAG_DB_PATH");
         c.env("SQLITE_GRAPHRAG_CACHE_DIR", self.tmp.path().join("cache"));
         c.env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
         c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
+        c.env("PATH", common::prepend_path(&mock_dir));
         c.arg("--skip-memory-guard");
         c
     }
@@ -825,7 +832,8 @@ fn smoke_25_debug_schema() {
         if allow_installed_version_mismatch()
             && (err.contains("unrecognized subcommand")
                 || err.contains("unexpected argument")
-                || err.contains("unknown subcommand"))
+                || err.contains("unknown subcommand")
+                || err.contains("unrecognized subcommand"))
         {
             eprintln!(
                 "Suite 10 smoke_25: installed legacy binary does not expose __debug_schema — skip graceful"

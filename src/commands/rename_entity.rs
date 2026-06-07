@@ -99,23 +99,19 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
         "UPDATE entities SET name = ?1, updated_at = unixepoch() WHERE id = ?2",
         params![new_name, entity_id],
     )?;
-    // vec0 does not support UPDATE — delete then insert.
-    tx.execute(
-        "DELETE FROM vec_entities WHERE entity_id = ?1",
-        params![entity_id],
-    )?;
+    // v1.0.76: BLOB-backed entity_embeddings table (PK = entity_id),
+    // supporting UPDATE OR REPLACE directly. Re-embed with the new name.
     let embedding_bytes = crate::embedder::f32_to_bytes(&embedding);
     tx.execute(
-        "INSERT INTO vec_entities(entity_id, namespace, type, embedding, name)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
+        "INSERT OR REPLACE INTO entity_embeddings(entity_id, namespace, embedding, source, model, dim)
+         VALUES (?1, ?2, ?3, 'llm-claude', 'multilingual-e5-small', 384)",
+        rusqlite::params![
             entity_id,
             namespace,
-            entity_type,
-            &embedding_bytes,
-            new_name
+            embedding_bytes,
         ],
     )?;
+    let _ = entity_type; // embedding row no longer carries entity_type
     tx.commit()?;
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

@@ -16,15 +16,20 @@ use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
 
+#[path = "common/mod.rs"]
+mod common;
+
 fn bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"))
 }
 
 fn cmd(dir: &TempDir) -> Command {
+    let mock_dir = common::mock_llm_path();
     let mut c = Command::new(bin());
     c.env_clear()
         .env("SQLITE_GRAPHRAG_DB_PATH", dir.path().join("ng.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", dir.path().join("cache"))
+        .env("PATH", common::prepend_path(&mock_dir))
         .arg("--skip-memory-guard");
     c
 }
@@ -692,6 +697,7 @@ fn recipe_13_parallel_namespaces() {
     let db_path = dir.path().join("ng.sqlite").to_owned();
     let cache_path = dir.path().join("cache").to_owned();
     let bin_path = bin();
+    let mock_path = common::prepend_path(&common::mock_llm_path());
 
     // Simulate `parallel -j 4` with 4 simultaneous threads
     let handles: Vec<_> = namespaces
@@ -701,11 +707,13 @@ fn recipe_13_parallel_namespaces() {
             let db = db_path.clone();
             let cache = cache_path.clone();
             let bin = bin_path.clone();
+            let path = mock_path.clone();
             std::thread::spawn(move || {
                 std::process::Command::new(&bin)
                     .env_clear()
                     .env("SQLITE_GRAPHRAG_DB_PATH", &db)
                     .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache)
+                    .env("PATH", &path)
                     .args([
                         "--skip-memory-guard",
                         "recall",

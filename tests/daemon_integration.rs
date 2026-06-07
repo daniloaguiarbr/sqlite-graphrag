@@ -77,6 +77,7 @@ fn run_heavy_command(
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn daemon_ping_and_stop_roundtrip() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
@@ -95,6 +96,7 @@ fn daemon_ping_and_stop_roundtrip() {
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn init_remember_recall_and_hybrid_increment_daemon_counter() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
@@ -193,6 +195,7 @@ fn init_remember_recall_and_hybrid_increment_daemon_counter() {
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn init_autospawns_daemon_when_missing() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
@@ -214,6 +217,7 @@ fn init_autospawns_daemon_when_missing() {
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn daemon_respawns_automatically_after_stop() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
@@ -264,6 +268,7 @@ fn daemon_respawns_automatically_after_stop() {
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn skip_memory_guard_does_not_autostart_daemon_without_force() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");
@@ -297,6 +302,7 @@ fn skip_memory_guard_does_not_autostart_daemon_without_force() {
 }
 
 #[test]
+#[ignore = "daemon is deprecated in v1.0.76; see ADR-0021"]
 fn daemon_shuts_down_when_cache_dir_disappears() {
     let tmp = TempDir::new().unwrap();
     let cache_dir = tmp.path().join("cache");

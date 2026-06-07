@@ -733,7 +733,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
     let paths = AppPaths::resolve(args.db.as_deref())?;
     ensure_db_ready(&paths)?;
     let conn = open_rw(&paths.db)?;
-    
+
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let memory_type_str = args.r#type.as_str().to_string();
 
@@ -1053,8 +1053,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             // G01: embedding pipeline — enables recall to find memories created via --mode claude-code
             let body_text = String::from_utf8_lossy(&file_content).into_owned();
             let snippet: String = body_text.chars().take(200).collect();
-            let chunks_info =
-                crate::chunking::split_into_chunks_hierarchical(&body_text);
+            let chunks_info = crate::chunking::split_into_chunks_hierarchical(&body_text);
 
             let embedding_result = if chunks_info.len() <= 1 {
                 crate::daemon::embed_passage_or_local(&paths.models, &body_text)

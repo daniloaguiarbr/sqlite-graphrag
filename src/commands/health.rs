@@ -217,7 +217,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let relationships_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?;
     let vec_memories_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM vec_memories", [], |r| r.get(0))?;
+        conn.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |r| r.get(0))?;
 
     let mentions_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM relationships WHERE relation = 'mentions'",

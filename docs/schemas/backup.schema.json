@@ -1,16 +1,56 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/backup.schema.json",
-  "title": "BackupResponse",
-  "description": "Response emitted by `sqlite-graphrag backup --json` on stdout as a single JSON line.",
-  "type": "object",
-  "required": ["action", "source", "destination", "size_bytes", "elapsed_ms"],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Response emitted by `sqlite-graphrag backup --json` on stdout as a single JSON line.",
   "properties": {
-    "action":      { "type": "string", "const": "backed_up", "description": "Always 'backed_up' on success." },
-    "source":      { "type": "string", "description": "Absolute path to the source SQLite database file." },
-    "destination": { "type": "string", "description": "Absolute path to the backup file that was written." },
-    "size_bytes":  { "type": "integer", "minimum": 0, "description": "Size of the backup file in bytes." },
-    "elapsed_ms":  { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
-  }
+    "action": {
+      "const": "backed_up",
+      "description": "Always 'backed_up' on success.",
+      "type": "string"
+    },
+    "destination": {
+      "description": "Absolute path to the backup file that was written.",
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "description": "Handler wall-clock time in milliseconds.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "pages_copied": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "size_bytes": {
+      "description": "Size of the backup file in bytes.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source": {
+      "description": "Absolute path to the source SQLite database file.",
+      "type": "string"
+    },
+    "step_size": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "source",
+    "destination",
+    "size_bytes",
+    "elapsed_ms"
+  ],
+  "title": "BackupResponse",
+  "type": "object"
 }

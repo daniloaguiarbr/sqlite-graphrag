@@ -11,6 +11,23 @@ use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // Test 1 — concurrency limit is respected under 10-process load
 // ---------------------------------------------------------------------------
@@ -71,8 +88,7 @@ fn limite_respeitado_sob_carga() {
 fn max_concurrency_zero_rejected_with_exit_2() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -117,8 +133,7 @@ fn all_slots_busy_return_75() {
     }
 
     // Invocation with --wait-lock 0 must fail immediately with exit 75.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -151,8 +166,7 @@ fn skip_memory_guard_bypasses_ram_check() {
 
     // With --skip-memory-guard, the command must complete successfully even in
     // environments where available RAM could cause exit 77.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()

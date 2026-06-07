@@ -23,6 +23,23 @@ use rusqlite::Connection;
 use serial_test::serial;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -33,8 +50,7 @@ fn init_isolated_db() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().expect("TempDir must be created");
     let db_path = tmp.path().join("test.sqlite");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("sqlite-graphrag binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -86,12 +102,13 @@ fn index_exists(conn: &Connection, name: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 — init applies exactly 9 migrations V001 through V009
+// Test 1 — init applies exactly 13 migrations V001 through V013
 // ---------------------------------------------------------------------------
+// v1.0.76 added V012 and V013 on top of the historical V001-V011 set.
 
 #[test]
 #[serial]
-fn init_creates_11_migrations_v001_to_v011() {
+fn init_creates_13_migrations_v001_to_v013() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -107,13 +124,13 @@ fn init_creates_11_migrations_v001_to_v011() {
 
     assert_eq!(
         versions.len(),
-        11,
-        "exactly 11 migrations must be applied, found: {versions:?}"
+        13,
+        "exactly 13 migrations must be applied, found: {versions:?}"
     );
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-        "expected versions V001-V011"
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        "expected versions V001-V013"
     );
 }
 
@@ -150,83 +167,111 @@ fn trigger_trg_fts_ad_exists() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4 — trigger trg_fts_au is INTENTIONALLY ABSENT (sqlite-vec conflict)
+// Test 4 — trigger trg_fts_au is INTENTIONALLY ABSENT (FTS5 sync handled in Rust)
 // ---------------------------------------------------------------------------
-// V004 explicitly documents that trg_fts_au is omitted because sqlite-vec
-// loaded via sqlite3_auto_extension conflicts with FTS5 on AFTER UPDATE
-// triggers. Edit/rename synchronisation lives in Rust code (edit.rs, rename.rs).
+// v1.0.76 removed sqlite-vec, but the design choice of handling FTS5 sync
+// in Rust (edit.rs, rename.rs, restore.rs) instead of a trigger is kept.
+// trg_fts_ai and trg_fts_ad are created by V004; trg_fts_au is NOT,
+// because the Rust handlers cover UPDATE-equivalent operations explicitly
+// and we avoid the historical sqlite-vec / FTS5 conflict inside the
+// trigger body for symmetry with the v1.0.74 design.
 
 #[test]
 #[serial]
-fn trigger_trg_fts_au_absent_due_to_vec_conflict() {
+fn trigger_trg_fts_au_absent_handled_in_rust() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     assert!(
         !trigger_exists(&conn, "trg_fts_au"),
-        "trigger trg_fts_au must NOT exist — sqlite-vec conflicts with FTS5 AFTER UPDATE"
+        "trigger trg_fts_au must NOT exist — FTS5 sync is handled in Rust (edit.rs, rename.rs, restore.rs)"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — vec_memories uses float[384] and distance_metric=cosine
+// Test 5 — memory_embeddings uses BLOB and dim=384 (v1.0.76 replacement for vec_memories)
 // ---------------------------------------------------------------------------
-// Verifies via DDL from sqlite_master that the vec0 table definition includes
-// the correct dimension and distance metric parameters.
+// v1.0.76 dropped vec_memories (sqlite-vec virtual table) and replaced it with
+// a regular BLOB-backed memory_embeddings table. The embedding dimensionality
+// is recorded in the dim column rather than in the DDL. Cosine similarity is
+// computed in pure Rust at query time (src/similarity.rs).
 
 #[test]
 #[serial]
-fn vec_memories_dim_384_cosine() {
+fn memory_embeddings_blob_dim_384() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
     let ddl: String = conn
         .query_row(
-            "SELECT sql FROM sqlite_master WHERE name = 'vec_memories'",
+            "SELECT sql FROM sqlite_master WHERE name = 'memory_embeddings'",
             [],
             |row| row.get(0),
         )
-        .expect("vec_memories must exist in sqlite_master");
+        .expect("memory_embeddings must exist in sqlite_master");
 
     assert!(
-        ddl.contains("float[384]"),
-        "vec_memories must declare float[384], DDL was: {ddl}"
+        ddl.contains("BLOB"),
+        "memory_embeddings must declare embedding as BLOB, DDL was: {ddl}"
     );
     assert!(
-        ddl.contains("distance_metric=cosine"),
-        "vec_memories must use distance_metric=cosine, DDL was: {ddl}"
+        ddl.contains("dim"),
+        "memory_embeddings must declare a dim column, DDL was: {ddl}"
+    );
+    assert!(
+        ddl.contains("384"),
+        "memory_embeddings must default dim to 384, DDL was: {ddl}"
+    );
+
+    // Confirm sqlite-vec tables are GONE.
+    let vec_present: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'vec_memories'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
+    assert_eq!(
+        vec_present, 0,
+        "vec_memories must NOT exist after V013, but it is still present"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 6 — vec_memories has 2 partition keys (namespace, type)
+// Test 6 — memory_embeddings has 2 partition-like indexes (namespace, source)
 // ---------------------------------------------------------------------------
+// vec_memories used sqlite-vec partition keys. memory_embeddings uses regular
+// SQLite indexes. The functional requirement is "find embeddings by namespace"
+// and "audit embeddings by source".
 
 #[test]
 #[serial]
-fn vec_memories_partition_keys_namespace_type() {
+fn memory_embeddings_partition_indexes() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
-    let ddl: String = conn
+    let has_ns_index: i64 = conn
         .query_row(
-            "SELECT sql FROM sqlite_master WHERE name = 'vec_memories'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_memory_embeddings_ns'",
             [],
             |row| row.get(0),
         )
-        .expect("vec_memories must exist in sqlite_master");
-
-    // Both columns must appear with 'partition key' in the DDL
-    let namespace_pk = ddl.contains("namespace") && ddl.to_lowercase().contains("partition key");
-    let type_pk = ddl.contains("type") && ddl.to_lowercase().contains("partition key");
-
-    assert!(
-        namespace_pk,
-        "vec_memories must declare 'namespace' as partition key, DDL: {ddl}"
+        .unwrap_or(0);
+    assert_eq!(
+        has_ns_index, 1,
+        "idx_memory_embeddings_ns must exist (namespace partition)"
     );
-    assert!(
-        type_pk,
-        "vec_memories must declare 'type' as partition key, DDL: {ddl}"
+
+    let has_source_index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_memory_embeddings_source'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    assert_eq!(
+        has_source_index, 1,
+        "idx_memory_embeddings_source must exist (source partition)"
     );
 }
 
@@ -271,8 +316,7 @@ fn fts5_matching_with_accents_cafe_cafe() {
     let db_path = tmp.path().join("test.sqlite");
 
     // DB init
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -280,8 +324,7 @@ fn fts5_matching_with_accents_cafe_cafe() {
         .success();
 
     // Insert memory with accented text
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_NAMESPACE", "global")
@@ -417,7 +460,7 @@ fn schema_meta_required_keys_exist() {
 
 #[test]
 #[serial]
-fn schema_version_meta_equals_11() {
+fn schema_version_meta_equals_13() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -430,8 +473,8 @@ fn schema_version_meta_equals_11() {
         .expect("schema_version must exist in schema_meta");
 
     assert_eq!(
-        version, "11",
-        "schema_version in schema_meta must be '11' after V011"
+        version, "13",
+        "schema_version in schema_meta must be '13' after V013"
     );
 }
 
@@ -449,8 +492,7 @@ fn v009_document_type_lifecycle_e2e() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init applies V001..V009 in a fresh DB.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -458,8 +500,7 @@ fn v009_document_type_lifecycle_e2e() {
         .success();
 
     // Insert a memory with the new type=document accepted by V009.
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_NAMESPACE", "global")
@@ -486,8 +527,7 @@ fn v009_document_type_lifecycle_e2e() {
     );
 
     // List filtered by type=document must return the inserted record.
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
@@ -513,8 +553,7 @@ fn v009_document_type_lifecycle_e2e() {
     assert_eq!(items[0]["type"], "document");
 
     // Recall via FTS5/vector must surface the freshly inserted document.
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "recall", "Sample", "--json"])
@@ -546,16 +585,14 @@ fn v009_note_type_lifecycle_e2e() {
     let tmp = TempDir::new().expect("TempDir must be created");
     let db_path = tmp.path().join("test.sqlite");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_NAMESPACE", "global")
@@ -581,8 +618,7 @@ fn v009_note_type_lifecycle_e2e() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "list", "--type", "note", "--json"])
@@ -601,8 +637,7 @@ fn v009_note_type_lifecycle_e2e() {
     assert_eq!(items.len(), 1, "expected exactly 1 note, got {items:?}");
     assert_eq!(items[0]["type"], "note");
 
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "recall", "scratch", "--json"])
@@ -637,16 +672,14 @@ fn v009_invalid_type_rejected() {
     let tmp = TempDir::new().expect("TempDir must be created");
     let db_path = tmp.path().join("test.sqlite");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
         .assert()
         .success();
 
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .expect("binary not found")
+    let output = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_NAMESPACE", "global")

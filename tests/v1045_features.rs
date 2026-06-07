@@ -6,6 +6,23 @@ use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 fn system_cache_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR") {
         return std::path::PathBuf::from(d);
@@ -17,7 +34,7 @@ fn system_cache_dir() -> std::path::PathBuf {
 
 fn cmd(temp: &TempDir) -> Command {
     let cache = system_cache_dir();
-    let mut c = Command::cargo_bin("sqlite-graphrag").expect("binary present in target/");
+    let mut c = sgr_cmd();
     c.env_clear()
         .env("HOME", temp.path())
         .env("SQLITE_GRAPHRAG_HOME", temp.path())
@@ -132,9 +149,16 @@ fn hybrid_search_finds_dotted_version() {
 // ---------------------------------------------------------------------------
 // S5: SQLITE_GRAPHRAG_ENABLE_NER env var accepts 1/true
 // ---------------------------------------------------------------------------
+// v1.0.76 removed GLiNER and NER. The flag is still accepted (it parses
+// without error) but no entity extraction is performed because the
+// pipeline that consumes the flag was deleted. These tests now exercise
+// the validation path: the flag MUST coexist with the absence of
+// --skip-extraction or the CLI refuses. We mark them `#[ignore]` until
+// the v1.0.77 cleanup either restores NER or deletes the flag.
 
 #[test]
 #[serial]
+#[ignore = "NER removed in v1.0.76; see ADR-0025"]
 fn enable_ner_env_var_accepts_1() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
@@ -159,6 +183,7 @@ fn enable_ner_env_var_accepts_1() {
 
 #[test]
 #[serial]
+#[ignore = "NER removed in v1.0.76; see ADR-0025"]
 fn enable_ner_env_var_accepts_true() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);

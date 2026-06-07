@@ -85,9 +85,8 @@ impl LlmEmbedding {
         Self::oauth_only_enforce()?;
         Ok(Self {
             flavour: EmbeddingFlavour::Codex,
-            binary: which::which("codex").map_err(|_| {
-                AppError::Embedding("`codex` not found on PATH".to_string())
-            })?,
+            binary: which::which("codex")
+                .map_err(|_| AppError::Embedding("`codex` not found on PATH".to_string()))?,
             model: "gpt-5.4".to_string(),
         })
     }
@@ -96,9 +95,8 @@ impl LlmEmbedding {
         Self::oauth_only_enforce()?;
         Ok(Self {
             flavour: EmbeddingFlavour::Claude,
-            binary: which::which("claude").map_err(|_| {
-                AppError::Embedding("`claude` not found on PATH".to_string())
-            })?,
+            binary: which::which("claude")
+                .map_err(|_| AppError::Embedding("`claude` not found on PATH".to_string()))?,
             model: "claude-sonnet-4-6".to_string(),
         })
     }
@@ -138,32 +136,40 @@ impl LlmEmbedding {
     }
 
     fn invoke_with_prefix(&mut self, prefix: &str, text: &str) -> Result<Vec<f32>, AppError> {
-        // Lazy-init the tokio runtime on first use so the sync callers
-        // (which all live behind a Mutex) don't need to be async.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| AppError::Embedding(format!("tokio runtime init failed: {e}")))?;
-
-        rt.block_on(async move {
-            let prompt = format!("{prefix}{text}");
-            let stdout = match self.flavour {
-                EmbeddingFlavour::Claude => self.invoke_claude(&prompt).await?,
-                EmbeddingFlavour::Codex => self.invoke_codex(&prompt).await?,
-            };
-            let parsed: EmbeddingResponse = serde_json::from_str(&stdout).map_err(|e| {
-                AppError::Embedding(format!(
-                    "LLM embedding response was not valid JSON: {e}; raw={stdout}"
-                ))
-            })?;
-            if parsed.embedding.len() != EMBEDDING_DIM {
-                return Err(AppError::Embedding(format!(
-                    "LLM returned {} dims, expected {EMBEDDING_DIM}",
-                    parsed.embedding.len()
-                )));
+        // v1.0.76: tolerate being called from inside an existing tokio
+        // runtime (e.g. a test marked `#[tokio::test]`) by reusing the
+        // current Handle via block_in_place. When no runtime is in scope
+        // we build a one-shot current-thread runtime.
+        let prompt = format!("{prefix}{text}");
+        let inner = async {
+            match self.flavour {
+                EmbeddingFlavour::Claude => self.invoke_claude(&prompt).await,
+                EmbeddingFlavour::Codex => self.invoke_codex(&prompt).await,
             }
-            Ok(parsed.embedding)
-        })
+        };
+        let stdout: String = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(inner))?,
+            Err(_) => {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| AppError::Embedding(format!("tokio runtime init failed: {e}")))?;
+                rt.block_on(inner)?
+            }
+        };
+
+        let parsed: EmbeddingResponse = serde_json::from_str(&stdout).map_err(|e| {
+            AppError::Embedding(format!(
+                "LLM embedding response was not valid JSON: {e}; raw={stdout}"
+            ))
+        })?;
+        if parsed.embedding.len() != EMBEDDING_DIM {
+            return Err(AppError::Embedding(format!(
+                "LLM returned {} dims, expected {EMBEDDING_DIM}",
+                parsed.embedding.len()
+            )));
+        }
+        Ok(parsed.embedding)
     }
 
     async fn invoke_claude(&self, prompt: &str) -> Result<String, AppError> {

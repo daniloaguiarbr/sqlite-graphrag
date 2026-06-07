@@ -47,11 +47,7 @@ pub fn top_k_by_score<I>(items: I, k: usize) -> Vec<(usize, f32)>
 where
     I: IntoIterator<Item = f32>,
 {
-    let mut scored: Vec<(usize, f32)> = items
-        .into_iter()
-        .enumerate()
-        .map(|(i, s)| (i, s))
-        .collect();
+    let mut scored: Vec<(usize, f32)> = items.into_iter().enumerate().collect();
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(k);
     scored

@@ -167,9 +167,7 @@ pub fn split_into_chunks_hierarchical(body: &str) -> Vec<Chunk> {
     let char_overlap = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN;
     let config = ChunkConfig::new(char_chunk_size)
         .with_overlap(char_overlap)
-        .expect(
-            "compile-time invariant: CHUNK_OVERLAP must be smaller than chunk size",
-        );
+        .expect("compile-time invariant: CHUNK_OVERLAP must be smaller than chunk size");
 
     let splitter = MarkdownSplitter::new(config);
 

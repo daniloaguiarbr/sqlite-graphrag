@@ -4,8 +4,25 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 fn cmd_lang(tmp: &TempDir, lang: &str) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -17,7 +34,7 @@ fn cmd_lang(tmp: &TempDir, lang: &str) -> Command {
 }
 
 fn cmd_env_lang(tmp: &TempDir, lang_val: &str) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -28,7 +45,7 @@ fn cmd_env_lang(tmp: &TempDir, lang_val: &str) -> Command {
 }
 
 fn cmd_no_lang(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -39,8 +56,7 @@ fn cmd_no_lang(tmp: &TempDir) -> Command {
 }
 
 fn init_db(tmp: &TempDir) {
-    Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
@@ -348,7 +364,7 @@ fn flag_lang_en_overrides_env_lang_pt() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -368,7 +384,7 @@ fn flag_lang_pt_overrides_env_lang_en() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -408,7 +424,7 @@ fn locale_ptbr_without_flag_without_env_applies_portuguese() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -470,8 +486,7 @@ fn alias_english_accepted_by_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let saida = Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    let saida = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
@@ -496,8 +511,7 @@ fn alias_pt_br_accepted_by_cli() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    let saida = Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    let saida = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"))
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")

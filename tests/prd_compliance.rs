@@ -12,12 +12,29 @@ use serial_test::serial;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
 fn cmd_base(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -322,28 +339,37 @@ fn prd_fts5_unicode61_remove_diacritics() {
 }
 
 // ---------------------------------------------------------------------------
-// 8 — vec_memories distance_metric cosine via pragma table_info
+// 8 — pure-Rust cosine similarity produces the expected distance range
 // ---------------------------------------------------------------------------
+// v1.0.76 dropped vec_memories and the distance_metric=cosine DDL. The cosine
+// invariant is now guaranteed by src/similarity.rs::cosine_similarity plus
+// the BLOB-backed memory_embeddings table. This test pins the contract:
+//   - orthogonal unit vectors yield distance > 0.5
+//   - identical unit vectors yield distance ~ 0.0
+//   - the result lies in (0.5, 2.0] for near-orthogonal vectors
+// The test does NOT shell out to the binary; it runs a tiny pure-Rust snippet
+// against the live library, so it stays fast and hermetic.
 
 #[test]
-fn prd_vec_memories_distance_metric_cosine() {
-    let tmp = TempDir::new().unwrap();
-    init_db(&tmp);
+fn prd_cosine_similarity_distance_invariant() {
+    use sqlite_graphrag::similarity::{cosine_similarity, similarity_to_distance};
 
-    let conn = Connection::open(db_path(&tmp)).unwrap();
+    let a: Vec<f32> = (0..384).map(|i| (i as f32).sin()).collect();
+    let b: Vec<f32> = (0..384).map(|i| (i as f32).cos()).collect();
+    let c: Vec<f32> = a.clone();
 
-    // Verifica via sqlite_master que vec_memories foi criada com distance_metric=cosine
-    let sql: String = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE name='vec_memories'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let sim_ab = cosine_similarity(&a, &b);
+    let sim_ac = cosine_similarity(&a, &c);
+    let d_ab = similarity_to_distance(sim_ab);
+    let d_ac = similarity_to_distance(sim_ac);
 
     assert!(
-        sql.contains("cosine"),
-        "vec_memories deve declarar distance_metric=cosine, sql: {sql}"
+        d_ab > 0.5 && d_ab <= 2.0,
+        "distance must lie in (0.5, 2.0] for near-orthogonal vectors, got {d_ab}"
+    );
+    assert!(
+        d_ac.abs() < 1e-6,
+        "identical vectors must yield distance ~ 0.0, got {d_ac}"
     );
 }
 
@@ -405,8 +431,7 @@ fn prd_five_instances_fifth_returns_exit_75() {
         .collect();
 
     // 5th invocation with --wait-lock 0 must return exit 75
-    Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "error")
         .args([
@@ -744,8 +769,8 @@ fn prd_graph_dot_is_valid_digraph() {
 
     let text = String::from_utf8_lossy(&output);
     assert!(
-        text.contains("digraph sqlite-graphrag {"),
-        "graph DOT deve começar com 'digraph sqlite-graphrag {{', obtido: {text}"
+        text.contains("digraph sqlite_graphrag {"),
+        "graph DOT deve começar com 'digraph sqlite_graphrag {{', obtido: {text}"
     );
 }
 
@@ -917,7 +942,7 @@ fn prd_chmod_600_aplicado_apos_init() {
 fn prd_path_traversal_rejected_in_db_path() {
     let tmp = TempDir::new().unwrap();
 
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", "../../../etc/passwd");
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");

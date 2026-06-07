@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Mock codex CLI for the v1.0.76 LLM-only test suite.
+#
+# Mirrors tests/mock-llm/claude but emits the JSONL event stream that
+# src/commands/codex_spawn.rs::parse_codex_jsonl consumes. The function
+# ignores every JSONL line except `item.completed` whose `item.type` is
+# `agent_message`; the last such `item.text` wins. We emit exactly one
+# such event with a 384-dim zero vector encoded as the agent message.
+
+set -euo pipefail
+
+ZEROS=$(python3 -c "import json,sys; sys.stdout.write(json.dumps([0.0]*384))")
+PAYLOAD=$(printf '{"embedding":%s}' "$ZEROS")
+
+cat <<JSONL
+{"type":"thread.started","thread_id":"mock-thread-0"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"agent_message","text":${PAYLOAD@Q}}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}
+JSONL
+
+exit 0

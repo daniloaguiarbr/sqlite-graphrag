@@ -547,7 +547,6 @@ fn stage_file(
     let body_hash = blake3::hash(raw_body.as_bytes()).to_hex().to_string();
     let snippet: String = raw_body.chars().take(200).collect();
 
-    
     let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body);
     if chunks_info.len() > REMEMBER_MAX_SAFE_MULTI_CHUNKS {
         return Err(AppError::LimitExceeded(format!(

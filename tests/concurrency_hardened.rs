@@ -17,6 +17,23 @@ use serial_test::serial;
 use std::sync::{Arc, Barrier};
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -63,8 +80,7 @@ fn cinco_instancias_quinta_exit_75() {
     let handles = ocupar_slots(&tmp, 4);
 
     // 5th invocation with --wait-lock 0 must fail with exit 75
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -110,8 +126,7 @@ fn wait_lock_3s_respeitado() {
     });
 
     // --wait-lock 3 must wait for release (within 3s) and complete
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -139,8 +154,7 @@ fn optimistic_locking_conflito_exit_3() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -148,8 +162,7 @@ fn optimistic_locking_conflito_exit_3() {
         .success();
 
     // Insert memory
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
@@ -170,8 +183,7 @@ fn optimistic_locking_conflito_exit_3() {
         .success();
 
     // Obter updated_at via read para capturar o timestamp antes de modificar
-    let output_leitura = Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    let output_leitura = sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
@@ -198,8 +210,7 @@ fn optimistic_locking_conflito_exit_3() {
     let updated_at_stale: i64 = 1;
 
     // Edit with stale --expected-updated-at must fail with exit 3 (Conflict)
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
@@ -233,8 +244,7 @@ fn purge_during_recall_does_not_corrupt() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -243,8 +253,7 @@ fn purge_during_recall_does_not_corrupt() {
 
     // Insert some old memories so that purge has something to do
     for i in 0..3 {
-        Command::cargo_bin("sqlite-graphrag")
-            .expect("binário não encontrado")
+        sgr_cmd()
             .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
             .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
             .args([
@@ -360,8 +369,7 @@ fn dez_remembers_namespaces_diferentes() {
     let db_path = tmp.path().join("test.sqlite");
 
     // Init
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -371,6 +379,7 @@ fn dez_remembers_namespaces_diferentes() {
     let n_threads = 10;
     let barrier = Arc::new(Barrier::new(n_threads));
     let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"));
+    let mock_path = common::prepend_path(&common::mock_llm_path());
 
     let handles: Vec<_> = (0..n_threads)
         .map(|i| {
@@ -379,6 +388,7 @@ fn dez_remembers_namespaces_diferentes() {
             let barrier_clone = Arc::clone(&barrier);
             let namespace = format!("ns-thread-{i}");
             let bin_clone = bin_path.clone();
+            let path_clone = mock_path.clone();
 
             std::thread::spawn(move || {
                 // Sincroniza todos os threads antes de disparar
@@ -387,6 +397,7 @@ fn dez_remembers_namespaces_diferentes() {
                 std::process::Command::new(&bin_clone)
                     .env("SQLITE_GRAPHRAG_DB_PATH", &db_path_clone)
                     .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_path_clone)
+                    .env("PATH", &path_clone)
                     .args([
                         "--skip-memory-guard",
                         "remember",
@@ -456,8 +467,7 @@ fn saturacao_10x_slots_bounded() {
     let tmp = TempDir::new().expect("TempDir");
     let db_path = tmp.path().join("test.sqlite");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binary")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "init"])
@@ -467,6 +477,7 @@ fn saturacao_10x_slots_bounded() {
     let total_processes = 40;
     let barrier = Arc::new(Barrier::new(total_processes));
     let bin_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sqlite-graphrag"));
+    let mock_path = common::prepend_path(&common::mock_llm_path());
 
     let handles: Vec<_> = (0..total_processes)
         .map(|i| {
@@ -474,12 +485,14 @@ fn saturacao_10x_slots_bounded() {
             let cache_clone = tmp.path().to_path_buf();
             let barrier_clone = Arc::clone(&barrier);
             let bin_clone = bin_path.clone();
+            let path_clone = mock_path.clone();
 
             std::thread::spawn(move || {
                 barrier_clone.wait();
                 std::process::Command::new(&bin_clone)
                     .env("SQLITE_GRAPHRAG_DB_PATH", &db_clone)
                     .env("SQLITE_GRAPHRAG_CACHE_DIR", &cache_clone)
+                    .env("PATH", &path_clone)
                     .args([
                         "--skip-memory-guard",
                         "--max-concurrency",

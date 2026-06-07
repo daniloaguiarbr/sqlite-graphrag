@@ -1,34 +1,102 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/related.schema.json",
-  "title": "RelatedResponse",
-  "description": "Response emitted by `sqlite-graphrag related` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 not found.",
   "$defs": {
     "RelatedMemory": {
-      "type": "object",
-      "required": ["memory_id", "name", "namespace", "type", "description", "hop_distance"],
       "additionalProperties": false,
       "properties": {
-        "memory_id":     { "type": "integer" },
-        "name":          { "type": "string" },
-        "namespace":     { "type": "string" },
-        "type":          { "type": "string" },
-        "description":   { "type": "string" },
-        "hop_distance":  { "type": "integer", "minimum": 1 },
-        "source_entity": { "type": ["string", "null"], "description": "Present when traversal found a relationship." },
-        "target_entity": { "type": ["string", "null"] },
-        "relation":      { "type": ["string", "null"] },
-        "weight":        { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 }
-      }
+        "description": {
+          "type": "string"
+        },
+        "hop_distance": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "memory_id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "relation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_entity": {
+          "description": "Present when traversal found a relationship.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_entity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        },
+        "weight": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "memory_id",
+        "name",
+        "namespace",
+        "type",
+        "description",
+        "hop_distance"
+      ],
+      "type": "object"
     }
   },
-  "type": "object",
-  "required": ["results", "elapsed_ms"],
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/related.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Response emitted by `sqlite-graphrag related` on stdout as a single JSON line. Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 not found.",
   "properties": {
-    "name":       { "type": "string", "description": "Name of the seed memory." },
-    "max_hops":   { "type": "integer", "minimum": 1, "description": "Maximum traversal depth requested." },
-    "results":    { "type": "array", "items": { "$ref": "#/$defs/RelatedMemory" } },
-    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Wall-clock time in milliseconds." }
-  }
+    "elapsed_ms": {
+      "description": "Wall-clock time in milliseconds.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "max_hops": {
+      "description": "Maximum traversal depth requested.",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name": {
+      "description": "Name of the seed memory.",
+      "type": "string"
+    },
+    "related_memories": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/RelatedMemory"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "results",
+    "elapsed_ms"
+  ],
+  "title": "RelatedResponse",
+  "type": "object"
 }

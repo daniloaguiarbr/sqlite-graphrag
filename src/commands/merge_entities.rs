@@ -167,13 +167,10 @@ pub fn run(args: MergeEntitiesArgs) -> Result<(), AppError> {
         [],
     )?;
 
-    // Step 6: delete source entities (vec_entities first — no FK CASCADE on vec0).
+    // Step 6: delete source entities. v1.0.76: FK ON DELETE CASCADE on
+    // entity_embeddings handles the vector row automatically.
     let mut entities_removed: usize = 0;
     for &src_id in &source_ids {
-        let _ = tx.execute(
-            "DELETE FROM vec_entities WHERE entity_id = ?1",
-            params![src_id],
-        );
         let removed = tx.execute("DELETE FROM entities WHERE id = ?1", params![src_id])?;
         entities_removed += removed;
     }

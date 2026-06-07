@@ -1,69 +1,214 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/hybrid-search.schema.json",
-  "title": "HybridSearchResponse",
-  "description": "Response emitted by `sqlite-graphrag hybrid-search` on stdout as a single JSON line.",
   "$defs": {
     "HybridSearchItem": {
-      "type": "object",
-      "required": ["memory_id", "name", "namespace", "type", "description", "body", "combined_score", "score", "source"],
       "additionalProperties": false,
       "properties": {
-        "memory_id":     { "type": "integer" },
-        "name":          { "type": "string" },
-        "namespace":     { "type": "string" },
-        "type":          { "type": "string" },
-        "description":   { "type": "string" },
-        "body":          { "type": "string" },
-        "combined_score":{ "type": "number",  "description": "RRF combined score." },
-        "score":         { "type": "number",  "description": "Alias of combined_score." },
-        "rrf_score":     { "type": "number",  "description": "Raw RRF score before normalization." },
-        "source":        { "type": "string",  "enum": ["hybrid"] },
-        "vec_rank":         { "type": "integer", "minimum": 1, "description": "Present when result appeared in vector search." },
-        "fts_rank":         { "type": "integer", "minimum": 1, "description": "Present when result appeared in full-text search." },
-        "normalized_score": { "type": "number", "minimum": 0, "maximum": 1, "description": "RRF score normalized to [0,1] for cross-method comparability" },
-        "vec_distance":     { "type": ["number", "null"], "description": "Raw cosine distance from vector search, null when not in vec results" },
-        "fts_bm25":         { "type": ["number", "null"], "description": "Raw BM25 score from FTS5, null when not available" }
-      }
+        "body": {
+          "type": "string"
+        },
+        "combined_score": {
+          "description": "RRF combined score.",
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fts_bm25": {
+          "description": "Raw BM25 score from FTS5, null when not available",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fts_rank": {
+          "description": "Present when result appeared in full-text search.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "memory_id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "normalized_score": {
+          "description": "RRF score normalized to [0,1] for cross-method comparability",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "rrf_score": {
+          "description": "Raw RRF score before normalization.",
+          "type": "number"
+        },
+        "score": {
+          "description": "Alias of combined_score.",
+          "type": "number"
+        },
+        "snippet": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "source": {
+          "enum": [
+            "hybrid"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "vec_distance": {
+          "description": "Raw cosine distance from vector search, null when not in vec results",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "vec_rank": {
+          "description": "Present when result appeared in vector search.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "memory_id",
+        "name",
+        "namespace",
+        "type",
+        "description",
+        "body",
+        "combined_score",
+        "score",
+        "source"
+      ],
+      "type": "object"
     },
     "RecallItem": {
-      "type": "object",
-      "required": ["memory_id", "name", "namespace", "type", "description", "snippet", "distance", "source"],
       "additionalProperties": false,
       "properties": {
-        "memory_id":   { "type": "integer" },
-        "name":        { "type": "string" },
-        "namespace":   { "type": "string" },
-        "type":        { "type": "string" },
-        "description": { "type": "string" },
-        "snippet":     { "type": "string" },
-        "distance":    { "type": "number" },
-        "source":      { "type": "string" }
-      }
+        "description": {
+          "type": "string"
+        },
+        "distance": {
+          "type": "number"
+        },
+        "memory_id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id",
+        "name",
+        "namespace",
+        "type",
+        "description",
+        "snippet",
+        "distance",
+        "source"
+      ],
+      "type": "object"
     },
     "Weights": {
-      "type": "object",
-      "required": ["vec", "fts"],
       "additionalProperties": false,
       "properties": {
-        "vec": { "type": "number" },
-        "fts": { "type": "number" }
-      }
+        "fts": {
+          "type": "number"
+        },
+        "vec": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "vec",
+        "fts"
+      ],
+      "type": "object"
     }
   },
-  "type": "object",
-  "required": ["query", "k", "rrf_k", "weights", "results", "graph_matches", "elapsed_ms"],
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/hybrid-search.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Response emitted by `sqlite-graphrag hybrid-search` on stdout as a single JSON line.",
   "properties": {
-    "query":         { "type": "string" },
-    "k":             { "type": "integer", "minimum": 1 },
-    "rrf_k":         { "type": "integer", "minimum": 1, "description": "RRF k parameter." },
-    "weights":       { "$ref": "#/$defs/Weights" },
-    "results":          { "type": "array", "items": { "$ref": "#/$defs/HybridSearchItem" } },
-    "graph_matches":    { "type": "array", "items": { "$ref": "#/$defs/RecallItem" } },
-    "fts_degraded":     { "type": "boolean", "description": "True when FTS5 query failed and results are vector-only" },
-    "fts_error":        { "type": ["string", "null"], "description": "FTS5 error message when fts_degraded is true" },
-    "fts_auto_rebuilt": { "type": "boolean", "description": "True when FTS5 was auto-rebuilt during this query" },
-    "elapsed_ms":       { "type": "integer", "minimum": 0 }
-  }
+    "elapsed_ms": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "fts_auto_rebuilt": {
+      "description": "True when FTS5 was auto-rebuilt during this query",
+      "type": "boolean"
+    },
+    "fts_degraded": {
+      "description": "True when FTS5 query failed and results are vector-only",
+      "type": "boolean"
+    },
+    "fts_error": {
+      "description": "FTS5 error message when fts_degraded is true",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "graph_matches": {
+      "items": {
+        "$ref": "#/$defs/RecallItem"
+      },
+      "type": "array"
+    },
+    "k": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "query": {
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/HybridSearchItem"
+      },
+      "type": "array"
+    },
+    "rrf_k": {
+      "description": "RRF k parameter.",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "weights": {
+      "$ref": "#/$defs/Weights"
+    }
+  },
+  "required": [
+    "query",
+    "k",
+    "rrf_k",
+    "weights",
+    "results",
+    "graph_matches",
+    "elapsed_ms"
+  ],
+  "title": "HybridSearchResponse",
+  "type": "object"
 }

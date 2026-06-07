@@ -7,6 +7,23 @@ use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 fn system_cache_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR") {
         return std::path::PathBuf::from(d);
@@ -18,7 +35,7 @@ fn system_cache_dir() -> std::path::PathBuf {
 
 fn cmd(temp: &TempDir) -> Command {
     let cache = system_cache_dir();
-    let mut c = Command::cargo_bin("sqlite-graphrag").expect("binary present in target/");
+    let mut c = sgr_cmd();
     c.env_clear()
         .env("HOME", temp.path())
         .env("SQLITE_GRAPHRAG_HOME", temp.path())

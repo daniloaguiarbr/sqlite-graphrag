@@ -63,7 +63,10 @@ fn approx_tokens(text: &str) -> usize {
     let words = text.split_whitespace().count();
     // Round up to avoid under-chunking.
     let num = words.saturating_mul(WORDS_TO_TOKENS_NUMERATOR);
-    let (tokens, rem) = (num / WORDS_TO_TOKENS_DENOMINATOR, num % WORDS_TO_TOKENS_DENOMINATOR);
+    let (tokens, rem) = (
+        num / WORDS_TO_TOKENS_DENOMINATOR,
+        num % WORDS_TO_TOKENS_DENOMINATOR,
+    );
     if rem == 0 {
         tokens
     } else {

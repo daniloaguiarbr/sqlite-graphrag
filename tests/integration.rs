@@ -3,9 +3,26 @@
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 /// Builds an isolated `Command` with a per-test `TempDir` database and shared model cache.
 fn cmd(tmp: &TempDir) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
@@ -17,7 +34,7 @@ fn init_db(tmp: &TempDir) {
 }
 
 fn isolated_cmd_in(dir: &std::path::Path) -> Command {
-    let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
+    let mut c = sgr_cmd();
     c.current_dir(dir);
     c.env_remove("SQLITE_GRAPHRAG_NAMESPACE");
     c.env_remove("SQLITE_GRAPHRAG_DB_PATH");
@@ -34,12 +51,12 @@ fn isolated_cmd_in(dir: &std::path::Path) -> Command {
 /// resolution fall back to `SQLITE_GRAPHRAG_HOME` or `current_dir`. Uses
 /// `env_clear` to ensure CI environment vars do not leak.
 fn home_isolated_cmd(cwd: &std::path::Path) -> Command {
+    let mock_dir = common::mock_llm_path();
     let mut c = Command::cargo_bin("sqlite-graphrag").unwrap();
     c.env_clear();
-    // PATH is required in some environments for binary libs; preserve it minimally.
-    if let Ok(path_var) = std::env::var("PATH") {
-        c.env("PATH", path_var);
-    }
+    // PATH must contain the mock LLM dir AFTER env_clear, otherwise
+    // v1.0.76's LlmEmbedding::detect_available fails to find claude/codex.
+    c.env("PATH", common::prepend_path(&mock_dir));
     if let Ok(home_var) = std::env::var("HOME") {
         c.env("HOME", home_var);
     }
@@ -346,8 +363,7 @@ fn test_health_ok_after_init() {
 fn test_daemon_help_lists_db_flag() {
     let tmp = TempDir::new().unwrap();
 
-    let output = Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    let output = sgr_cmd()
         .current_dir(tmp.path())
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .args(["daemon", "--help"])
@@ -365,8 +381,7 @@ fn test_daemon_help_lists_db_flag() {
 fn test_daemon_accepts_db_ping_json_without_parse_error() {
     let tmp = TempDir::new().unwrap();
 
-    Command::cargo_bin("sqlite-graphrag")
-        .unwrap()
+    sgr_cmd()
         .current_dir(tmp.path())
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
         .args(["daemon", "--db", "foo.sqlite", "--ping", "--json"])
@@ -911,7 +926,7 @@ fn test_stats_returns_counts() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert!(json["memories"].as_i64().unwrap() >= 1);
     assert!(json["db_size_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], 13);
 }
 
 #[test]
@@ -1631,8 +1646,13 @@ fn test_unlink_missing_entity_returns_exit_4() {
 }
 
 // ---------------------------------------------------------------------------
-// regression: INSERT OR REPLACE on vec_entities (vec0 does not support REPLACE)
+// regression: shared entity across memories must not duplicate entity_embeddings rows
 // ---------------------------------------------------------------------------
+// v1.0.74 hit this bug because vec0 does not support INSERT OR REPLACE. v1.0.76
+// replaced vec_entities with a regular BLOB-backed entity_embeddings table whose
+// PK is the entity_id. The fix moves the deduplication to the caller (the
+// storage layer upserts on entity_id, so two memories sharing one entity
+// produce ONE entity_embeddings row). This test pins that invariant.
 
 #[test]
 fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
@@ -1646,8 +1666,8 @@ fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
         r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
     );
 
-    // Second memory reuses the SAME entity — vec0 does not tolerate duplicate INSERT OR REPLACE.
-    // DEVE ter sucesso sem UNIQUE constraint error.
+    // Second memory reuses the SAME entity — v1.0.76 storage layer dedups by
+    // entity_id, so the upsert must succeed without UNIQUE constraint error.
     seed_memory_with_entities(
         &tmp,
         "memoria-segundo",
@@ -1659,6 +1679,23 @@ fn test_remember_does_not_duplicate_vec_entities_for_shared_entity() {
         &tmp,
         "memoria-terceiro",
         r#"[{"name":"entidade-comum","entity_type":"concept","description":null}]"#,
+    );
+
+    // Open the database directly to verify there is exactly ONE entity_embeddings
+    // row for the shared entity, not three.
+    let conn = rusqlite::Connection::open(tmp.path().join("test.sqlite")).unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM entity_embeddings e
+             JOIN entities en ON en.id = e.entity_id
+             WHERE en.name = 'entidade-comum'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("entity_embeddings query must succeed");
+    assert_eq!(
+        count, 1,
+        "shared entity across 3 memories must produce exactly 1 entity_embeddings row, found {count}"
     );
 }
 
@@ -2204,9 +2241,9 @@ fn test_graph_export_dot_contem_digraph() {
         .stdout
         .clone();
     let rendered = String::from_utf8(out).unwrap();
-    assert!(rendered.contains("digraph sqlite-graphrag"));
-    assert!(rendered.contains("dot_a"));
-    assert!(rendered.contains("dot_b"));
+    assert!(rendered.contains("digraph sqlite_graphrag"));
+    assert!(rendered.contains("dot-a"));
+    assert!(rendered.contains("dot-b"));
     assert!(rendered.contains("uses"));
 }
 

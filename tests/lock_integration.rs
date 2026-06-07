@@ -17,6 +17,23 @@ use assert_cmd::Command;
 use serial_test::serial;
 use tempfile::TempDir;
 
+/// Builds a fresh `Command` with the mock LLM PATH prepended.
+///
+/// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
+/// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
+/// 384-dim zero vector so the binary finishes without a real OAuth
+/// login. The mock directory is leaked (no TempDir cleanup) so the
+/// spawned subprocess always finds the mocks.
+fn sgr_cmd() -> Command {
+    let mock_dir = common::mock_llm_path();
+    let mut c = Command::cargo_bin("sqlite-graphrag").expect("sqlite-graphrag binary not found");
+    c.env("PATH", common::prepend_path(&mock_dir));
+    c
+}
+
+#[path = "common/mod.rs"]
+mod common;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -39,16 +56,14 @@ fn slot_released_after_process_exits() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
     // First invocation — must acquire and release slot 1.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
         .success();
 
     // Second invocation — must acquire the slot again without error.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
@@ -66,8 +81,7 @@ fn slot_released_after_process_exits() {
 fn slot_file_created_in_cache_dir() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");
 
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args(["--skip-memory-guard", "namespace-detect"])
         .assert()
@@ -112,8 +126,7 @@ fn wait_lock_zero_returns_75_when_slots_busy() {
     }
 
     // Invocation with all slots busy and --wait-lock 0 → exit 75.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -165,8 +178,7 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Second instance must fail immediately with exit 75.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",
@@ -223,8 +235,7 @@ fn wait_lock_espera_e_adquire_slot() {
     });
 
     // --wait-lock 10 must wait for release and complete successfully.
-    Command::cargo_bin("sqlite-graphrag")
-        .expect("binário sqlite-graphrag não encontrado")
+    sgr_cmd()
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path())
         .args([
             "--skip-memory-guard",

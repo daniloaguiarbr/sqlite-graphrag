@@ -1,15 +1,58 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/optimize.schema.json",
-  "title": "OptimizeResponse",
-  "description": "Response emitted by `sqlite-graphrag optimize` on stdout as a single JSON line.",
-  "type": "object",
-  "required": ["db_path", "status", "fts_rebuilt", "elapsed_ms"],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Response emitted by `sqlite-graphrag optimize` on stdout as a single JSON line.",
   "properties": {
-    "db_path":    { "type": "string" },
-    "status":     { "type": "string", "enum": ["ok"] },
-    "fts_rebuilt": { "type": "boolean", "description": "Whether the FTS5 index was rebuilt during optimization." },
-    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
-  }
+    "db_path": {
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "description": "Handler wall-clock time in milliseconds.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "fts_rebuilt": {
+      "description": "Whether the FTS5 index was rebuilt during optimization.",
+      "type": "boolean"
+    },
+    "fts_rows_indexed": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "fts_skipped_functional": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "fts_unhealthy": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "ok"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "db_path",
+    "status",
+    "fts_rebuilt",
+    "elapsed_ms"
+  ],
+  "title": "OptimizeResponse",
+  "type": "object"
 }
