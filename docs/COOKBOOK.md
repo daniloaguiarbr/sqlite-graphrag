@@ -17,13 +17,12 @@
 - `hybrid-search --with-graph` enables graph traversal seeded from top RRF results (since v1.0.44)
 
 
-## Latency Note
-- The CLI can run stateless, but `sqlite-graphrag daemon` keeps the embedding model resident for repeated heavy commands
-- For production workflows requiring lower latency, start `sqlite-graphrag daemon` once and let `init`, `remember`, `recall`, and `hybrid-search` reuse it automatically
-- Current single-shot `recall` takes approximately 1 second on modern hardware
-- Batch pipelines amortize this cost by invoking the binary once per document in parallel
-- `daemon --ping --json` checks whether the daemon is alive; `daemon --stop` shuts it down gracefully
-- See Recipe "How to start and monitor the daemon for lower latency" for setup details
+## Latency Note — v1.0.76 LLM-Only
+- The CLI is one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. There is no daemon and no in-process model.
+- Subprocess spawn cost is approximately 1-3 seconds per call. The LLM round-trip is the model; there is nothing to "keep warm".
+- `sqlite-graphrag daemon` is deprecated and kept for source compatibility through v1.0.76 → v1.1.0. The daemon no longer offers a speedup because the LLM subprocess is the new "model loader". Removed in v1.1.0.
+- Batch pipelines should batch chunks on the LLM side (one prompt with N passages) via `embed_passages_controlled` to amortize spawn cost.
+- Operators with very large corpora should rely on FTS5 (`hybrid-search --k 50`) for coarse filtering before reaching the cosine refinement (see ADR-0024).
 
 
 ## Default Values Reference
@@ -54,7 +53,7 @@ sqlite-graphrag health --json
 
 
 ### Explanation
-- Command `init` creates the SQLite file and downloads `multilingual-e5-small` locally
+- Command `init` creates the SQLite file and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download; the LLM subprocess is the model.
 - Flag `--namespace default` is a user-chosen name; the built-in fallback namespace is `global`
 - Command `health` validates integrity with `PRAGMA integrity_check` and returns JSON
 - Exit code `0` signals the database is ready for writes and reads from any agent
@@ -71,13 +70,17 @@ sqlite-graphrag health --json
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
-## How To Start And Monitor The Daemon For Lower Latency
-### Problem
-- Every `recall` and `remember` call pays a 1-second cold start to load the ONNX embedding model
-- Your interactive agent session feels sluggish because the model loads and unloads on every invocation
+## How To Start And Monitor The Daemon For Lower Latency — v1.0.76 DEPRECATED
+### Problem (v1.0.74 and earlier)
+- Every `recall` and `remember` call paid a 1-second cold start to load the ONNX embedding model
+- Interactive agent sessions felt sluggish because the model loaded and unloaded on every invocation
 
+### Status (v1.0.76)
+- The `daemon` subcommand is **deprecated** and kept for source compatibility through v1.0.76 → v1.1.0. The daemon no longer offers a speedup because the LLM subprocess is the new "model loader". Removed in v1.1.0.
+- The CLI is now one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess for embedding generation. There is no in-process model to keep warm.
+- See ADR-0021 for the deprecation timeline and ADR-0019 for the LLM-only architecture.
 
-### Solution
+### Recipe (if you still use the daemon on v1.0.75 for transition)
 ```bash
 sqlite-graphrag daemon
 sqlite-graphrag daemon --ping --json
@@ -85,8 +88,7 @@ sqlite-graphrag daemon --ping --json
 sqlite-graphrag daemon --stop
 ```
 
-
-### Explanation
+### Explanation (legacy)
 - Daemon keeps the embedding model resident in memory with auto-shutdown after 600 seconds of idle
 - Commands `init`, `remember`, `ingest`, `recall`, and `hybrid-search` reuse the daemon automatically
 - `--ping` returns a JSON health check including the embedding request counter since startup
@@ -102,6 +104,37 @@ sqlite-graphrag daemon --stop
 ### See Also
 - Recipe "How to bootstrap memory database in 60 seconds"
 - Recipe "How to benchmark hybrid-search against pure vec search"
+
+
+## How To Upgrade From v1.0.74 Or v1.0.75 To v1.0.76 (LLM-Only)
+### Problem
+- You have a v1.0.74 or v1.0.75 database with vec0 virtual tables (`vec_memories`, `vec_entities`, `vec_chunks`)
+- The v1.0.76 binary removed `sqlite-vec`, `fastembed`, `GLiNER`, and the `tokenizers` crate
+- A plain `migrate` may fail with "applied migration V2 is different than filesystem one V2" (refinery checksum mismatch) because V002 was intentionally emptied to a no-op for v1.0.76
+- You want the upgrade to be one-shot, not a manual SQL session
+
+### Solution
+```bash
+# 1. Install the new binary
+cargo install sqlite-graphrag --locked --force
+
+# 2. One-shot upgrade on your existing database
+sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db /path/to/graphrag.sqlite
+```
+
+### Explanation
+- `--to-llm-only` runs three things in one transaction:
+  - Detects whether `vec_memories` / `vec_entities` / `vec_chunks` virtual tables exist in `sqlite_master` and reports `vec_tables_were_present: true|false`
+  - Rewrites recorded migration checksums to match the current file content (covers the V002 mismatch; see `--rehash` below for the standalone flag)
+  - Applies the V013 migration which drops the three vec tables and creates the BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables
+- `--drop-vec-tables` is the explicit safety guard; without it, `--to-llm-only` refuses to run
+- The CLI is `~6 MB` (down from 39 MB); no ONNX model download; no local fastembed install
+- New `remember` / `edit` / `ingest` calls re-embed the affected memory via `claude code` or `codex` headless subprocess (OAuth)
+- See `docs/MIGRATION.md` for the full v1.0.74 → v1.0.76 → v1.1.0 path and `docs/decisions/adr-0019-llm-only-one-shot.md` for the architectural rationale
+
+### Variants
+- If you only need the checksum rewrite without applying migrations, use `sqlite-graphrag migrate --rehash`
+- If you must keep the v1.0.74 fastembed pipeline during the transition window, install with `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removed in v1.1.0)
 
 
 ## How To Bulk-Import A Knowledge Base Directory

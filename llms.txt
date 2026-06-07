@@ -1,18 +1,29 @@
-# sqlite-graphrag
+# sqlite-graphrag (v1.0.76 LLM-Only One-Shot)
 
-> Persistent memory for 27 AI agents in a single 25 MB Rust binary
+> Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file, with no Pinecone account, no OpenAI embedding bill, no Docker cluster to maintain. Sub-50ms recall. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 6 MB binary. Zero model download. sqlite-graphrag v1.0.76 gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Sub-50ms recall (with the LLM subprocess spawn dominating the first call). Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Read this document in [Portuguese (pt-BR)](llms.pt-BR.txt).
+- Architecture rationale: [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) (LLM-only one-shot), [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) (pure-Rust cosine), [ADR-0021](docs/decisions/adr-0021-deprecate-daemon.md) (daemon deprecated), [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md) (BLOB-backed embeddings), [ADR-0023](docs/decisions/adr-0023-remove-tokenizers.md) (tokenizers removed), [ADR-0024](docs/decisions/adr-0024-fts5-coarse-cosine-refine.md) (FTS5 coarse + cosine refine), [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md) (OAuth-only LLM)
+
+
+## v1.0.76 Architecture (LLM-Only)
+- The default build is LLM-only and one-shot. There is no daemon, no ONNX runtime, no `libonnxruntime.so` to ship, and no `multilingual-e5-small` model to download. The LLM subprocess IS the model.
+- Embedding generation: a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess is spawned per call. The CLI never holds an embedding model in memory.
+- Vector search: cosine similarity is computed in pure Rust over the BLOB embeddings stored in `memory_embeddings`, `entity_embeddings`, and `chunk_embeddings`. The `sqlite-vec` extension is gone.
+- Daemon: deprecated in v1.0.76, removed in v1.1.0. Still works for source compatibility but no longer offers a speedup.
+- `embedding-legacy` feature: opt-in transition window to keep the v1.0.74 fastembed + ort + tokenizers pipeline. REMOVED in v1.1.0. Use `cargo install sqlite-graphrag --features embedding-legacy --locked`.
+- Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite (--rehash) with V013 vec-table drop. The BLOB-backed embedding tables stay empty until the next `remember` / `edit` / `ingest` re-embeds via the LLM.
 
 
 ## Primary Documentation
 ### Canonical English sources for LLM ingestion
 - [README](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.md): full installation, command reference, integration table and FAQ
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/HOW_TO_USE.md): step-by-step walkthrough from install to first hybrid search in 60 seconds
-- [COOKBOOK](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/COOKBOOK.md): thirty recipes covering ingestion, retrieval, graph traversal, backup and audit
+- [COOKBOOK](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/COOKBOOK.md): 34+ recipes covering ingestion, retrieval, graph traversal, backup, audit, and the v1.0.76 LLM-only migration
 - [AGENTS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/AGENTS.md): persuasive guide for AI agent authors: economics, JSON contract, exit code routing
+- [MIGRATION](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/MIGRATION.md): upgrade path v1.0.74/v1.0.75 → v1.0.76 → v1.1.0
 - [INTEGRATIONS](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/INTEGRATIONS.md): vendor-specific configuration for all 27 supported agents and IDEs
 - [CHANGELOG](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CHANGELOG.md): full release history with migration notes
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/CONTRIBUTING.md): pull request workflow and coding standards
@@ -22,16 +33,18 @@
 
 ## Core Commands
 ### Subcommands grouped by lifecycle
-- `init` initializes the SQLite database and downloads the embedding model once
-- `remember` saves a memory with name, type, description, body and optional entity graph; use `--max-rss-mb` to cap process RSS during embedding (default 8192 MiB)
-- `recall` performs vector KNN similarity search over stored memories
-- `hybrid-search` fuses FTS5 full-text and vector KNN via Reciprocal Rank Fusion
-- `deep-research` decomposes a query into up to 7 sub-queries, computes a separate embedding per sub-query, runs parallel vector+FTS hybrid search fused via RRF plus 3-hop graph traversal per sub-query, deduplicates and assembles directed evidence chains with `graph_context` (entities + relationships); flags: `--k` (default 20), `--max-sub-queries` (default 7), `--max-hops` (default 3), `--min-weight`, `--max-concurrency`, `--timeout`, `--with-bodies`, `--max-results` (default 50), `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`, `--mode` (none|claude-code|codex, v1.1.0), `--max-cost-usd`
-- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle; `read --id <id>` fetches by numeric memory ID as alternative to `--name`; `edit --type` changes memory type
+- `init` initializes the SQLite database and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download.
+- `remember` saves a memory with name, type, description, body and optional entity graph; spawning an LLM subprocess per call for embedding generation
+- `recall` performs pure-Rust cosine KNN similarity search over stored BLOB embeddings
+- `hybrid-search` fuses FTS5 full-text and pure-Rust cosine KNN via Reciprocal Rank Fusion
+- `deep-research` decomposes a query into up to 7 sub-queries, computes a separate embedding per sub-query (via the LLM subprocess), runs parallel vector+FTS hybrid search fused via RRF plus 3-hop graph traversal per sub-query, deduplicates and assembles directed evidence chains
+- `read` `list` `forget` `rename` `edit` `history` `restore` manage the memory lifecycle
 - `remember-batch` ingests multiple memories from a NDJSON stream in a single invocation
 - `completions` generates shell completion scripts for bash, zsh, fish, elvish and powershell
 - `link` `unlink` `related` manage typed entity relationships for multi-hop traversal
-- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database; `health` reports `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics; `health` also reports `relation_concentration_warning` and super-hub detection when any entity or relation type dominates the graph
+- `health` `stats` `migrate` `vacuum` `optimize` `sync-safe-copy` manage the database
+- `migrate --rehash` rewrites recorded migration checksums to match the current file content (one-shot fix for v1.0.74 → v1.0.76 V002 mismatch)
+- `migrate --to-llm-only --drop-vec-tables` one-shot upgrade for v1.0.74/v1.0.75 databases: rehash + apply V013 + report vec-table state
 - `backup` creates a consistent database backup using SQLite Online Backup API, safe with WAL mode
 - `fts rebuild` `fts check` `fts stats` repair, verify, and inspect the FTS5 full-text index
 - `memory-entities` lists all entities linked to a named memory
@@ -40,12 +53,12 @@
 - `reclassify` changes the `entity_type` of one entity or a whole category via `--batch`
 - `merge-entities` merges duplicate entity nodes into a single canonical node
 - `prune-ner` removes NER-generated bindings from one entity (`--entity`) or all (`--all --yes`)
-- `remember --dry-run` previews parsing and graph extraction without writing to the database
+- `remember --dry-run` previews parsing and graph extraction without writing to the database or spawning the LLM
 - `cleanup-orphans` `prune-relations` remove orphaned entities and weak or unused relations from the graph
 - `purge` `namespace-detect` handle maintenance and namespace resolution
-- `reclassify-relation` renames relationship types across the graph; single mode: `--source A --target B --from-relation old --to-relation new`; batch mode: `--from-relation old --to-relation new --batch`; optional filters: `--filter-source-type`, `--filter-target-type`; `--dry-run` previews count; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge
-- `normalize-entities` normalizes all entity names in the namespace to lowercase kebab-case ASCII; auto-merges collisions (e.g., `Claude Code` and `claude-code` become one node with combined relationships); `--dry-run` previews, `--yes` applies
-- `enrich` LLM-augmented graph quality pipeline via `--mode claude-code` or `--mode codex`; scan-judge-persist pattern with queue DB for resume/retry; 3 operations implemented: `--operation memory-bindings` (extract entities from orphan memories), `--operation entity-descriptions` (generate descriptions for entities with none), `--operation body-enrich` (expand short memory bodies); `--dry-run` previews without spawning LLM; `--max-cost-usd` caps budget; `--llm-parallelism <N>` controls concurrent LLM subprocesses (default 1); output is NDJSON (phase events, item events, summary)
+- `reclassify-relation` renames relationship types across the graph
+- `normalize-entities` normalizes all entity names in the namespace to lowercase kebab-case ASCII
+- `enrich` LLM-augmented graph quality pipeline via `--mode claude-code` or `--mode codex`
 
 
 ## Environment Variables
@@ -146,8 +159,8 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Vali
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.68 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.76 with MSRV Rust 1.88 declared in `Cargo.toml`
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
-- Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
-- Storage layer `rusqlite` with bundled SQLite plus `sqlite-vec` extension and FTS5 module
+- Embedding model: delegated to `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) headless subprocess per call; no in-process model
+- Storage layer: `rusqlite` with bundled SQLite and FTS5 module. `sqlite-vec` extension REMOVED in v1.0.76; vector similarity is pure-Rust cosine over BLOB embeddings
 - Up to four concurrent instances supported via counting semaphore with `fs4` advisory locks

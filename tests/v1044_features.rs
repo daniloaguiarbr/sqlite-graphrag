@@ -42,6 +42,7 @@ fn system_cache_dir() -> std::path::PathBuf {
 fn cmd(temp: &TempDir) -> Command {
     let cache = system_cache_dir();
     let mut c = sgr_cmd();
+    let mock_dir = common::mock_llm_path();
     c.env_clear()
         .env("HOME", temp.path())
         .env("SQLITE_GRAPHRAG_HOME", temp.path())
@@ -53,13 +54,17 @@ fn cmd(temp: &TempDir) -> Command {
         "LOCALAPPDATA",
         "APPDATA",
         "USERPROFILE",
-        "PATH",
         "SystemRoot",
     ] {
         if let Ok(v) = std::env::var(var) {
             c.env(var, v);
         }
     }
+    // PATH is composed (not just inherited) so the mock-llm directory is
+    // always prepended. The v1.0.76 binary spawns `claude` or `codex`
+    // for every `remember` / `ingest` / `edit`; without the mock in
+    // PATH the spawn calls the real CLI on the host which fails.
+    c.env("PATH", common::prepend_path(&mock_dir));
     c
 }
 

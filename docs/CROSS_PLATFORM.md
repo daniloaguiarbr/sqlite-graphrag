@@ -1,10 +1,16 @@
 # CROSS PLATFORM SUPPORT
 
-> One binary, five targets, zero configuration drama across every major operating system
+> One 6 MB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 
 
 - Read this guide in Portuguese at [CROSS_PLATFORM.pt-BR.md](CROSS_PLATFORM.pt-BR.md)
 - Return to the main [README.md](../README.md) for the full command reference
+
+
+## v1.0.76 Architectural Note
+- The default build is LLM-only and one-shot. There is no ONNX runtime to ship, no `libonnxruntime.so` to bundle, and no `multilingual-e5-small` model to download. Embedding generation delegates to a headless `claude code` or `codex` subprocess (OAuth) spawned per call.
+- The `embedding-legacy` feature restores the v1.0.74 fastembed + ort + tokenizers pipeline for the v1.0.76 → v1.1.0 transition window. It will be REMOVED in v1.1.0; do not depend on it in new code.
+- The cross-platform table below describes the default LLM-only build. Operators using `--features embedding-legacy` will see a larger binary and the ARM64 GNU ONNX contract from the v1.0.75 era.
 
 
 ## The Pain You Already Know
@@ -17,7 +23,7 @@
 
 ### After — Single Binary That Just Runs
 - One `cargo install --locked` command delivers the binary to any supported target
-- No Python runtime, no Node runtime, no JVM, and only one ARM64 GNU shared library contract
+- No Python runtime, no Node runtime, no JVM, no ONNX runtime, no 1.1 GB model download
 - Binary startup stays under eighty milliseconds across every target we ship
 - Exit codes remain identical across all five shipped targets for reliable orchestration
 - JSON output format stays byte-for-byte identical across every operating system
@@ -25,6 +31,8 @@
 ### Bridge — The Command That Takes You There
 ```bash
 cargo install --path .
+# or
+cargo install --locked sqlite-graphrag
 ```
 
 
@@ -32,27 +40,28 @@ cargo install --path .
 ### Targets — Five Combinations We Ship and Test
 | Target | OS | Architecture | Binary Size | Startup |
 | --- | --- | --- | --- | --- |
-| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
-| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
-| aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
-| x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
-| aarch64-pc-windows-msvc | Windows | ARM64 | ~27 MB | <80ms |
+| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~6 MB | <50ms |
+| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~6 MB | <60ms |
+| aarch64-apple-darwin | macOS | Apple Silicon | ~6 MB | <30ms |
+| x86_64-pc-windows-msvc | Windows | x86_64 | ~6 MB | <80ms |
+| aarch64-pc-windows-msvc | Windows | ARM64 | ~6 MB | <80ms |
 
 - Every row above gets a release asset attached to each GitHub release tag
-- Every row above receives automated smoke tests in CI on every pushed commit
+- Every row above receives automated smoke tests in CI on every pushed commit (with the mock LLM CLI prepended to PATH)
 - SHA256SUMS manifest ships alongside every binary for integrity verification
 - Debug symbols ship as separate `.dSYM` or `.pdb` artifacts on request
 - Cross-compilation uses `cross` on Linux hosts for the `aarch64-unknown-linux-gnu` matrix cell
+- Sizes are for the default LLM-only build; `--features embedding-legacy` adds the fastembed + ort + tokenizers graph and the binary grows back toward the v1.0.74 ~25 MB
 
 ### Unsupported Release Targets — Why They Are Excluded
-- `x86_64-apple-darwin` is excluded because current `ort` releases no longer provide a compatible prebuilt ONNX Runtime path for Intel macOS in this project configuration
-- `x86_64-unknown-linux-musl` is excluded because current `ort` releases do not provide a supported prebuilt ONNX Runtime path for musl in this project configuration
-- Reintroducing either target now REQUIRES a custom ONNX Runtime build or a different backend strategy
+- `x86_64-apple-darwin` is excluded because the v1.0.76 build no longer requires a prebuilt ONNX Runtime path (and Intel macOS has been a long-deprecated macOS target since 2024)
+- `x86_64-unknown-linux-musl` is excluded because no glibc-only native dependency remains in the default build, but a musl build is not part of the release matrix
+- Reintroducing either target is a routine cross-compile task in v1.0.76 because no C extension needs to be linked
 
-### ARM64 GNU — Shared ONNX Runtime Contract
-- `aarch64-unknown-linux-gnu` uses dynamic ONNX Runtime loading instead of link-time bundling
-- Ship `libonnxruntime.so` next to the binary, inside `./lib/`, or set `ORT_DYLIB_PATH` explicitly
-- This avoids target-specific link failures from prebuilt ONNX Runtime archives during cross-compilation
+### ARM64 GNU — No More Shared ONNX Runtime Contract
+- v1.0.76 has NO ONNX runtime dependency in the default build. The previous `aarch64-unknown-linux-gnu` ONNX contract (`libonnxruntime.so` next to the binary, `ORT_DYLIB_PATH` env var) is REMOVED.
+- The dynamic loader contract was an artifact of the v1.0.74 fastembed pipeline. With the LLM subprocess as the model, the binary needs zero C shared libraries beyond libc.
+- Operators using `--features embedding-legacy` must continue to ship `libonnxruntime.so` on `aarch64-unknown-linux-gnu`. This is the only configuration that still needs the contract.
 
 
 ## Linux Notes
@@ -60,8 +69,7 @@ cargo install --path .
 - glibc binary runs on Ubuntu 20.04, Debian 11, Fedora 36 plus mainstream distros
 - `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` are the only published Linux assets now
 - `x86_64-unknown-linux-musl` is not part of the official release matrix since `v1.0.16`
-- Reintroducing musl now requires a custom ONNX Runtime build or a different backend strategy
-- Prefer glibc for workstations, CI runners, and container bases until that backend gap is closed
+- With the LLM-only build, no glibc version constraint exists beyond what the LLM subprocess binary needs
 
 
 ## macOS Notes
@@ -74,9 +82,9 @@ cargo install --path .
 ### Apple Silicon — Native Performance on M1 M2 M3 M4
 - Native aarch64 binary runs thirty percent faster than Rosetta-translated x86_64
 - Intel macOS is currently outside the official release matrix for this project configuration
-- Model loading follows the same `fastembed` plus `ort` stack used on the other published targets
-- Embedding generation hits 2000 tokens per second on M3 Pro versus 800 on Rosetta
+- The LLM subprocess (`claude` or `codex`) is the model; the Rust binary itself does not load any model
 - Cold start measures twenty eight milliseconds on M2 thanks to improved branch predictor
+- The only LLM-side latency is the 1-3 s subprocess spawn (claude / codex) per `remember` / `recall`
 
 
 ## Windows Notes
@@ -172,8 +180,8 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 
 - Cold start measures time from process spawn to first successful SQL query completion
 - Warm recall measures second invocation with the database page cache already hot
-- RSS after model reports peak resident memory after loading `multilingual-e5-small` fully
-- Embedding throughput measures tokens per second during sustained `remember` operations
+- RSS after model reports peak resident memory of the LLM subprocess (`claude -p` or `codex exec`) during embedding; the Rust binary itself holds no model state
+- Embedding throughput measures tokens per second during sustained `remember` operations, dominated by LLM subprocess spawn + JSON parse
 - Every number above stays within ten percent variance across ten benchmark runs locally
 
 

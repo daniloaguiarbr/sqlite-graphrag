@@ -79,6 +79,13 @@ serde_json = "1"
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt", "ansi", "registry", "tracing-log"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
+# v1.0.76: siphasher pinned to 1.x to compute migration checksums in
+# the `migrate --rehash` subcommand. Same algorithm and same version
+# that refinery-core 0.9.1 uses internally (SipHasher13 over
+# name | version | sql). Without this dep we would have to vendor the
+# SipHasher13 implementation; the dep is already in the build graph
+# transitively, so this entry only makes the link explicit.
+siphasher = "1"
 anyhow = "1"
 thiserror = "2"
 blake3 = "1"

@@ -708,3 +708,159 @@ fn v009_invalid_type_rejected() {
         "stderr should mention type rejection, got: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v1.0.76 — migrate --rehash and --to-llm-only integration tests
+// ---------------------------------------------------------------------------
+// These tests exercise the CLI subcommands end-to-end through `assert_cmd`.
+// They cover three real-world flows:
+//   1. --rehash on a healthy fresh DB is a no-op (status = ok_no_changes).
+//   2. --rehash rewrites a corrupted V001 checksum and the next `migrate`
+//      run no longer fails with "applied migration V1 is different than
+//      filesystem one V1".
+//   3. --to-llm-only on a fresh v1.0.76 DB reports no vec tables and a
+//      successful schema_version 13 (V013 applied).
+//   4. --to-llm-only refuses to run without the explicit --drop-vec-tables
+//      safety guard (exit code 1, validation error).
+
+#[test]
+#[serial]
+fn migrate_rehash_is_noop_on_healthy_db() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    let output = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate", "--rehash"])
+        .output()
+        .expect("migrate --rehash must run");
+
+    assert!(
+        output.status.success(),
+        "migrate --rehash must succeed on a healthy DB. stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    assert_eq!(
+        json["status"], "ok_no_changes",
+        "healthy DB must report ok_no_changes, got: {stdout}"
+    );
+    assert_eq!(json["rewritten"].as_array().unwrap().len(), 0);
+    assert_eq!(json["inspected"], 13);
+    assert_eq!(json["schema_version"], 13);
+}
+
+#[test]
+#[serial]
+fn migrate_rehash_fixes_corrupted_checksum() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    // Corrupt the V001 checksum so the next `migrate` would fail.
+    let conn = conn_ro(&db_path);
+    conn.execute_batch(
+        "UPDATE refinery_schema_history SET checksum = '999999999999' WHERE version = 1",
+    )
+    .expect("corrupt V001 checksum");
+    drop(conn);
+
+    // Sanity: a regular `migrate` should now fail.
+    let bad = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate"])
+        .output()
+        .expect("migrate must run");
+    assert!(
+        !bad.status.success(),
+        "migrate must fail on a corrupted checksum, got: {:?}",
+        bad.status
+    );
+
+    // `migrate --rehash` should detect the mismatch, rewrite the row,
+    // and exit 0 with status=ok_rewritten.
+    let good = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate", "--rehash"])
+        .output()
+        .expect("migrate --rehash must run");
+    assert!(
+        good.status.success(),
+        "migrate --rehash must succeed. stderr={}",
+        String::from_utf8_lossy(&good.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&good.stdout).expect("JSON");
+    assert_eq!(json["status"], "ok_rewritten");
+    assert_eq!(json["rewritten"].as_array().unwrap().len(), 1);
+    assert_eq!(json["rewritten"][0]["version"], 1);
+    assert_eq!(json["rewritten"][0]["name"], "init");
+    assert_eq!(json["rewritten"][0]["old_checksum"], "999999999999");
+
+    // And a subsequent plain `migrate` should now succeed.
+    let after = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate"])
+        .output()
+        .expect("migrate must run");
+    assert!(
+        after.status.success(),
+        "migrate must succeed after rehash. stderr={}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+}
+
+#[test]
+#[serial]
+fn migrate_to_llm_only_reports_no_vec_tables_on_fresh_db() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    let output = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args([
+            "--skip-memory-guard",
+            "migrate",
+            "--to-llm-only",
+            "--drop-vec-tables",
+        ])
+        .output()
+        .expect("migrate --to-llm-only must run");
+
+    assert!(
+        output.status.success(),
+        "migrate --to-llm-only must succeed on a fresh v1.0.76 DB. stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["schema_version"], 13);
+    assert_eq!(json["v013_applied"], true);
+    assert_eq!(
+        json["vec_tables_were_present"], false,
+        "fresh v1.0.76 DBs must not have vec0 virtual tables"
+    );
+    assert_eq!(json["rehashed"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+#[serial]
+fn migrate_to_llm_only_requires_drop_vec_tables_safety_guard() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    let output = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate", "--to-llm-only"])
+        .output()
+        .expect("migrate --to-llm-only must run");
+
+    assert!(
+        !output.status.success(),
+        "migrate --to-llm-only without --drop-vec-tables must refuse to run"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("JSON");
+    assert_eq!(json["code"], 1, "validation error code 1 expected");
+    let msg = json["message"].as_str().unwrap_or("").to_string();
+    assert!(
+        msg.contains("--drop-vec-tables"),
+        "error message must mention --drop-vec-tables, got: {msg}"
+    );
+}

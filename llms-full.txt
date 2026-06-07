@@ -1,9 +1,9 @@
-# sqlite-graphrag
+# sqlite-graphrag (v1.0.76 LLM-Only One-Shot)
 
 
-> Persistent memory for 27 AI agents in a single 25 MB Rust binary
+> Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 25 MB binary. Zero cloud calls. sqlite-graphrag gives every AI coding assistant a local, private memory layer backed by a single SQLite file. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 6 MB binary. Zero model download. v1.0.76 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 - Compact summary in [llms.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.txt); Portuguese variant in [llms.pt-BR.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.pt-BR.txt)
@@ -15,12 +15,21 @@ cargo install --locked sqlite-graphrag
 
 ## What is it?
 ### sqlite-graphrag delivers durable memory for AI agents
-- Stores memories, entities and relationships inside a single SQLite file under 25 MB
-- Embeds content locally via `fastembed` with the `multilingual-e5-small` model
-- Combines FTS5 full-text search with `sqlite-vec` KNN into a hybrid Reciprocal Rank Fusion ranker
+- Stores memories, entities and relationships inside a single SQLite file (6 MB binary)
+- Embeds content via headless `claude code` or `codex` LLM subprocess (OAuth, no API key); the LLM subprocess IS the model
+- Combines FTS5 full-text search with pure-Rust cosine KNN over BLOB embeddings into a hybrid Reciprocal Rank Fusion ranker
+- `sqlite-vec` extension REMOVED in v1.0.76; cosine similarity is computed in-process over `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` BLOB tables
 - Extracts an entity graph with typed edges for multi-hop recall across memories
 - Preserves every edit through an immutable version history table for full audit
-- Runs on Linux, macOS and Windows natively with zero external services required
+- Runs on Linux, macOS and Windows natively with zero external services required beyond an LLM CLI on PATH
+
+## v1.0.76 Architecture
+- The default build is LLM-only and one-shot. See [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) for the full architectural rationale.
+- Daemon: deprecated in v1.0.76, removed in v1.1.0. Still works for source compatibility but the daemon no longer offers a speedup because the LLM subprocess is the new "model loader".
+- `embedding-legacy` feature: opt-in to keep the v1.0.74 fastembed + ort + tokenizers + sqlite-vec pipeline. REMOVED in v1.1.0. Use `cargo install sqlite-graphrag --features embedding-legacy --locked`.
+- Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite with V013 vec-table drop.
+- OAuth enforcement: the spawn of `claude -p` or `codex exec` ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. See [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md).
+- Cosine similarity is now pure Rust: see [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) for the algorithm. BLOB-backed embeddings replace vec0: see [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md).
 
 
 ## Why sqlite-graphrag?
@@ -275,7 +284,7 @@ RUN cargo install --locked sqlite-graphrag
 | `6` | Payload exceeded allowed limits | Split body into smaller chunks |
 | `10` | SQLite database error | Run `health` to inspect integrity |
 | `11` | Embedding generation failed | Check model files and retry |
-| `12` | `sqlite-vec` extension failed | Reinstall binary with bundled extension |
+| `12` | `sqlite-vec` extension failed (only relevant for `embedding-legacy` feature) | Reinstall with `--features embedding-legacy` or drop the legacy feature |
 | `13` | Batch partial failure | Honor backoff and retry later |
 | `14` | Filesystem I/O error: cache directory not writable, nonexistent ingest target directory | Check permissions and disk space |
 | `15` | Database busy after retries | Wait and retry the operation |
@@ -329,7 +338,7 @@ RUN cargo install --locked sqlite-graphrag
 
 ## Safe Parallel Invocation
 ### Counting semaphore with four simultaneous slots
-- Each heavy invocation can load `multilingual-e5-small` consuming roughly 1.1 GB of RAM
+- Each heavy invocation spawns an LLM subprocess (`claude` or `codex`); the Rust binary itself holds no model in memory
 - Up to four instances run in parallel via `MAX_CONCURRENT_CLI_INSTANCES` default
 - Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`
 - A fifth concurrent invocation waits up to 300 seconds then exits with code 75
@@ -367,12 +376,12 @@ RUN cargo install --locked sqlite-graphrag
 ## Troubleshooting FAQ
 ### Common issues and fixes
 - Database locked after crash requires `sqlite-graphrag vacuum` to checkpoint the WAL
-- First `init` takes roughly one minute while `fastembed` downloads the quantized model
+- First `init` validates the LLM CLI on PATH; no model download; cold-start LLM subprocess spawn is 1-3 s per embedding call
 - Permission denied on Linux means the cache directory lacks write access for your user
 - Namespace detection falls back to `global` when no explicit override is present
 - Parallel invocations beyond four slots receive exit 75 and SHOULD retry with backoff
 - Exit 10 signals database error: run `sqlite-graphrag health --json` to inspect integrity
-- Exit 12 signals sqlite-vec load failure: verify SQLite version is 3.40 or newer
+- Exit 12 is reserved for the `embedding-legacy` feature path; the default LLM-only build never returns exit 12
 - Exit 77 signals low RAM: free at least 1 GB before invoking the embedding model
 
 
@@ -453,7 +462,7 @@ cargo install --locked sqlite-graphrag
 sqlite-graphrag init --namespace default
 sqlite-graphrag health --json
 ```
-- Command `init` creates the SQLite file and downloads `multilingual-e5-small` locally
+- Command `init` creates the SQLite file and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download.
 - Exit code `0` signals the database is ready for writes and reads from any agent
 - Saves 30 minutes per laptop versus a Pinecone plus Docker plus Python bootstrap
 
@@ -568,7 +577,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 - Package `sqlite-graphrag` v1.0.68 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
-- Embedding model `multilingual-e5-small` quantized via `fastembed` at approximately 750 MB RAM
+- Embedding generation: delegated to a headless `claude code` or `codex` subprocess (OAuth) per call. The Rust binary holds no model.
 - Storage layer `rusqlite` bundled SQLite plus `sqlite-vec` extension plus FTS5 module
 
 
