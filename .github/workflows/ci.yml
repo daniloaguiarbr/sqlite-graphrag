@@ -27,11 +27,12 @@ jobs:
       - run: cargo fmt --all --check
 
   clippy:
-    name: Clippy (${{ matrix.os }})
+    name: Clippy (${{ matrix.os }} / ${{ matrix.features }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2025]
+        features: [default, llm-only, embedding-legacy]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -40,14 +41,30 @@ jobs:
           components: clippy
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy with feature matrix
+        run: |
+          if [ "${{ matrix.features }}" = "default" ]; then
+            cargo clippy --all-targets -- -D warnings
+          else
+            cargo clippy --all-targets --features "${{ matrix.features }}" -- -D warnings
+          fi
 
   test:
-    name: Tests (${{ matrix.os }})
+    name: Tests (${{ matrix.os }} / ${{ matrix.features }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2025]
+        features: [default, llm-only, embedding-legacy]
+        include:
+          # llm-only is the v1.0.76 default build; it is the canonical
+          # feature set for the release artifact.
+          - features: default
+            llm-cli: claude
+          - features: llm-only
+            llm-cli: claude
+          - features: embedding-legacy
+            llm-cli: none
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -55,19 +72,45 @@ jobs:
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Cache embedding ONNX models
+        if: matrix.features == 'embedding-legacy'
         uses: actions/cache@v5
         with:
           path: |
             ~/.cache/sqlite-graphrag/models
             ~/Library/Caches/sqlite-graphrag/models
             ~\AppData\Local\sqlite-graphrag\cache\models
-          key: embedding-model-multilingual-e5-small-${{ runner.os }}-v2
-      - name: Pre-download embedding model
+          key: embedding-model-multilingual-e5-small-${{ runner.os }}-v3
+      - name: Pre-download embedding model (embedding-legacy only)
+        if: matrix.features == 'embedding-legacy'
         shell: bash
         run: |
-          timeout 120 cargo run -- init --json 2>/dev/null && echo "Model ready" || echo "Model download skipped or failed (tests will skip gracefully)"
+          timeout 120 cargo run --features embedding-legacy -- init --json 2>/dev/null && echo "Model ready" || echo "Model download skipped or failed (tests will skip gracefully)"
         env:
           SQLITE_GRAPHRAG_HOME: ${{ runner.temp }}/sgr-model-init
+      - name: Install LLM CLI mock (default + llm-only only)
+        if: matrix.llm-cli == 'claude'
+        shell: bash
+        run: |
+          # Install a stub `claude` that returns a fixed 384-dim
+          # embedding for any prompt. The unit tests in
+          # `src/extract/llm_embedding.rs` use this stub.
+          mkdir -p /tmp/sgr-llm-mock/bin
+          cat > /tmp/sgr-llm-mock/bin/claude <<'MOCK'
+          #!/bin/bash
+          # Trivial mock that returns a fixed JSON for the
+          # embedding schema. Used by the CI test job for the
+          # default and llm-only feature configurations.
+          if [[ "$*" == *"--output-schema"* ]]; then
+            # Generate 384 zeros.
+            zeros=$(python3 -c 'import json; print(json.dumps({"embedding":[0.0]*384}))')
+            echo "$zeros"
+            exit 0
+          fi
+          echo '{"text":"mock"}'
+          exit 0
+          MOCK
+          chmod +x /tmp/sgr-llm-mock/bin/claude
+          echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --version 0.9.114 --locked
       - name: Run tests with nextest (retry on network flake)
@@ -77,11 +120,15 @@ jobs:
           RUSTFLAGS: -D warnings
         run: |
           for attempt in 1 2 3; do
-            echo "=== Test attempt $attempt ==="
-            if cargo nextest run --profile ci; then
-              break
+            echo "=== Test attempt $attempt (features=${{ matrix.features }}) ==="
+            if [ "${{ matrix.features }}" = "default" ]; then
+              cargo nextest run --profile ci
+            else
+              cargo nextest run --profile ci --features "${{ matrix.features }}"
             fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            rc=$?
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
             echo "Attempt $attempt failed, retrying in 30s..."
             sleep 30
           done

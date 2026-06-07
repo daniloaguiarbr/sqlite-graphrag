@@ -1,803 +1,221 @@
-# HOW TO USE sqlite-graphrag
+# HOW TO USE sqlite-graphrag (v1.0.76 — LLM-Only)
 
-> Ship persistent memory to any AI agent with one local binary and zero cloud dependencies
+> Ship persistent memory to any AI agent with one local binary, a
+> single SQLite file, and the LLM CLI you already trust.
 
-
-- Read this guide in Portuguese at [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
-- Return to the main [README.md](../README.md) for command reference
-
-
-## The Question That Starts Here
-### Curiosity — Why Engineers Abandon Pinecone in 2026
-- How many milliseconds separate your agent from production memory today
-- Why senior engineers in production choose SQLite over Pinecone for LLM memory
-- What changes when embeddings, search and graph live inside a single file
-- Why twenty one AI agents converge on sqlite-graphrag as their persistence layer
-- This guide answers every question above in under ten minutes of reading
+- Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
+- Voltar ao [README.md](../README.md) para referência de comandos
 
 
-## Reading Time and Impact
-### Investment — Five Minutes to Read Ten to Execute
-- Technical readers can scan this guide quickly by following the headings
-- First execution time depends mostly on the one-time model download
-- Standard CLI patterns keep the learning curve low for shell users
-- First memory can be persisted immediately after installation and initialization
-- First hybrid search depends on hardware, model residency, and database size
-- Local storage removes recurring cloud retrieval dependencies from the workflow
+## What v1.0.76 Changed
+
+The default build is now **LLM-only and one-shot**. There is no
+local embedding model, no GLiNER NER, no ONNX runtime, no
+`sqlite-vec` C extension. Every `remember` / `ingest` / `edit`
+spawns a headless LLM subprocess (claude code or codex CLI) that
+returns the embedding and (optionally) the extracted entities.
+
+The CLI is one-shot: there is no daemon, no model to keep in
+memory, no socket to clean up. The release binary is ~6 MB (was
+39 MB) and the cold start is 1-3 s (was 30 s with the ONNX model
+load).
 
 
 ## Prerequisites
-### Environment — Minimum Supportable Baseline
-- Rust 1.88 or newer installed via `rustup` across Linux macOS and Windows
-- SQLite version 3.40 or newer shipped with your operating system distribution
-- Published assets target Linux glibc, Apple Silicon macOS, and Windows on x86_64 or ARM64
-- Available RAM of 100 MB free for runtime plus 1 GB during embedding model load
-- Disk space of 200 MB for the embedding model cache on first invocation
-- Network access required ONLY for first `init` to download quantized embeddings
 
+You need ONE of these CLIs installed and on `PATH`:
 
-## First Command in 60 Seconds
-### Install — Three Shell Lines You Copy Once
+- `claude` — Claude Code CLI 2.1.0+
+  ([install](https://docs.claude.com/claude-code))
+- `codex` — OpenAI Codex CLI 0.130.0+
+  ([repo](https://github.com/openai/codex))
+
+Both must be logged in with the **OAuth flow** (Claude Pro/Max
+or ChatGPT Pro subscription). API keys are NOT supported — see
+the "OAuth enforcement" section below.
+
+To check:
+
 ```bash
-cargo install --path .
-sqlite-graphrag init
-sqlite-graphrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
+which claude || which codex
+claude --version
+codex --version
 ```
-- First line downloads, builds and installs the binary into `~/.cargo/bin`
-- Second line creates the SQLite database and downloads the embedding model
-- Third line persists your first memory and indexes it for hybrid retrieval
-- Confirmation prints to stdout, traces route to stderr, exit code zero signals success
-- Your next `recall` call returns the note you just saved after the model is ready
 
 
-## Core Commands
-### Lifecycle — Seven Subcommands You Use Daily
+## OAuth Enforcement
+
+v1.0.76 inherits the OAuth-only mandate from v1.0.69. If
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the
+environment, the LLM spawn ABORTS with `AppError::Validation`
+and the CLI exits with code 1.
+
+To unset:
+
+```bash
+unset ANTHROPIC_API_KEY
+unset OPENAI_API_KEY
+```
+
+The two API-key env vars are also excluded from the
+env-clear whitelist, so they cannot bypass the check even when
+set in a parent process.
+
+
+## Install
+
+```bash
+cargo install sqlite-graphrag --version 1.0.76 --force
+```
+
+This installs the LLM-only default build. Verify:
+
+```bash
+sqlite-graphrag --version
+# sqlite-graphrag 1.0.76
+```
+
+For the legacy fastembed pipeline (transition window, REMOVED
+in v1.1.0):
+
+```bash
+cargo install sqlite-graphrag --version 1.0.76 --features embedding-legacy --force
+```
+
+
+## Initialize a Database
+
 ```bash
 sqlite-graphrag init --namespace my-project
-sqlite-graphrag remember --name auth-design --type decision --description "auth uses JWT" --body "Rationale documented."
-sqlite-graphrag recall "authentication strategy" --k 5 --json
-sqlite-graphrag hybrid-search "jwt design" --k 10 --rrf-k 60 --json
-sqlite-graphrag read --name auth-design
-sqlite-graphrag forget --name auth-design
-sqlite-graphrag purge --retention-days 90 --yes
 ```
-- `init` bootstraps the database, downloads the model and validates the `sqlite-vec` extension
-- `remember` stores content and generates embeddings atomically; graph nodes and edges are persisted when supplied explicitly
-- GLiNER NER is disabled by default; add `--enable-ner` to activate automatic entity/relationship extraction
-- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
-- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
-- Use `--gliner-variant` to select model size: `fp32` (default, 1.1 GB), `fp16` (580 MB), `int8` (349 MB); int8 trades 15–18% accuracy loss for 3× faster load and 68% smaller disk footprint
-- Use `--max-rss-mb <MiB>` on `remember` and `ingest` to abort embedding when process RSS exceeds the limit (default 8192 MiB); useful in memory-constrained CI
-- `recall` performs vector KNN over `vec_memories` and expands graph matches by default unless `--no-graph` is passed
-- `hybrid-search` fuses FTS5 full-text and vector KNN with Reciprocal Rank Fusion
-- `--with-graph` augments results with graph traversal matches seeded from top RRF hits
-- `--max-hops` (default 2) and `--min-weight` (default 0.3) tune the graph expansion
-- Graph matches appear in the `graph_matches` array, separate from `results`
-- `read` fetches a memory by its exact kebab-case name in a single SQL query; use `--id <N>` for direct lookup by integer `memory_id` when you have the ID from a prior query; use `--with-graph` to include attached entities and relationships in the response
-- `forget` performs a soft delete preserving the full version history
-- `purge` permanently removes memories soft-deleted more than the retention threshold
+
+The `init` command:
+
+1. Creates `graphrag.sqlite` in the current directory.
+2. Runs all migrations including V013 (drops vec tables, creates
+   `memory_embeddings` / `entity_embeddings` / `chunk_embeddings`).
+3. Spawns the LLM once to confirm the OAuth session is valid.
+4. Reports `schema_version: 13` on success.
+
+The first `init` is slow (1-3 s LLM round-trip). Subsequent
+`init` calls are no-ops (the schema is already at the target
+version).
 
 
-## Persistent Daemon
-### Reuse The Embedding Model Across Heavy Commands
-```bash
-sqlite-graphrag daemon
-sqlite-graphrag daemon --ping
-sqlite-graphrag daemon --stop
-sqlite-graphrag daemon --db ./graphrag.sqlite --ping --json
-```
-- `init`, `remember`, `recall`, and `hybrid-search` automatically try the daemon first
-- If the daemon is unavailable, those commands auto-start it on demand before falling back locally
-- Manual `sqlite-graphrag daemon` startup is now optional and useful mainly for explicit supervision or debugging
-- Use `--ping` to confirm the daemon is alive and inspect handled embedding request counts
-- `daemon --ping` emits a warning when the running daemon version differs from the CLI binary version; restart the daemon after upgrades with `daemon --stop` followed by `daemon`
-- Since v1.0.50, the CLI auto-restarts the daemon on version mismatch before the first embedding request, eliminating the need for manual `daemon --stop` after upgrades
-- Use `--stop` for a graceful shutdown after long-running batch or agent sessions
-- `--db` and `--json` are accepted for the same global CLI contract used by agent pipelines
-
-
-## Advanced Patterns
-### Recipe One — Hybrid Search With Weighted Fusion
-```bash
-sqlite-graphrag hybrid-search "postgres migration strategy" \
-  --k 20 \
-  --rrf-k 60 \
-  --weight-vec 0.7 \
-  --weight-fts 0.3 \
-  --json \
-  | jaq '.results[] | {name, score, source}'
-```
-- Combines dense vector similarity and sparse full-text matches in one ranked list
-- Weight tuning lets you favor semantic proximity against keyword precision per query
-- RRF constant `--rrf-k 60` matches the default recommended by the RRF paper
-- Pipeline keeps ranking fields explicit for downstream orchestration
-- Latency depends on hardware, model residency, and database size
-
-### Recipe Two — Graph Traversal for Multi-Hop Recall
-```bash
-sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
-sqlite-graphrag link --from jwt-spec --to rfc-7519 --relation mentions
-sqlite-graphrag related auth-design --hops 2 --json \
-  | jaq -r '.results[] | select(.hop_distance == 2) | .name'
-```
-- Two hops surface transitive knowledge invisible to pure vector search methods
-- Typed relations let your agent reason about cause, dependency and reference chains
-- Graph queries stay local inside SQLite joins and typed relationships
-- Multi-hop recall recovers context that flat embeddings often miss from the first vector pass
-- Hop distance gives the orchestrator an explicit signal for expansion depth
-
-### Recipe Three — Batch Ingestion via Shell Pipeline
-```bash
-find ./docs -name "*.md" -print0 \
-  | xargs -0 -n 1 -P 1 -I {} bash -c '
-      name=$(basename "$1" .md)
-      sqlite-graphrag remember \
-        --max-concurrency 1 \
-        --name "doc-${name}" \
-        --type reference \
-        --description "imported from $1" \
-        --body-file "$1"
-    ' _ {}
-```
-- Start bulk ingestion at `-P 1` and scale only after measuring RSS on the current host
-- Exit code `75` signals slot exhaustion and the orchestrator should retry later
-- Exit code `77` signals RAM pressure and the orchestrator must wait for free memory
-- `--body-file` avoids shell quoting drift on Markdown bodies
-- Heavy ingestion throughput depends on hardware, daemon state, and document size
-
-### Recipe Four — Snapshot-Safe Sync With Dropbox or iCloud
-```bash
-sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite
-ouch compress ~/Dropbox/graphrag.sqlite ~/Dropbox/graphrag-$(date +%Y%m%d).tar.zst
-```
-- `sync-safe-copy` checkpoints the WAL and copies a consistent snapshot atomically
-- Snapshotting reduces the risk of sync tools copying a moving SQLite database
-- Compression ratio varies with the database contents and WAL state
-- Recovery stays straightforward with one decompression step and one copy step
-- Use the checkpointed copy instead of syncing the live database file directly
-
-### Recipe Five — Integration With Claude Code Orchestrator
-```bash
-sqlite-graphrag recall "$USER_QUERY" --k 5 --json \
-  | jaq -c '{
-      context: [.results[] | {name, snippet, distance, source}],
-      generated_at: now | todate
-    }' \
-  | claude --print "Use this context to answer: $USER_QUERY"
-```
-- Structured JSON flows cleanly into any downstream orchestrator reading this command's stdout through its own stdin
-- Distance field lets the orchestrator drop weak recall hits before prompting
-- Determinism of exit codes lets the orchestrator route errors without parsing stderr
-- Recall returns snippets instead of full bodies, which helps keep prompts smaller
-- End-to-end latency depends on the local CLI plus the downstream model runtime
-
-
-### Recipe Six — Entity Rename With Impact Assessment (v1.0.58)
-```bash
-# Step 1: check which memories reference the entity
-sqlite-graphrag memory-entities --entity auth --json | jaq '.memories[].name'
-
-# Step 2: rename the entity (preserves all relationships and memory bindings)
-sqlite-graphrag rename-entity --name auth --new-name authentication --json
-
-# Step 3: update the entity description
-sqlite-graphrag reclassify --name authentication --description "JWT-based authentication service" --json
-```
-- `memory-entities --entity` provides impact assessment before rename or delete
-- `rename-entity` is atomic: updates entity name and re-embeds vector in one transaction
-- All relationships and memory bindings use integer FK and are unaffected by the name change
-- Combine with `reclassify --description` to enrich the entity metadata in the same session
-
-### Deep research with parallel multi-hop queries (v1.0.64)
-- Run `sqlite-graphrag deep-research "query" --k 20 --json` for parallel decomposed search
-- The command splits the query into up to 7 sub-queries, runs them concurrently via bounded JoinSet + Semaphore, deduplicates results, and assembles evidence chains from graph traversal
-- Use `--max-sub-queries N` to cap decomposition (default: 7, calibrated against MuSiQue/StepChain benchmarks)
-- Use `--max-hops N` to set graph traversal depth (default: 3, sweet spot per NovelHopQA benchmark)
-- Use `--min-weight F` to filter weak edges during traversal (default: 0.3)
-- Use `--max-results N` to cap deduplicated output (default: 50)
-- Use `--with-bodies` to include full memory bodies in the output
-- Use `--max-concurrency N` to limit parallel sub-queries (default: min(cpus, 8))
-- Use `--timeout N` to set per-sub-query timeout in seconds (default: 30)
-- Use `--rrf-k N` to tune RRF fusion constant (default: 60, same as hybrid-search)
-- Use `--graph-decay F` to set graph score decay factor per hop (default: 0.7)
-- Use `--graph-min-score F` to filter noise from graph-expanded results (default: 0.05)
-- Use `--max-neighbors-per-hop N` to cap the BFS fan-out per entity per hop (default: unlimited)
-- Use instead of the manual 3-layer pipeline (hybrid-search → read → related) for comprehensive research in a single invocation
-
-### Reclassifying relationship types (v1.0.65)
-- Run `sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --dry-run --json` to preview how many edges would change
-- Run `sqlite-graphrag reclassify-relation --from-relation mentions --to-relation related --batch --json` to apply the change
-- Single edge mode: `sqlite-graphrag reclassify-relation --source entity-a --target entity-b --from-relation applies-to --to-relation uses --json`
-- Use `--filter-source-type concept` and `--filter-target-type tool` to narrow batch scope
-- Handles UNIQUE collisions automatically via `UPDATE OR IGNORE` + `DELETE` merge pattern
-- JSON response: `action`, `from_relation`, `to_relation`, `count`, `merged_duplicates`, `namespace`, `elapsed_ms`
-
-### Normalizing entity names (v1.0.65)
-- Run `sqlite-graphrag normalize-entities --dry-run --json` to preview which entities would be renamed or merged
-- Run `sqlite-graphrag normalize-entities --yes --json` to apply normalization
-- Normalizes to lowercase kebab-case ASCII: `"Claude Code"` becomes `claude-code`, `"CANONICAL_RELATIONS"` becomes `canonical-relations`
-- When normalization creates a collision (e.g., both `Claude Code` and `claude-code` exist), automatically merges relationships into the target and deletes the source entity
-- JSON response: `action`, `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
-
-### Enriching graph quality with LLM (v1.0.65)
-- Run `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50 --json` to extract entities from orphan memories
-- Run `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --limit 100 --json` to generate descriptions for entities with none
-- Run `sqlite-graphrag enrich --operation body-enrich --mode claude-code --limit 20 --json` to expand short memory bodies
-- Use `--dry-run` to preview which items would be enriched without spawning the LLM
-- Use `--max-cost-usd N` to cap cumulative API spend (ignored for OAuth users)
-- Use `--resume` and `--retry-failed` for crash resilience via queue DB
-- Use `--llm-parallelism <N>` to control how many LLM subprocesses run concurrently (default: 1); increase on hosts with headroom to speed up large enrichment runs
-- Output is NDJSON: phase events, per-item events (status: `done`/`failed`/`skipped`/`preview`), and summary line
-- Schemas: `enrich-phase.schema.json`, `enrich-item-event.schema.json`, `enrich-summary.schema.json`
-
-### Capping process proliferation on Claude Code runs (G28, v1.0.68)
-- Set `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR=/path/to/empty/dir` before invoking `enrich` or `ingest --mode claude-code` to suppress user-scoped MCP servers.  The empty directory must exist but contain no files; the CLI sets `CLAUDE_CONFIG_DIR=<that dir>` on the subprocess, which is the only mechanism upstream Claude Code actually honours (see [anthropics/claude-code#10787]).  We deliberately do NOT pass `--strict-mcp-config` or `--mcp-config '{}'` because Claude Code CLI ignores both flags.
-- Two `enrich` invocations on the same database now fail fast: the second one returns exit code 75 with `AppError::JobSingletonLocked { job_type: "enrich", namespace }` instead of stacking on top of the first.  Use the existing queue DB and `--resume` instead of running multiple invocations in parallel.
-- A `tracing::warn!` is emitted when `--llm-parallelism > 4`.  Each worker spawns a `claude -p` subprocess; without MCP isolation the typical fan-out is 8-20 extra child processes per worker.  Combine with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep the host responsive.
-
-
-## What Is New in v1.0.69 (Behaviour Changes First)
-### OAuth-Only Enforcement (BEHAVIOUR CHANGE)
-- Spawn of `claude -p` and `codex exec` ABORTS with `AppError::Validation` (exit code 1) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are set
-- OAuth is the ONLY accepted credential mechanism; the `--bare` flag is REMOVED from all executable code paths
-- Migration: run `claude login` (Claude Pro/Max) or `codex login` (ChatGPT Pro) once and remove the env var from your shell rc
-- See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale
-### Process Proliferation Hardening (G28)
-- `claude_runner::build_claude_command` now ALWAYS passes the OAuth-friendly hardening flags
-- New `src/reaper.rs` walks `/proc` at startup, killing orphans with `PPID=1` and age greater than 60 seconds
-- New `src/system_load.rs` provides load-average detection; `enrich` aborts when load exceeds 2× ncpus
-- `retry::CircuitBreaker` is integrated into the worker loop with `--circuit-breaker-threshold` (default 5, set 0 to disable)
-- `run_claude` sends `SIGTERM` on timeout before the `Child` is dropped, so MCP children do not survive the parent
-### Singleton Scoped by `db_hash` (G30)
-- `lock::acquire_job_singleton` lock file path is `job-singleton-{tag}-{namespace_slug}-{db_hash}.lock` where `db_hash` is the first 12 hex characters of `blake3(canonicalize(db_path))`
-- Two concurrent `enrich` invocations against DIFFERENT databases no longer collide
-- New flags `--wait-job-singleton <SECONDS>` and `--force-job-singleton` on `enrich` and `ingest`
-- The error message that previously referenced a non-existent `--wait-job-singleton` flag is now actionable
-### Codex Spawn Helper Unified (G31+G32+G33)
-- New `src/commands/codex_spawn.rs` (~700 lines, 11 tests) owns the canonical spawn pipeline, JSONL parser, and ChatGPT Pro OAuth model validation
-- Model whitelist: `codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5` (default `gpt-5.5`)
-- New top-level subcommand `codex-models --json` lists the models; `codex-models --suggest <substring>` returns the closest match
-- Schema JSON moved from `/tmp` to `paths::AppPaths::cache_dir().join("schemas")` so it survives reboots
-- The canonical command includes the OAuth-only hardening flag `-c mcp_servers='{}'` and `--ask-for-approval never`
-### Preservation Gate Jaccard (G29)
-- New flag `--preserve-threshold <FLOAT>` on `enrich` (default 0.7)
-- New `src/preservation.rs` (10 tests) computes Jaccard trigram similarity between original and enriched bodies
-- If similarity is below threshold, the enriched body is rejected with `EnrichItemResult::PreservationFailed` and is NOT persisted
-- Idempotency via `blake3::hash`: when `old_hash == new_hash`, the body is skipped with reason `enriched body hash matches original (blake3:{hash})`
-### MemorySource Enum (G29)
-- New `src/memory_source.rs` (~180 lines, 8 tests) defines a type-safe enum of the five CHECK-constraint values: `Agent`, `User`, `System`, `Import`, `Sync`
-- Runtime guard `validate_source` is called from `memories::insert` and `memories::update` to catch invalid sources early
-### FTS5 Hardening Flags (G36)
-- `optimize` pre-checks FTS5 health via `check_fts_functional` BEFORE rebuilding; healthy indexes are no longer rebuilt
-- New flags: `--fts-dry-run` (exit 1 if rebuild recommended), `--fts-progress <N>` (background poll every N seconds, default 30, 0 disables), `--yes` (reserved for forward compatibility)
-- `OptimizeResponse` exposes `fts_rebuilt`, `fts_skipped_functional`, `fts_unhealthy`, and `fts_rows_indexed` for observability
-### vec Orphan Handling (G39)
-- New subcommand family: `vec orphan-list --json` lists each orphan vector with `vector_hash`
-- `vec purge-orphan --yes --dry-run` deletes orphans from THREE tables (`vec_memories`, `vec_entities`, `vec_chunks`) in one transaction
-- `vec stats --json` reports row counts and orphan counts
-- New hook in `src/commands/forget.rs` calls `memories::delete_vec` BEFORE the soft-delete, preventing new orphans
-### Backup Hardening (G38)
-- Defaults changed from `run_to_completion(100, 50ms)` to `run_to_completion(1000, 5ms)` (25x speedup on 4.3 GB databases)
-- New flags: `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-progress <PAGES>`, `--backup-no-sleep`
-### Selective Enrichment (G37)
-- New flags `--names <NAME>` (comma-delimited) and `--names-file <PATH>` (one name per line, `#` comments accepted) on `enrich`
-- Operators can now reprocess a single memory without scanning the full set
-### Preflight and Fallback (G35)
-- New flags `--preflight-check`, `--fallback-mode <codex|claude-code>`, and `--rate-limit-buffer <SECONDS>` on `enrich`
-- The preflight probe issues a 1-turn ping before scanning N candidates; on a Claude rate limit it aborts with a clear error (or switches to `--fallback-mode`)
-### Worker Warning by Mode (G34)
-- The `llm_parallelism > 4` warning is conditional to the mode: Claude warns at 5, Codex warns at 17, Codex 5..16 is silent
-
-
-## Configuration and Namespace Notes
-### Namespace Default
-- Default namespace is `global` when `--namespace` is omitted
-- Configure via `SQLITE_GRAPHRAG_NAMESPACE` env var to override globally; since v1.0.51 all commands respect this variable (previously 8 commands ignored it)
-- Use `namespace-detect` to inspect the resolved namespace before running bulk operations
-
-### Score Semantics
-- `recall` emits `distance`, where lower values mean more similar matches
-- `hybrid-search` emits `score` and `combined_score`, where higher values rank first
-- Always prefer `--json` in pipelines so the orchestrator can branch on the raw fields it actually receives
-
-### Language Flag Aliases
-- `--lang en` forces English output regardless of system locale
-- `--lang pt`, `--lang pt-BR`, `--lang portuguese`, and `--lang PT` all force Portuguese
-- Env var `SQLITE_GRAPHRAG_LANG=pt` overrides system locale when `--lang` is absent
-- All aliases resolve to the same two internal variants: English and Portuguese
-
-### JSON Output Flag
-- `--json` is accepted by every subcommand as the broad compatibility flag for deterministic JSON stdout
-- `--format json` is accepted only by commands that expose `--format` in their help output
-- Use `--json` in pipelines when you want one spelling that works across the whole CLI surface
-- When `--json` appears with a non-JSON `--format`, `--json` wins and stdout remains JSON
-- Use `--format json` only on commands that explicitly advertise `--format`
-
-### Standardized Output Format Flags
-- Every subcommand emits JSON by default on stdout
-- `--json` is the short form — preferred in one-liners and agent pipelines
-- `--format json` is the explicit form — available only on commands that expose `--format`
-- Human-readable `text` and `markdown` are implemented only on a subset of commands
-- Current flag support matrix:
-
-| Subcommand | `--json` | `--format json` | Default output |
-|---|---|---|---|
-| `remember` | yes | yes | json |
-| `recall` | yes | yes | json |
-| `read` | yes | no | json |
-| `list` | yes | yes | json |
-| `forget` | yes | no | json |
-| `link` | yes | yes | json |
-| `unlink` | yes | yes | json |
-| `stats` | yes | no | json |
-| `health` | yes | no | json |
-| `history` | yes | no | json |
-| `edit` | yes | no | json |
-| `rename` | yes | yes | json |
-| `restore` | yes | yes | json |
-| `purge` | yes | no | json |
-| `cleanup-orphans` | yes | yes | json |
-| `optimize` | yes | no | json |
-| `migrate` | yes | no | json |
-| `init` | yes | no | json |
-| `sync-safe-copy` | yes | no | json |
-| `hybrid-search` | yes | yes | json |
-| `related` | yes | yes | json |
-| `namespace-detect` | yes | no | json |
-| `daemon` | yes | no | json |
-| `export` | yes | no | ndjson |
-| `deep-research` | yes | no | json |
-| `reclassify-relation` | yes | no | json |
-| `normalize-entities` | yes | no | json |
-| `enrich` | yes | no | ndjson |
+## Persist Your First Memory
 
 ```bash
-# Short form — preferred in pipelines
-sqlite-graphrag recall "auth" --json | jaq '.results[].name'
-
-# Explicit form — identical output
-sqlite-graphrag recall "auth" --format json | jaq '.results[].name'
-
-# Both forms accepted in the same pipeline
-sqlite-graphrag stats --json && sqlite-graphrag recall "auth" --format json
+sqlite-graphrag remember \
+    --name auth-decision-2026-06 \
+    --type decision \
+    --description "JWT token rotation strategy with 15-min expiry" \
+    --body "We picked JWT with a 15-minute access token and a
+    7-day refresh token. The refresh flow uses HttpOnly cookies.
+    See https://auth0.com/docs/refresh-tokens for the spec." \
+    --entities-file entities.json
 ```
 
-### DB Path Discovery
-- Default behavior always uses `graphrag.sqlite` in the current working directory
-- All commands accept `--db <PATH>` flag in addition to `SQLITE_GRAPHRAG_DB_PATH` env var
-- CLI flag takes precedence over environment variable
-- Use `--db` only when you intentionally need a database outside the current directory
-
-### ARM64 GNU ONNX Runtime Contract
-- On `aarch64-unknown-linux-gnu`, embedding-heavy commands use `ort/load-dynamic` instead of link-time ONNX Runtime linkage
-- The binary searches `libonnxruntime.so` in this order: `ORT_DYLIB_PATH`, executable directory, `./lib/` beside the executable, then the model cache directory
-- If none of those paths contain the library, process startup still succeeds but the first embedding operation fails when `ort` cannot load the runtime
-- Ship `libonnxruntime.so` beside the binary or export `ORT_DYLIB_PATH` explicitly in service units and CI jobs
-- This contract applies to `init`, `remember`, `recall`, and `hybrid-search` on ARM64 GNU builds
-
-### Log Format
-- `SQLITE_GRAPHRAG_LOG_FORMAT=json` emits tracing events as newline-delimited JSON to stderr
-- Default value is `pretty`; any value other than `json` falls back to human-readable pretty format
-- Use `json` format when shipping logs to structured aggregators such as Loki or Datadog
-
-### Display Timezone
-- `SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo` applies any IANA timezone to all `*_iso` fields in JSON output
-- Flag `--tz <IANA>` takes priority over the environment variable; both fall back to UTC when absent
-- Integer epoch fields (`created_at`, `updated_at`) are never affected — only the ISO string companions
-- Invalid IANA names cause exit 2 with a descriptive validation error before the command executes
-- Examples: `America/New_York`, `Europe/Berlin`, `Asia/Tokyo`, `America/Sao_Paulo`
-```bash
-# One-off with flag
-sqlite-graphrag read --name my-note --tz America/Sao_Paulo
-
-# Persistent via env var
-export SQLITE_GRAPHRAG_DISPLAY_TZ=America/Sao_Paulo
-sqlite-graphrag list | jaq '.items[].updated_at_iso'   # or .memories[] (v1.0.66 alias)
-```
-
-### Concurrency Cap
-- `--max-concurrency` is capped at `2×nCPUs`; higher values return exit 2 during argument validation
-- Embedding-heavy commands are clamped further at runtime from available RAM and the per-process RSS budget measured for the ONNX model
-- Treat `init`, `remember`, `recall`, and `hybrid-search` as heavy commands when planning automation or audits
-- Exit code 2 signals invalid argument; reduce the value and retry immediately
-- The hard ceiling remains 4 cooperating subprocesses, but the effective safe limit may be lower on the current host
-- During audits start heavy commands with `--max-concurrency 1` and scale only after measuring RSS and swap behavior
-
-### Help Text Language for Global Flags
-- The global flags `--max-concurrency`, `--wait-lock`, `--lang`, and `--tz` display English help text in `--help` output
-- This is deliberate: clap help stays static and consistent across screenshots, docs, and shell transcripts
-- Flag `--lang` changes only human-facing runtime stderr messages; JSON stdout and clap help stay deterministic
-
-
-## Reference — Subcommands Not Covered in Quick Start
-### Using cleanup-orphans
-- Removes entities that have no memories attached and no graph relationships
-- Run periodically after bulk `forget` operations to keep the entity table lean
-```bash
-sqlite-graphrag cleanup-orphans --dry-run
-sqlite-graphrag cleanup-orphans --yes
-```
-- Prerequisites: none — works on any initialized database
-- `--dry-run` prints the count of orphan entities without deleting them
-- `--yes` skips the interactive confirmation prompt for scripted pipelines
-- Exit code 0: cleanup succeeded (or nothing to clean)
-- Exit code 75: slot exhausted, retry after a short backoff
-
-### Using export
-- Streams all memories as NDJSON for portable backup or migration
-- Output: one JSON line per memory plus a final summary line
-```bash
-sqlite-graphrag export --limit 1000 > backup.ndjson
-sqlite-graphrag export --type decision --namespace my-project > decisions.ndjson
-sqlite-graphrag export --include-deleted --json
-```
-- Prerequisites: an initialized database must exist
-- Supports `--namespace`, `--type`, `--include-deleted`, `--limit`, and `--offset` for filtering
-- Final summary line includes `exported` and `elapsed_ms`
-- Exit code 0: export completed
-
-### Using edit
-- Alters the body or description of an existing memory in-place creating a new version
-- Re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate scores after edit (since v1.0.63; description-only edits skip re-embedding)
-- Use `--type <KIND>` to change the memory type (e.g., from `note` to `decision`) without recreating the memory; skips re-embedding when body is unchanged
-- Use `--expected-updated-at` for optimistic locking in concurrent agent pipelines
-```bash
-sqlite-graphrag edit --name auth-design --body "Updated rationale after RFC review"
-sqlite-graphrag edit --name auth-design --description "New short description"
-sqlite-graphrag edit --name auth-design \
-  --body-file ./updated-body.md \
-  --expected-updated-at "2026-04-19T12:00:00Z"
-```
-- Prerequisites: the memory must already exist in the target namespace
-- `--body-file` reads body content from a file, avoiding shell escaping issues
-- `--body-stdin` reads body from stdin for pipeline integration
-- `--body`, `--body-file`, and `--body-stdin` are mutually exclusive
-- `--expected-updated-at` accepts Unix epoch or RFC 3339; mismatches return exit 3
-- Exit code 0: edit succeeded and new version is indexed
-- Exit code 3: optimistic locking conflict — the memory was modified concurrently
-
-### Using graph
-- Exports the full entity-relationship snapshot in JSON, DOT or Mermaid format
-- DOT and Mermaid formats enable visualization in Graphviz, VSCode or mermaid.live
-```bash
-sqlite-graphrag graph --format json
-sqlite-graphrag graph --format dot --output graph.dot
-sqlite-graphrag graph --format mermaid --output graph.mmd
-```
-- Prerequisites: at least one `link` or `remember` call must have created entities
-- `--format json` (default) emits `{"nodes": [...], "edges": [...]}` to stdout
-- `--format dot` emits a Graphviz-compatible directed graph for offline rendering
-- `--format mermaid` emits a Mermaid flowchart block for Markdown embedding
-- `--json` forces JSON stdout even when `--format dot`, `--format mermaid`, or `graph stats --format text` is also present
-- `--output <PATH>` writes directly to a file instead of stdout unless `--json` is present
-- Exit code 0: export succeeded
-
-#### Using graph traverse
-- Traverses the entity graph from a starting node up to a given depth
-- Use `--from` to name the root entity and `--depth` to control how many hops to follow
-```bash
-sqlite-graphrag graph traverse --from AuthDecision --depth 2 --format json
-sqlite-graphrag graph traverse --from JwtSpec --depth 1
-```
-- Prerequisites: the root entity named by `--from` must exist in the graph
-- `--from <NAME>` sets the root entity; the value is the entity name (required)
-- `--depth <N>` controls maximum hop distance from the root (default: 2)
-- Output schema: `{"from": "...", "namespace": "...", "depth": N, "hops": [...], "elapsed_ms": N}`
-- Each hop carries `entity`, `relation`, `direction`, `weight`, and `depth`
-- Exit code 0: traversal succeeded
-- Exit code 4: root entity not found
-
-#### Using graph stats
-- Returns aggregate statistics about the entity graph in the target namespace
-- Use to inspect graph density and connectivity before running traversals
-```bash
-sqlite-graphrag graph stats --format json
-sqlite-graphrag graph stats --namespace my-project
-```
-- Prerequisites: at least one entity must exist in the target namespace
-- Output fields: `namespace`, `node_count`, `edge_count`, `avg_degree`, `max_degree`, `elapsed_ms`
-- `--format json` (default) emits the stats object to stdout
-- `--format text` emits a compact human-readable summary line
-- Exit code 0: stats returned
-
-#### Using graph entities
-- Lists typed graph entities with optional filters for type, namespace, limit, and offset
-- Use to enumerate all entities the graph knows about before running `traverse` or `link`
-```bash
-sqlite-graphrag graph entities --json
-sqlite-graphrag graph entities --entity-type concept --limit 20
-sqlite-graphrag graph entities --entity-type person --namespace my-project --json
-sqlite-graphrag graph entities --limit 50 --offset 100 --json
-```
-- Prerequisites: at least one entity must exist — created via `remember`, explicit `link`, or `link --create-missing`
-- `--entity-type <TYPE>` filters results to a single type; valid types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- `--limit <N>` caps the result count (default: 50); `--offset <N>` enables cursor-style pagination
-- Output schema: `{"entities": [...], "total_count": N, "limit": N, "offset": N, "namespace": "...", "elapsed_ms": N}`
-- Each item carries `id`, `name`, `entity_type`, `namespace`, and `created_at`
-- Exit code 0: list returned (empty `entities` array when no entities match the filter)
-- Exit code 4: namespace not found
-
-### Using health
-- Runs an integrity check and reports storage statistics for the active database
-- Use in agent startup scripts to detect corrupted databases before processing begins
-```bash
-sqlite-graphrag health
-sqlite-graphrag health --json
-```
-- Prerequisites: an initialized database must exist
-- Runs `PRAGMA integrity_check` first; returns exit code 10 with `integrity_ok: false` if corruption is detected
-- Output schema: `{"status":"ok","integrity":"ok","integrity_ok":true,"schema_ok":true,"vec_memories_ok":true,"vec_memories_missing":0,"vec_memories_orphaned":0,"counts":{"memories":N,"entities":N,"relationships":N,"vec_memories":N},"db_path":"...","db_size_bytes":N,"schema_version":N,"wal_size_mb":N.N,"journal_mode":"wal","checks":[{"name":"integrity","ok":true}],"elapsed_ms":N}`
-- `journal_mode` reports the SQLite journaling mode (`wal` or `delete`)
-- `wal_size_mb` reports the current WAL file size in megabytes (0.0 when not in WAL mode)
-- `checks` is an array of diagnostic objects with `name` and `ok`
-- `integrity_ok` is `true` when `integrity_check` returns `"ok"` and `false` otherwise
-- When `mentions` relationships exceed 50% of all graph relationships, the response also includes `mentions_ratio` (float) and `mentions_warning` (string)
-- Since v1.0.65: also reports `top_relation` (string), `top_relation_ratio` (float), `applies_to_ratio` (float), and `relation_concentration_warning` (string) when any single relation type exceeds 40% of edges
-- Super-hub detection: when any entity has `degree > 50`, the response includes a `super_hub_warning` field listing the affected entity names; review and prune those hubs to avoid retrieval bias
-- Exit code 0: database is healthy
-- Exit code 10: integrity check failed — treat as corrupted database
-
-### Using history
-- Lists all immutable versions of a named memory in reverse chronological order
-- Use the returned `version` integer with `restore` to roll back to any prior state
-```bash
-sqlite-graphrag history --name auth-design
-```
-- Prerequisites: the memory must exist and have at least one stored version
-- Output is a JSON object with `name`, `namespace`, `versions`, and `elapsed_ms`
-- Versions start at 1 and increment with each successful `edit` or `restore` call
-- Exit code 0: history returned
-- Exit code 4: memory not found in the target namespace
-
-### Using namespace-detect
-- Resolves and prints the effective namespace for the current invocation context
-- Use to debug `--namespace`, `SQLITE_GRAPHRAG_NAMESPACE`, and auto-detect conflicts
-```bash
-sqlite-graphrag namespace-detect
-sqlite-graphrag namespace-detect --namespace my-project
-```
-- Prerequisites: none — works without a database present
-- Output JSON with fields `namespace`, `source`, `cwd`, and `elapsed_ms`
-- Precedence order: `--namespace` flag > `SQLITE_GRAPHRAG_NAMESPACE` env > auto-detect
-- Exit code 0: resolution succeeded
-
-### Using debug-schema
-- Hidden diagnostic subcommand that dumps the full SQLite schema and migration history
-- Use when troubleshooting schema drift between binary versions or after failed migrations
-```bash
-sqlite-graphrag debug-schema
-sqlite-graphrag debug-schema --db /path/to/custom.db
-```
-- Prerequisites: an initialized database must exist at the default or specified path
-- Output schema: `{"schema_version": N, "user_version": N, "objects": [...], "migrations": [...], "elapsed_ms": N}`
-- `schema_version` mirrors `PRAGMA user_version`; `user_version` is the raw PRAGMA value
-- `objects` lists all SQLite schema objects (tables, indexes, virtual tables) with `name` and `type`
-- `migrations` lists all rows from `refinery_schema_history` with `version`, `name`, and `applied_on`
-- This subcommand is intentionally hidden from `--help` output; invoke it by exact name
-- Exit code 0: schema dump succeeded
-
-### Using rename
-- Renames a memory preserving its full version history and entity graph connections
-- Use `--name`/`--old`/`--from` (since v1.0.35) and `--new-name`/`--new`/`--to` (since v1.0.35) interchangeably; legacy aliases remain supported
-```bash
-sqlite-graphrag rename --name old-name --new-name new-name
-sqlite-graphrag rename --old old-name --new new-name
-sqlite-graphrag rename --from old-name --to new-name
-```
-- Prerequisites: the source memory must exist; the target name must be available
-- `--expected-updated-at` enables optimistic locking to prevent concurrent rename conflicts
-- History entries remain linked to the original name for audit trail integrity
-- Exit code 0: rename succeeded
-- Exit code 3: optimistic locking conflict
-- Exit code 4: source memory not found
-
-### Using restore
-- Creates a new version of a memory based on an older version body without overwriting history
-- Use `history` first to discover available version numbers before calling `restore`
-```bash
-sqlite-graphrag history --name auth-design
-sqlite-graphrag restore --name auth-design --version 2
-```
-- Prerequisites: the memory must exist and the target version number must be valid
-- Restore does NOT overwrite history — it appends a new version with the old body
-- Restore preserves the current memory name — if the memory was renamed after the target version, the name stays as-is (since v1.0.63)
-- `--expected-updated-at` enables optimistic locking for concurrent pipeline safety
-- JSON response includes `action: "restored"` field, consistent with other CRUD commands
-- Exit code 0: restore succeeded and the new version is indexed
-- Exit code 4: version number not found in the history table
-
-### Using unlink
-- Removes a specific typed edge between two entities from the graph
-- Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
-```bash
-sqlite-graphrag unlink --from auth-design --to jwt-spec --relation depends-on
-sqlite-graphrag unlink --source auth-design --target jwt-spec --relation depends-on
-```
-- Prerequisites: the edge must exist; all three of `--from`, `--to`, and `--relation` are required
-- `--relation` accepts any kebab-case or snake_case string. 12 canonical values: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`. Custom values (e.g., `implements`, `blocks`) are accepted with a warning since v1.0.49.
-- Both `--from`/`--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- Exit code 0: edge removed
-- Exit code 4: edge not found
-
-### Using prune-relations
-- Bulk-deletes all relationships matching a specific relation type across the namespace
-- Use `--dry-run` to preview the count before committing
-- Use `--yes` to skip interactive confirmation in automated pipelines
-```bash
-sqlite-graphrag prune-relations --relation mentions --dry-run --json
-sqlite-graphrag prune-relations --relation mentions --dry-run --show-entities --json
-sqlite-graphrag prune-relations --relation mentions --yes --json
-```
-- Canonical relation types: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
-- Custom relation types (e.g., `implements`, `blocks`) are also accepted
-- `--show-entities` adds an `affected_entity_names` array to the response during `--dry-run` preview
-- After bulk deletion, run `cleanup-orphans` to remove entities left without relationships
-- JSON output: `{action, relation, count, entities_affected, affected_entity_names?, namespace, elapsed_ms}`
-- Exit code 0: relationships deleted (or dry-run count returned)
-- Exit code 1: invalid relation format
-
-**Relation format note:** relations are accepted in both kebab-case (`depends-on`) and snake_case (`depends_on`); the storage layer and all JSON output always use snake_case. Non-canonical values are accepted with a `tracing::warn!` and are stored as-is in snake_case.
-
-
-## Additional Notes on Core Commands
-### Note on ingest
-- `ingest --dry-run` previews the file-to-name mapping without loading the ONNX model or persisting anything
-- `--dry-run` NDJSON output uses `status: "preview"` per file; use it to detect name truncations and collisions before committing
-- When a file basename differs from the derived kebab-case name (spaces, accents, special characters), the NDJSON line includes `original_filename` with the original basename
-- Four extraction modes via `--mode`: `none` (default, body-only), `gliner` (local NER), `claude-code` (LLM-curated via Claude Code CLI), `codex` (LLM-curated via OpenAI Codex CLI)
-- `--mode claude-code` requires Claude Code >= 2.1.0 installed locally with Pro/Max subscription; spawns `claude -p` headless per file
-- Use `--resume` to continue interrupted claude-code ingestion; `--max-cost-usd <N>` to cap cumulative LLM spend
-- Use --claude-timeout <S> to set per-file timeout (default 300s); prevents hung processes in automated pipelines
-  - `--mode codex`: LLM-curated extraction via OpenAI Codex CLI (`codex exec --json` per file)
-  - Requires Codex CLI >= 0.120.0 with active ChatGPT Pro device auth
-  - Codex-specific flags: `--codex-binary`, `--codex-model`, `--codex-timeout` (default 300s)
-  - Environment variable `SQLITE_GRAPHRAG_CODEX_BINARY` overrides PATH lookup
-  - **OAuth-only authentication (v1.0.69 breaking change):** The spawn ABORTS with `AppError::Validation` (exit code 1) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are defined in the environment. The OAuth flow is the ONLY accepted credential mechanism.
-    `--mode claude-code` reads OAuth from `~/.claude/.credentials.json` (Claude Pro/Max/Team).
-    `--mode codex` reads device auth from `codex login` or `codex login --device-auth` (ChatGPT Pro).
-    Migrate by running `claude login` or `codex login` once and removing the env var from your shell rc.
-    The `--bare` flag for `claude -p` is REMOVED from all executable code paths because it disables OAuth.
-    See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale.
-
-### Note on link
-- Prerequisite: entities must exist in the graph before creating explicit links
-- Create memories with explicit graph payloads first, then call `link` to type additional edges
-- Use `--from`/`--source` and `--to`/`--target` interchangeably; legacy aliases remain supported
-- Both `--from` and `--to` entities must be typed graph nodes; valid entity types are: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- Attempting to link entities whose names do not match a typed node returns exit code 4
-- Use `--max-entity-degree N` to emit a `tracing::warn!` when an entity exceeds N connections (v1.0.65, also available on `remember`)
-- JSON output: `{action, from, source, to, target, relation, weight, namespace}`
-- Both `from` and `source` carry the same value; both `to` and `target` carry the same value
-```bash
-sqlite-graphrag remember --name auth-design --type decision --description "..." --body "Uses JWT and OAuth2."
-sqlite-graphrag remember --name jwt-spec --type reference --description "..." --body "RFC 7519 defines JWT."
-sqlite-graphrag link --from auth-design --to jwt-spec --relation depends-on
-```
-
-### Note on forget
-- `forget` performs a soft delete; the memory disappears from `recall` and `list` results
-- JSON output: `{forgotten, name, namespace}`
-- Run `purge` later to hard-delete soft-deleted rows and reclaim disk space
-- Since v1.0.52: when the memory is not found, `forget` no longer emits JSON to stdout; only a stderr error message and exit code 4 are produced
-
-### Note on optimize and migrate
-- `optimize --json` returns `{db_path, status}`
-- `migrate --json` returns `{db_path, schema_version, status}`
-- Run `migrate` after every binary upgrade to apply pending schema changes safely
-
-### Note on cleanup-orphans
-- JSON output: `{orphan_count, deleted, dry_run, namespace}`
-- Run `--dry-run` first to confirm the count before passing `--yes` in automation
-
-### Note on graph nodes schema
-- `graph --format json` emits `{"nodes": [...], "edges": [...]}`
-- Node fields: `{id, name, namespace, kind, type}` where `kind` and `type` carry the same value
-- Edge fields are `{from, to, relation, weight}`
-
-### Note on remember
-- `--force-merge` updates an existing memory body instead of returning exit code 9 on duplicate name; since v1.0.51 also restores soft-deleted memories and updates them in one step
-- Use `--force-merge` in idempotent pipeline loops where the same key may appear multiple times
-- Use `remember-batch` to create multiple memories from NDJSON on stdin; each line is a JSON object with `name`, `type`, `description`, `body`, and optional `entities`/`relationships` arrays
-- Use `--transaction` on `remember-batch` for all-or-nothing atomicity across all lines
-- Use `--force-merge` on `remember-batch` to update existing memories by name instead of failing on duplicates
-- Use `--fail-fast` on `remember-batch` to stop processing on the first error
-```bash
-sqlite-graphrag remember --name config-notes --type project \
-  --description "updated config" --body "New body content" --force-merge
-```
-- `--entities-file` accepts a JSON file where each object must include an `entity_type` field
-- The alias field `type` is also accepted as a synonym for `entity_type`
-- Do not send both `entity_type` and `type` in the same object because Serde treats that as a duplicate field
-- Valid `entity_type` values: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
-- Invalid `entity_type` values are rejected at ingestion time with a descriptive validation error
-- `--relationships-file` accepts a JSON array where each object must include `source`, `target`, `relation`, and `strength`; `from` and `to` are accepted as aliases for `source` and `target`
-- `--graph-stdin` accepts one JSON object with optional `body`, `entities`, and `relationships`; invalid JSON fails and is not saved as body text
-- `--graph-stdin` is mutually exclusive with `--body`, `--body-file`, `--body-stdin`, `--entities-file`, and `--relationships-file`
-- `remember` accepts body payloads up to `512000` bytes and up to `512` chunks; larger payloads return exit code `6`
-- `strength` must be a floating-point number in the inclusive range `[0.0, 1.0]`
-- `strength` is mapped to the stored `weight` field in relationship outputs and graph traversal results
-- `relation` in `--relationships-file` accepts canonical stored labels such as `uses`, `supports`, `applies_to`, `depends_on`, and `tracked_in`; dashed aliases such as `depends-on` and `tracked-in` are normalized before storage
+Where `entities.json` is:
 
 ```json
 [
-  { "name": "SQLite", "entity_type": "tool" },
-  { "name": "GraphRAG", "type": "concept" }
+  {"name": "JWT", "entity_type": "concept"},
+  {"name": "Auth0", "entity_type": "tool"}
 ]
 ```
 
-```json
-[
-  {
-    "source": "SQLite",
-    "target": "GraphRAG",
-    "relation": "supports",
-    "strength": 0.8,
-    "description": "SQLite supports local GraphRAG retrieval"
-  }
-]
+The `remember` command:
+
+1. Calls the LLM to embed the body (1-3 s).
+2. Stores the memory in `memories` (FTS5 indexed).
+3. Stores the embedding as a BLOB in `memory_embeddings`.
+4. Links the entities via the `entities` table.
+5. Returns JSON with `memory_id`, `version`, `elapsed_ms`.
+
+
+## Search Memories
+
+The two main search commands are:
+
+```bash
+# Exact-token + semantic search, fused via RRF
+sqlite-graphrag hybrid-search "auth jwt design" --k 10 --json
+
+# Semantic-only (no FTS5 component)
+sqlite-graphrag recall "auth jwt design" --k 5 --no-graph --json
+```
+
+For the default namespace size (10k memories or fewer), the
+cosine refinement over the embedding BLOB is fast enough
+(single-digit ms). For larger namespaces, prefer
+`hybrid-search` so FTS5 does the coarse filtering.
+
+
+## Extract Entities via the LLM
+
+The default `remember` does URL extraction only. For full NER
+(entities + typed relationships), use the LLM backend:
+
+```bash
+sqlite-graphrag remember \
+    --name design-review-q2 \
+    --type note \
+    --description "Q2 design review notes" \
+    --body "$(cat design-review.md)" \
+    --extraction-backend llm
+```
+
+The LLM returns structured JSON with entities and relationships
+in the same prompt that produces the embedding. The total round-trip
+is 3-8 s (longer than the embed-only path because the prompt
+includes the schema and the response is larger).
+
+
+## Migration from v1.0.74 / v1.0.75
+
+See [MIGRATION.md](MIGRATION.md) for the full step-by-step. The
+short version:
+
+1. Install v1.0.76 (LLM-only).
+2. Run `sqlite-graphrag init` — migration V013 runs automatically.
+3. Old vec tables are dropped; new `memory_embeddings` is empty.
+4. Memories are re-embedded lazily on the next `edit` / `ingest`.
+
+For a large corpus, batch-pre-warm with:
+
+```bash
+sqlite-graphrag list --json | jaq -r '.items[].name' | \
+    xargs -I {} sqlite-graphrag edit --name {} \
+        --description "$(sqlite-graphrag read --name {} --json | jaq -r .description)"
 ```
 
 
-## Integration With AI Agents
-### Twenty One Agents — One Persistence Layer
-- Claude Code from Anthropic consumes JSON from stdout and orchestrates via exit codes
-- Codex from OpenAI reads hybrid-search output to ground generation in local memory
-- Gemini CLI from Google parses `--json` output to inject facts into prompts
-- Opencode open source harness treats sqlite-graphrag as a native MCP-style backend
-- OpenClaw agent framework uses `recall` as its long-term memory tier natively
-- Paperclip research assistant persists findings across sessions via `remember` atomically
-- VS Code Copilot from Microsoft invokes the CLI through integrated terminal tasks
-- Google Antigravity platform calls the binary inside its sandboxed worker runtime
-- Windsurf from Codeium routes indexed project memories through `hybrid-search` queries
-- Cursor editor hooks `recall` into its chat panel for context-aware completions
-- Zed editor invokes sqlite-graphrag as an external tool in its assistant channel
-- Aider coding agent queries `related` for multi-hop reasoning over commit history
-- Jules from Google Labs uses exit codes to gate automated pull request reviews
-- Kilo Code autonomous agent delegates long-term memory to the local SQLite file
-- Roo Code orchestrator passes memory context into its planning phase deterministically
-- Cline autonomous agent persists tool outputs via `remember` between cycles
-- Continue open source assistant integrates via its custom context provider API
-- Factory agent framework stores decision logs for auditable multi-agent workflows
-- Augment Code assistant hydrates its embeddings cache from `hybrid-search` results
-- JetBrains AI Assistant runs sqlite-graphrag as a side process for cross-project memory
-- OpenRouter proxy layer injects retrieved context before forwarding requests upstream
+## CI Test Environment
+
+If you want to run the full test suite in CI, you need an LLM
+CLI on `PATH`. The v1.0.76 build does not embed via fastembed in
+the default configuration, so `v1044_features` /
+`signal_handling_integration` / `v2_breaking_integration` will
+fail with `no LLM CLI found on PATH` when neither `claude` nor
+`codex` is installed.
+
+Workarounds:
+
+1. Install `claude` in the CI image and authenticate via OAuth
+   (requires storing OAuth tokens in CI secrets).
+2. Build with `--features embedding-legacy` to restore the
+   fastembed pipeline; the relevant tests then pass without an
+   LLM. The CI workflow is updated in v1.0.76 to test all three
+   configurations (default, llm-only, embedding-legacy).
+3. Use a mock LLM CLI that returns a fixed JSON response for
+   the embedding prompt (used internally for the unit tests in
+   `src/extract/llm_embedding.rs`).
 
 
-## Common Errors
-### FTS5 Index Repair
-- Check FTS5 health: `sqlite-graphrag health --json | jaq '.fts_query_ok'`
-- If false, rebuild: `sqlite-graphrag fts rebuild --json`
-- Verify: `sqlite-graphrag fts check --json`
-- View stats: `sqlite-graphrag fts stats --json`
+## See Also
 
-### Database Backup
-- Create safe backup: `sqlite-graphrag backup --output backup.sqlite --json`
-- Uses SQLite Online Backup API — safe with WAL mode and concurrent reads
-
-### Entity Management
-- List entities of a memory: `sqlite-graphrag memory-entities --name my-mem --json`
-- Delete entity with cascade: `sqlite-graphrag delete-entity --name bad-entity --cascade --json`
-- Reclassify entity type: `sqlite-graphrag reclassify --name my-entity --entity-type concept --json`
-- Bulk reclassify: `sqlite-graphrag reclassify --from-type organization --to-type concept --batch --json`
-- Merge duplicates: `sqlite-graphrag merge-entities --names "auth-system,auth-jwt" --into auth --json`
-- Remove NER bindings: `sqlite-graphrag prune-ner --entity noisy-entity --json`
-
-### Troubleshooting — Five Failures and Their Fixes
-- Error `exit 10` signals database lock, run `sqlite-graphrag vacuum` to checkpoint WAL
-- Error `exit 12` signals `sqlite-vec` load failure, verify SQLite version is 3.40 plus
-- Error `exit 13` signals batch partial failure, inspect partial results and retry only the failed items
-- Error `exit 15` signals database busy after retries, lower write pressure or raise `--wait-lock`
-- Error `exit 75` signals slots exhausted, retry after a short backoff interval
-- Error `exit 77` signals low RAM, free memory before invoking the embedding model again
-- Error `exit 9` on `remember` signals a duplicate or soft-deleted memory; use `--force-merge` to restore and update, or `restore` to revive it first
-- Error `exit 2` signals a Clap argument parsing error; check flags and required arguments
-- Use `--max-rss-mb <MiB>` on `remember` or `ingest` to set a per-chunk RSS abort threshold (default 8192 MiB) and prevent ONNX runtime from exhausting system memory
-
-
-## Next Steps
-### Level Up — Where to Go After This Guide
-- Read `COOKBOOK.md` for thirty recipes covering search, graph and batch workflows
-- Read `INTEGRATIONS.md` for vendor specific configuration of all 27 agents above
-- Read `docs/AGENTS.md` for multi-agent orchestration patterns using Agent Teams
-- Read `docs/CROSS_PLATFORM.md` to understand target binaries across nine platforms
-- Star the public repository once `sqlite-graphrag` is published to track releases
+- [COOKBOOK.md](COOKBOOK.md) for common recipes
+- [MIGRATION.md](MIGRATION.md) for v1.0.74 → v1.0.76 upgrade
+- [CROSS_PLATFORM.md](CROSS_PLATFORM.md) for Windows / macOS
+- [AGENTS.md](AGENTS.md) for agent integration
+- [decisions/](decisions/) for the 25 ADRs

@@ -1,9 +1,78 @@
-# sqlite-graphrag for AI Agents
+# sqlite-graphrag for AI Agents (v1.0.76)
 
+> Persistent memory for 27 AI agents in a single 6 MB Rust binary.
+> v1.0.76 is **LLM-only and one-shot**: every `remember` / `ingest`
+> spawns a headless claude code or codex CLI subprocess (OAuth, no
+> MCP, no hooks). There is no daemon, no ONNX runtime, no local
+> embedding model.
 
-> Persistent memory for 27 AI agents in a single 25 MB Rust binary
+## v1.0.76 Architecture (LLM-Only)
 
-- Read this document in [Portuguese (pt-BR)](AGENTS.pt-BR.md).
+The CLI is a thin orchestrator. Every embedding call spawns a
+claude code or codex subprocess that returns a 384-dim f32
+vector in JSON. Every entity extraction call does the same
+with a different output schema. The CLI never holds an
+embedding model in memory; the LLM subprocess is the model.
+
+The daemon is deprecated (it still works, but it no longer
+provides a speedup because the LLM subprocess is the new
+"model loader"). Removed in v1.1.0.
+
+For the full architectural rationale, see ADR-0019. For the
+daemon deprecation timeline, see ADR-0021.
+
+## LLM Hardening (inherited from v1.0.69)
+
+When spawning `claude code` headless, the CLI always passes:
+
+```
+--strict-mcp-config
+--mcp-config '{}'
+--settings '{"hooks":{}}'
+--dangerously-skip-permissions
+--output-schema <JSON schema for the response>
+--model <claude-sonnet-4-6 | gpt-5.4>
+-p <prompt>
+```
+
+For `codex`:
+
+```
+--json
+--output-schema <JSON schema>
+--ephemeral
+--skip-git-repo-check
+--sandbox read-only
+--ignore-user-config
+--ignore-rules
+-c mcp_servers='{}'
+--ask-for-approval never
+--model <claude-sonnet-4-6 | gpt-5.4>
+```
+
+These flags are the canonical hardening set. They are tested
+in `src/commands/claude_runner.rs::tests` and
+`src/commands/codex_spawn.rs::tests` and must not be removed
+without an ADR.
+
+## OAuth Enforcement
+
+The CLI ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY`
+or `OPENAI_API_KEY` is set in the environment. The agent must
+use the OAuth flow:
+
+```bash
+# First time
+claude login   # or: codex login
+
+# After login, verify
+claude --version
+codex --version
+```
+
+The two API-key env vars are also excluded from the env-clear
+whitelist, so they cannot be passed through a parent process.
+Agents that try to set them will see a clear validation error.
 
 
 ## CLI Flag Aliases (since v1.0.35)
