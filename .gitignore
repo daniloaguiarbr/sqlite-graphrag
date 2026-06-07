@@ -64,3 +64,4 @@ gaps.md
 fuzz/corpus/
 fuzz/artifacts/
 scripts/legacy/
+graphrag.sqlite.v1075-bak
