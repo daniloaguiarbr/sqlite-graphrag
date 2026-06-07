@@ -110,23 +110,60 @@ pub fn try_shutdown(models_dir: &Path) -> Result<Option<DaemonResponse>, AppErro
 }
 
 pub fn embed_passage_or_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, AppError> {
-    match request_or_autostart(
+    // v1.0.76 (G22 + ADR-0021): the daemon is DEPRECATED and will be
+    // removed in v1.1.0. The LLM-only build must not depend on the
+    // daemon's response shape. The local LLM embedder is the canonical
+    // path going forward.
+    //
+    // Try the daemon first for backward compat with operator scripts
+    // that explicitly start a daemon. If the daemon is unavailable,
+    // errors, or returns an empty response, fall back to the local
+    // embedder.
+    let daemon_attempt: Result<Option<Vec<f32>>, AppError> = request_or_autostart(
         models_dir,
         &DaemonRequest::EmbedPassage {
             text: text.to_string(),
         },
         true,
-    )? {
-        Some(DaemonResponse::PassageEmbedding { embedding, .. }) => Ok(embedding),
-        Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
-        Some(other) => Err(AppError::Internal(anyhow::anyhow!(
-            "unexpected daemon response for passage embedding: {other:?}"
-        ))),
-        None => {
-            let embedder = embedder::get_embedder(models_dir)?;
-            embedder::embed_passage(embedder, text)
+    )
+    .and_then(|opt| match opt {
+        Some(DaemonResponse::PassageEmbedding { embedding, .. }) => Ok(Some(embedding)),
+        Some(DaemonResponse::Error { message }) => {
+            tracing::warn!(
+                target: "daemon",
+                error = %message,
+                "daemon returned Error; falling back to local embedder"
+            );
+            Ok(None)
+        }
+        Some(other) => {
+            tracing::warn!(
+                target: "daemon",
+                response = ?other,
+                "daemon returned unexpected response; falling back to local embedder"
+            );
+            Ok(None)
+        }
+        None => Ok(None),
+    });
+    match daemon_attempt {
+        Ok(Some(emb)) => return Ok(emb),
+        Ok(None) => {
+            tracing::info!(
+                target: "daemon",
+                "daemon unavailable; using local embedder (ADR-0021 canonical path)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "daemon",
+                error = %e,
+                "daemon request failed; using local embedder"
+            );
         }
     }
+    let embedder = embedder::get_embedder(models_dir)?;
+    embedder::embed_passage(embedder, text)
 }
 
 pub fn embed_query_or_local(
@@ -142,7 +179,17 @@ pub fn embed_query_or_local(
         cli_autostart,
     )? {
         Some(DaemonResponse::QueryEmbedding { embedding, .. }) => Ok(embedding),
-        Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
+        // v1.0.76: fall back to local embedder on daemon error (see
+        // embed_passage_or_local for the rationale).
+        Some(DaemonResponse::Error { message }) => {
+            tracing::warn!(
+                target: "daemon",
+                error = %message,
+                "daemon returned error; falling back to local embedder"
+            );
+            let embedder = embedder::get_embedder(models_dir)?;
+            embedder::embed_query(embedder, text)
+        }
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
             "unexpected daemon response for query embedding: {other:?}"
         ))),
@@ -165,7 +212,16 @@ pub fn embed_passages_controlled_or_local(
 
     match request_or_autostart(models_dir, &request, true)? {
         Some(DaemonResponse::PassageEmbeddings { embeddings, .. }) => Ok(embeddings),
-        Some(DaemonResponse::Error { message }) => Err(AppError::Embedding(message)),
+        // v1.0.76: fall back to local embedder on daemon error.
+        Some(DaemonResponse::Error { message }) => {
+            tracing::warn!(
+                target: "daemon",
+                error = %message,
+                "daemon returned error; falling back to local embedder"
+            );
+            let embedder = embedder::get_embedder(models_dir)?;
+            embedder::embed_passages_controlled(embedder, texts, token_counts)
+        }
         Some(other) => Err(AppError::Internal(anyhow::anyhow!(
             "unexpected daemon response for passage embedding batch: {other:?}"
         ))),

@@ -14,6 +14,7 @@
 //! stored in `~/.codex/models_cache.json` BEFORE spawning the subprocess.
 
 use crate::errors::AppError;
+use crate::extract::codex_compat::codex_supports_ask_for_approval;
 use crate::extraction::{ExtractedUrl, ExtractionResult};
 use crate::storage::entities::{NewEntity, NewRelationship};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,11 @@ pub struct CodexUsage {
 #[derive(Debug)]
 pub struct CodexResult {
     pub extraction: ExtractionResult,
+    /// Raw text of the last `item.completed` of type `agent_message` (the
+    /// JSON payload the LLM produced). Callers that need a schema other
+    /// than the extraction shape (e.g. body-enrich's `enriched_body`)
+    /// should parse this directly.
+    pub last_agent_text: String,
     pub usage: Option<CodexUsage>,
     pub rate_limited: bool,
     pub schema_error: bool,
@@ -288,8 +294,6 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
     }
 
     cmd.arg("exec")
-        .arg("-c")
-        .arg("mcp_servers='{}'")
         .arg("--json")
         .arg("--output-schema")
         .arg(&args.schema_path)
@@ -298,9 +302,19 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         .arg("--sandbox")
         .arg("read-only")
         .arg("--ignore-user-config")
-        .arg("--ignore-rules")
-        .arg("--ask-for-approval")
-        .arg("never");
+        .arg("--ignore-rules");
+
+    // Codex 0.134+ no longer accepts `-c mcp_servers='{}'` — it parses the
+    // value as a string and rejects it ("expected a map"). The
+    // `--ignore-user-config` flag already discards any user-defined MCP
+    // servers, so the override is redundant on all supported versions.
+
+    // Codex 0.134+ removed --ask-for-approval entirely (Issue #26602).
+    // Skip the flag on newer versions; sandbox=read-only already suppresses
+    // approval prompts. See src/extract/codex_compat.rs for the probe.
+    if codex_supports_ask_for_approval() {
+        cmd.arg("--ask-for-approval").arg("never");
+    }
 
     if let Some(m) = args.model {
         cmd.arg("-m").arg(m);
@@ -441,6 +455,7 @@ pub fn parse_codex_jsonl(stdout: &str) -> Result<CodexResult, AppError> {
     let extraction = parse_extraction_text(&text)?;
     Ok(CodexResult {
         extraction,
+        last_agent_text: text,
         usage,
         rate_limited,
         schema_error,
@@ -718,20 +733,25 @@ mod tests {
         };
         let cmd = build_codex_command(&args);
         let argv: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
-        // Mandatory flags from gaps.md lines 233-238
-        assert!(argv.contains(&"-c"), "must have -c (gaps.md:234)");
-        assert!(
-            argv.contains(&"mcp_servers='{}'"),
-            "must have mcp_servers override (gaps.md:234)"
-        );
+        // Mandatory flags from gaps.md lines 233-238.
+        // -c mcp_servers='{}' was REMOVED in v1.0.76 — codex 0.134+ parses
+        // the value as a string and rejects it ("expected a map"). The
+        // --ignore-user-config flag already covers the MCP isolation
+        // requirement.
         assert!(
             argv.contains(&"--ignore-user-config"),
             "must have --ignore-user-config (gaps.md:266)"
         );
-        assert!(
-            argv.contains(&"--ask-for-approval"),
-            "must have --ask-for-approval never (gaps.md:237)"
-        );
+        // --ask-for-approval is conditional on codex < 0.134. When the
+        // installed codex is 0.134+ the flag is omitted by the compat
+        // helper. Both outcomes are valid.
+        let ask_for_approval_present = argv.contains(&"--ask-for-approval");
+        if !crate::extract::codex_compat::codex_supports_ask_for_approval() {
+            assert!(
+                !ask_for_approval_present,
+                "codex 0.134+ must NOT include --ask-for-approval"
+            );
+        }
         assert!(
             argv.contains(&"--sandbox"),
             "must have --sandbox read-only (G31)"

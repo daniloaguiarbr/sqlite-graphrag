@@ -3475,20 +3475,18 @@ fn call_codex(
             // G32: use the JSONL parser, NOT serde_json::from_str on the
             // entire stdout (codex emits one event per line).
             let result = super::codex_spawn::parse_codex_jsonl(&stdout_str)?;
-            // Wrap the extraction as a JSON object so downstream code
-            // (which expects a single `serde_json::Value`) keeps working.
-            // `ExtractedUrl` lacks `Serialize` so we project to a
-            // serde-friendly vector.
-            let urls: Vec<serde_json::Value> = result
-                .extraction
-                .urls
-                .iter()
-                .map(|u| serde_json::json!({"url": u.url, "offset": u.start}))
-                .collect();
-            let value = serde_json::json!({
-                "entities": result.extraction.entities,
-                "urls": urls,
-            });
+            // Return the raw agent_message text parsed as JSON. Different
+            // operations (memory-bindings, body-enrich) use different
+            // output schemas, so we let the caller pick which fields to
+            // extract. The previous implementation hardcoded
+            // `{entities, urls}` which broke body-enrich.
+            let value: serde_json::Value =
+                serde_json::from_str(&result.last_agent_text).map_err(|e| {
+                    AppError::Validation(format!(
+                        "codex agent_message is not valid JSON: {e}; raw={}",
+                        result.last_agent_text
+                    ))
+                })?;
             Ok((value, 0.0, false))
         }
         None => {

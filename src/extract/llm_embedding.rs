@@ -56,18 +56,18 @@ struct EmbeddingResponse {
 
 impl LlmEmbedding {
     /// Detects which LLM CLI is available on PATH and returns the
-    /// matching embedding client. Prefers `claude` over `codex` because
-    /// claude's tool-use protocol is more stable for embedding requests.
+    /// matching embedding client.
+    ///
+    /// v1.0.76: PREFERS `codex` over `claude` because:
+    /// - Claude Code 2.1+ ships a 180k+ token system context (plugins,
+    ///   skills, agents, MCP) that overflows the 200k context window
+    ///   for even trivial embedding prompts and returns "Prompt is too
+    ///   long".
+    /// - Codex 0.134+ is lightweight (~5k system context) and the
+    ///   `StructuredOutput` tool reliably returns 384-dim vectors.
     pub fn detect_available() -> Result<Self, AppError> {
         Self::oauth_only_enforce()?;
 
-        if let Ok(path) = which::which("claude") {
-            return Ok(Self {
-                flavour: EmbeddingFlavour::Claude,
-                binary: path,
-                model: "claude-sonnet-4-6".to_string(),
-            });
-        }
         if let Ok(path) = which::which("codex") {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Codex,
@@ -75,8 +75,15 @@ impl LlmEmbedding {
                 model: "gpt-5.4".to_string(),
             });
         }
+        if let Ok(path) = which::which("claude") {
+            return Ok(Self {
+                flavour: EmbeddingFlavour::Claude,
+                binary: path,
+                model: "claude-sonnet-4-6".to_string(),
+            });
+        }
         Err(AppError::Embedding(
-            "no LLM CLI found on PATH: install `claude` (Claude Code 2.1+) or `codex` (0.130+)"
+            "no LLM CLI found on PATH: install `codex` (0.130+) or `claude` (Claude Code 2.1+)"
                 .to_string(),
         ))
     }
@@ -158,10 +165,8 @@ impl LlmEmbedding {
             }
         };
 
-        let parsed: EmbeddingResponse = serde_json::from_str(&stdout).map_err(|e| {
-            AppError::Embedding(format!(
-                "LLM embedding response was not valid JSON: {e}; raw={stdout}"
-            ))
+        let parsed: EmbeddingResponse = parse_embedding_response(&stdout).map_err(|e| {
+            AppError::Embedding(format!("LLM embedding response parse failed: {e}; raw={stdout}"))
         })?;
         if parsed.embedding.len() != EMBEDDING_DIM {
             return Err(AppError::Embedding(format!(
@@ -174,18 +179,26 @@ impl LlmEmbedding {
 
     async fn invoke_claude(&self, prompt: &str) -> Result<String, AppError> {
         // v1.0.69 hardening: --strict-mcp-config --mcp-config '{}' --settings
-        // '{"hooks":{}}' --dangerously-skip-permissions --output-schema
-        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}}},"required":["embedding"],"additionalProperties":false}"#;
+        // '{"hooks":{}}' --dangerously-skip-permissions.
+        //
+        // v1.0.76 hardening: Claude Code 2.1+ renamed --output-schema to
+        // --json-schema and accepts the schema as an inline JSON string
+        // (NOT a file path). Also pass --output-format json so the
+        // response is a single JSON object on stdout (the default text
+        // mode returns prose which fails the `embedding` field check).
+        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}},"required":["embedding"],"additionalProperties":false}"#;
         let output = Command::new(&self.binary)
             .arg("-p")
             .arg(prompt)
-            .arg("--output-schema")
-            .arg(SCHEMA)
             .arg("--model")
             .arg(&self.model)
+            .arg("--json-schema")
+            .arg(SCHEMA)
+            .arg("--output-format")
+            .arg("json")
             .arg("--strict-mcp-config")
             .arg("--mcp-config")
-            .arg("{}")
+            .arg(r#"{"mcpServers":{}}"#)
             .arg("--settings")
             .arg(r#"{"hooks":{}}"#)
             .arg("--dangerously-skip-permissions")
@@ -210,27 +223,37 @@ impl LlmEmbedding {
 
     async fn invoke_codex(&self, prompt: &str) -> Result<String, AppError> {
         // v1.0.69 hardening: --json --output-schema --ephemeral --skip-git-repo-check
-        // --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}'
+        // --sandbox read-only --ignore-user-config --ignore-rules
         //
-        // v1.0.76 hardening (G31 + G33): codex 0.134+ removed the
-        // --ask-for-approval flag (Issue #26602). The compat helper detects
-        // the installed version and omits the flag when unsupported.
-        // sandbox=read-only already suppresses all interactive prompts.
+        // v1.0.76 hardening (G31 + G33 + codex 0.134+ compat):
+        // - --ask-for-approval removed in 0.134+ (Issue #26602) — gated
+        //   by the codex_compat helper
+        // - -c mcp_servers='{}' removed — value is parsed as string and
+        //   rejected ("expected a map"). --ignore-user-config already
+        //   covers the MCP isolation requirement.
+        // - --output-schema is a FILE PATH (not inline JSON like
+        //   claude's --json-schema). Write to a temp file in the
+        //   cache dir (matches the trusted-schema-path pattern used by
+        //   codex_spawn).
         const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}},"required":["embedding"],"additionalProperties":false}"#;
+        let schema_path = std::env::temp_dir().join(format!(
+            "sqlite-graphrag-embed-schema-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&schema_path, SCHEMA)
+            .map_err(|e| AppError::Embedding(format!("failed to write schema file: {e}")))?;
         let mut cmd = Command::new(&self.binary);
         cmd.arg("exec")
             .arg(prompt)
             .arg("--json")
             .arg("--output-schema")
-            .arg(SCHEMA)
+            .arg(&schema_path)
             .arg("--ephemeral")
             .arg("--skip-git-repo-check")
             .arg("--sandbox")
             .arg("read-only")
             .arg("--ignore-user-config")
-            .arg("--ignore-rules")
-            .arg("-c")
-            .arg("mcp_servers='{}'");
+            .arg("--ignore-rules");
         if crate::extract::codex_compat::codex_supports_ask_for_approval() {
             cmd.arg("--ask-for-approval").arg("never");
         }
@@ -246,6 +269,7 @@ impl LlmEmbedding {
             .output()
             .await
             .map_err(|e| AppError::Embedding(format!("codex spawn failed: {e}")))?;
+        let _ = std::fs::remove_file(&schema_path);
         if !output.status.success() {
             return Err(AppError::Embedding(format!(
                 "codex exited with {}: stderr={}",
@@ -282,4 +306,48 @@ mod tests {
         assert_eq!(EmbeddingFlavour::Claude.as_str(), "claude");
         assert_eq!(EmbeddingFlavour::Codex.as_str(), "codex");
     }
+}
+
+/// Parse the LLM embedding response. The two backends emit different
+/// shapes:
+/// - Claude (with `--output-format json`): single JSON object on stdout.
+/// - Codex (with `--json`): JSONL stream with one event per line; the
+///   `agent_message` event's `text` field is the JSON payload.
+///
+/// This helper accepts both shapes and returns the parsed
+/// `EmbeddingResponse` (or an error describing the first mismatch).
+fn parse_embedding_response(stdout: &str) -> Result<EmbeddingResponse, String> {
+    // Strategy 1: try the whole stdout as JSON (Claude path).
+    if let Ok(parsed) = serde_json::from_str::<EmbeddingResponse>(stdout) {
+        return Ok(parsed);
+    }
+    // Strategy 2: walk the JSONL line by line and pick the last
+    // `item.completed` of type `agent_message` (Codex path).
+    let mut last_agent_text: Option<String> = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if event.get("type").and_then(|t| t.as_str()) != Some("item.completed") {
+            continue;
+        }
+        let item = match event.get("item") {
+            Some(i) => i,
+            None => continue,
+        };
+        if item.get("type").and_then(|t| t.as_str()) != Some("agent_message") {
+            continue;
+        }
+        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+            last_agent_text = Some(text.to_string());
+        }
+    }
+    let text = last_agent_text
+        .ok_or_else(|| "no agent_message found in codex JSONL output".to_string())?;
+    serde_json::from_str::<EmbeddingResponse>(&text)
+        .map_err(|e| format!("codex agent_message text is not EmbeddingResponse: {e}; raw={text}"))
 }
