@@ -211,10 +211,14 @@ impl LlmEmbedding {
     async fn invoke_codex(&self, prompt: &str) -> Result<String, AppError> {
         // v1.0.69 hardening: --json --output-schema --ephemeral --skip-git-repo-check
         // --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}'
-        // --ask-for-approval never
-        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}}},"required":["embedding"],"additionalProperties":false}"#;
-        let output = Command::new(&self.binary)
-            .arg("exec")
+        //
+        // v1.0.76 hardening (G31 + G33): codex 0.134+ removed the
+        // --ask-for-approval flag (Issue #26602). The compat helper detects
+        // the installed version and omits the flag when unsupported.
+        // sandbox=read-only already suppresses all interactive prompts.
+        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}},"required":["embedding"],"additionalProperties":false}"#;
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("exec")
             .arg(prompt)
             .arg("--json")
             .arg("--output-schema")
@@ -226,9 +230,11 @@ impl LlmEmbedding {
             .arg("--ignore-user-config")
             .arg("--ignore-rules")
             .arg("-c")
-            .arg("mcp_servers='{}'")
-            .arg("--ask-for-approval")
-            .arg("never")
+            .arg("mcp_servers='{}'");
+        if crate::extract::codex_compat::codex_supports_ask_for_approval() {
+            cmd.arg("--ask-for-approval").arg("never");
+        }
+        let output = cmd
             .arg("--model")
             .arg(&self.model)
             .env_clear()

@@ -15,6 +15,14 @@ pub fn codex_capabilities(version: &ExecutorVersion) -> ExecutorCapabilities {
         caps.default_flags
             .extend(["-a".to_string(), "never".to_string()]);
         caps.removed_flags.push("--ask-for-approval".to_string());
+    } else if version.is_at_least(0, 134, 0) {
+        // PATCH 2026-06-07: codex CLI 0.134.0 removed BOTH --ask-for-approval AND -a.
+        // Approvals are now controlled via --dangerously-bypass-approvals-and-sandbox.
+        // We skip the approval flag entirely (sandbox=read-only is already strict).
+        caps.supports_mcp_map = true;
+        caps.supports_ask_for_approval_flag = false;
+        caps.removed_flags.push("--ask-for-approval".to_string());
+        caps.removed_flags.push("-a".to_string());
     } else if version.is_at_least(0, 130, 0) {
         caps.supports_mcp_map = false;
         caps.supports_ask_for_approval_flag = true;

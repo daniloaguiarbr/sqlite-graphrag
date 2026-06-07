@@ -1,10 +1,12 @@
 //! Extraction backend abstraction (v1.0.75 — G21 solution)
 //!
-//! Provides `ExtractionBackend` trait with concrete implementations for
+//! Provides  trait with concrete implementations for
 //! LLM-only (default in v1.0.75), Embedding (legacy), None (no extraction),
 //! and Composite (orchestrates multiple backends in parallel).
 //!
 //! The trait enables backend-agnostic ingest/enrich/remember pipelines.
+
+pub mod codex_compat;
 
 use crate::errors::AppError;
 use async_trait::async_trait;

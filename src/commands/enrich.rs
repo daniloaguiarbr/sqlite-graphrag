@@ -1315,15 +1315,91 @@ fn persist_enriched_body(
 // Main entry point
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// G20: mode-conditional flag validation
+// ---------------------------------------------------------------------------
+
+/// True when a scalar value matches its declared default. Used to
+/// distinguish "operator passed an explicit override" from "clap filled
+/// the default" for flags with default_value_t.
+fn is_at_default<T: PartialEq>(value: T, default: T) -> bool {
+    value == default
+}
+
+/// G20: validate that flags for one LLM provider were not passed when
+/// the operator selected a different provider. Flags silently discarded
+/// by the wrong mode are surfaced as AppError::Validation BEFORE any
+/// DB work, so the operator gets an actionable error instead of a
+/// surprise at runtime.
+///
+/// Detection rules:
+/// - For Option<PathBuf> / Option<String>: is_some() means explicit
+/// - For scalar fields with default_value_t: value != default means explicit
+/// - For boolean fields: true means explicit (default is false)
+///
+/// Mode-specific matrices:
+/// - mode=claude-code rejects: codex_binary, codex_model, codex_timeout != 300
+/// - mode=codex rejects: claude_binary, claude_model, claude_timeout != 300, max_cost_usd
+fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppError> {
+    const DEFAULT_TIMEOUT: u64 = 300;
+
+    let mut conflicts: Vec<String> = Vec::new();
+
+    match args.mode {
+        EnrichMode::ClaudeCode => {
+            if args.codex_binary.is_some() {
+                conflicts.push("--codex-binary is ignored when --mode=claude-code".to_string());
+            }
+            if args.codex_model.is_some() {
+                conflicts.push("--codex-model is ignored when --mode=claude-code".to_string());
+            }
+            if !is_at_default(args.codex_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--codex-timeout={} is ignored when --mode=claude-code (remove the flag to use the default 300s)",
+                    args.codex_timeout
+                ));
+            }
+        }
+        EnrichMode::Codex => {
+            if args.claude_binary.is_some() {
+                conflicts.push("--claude-binary is ignored when --mode=codex".to_string());
+            }
+            if args.claude_model.is_some() {
+                conflicts.push("--claude-model is ignored when --mode=codex".to_string());
+            }
+            if !is_at_default(args.claude_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--claude-timeout={} is ignored when --mode=codex (remove the flag to use the default 300s)",
+                    args.claude_timeout
+                ));
+            }
+            if args.max_cost_usd.is_some() {
+                conflicts.push(
+                    "--max-cost-usd is ignored when --mode=codex (OAuth-first; cost is metered by your subscription, not the call)"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    if !conflicts.is_empty() {
+        return Err(AppError::Validation(format!(
+            "G20: mode-conditional flag conflicts detected for --mode={}:\n  - {}",
+            args.mode,
+            conflicts.join("\n  - ")
+        )));
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+
 /// Main entry point for the `enrich` command.
 pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
-    // TODO(G20): add mode-conditional flag validation before DB access.
-    // Flags that are silently discarded when the wrong mode is active:
-    //   --mode claude-code: codex_binary, codex_model, codex_timeout
-    //   --mode codex:       claude_binary, claude_model, claude_timeout,
-    //                       max_cost_usd, rate_limit_wait
-    // Approach: check each non-default flag value early and return
-    // Err(AppError::Validation(...)) for incompatible mode+flag combinations.
+    // G20: mode-conditional flag validation BEFORE any DB access.
+    // Surfaces flags that the wrong mode would silently discard.
+    validate_mode_conditional_flags_enrich(args)?;
     let started = Instant::now();
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
