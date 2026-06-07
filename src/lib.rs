@@ -107,6 +107,10 @@ pub mod chunking;
 /// Hybrid entity extraction: regex pre-filter + GLiNER zero-shot NER (graceful degradation).
 pub mod extraction;
 
+/// v1.0.75 (G21 solution): extraction backend abstraction with
+/// LLM/Embedding/None/Composite implementations.
+pub mod extract;
+
 /// `clap` definitions for the top-level `sqlite-graphrag` binary.
 pub mod cli;
 
@@ -142,6 +146,10 @@ pub mod i18n;
 /// per-namespace heavy-job singleton `acquire_job_singleton` for
 /// `enrich`, `ingest --mode claude-code`, `ingest --mode codex`.
 pub mod lock;
+
+/// v1.0.75 (G22 solution): spawn subsystem abstraction with
+/// `VersionAdapter` trait for codex/claude/opencode executors.
+pub mod spawn;
 
 /// Memory guard: checks RAM availability before loading the ONNX model.
 pub mod memory_guard;

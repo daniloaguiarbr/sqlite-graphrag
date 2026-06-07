@@ -82,6 +82,14 @@ pub struct Cli {
     #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
+    /// v1.0.75 (G21 solution): extraction backend selector. Accepts
+    /// `llm` (default), `embedding` (legacy), `none`, or `both` (composite).
+    /// The `llm` backend invokes claude code / codex CLI headless to extract
+    /// entities and relationships; `embedding` uses the legacy fastembed
+    /// pipeline (requires the `embedding-legacy` feature at compile time).
+    #[arg(long, global = true, value_name = "KIND", default_value = "llm")]
+    pub extraction_backend: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }

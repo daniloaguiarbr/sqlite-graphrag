@@ -4,6 +4,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.75] - 2026-06-07
+
+### Added
+
+- **ExtractionBackend trait (G21 solution)**: new `src/extract/` module exposes a `ExtractionBackend` trait with four implementations: `LlmBackend` (default, invokes claude code / codex CLI headless), `EmbeddingBackend` (legacy fastembed pipeline, stub when LLM-only), `NoneBackend` (no-op for explicit skip), and `CompositeBackend` (merges multiple backends in parallel). The global flag `--extraction-backend llm|embedding|none|both` selects the backend at runtime; the LLM backend is the new default. The trait uses `async-trait` for `dyn` dispatch, returns structured `ExtractionOutput { entities, relationships, embedding, backend, elapsed_ms }`, and is the foundation for the v1.1.0 LLM-only migration.
+
+- **VersionAdapter trait (G22 solution)**: new `src/spawn/` module abstracts executor spawn invocations behind a `VersionAdapter` trait. Three concrete adapters ship: `CodexAdapter` (detects codex 0.130.0 through 0.138+ and adapts flags — `codex 0.137.0` removed `--ask-for-approval` in favour of `-a never`, and the adapter emits the new flag automatically), `ClaudeAdapter` (claude code 2.1.0+), and `OpencodeAdapter` (opencode headless). The trait also exposes `ExecutorVersion` (built on `semver::Version`), `CompatMode` (`strict` | `lenient` | `auto`), `ExecutorCapabilities`, `VersionCache`, and an `ErrorPropagator` that propagates subprocess stderr to the user instead of swallowing it (was the root cause of G22 P16).
+
+- **Adaptive concurrency (G18 solution)**: `MAX_CONCURRENT_CLI_INSTANCES` raised from 4 to 16 (legacy fallback). New `crate::lock::calculate_safe_concurrency()` function reads `sysinfo::System::available_memory()` and computes a dynamic permit count via `min(cpus, available_mb / worker_cost_mb)`. New `LLM_WORKER_RSS_MB = 350` constant for LLM-only workers (vs `EMBEDDING_LOAD_EXPECTED_RSS_MB = 1100` for the legacy fastembed path). The `* 0.5` halving factor that caused the 4-slot ceiling has been removed.
+
+- **Feature flag `llm-only` (G23 foundation)**: opt-in feature that opts the build out of the fastembed + ort pipeline. Currently a no-op alias in the default build; the foundation for the v1.1.0 default flip. `embedding-legacy` is recognised by `cfg!()` checks in `src/lock.rs` so the adaptive concurrency formula can pick the right `worker_cost_mb` in feature-gated builds.
+
+- **tracing respects `RUST_LOG`**: removed the static `release_max_level_info` feature from `tracing`, so operators can override the log level at runtime via the `RUST_LOG` environment variable (helps G22 P17).
+
+### Dependencies
+
+- `async-trait = "0.1"` — required for the `ExtractionBackend` and `VersionAdapter` traits to be dyn-compatible.
+- `semver = "1"` with `serde` feature — required for `ExecutorVersion` parsing in `src/spawn/`.
+
+### Tests
+
+- 745 lib tests preserved (v1.0.74 baseline)
+- 12 new tests in `tests/extract_backend.rs` (LLM, Embedding, None, Composite, factory, dispatch, hints, health)
+- 13 new tests in `tests/spawn_version_adapter.rs` (Codex, Claude, Opencode, version matrix, parse, JSONL)
+- 6 new tests in `tests/concurrency_adaptive.rs` (legacy formula no longer halves, LLM worker budget, max ceiling)
+- Total: 776 tests passing
+
+### Validation
+
+- `cargo check --all-targets`: 0 errors, 0 warnings
+- `cargo build --bin sqlite-graphrag`: 0 errors
+- `cargo test --lib`: 745 passed
+- `cargo test --test extract_backend --test spawn_version_adapter --test concurrency_adaptive`: 31 passed
+
 ## [1.0.74] - 2026-06-05
 
 ### Fixed

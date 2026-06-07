@@ -29,7 +29,8 @@ use directories::ProjectDirs;
 use fs4::fs_std::FileExt;
 
 use crate::constants::{
-    CLI_LOCK_POLL_INTERVAL_MS, JOB_SINGLETON_POLL_INTERVAL_MS, MAX_CONCURRENT_CLI_INSTANCES,
+    CLI_LOCK_POLL_INTERVAL_MS, EMBEDDING_LOAD_EXPECTED_RSS_MB, JOB_SINGLETON_POLL_INTERVAL_MS,
+    LLM_WORKER_RSS_MB, MAX_CONCURRENT_CLI_INSTANCES,
 };
 use crate::errors::AppError;
 
@@ -166,7 +167,60 @@ fn try_acquire_slot(slot: usize) -> Result<File, AppError> {
 /// - If `wait_seconds` is `None` or `Some(0)`, returns immediately with
 ///   `AppError::AllSlotsFull { max, waited_secs: 0 }`.
 /// - If `wait_seconds` is `Some(n) > 0`, enters a polling loop every
-///   [`crate::constants::CLI_LOCK_POLL_INTERVAL_MS`] ms until the deadline expires, returning
+/// v1.0.75 — Adaptive safe-concurrency calculation (G18 solution)
+///
+/// Returns the maximum number of parallel CLI instances the host can sustain
+/// without thrashing. The formula:
+///
+///   safe = min(cpus, available_mb / per_worker_mb) * 1.0
+///
+/// replaces the previous `... * 0.5` halving factor. The `* 0.5` was the
+/// root cause of G18: even on a 64 GB host the result was always
+/// clamped to 4 because of the division-by-2.
+///
+/// The per-worker cost is the lower of `EMBEDDING_LOAD_EXPECTED_RSS_MB`
+/// (1100) and `LLM_WORKER_RSS_MB` (350), so LLM-only builds get a
+/// proportionally higher parallelism budget without changing the API.
+///
+/// Returns 1 as a defensive floor when system stats are unavailable.
+pub fn calculate_safe_concurrency() -> usize {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let available_mb = sys.available_memory() / 1_048_576;
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+
+    let per_worker_mb = if cfg!(feature = "llm-only") && !cfg!(feature = "embedding-legacy") {
+        LLM_WORKER_RSS_MB
+    } else if cfg!(feature = "embedding-legacy") && !cfg!(feature = "llm-only") {
+        EMBEDDING_LOAD_EXPECTED_RSS_MB
+    } else {
+        LLM_WORKER_RSS_MB.min(EMBEDDING_LOAD_EXPECTED_RSS_MB)
+    };
+
+    let memory_bound = if available_mb == 0 {
+        cpus
+    } else {
+        (available_mb / per_worker_mb.max(1)) as usize
+    };
+    let raw = cpus.min(memory_bound).max(1);
+    raw.min(MAX_CONCURRENT_CLI_INSTANCES)
+}
+
+/// v1.0.75 — Returns the worker cost in MiB used by `calculate_safe_concurrency`.
+/// Exposed for telemetry and `--info` output.
+pub fn worker_cost_mb() -> u64 {
+    if cfg!(feature = "llm-only") && !cfg!(feature = "embedding-legacy") {
+        LLM_WORKER_RSS_MB
+    } else if cfg!(feature = "embedding-legacy") && !cfg!(feature = "llm-only") {
+        EMBEDDING_LOAD_EXPECTED_RSS_MB
+    } else {
+        LLM_WORKER_RSS_MB.min(EMBEDDING_LOAD_EXPECTED_RSS_MB)
+    }
+}
+
 ///   `AppError::AllSlotsFull { max, waited_secs: n }` if no slot opens.
 ///
 /// The returned `File` MUST be kept alive until the process exits; dropping it

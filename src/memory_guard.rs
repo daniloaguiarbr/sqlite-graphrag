@@ -122,21 +122,31 @@ mod tests {
     }
 
     #[test]
-    fn calculate_safe_concurrency_respects_half_margin() {
-        let permits = calculate_safe_concurrency(8_000, 8, 1_000, 4);
-        assert_eq!(permits, 4);
+    fn calculate_safe_concurrency_no_half_margin() {
+        // v1.0.75 (G18): halving margin removed. 8000 MB / 1000 MB = 8, min(8, 8) = 8.
+        let permits = calculate_safe_concurrency(8_000, 8, 1_000, 16);
+        assert_eq!(permits, 8);
     }
 
     #[test]
     fn calculate_safe_concurrency_never_returns_zero() {
-        let permits = calculate_safe_concurrency(100, 1, 10_000, 4);
+        let permits = calculate_safe_concurrency(100, 1, 10_000, 16);
         assert_eq!(permits, 1);
     }
 
     #[test]
     fn calculate_safe_concurrency_respects_max_ceiling() {
-        let permits = calculate_safe_concurrency(128_000, 64, 500, 4);
-        assert_eq!(permits, 4);
+        // 128 GB / 500 MB = 256, min(64, 256) = 64, clamped to max 16
+        let permits = calculate_safe_concurrency(128_000, 64, 500, 16);
+        assert_eq!(permits, 16);
+    }
+
+    #[test]
+    fn calculate_safe_concurrency_llm_worker_budget() {
+        // LLM workers: 64 GB available, 8 CPUs, 350 MB per worker.
+        // 64_000 / 350 = 182, min(8, 182) = 8.
+        let permits = calculate_safe_concurrency(64_000, 8, 350, 16);
+        assert_eq!(permits, 8);
     }
 
     #[test]

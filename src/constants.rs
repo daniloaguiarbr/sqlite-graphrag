@@ -337,8 +337,16 @@ pub const CLI_LOCK_EXIT_CODE: i32 = 75;
 ///
 /// Aligned with `DAEMON_MAX_CONCURRENT_CLIENTS` from the PRD. Limits the counting
 /// semaphore in [`crate::lock`] to prevent memory overload when multiple parallel
-/// invocations attempt to load the ONNX model simultaneously.
-pub const MAX_CONCURRENT_CLI_INSTANCES: usize = 4;
+/// v1.0.75 (G18 solution): removed the rigid 4-slot ceiling. The adaptive
+/// `calculate_safe_concurrency` function in [`crate::lock`]` now reports
+/// the dynamic limit. This constant is preserved as a *legacy fallback*
+/// when the dynamic calculation cannot be performed (e.g. when `sysinfo`
+/// cannot read `/proc/meminfo`).
+///
+/// Operators should prefer passing `--max-concurrency` explicitly OR
+/// letting the runtime compute the limit. The default ceiling is intentionally
+/// higher (16) so the legacy 4-slot hard cap does not silently reappear.
+pub const MAX_CONCURRENT_CLI_INSTANCES: usize = 16;
 
 /// G28-B (v1.0.68): polling interval in milliseconds used by
 /// `acquire_job_singleton` between retry attempts when another invocation
@@ -365,13 +373,17 @@ pub const CLI_LOCK_DEFAULT_WAIT_SECS: u64 = 300;
 
 /// Expected RSS in MiB for a single instance with the ONNX model loaded via fastembed.
 ///
-/// Used in the formula `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
-/// to compute the dynamic permit count.
-///
-/// Value calibrated on 2026-04-23 with `/usr/bin/time -v` against `sqlite-graphrag v1.0.3`
-/// on the heavy commands `remember`, `recall`, and `hybrid-search`, all peaking near
-/// 1.03 GiB RSS per process. The constant below rounds up with a defensive margin.
+/// v1.0.75 (G18 solution): preserved for `embedding-legacy` builds. LLM-only
+/// builds use a much lower `LLM_WORKER_RSS_MB` constant. The formula
+/// `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
+/// was also reworked to drop the halving factor (the 0.5 margin was the
+/// root cause of G18). See [`crate::lock::calculate_safe_concurrency`].
 pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 1_100;
+
+/// v1.0.75 (G18 + G23): expected RSS in MiB for an LLM-only worker that
+/// spawns a `claude -p` or `codex exec` subprocess. Much lower than the
+/// embedding cost because the ONNX model is not loaded per-worker.
+pub const LLM_WORKER_RSS_MB: u64 = 350;
 
 /// Process exit code returned when available memory is below [`MIN_AVAILABLE_MEMORY_MB`].
 ///
