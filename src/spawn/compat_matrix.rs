@@ -14,8 +14,7 @@ pub fn codex_capabilities(version: &ExecutorVersion) -> ExecutorCapabilities {
         caps.supports_ask_for_approval_flag = false;
         caps.default_flags
             .extend(["-a".to_string(), "never".to_string()]);
-        caps.removed_flags
-            .push("--ask-for-approval".to_string());
+        caps.removed_flags.push("--ask-for-approval".to_string());
     } else if version.is_at_least(0, 130, 0) {
         caps.supports_mcp_map = false;
         caps.supports_ask_for_approval_flag = true;
@@ -40,8 +39,7 @@ pub fn claude_capabilities(version: &ExecutorVersion) -> ExecutorCapabilities {
         caps.default_flags
             .extend(["--output-format".to_string(), "json".to_string()]);
     } else {
-        caps.default_flags
-            .push("--output-format=json".to_string());
+        caps.default_flags.push("--output-format=json".to_string());
     }
     caps
 }
@@ -63,7 +61,9 @@ mod tests {
         let v = ExecutorVersion::parse("0.137.0").unwrap();
         let caps = codex_capabilities(&v);
         assert!(!caps.supports_ask_for_approval_flag);
-        assert!(caps.removed_flags.contains(&"--ask-for-approval".to_string()));
+        assert!(caps
+            .removed_flags
+            .contains(&"--ask-for-approval".to_string()));
     }
 
     #[test]

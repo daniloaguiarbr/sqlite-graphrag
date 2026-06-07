@@ -40,7 +40,7 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     let init = TextInitOptions::new(EmbeddingModel::MultilingualE5Small)
         .with_cache_dir(model_root)
         .with_execution_providers(vec![CPUExecutionProvider::default().into()])
-        .with_max_length(EMBEDDING_MAX_TOKENS as usize);
+        .with_max_length(EMBEDDING_MAX_TOKENS);
 
     let embedder = TextEmbedding::try_new(init).map_err(|e| {
         AppError::Embedding(format!("failed to initialise fastembed TextEmbedding: {e}"))
@@ -49,15 +49,12 @@ pub fn get_embedder(models_dir: &Path) -> Result<&'static Mutex<TextEmbedding>, 
     Ok(EMBEDDER.get().expect("EMBEDDER initialised above"))
 }
 
-pub fn embed_passage(
-    embedder: &Mutex<TextEmbedding>,
-    text: &str,
-) -> Result<Vec<f32>, AppError> {
+pub fn embed_passage(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let mut guard = embedder.lock();
     let prefixed = format!("{PASSAGE_PREFIX}{text}");
-    let docs = vec![prefixed.as_str()];
+    let docs: [&str; 1] = [prefixed.as_str()];
     let embeddings = guard
-        .embed(docs.iter(), Some(FASTEMBED_BATCH_SIZE))
+        .embed(docs, Some(FASTEMBED_BATCH_SIZE))
         .map_err(|e| AppError::Embedding(format!("embed_passage failed: {e}")))?;
     if embeddings.is_empty() {
         return Err(AppError::Embedding(
@@ -67,15 +64,12 @@ pub fn embed_passage(
     Ok(normalise_dim(embeddings.into_iter().next().unwrap()))
 }
 
-pub fn embed_query(
-    embedder: &Mutex<TextEmbedding>,
-    text: &str,
-) -> Result<Vec<f32>, AppError> {
+pub fn embed_query(embedder: &Mutex<TextEmbedding>, text: &str) -> Result<Vec<f32>, AppError> {
     let mut guard = embedder.lock();
     let prefixed = format!("{QUERY_PREFIX}{text}");
-    let docs = vec![prefixed.as_str()];
+    let docs: [&str; 1] = [prefixed.as_str()];
     let embeddings = guard
-        .embed(docs.iter(), Some(FASTEMBED_BATCH_SIZE))
+        .embed(docs, Some(FASTEMBED_BATCH_SIZE))
         .map_err(|e| AppError::Embedding(format!("embed_query failed: {e}")))?;
     if embeddings.is_empty() {
         return Err(AppError::Embedding(

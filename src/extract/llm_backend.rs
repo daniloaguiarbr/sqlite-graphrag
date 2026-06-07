@@ -110,7 +110,17 @@ impl ExtractionBackend for LlmBackend {
             let lower = word.to_ascii_lowercase();
             if matches!(
                 lower.as_str(),
-                "the" | "and" | "for" | "with" | "from" | "this" | "that" | "into" | "sobre" | "para" | "como"
+                "the"
+                    | "and"
+                    | "for"
+                    | "with"
+                    | "from"
+                    | "this"
+                    | "that"
+                    | "into"
+                    | "sobre"
+                    | "para"
+                    | "como"
             ) {
                 continue;
             }
@@ -129,7 +139,11 @@ impl ExtractionBackend for LlmBackend {
         }
 
         if entities.len() > 1 && !hints.skip_relations {
-            for (i, source) in entities.iter().enumerate().take(entities.len().saturating_sub(1)) {
+            for (i, source) in entities
+                .iter()
+                .enumerate()
+                .take(entities.len().saturating_sub(1))
+            {
                 for target in entities.iter().skip(i + 1) {
                     relationships.push(ExtractedRelationship {
                         source: source.name.clone(),

@@ -167,7 +167,6 @@ fn try_acquire_slot(slot: usize) -> Result<File, AppError> {
 /// - If `wait_seconds` is `None` or `Some(0)`, returns immediately with
 ///   `AppError::AllSlotsFull { max, waited_secs: 0 }`.
 /// - If `wait_seconds` is `Some(n) > 0`, enters a polling loop every
-/// v1.0.75 — Adaptive safe-concurrency calculation (G18 solution)
 ///
 /// Returns the maximum number of parallel CLI instances the host can sustain
 /// without thrashing. The formula:

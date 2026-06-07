@@ -29,10 +29,18 @@ impl ExecutorVersion {
         }
         let channel_start = trimmed.find('-');
         let (numeric_part, channel_part) = match channel_start {
-            Some(idx) => (trimmed[..idx].to_string(), Some(trimmed[idx + 1..].to_string())),
+            Some(idx) => (
+                trimmed[..idx].to_string(),
+                Some(trimmed[idx + 1..].to_string()),
+            ),
             None => (trimmed.to_string(), None),
         };
-        let semver = if numeric_part.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        let semver = if numeric_part
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
             Version::from_str(&numeric_part).ok()
         } else {
             None
@@ -58,9 +66,7 @@ impl ExecutorVersion {
 
     pub fn is_at_least(&self, major: u64, minor: u64, patch: u64) -> bool {
         match &self.semver {
-            Some(v) => {
-                (v.major, v.minor, v.patch) >= (major, minor, patch)
-            }
+            Some(v) => (v.major, v.minor, v.patch) >= (major, minor, patch),
             None => false,
         }
     }

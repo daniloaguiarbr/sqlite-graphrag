@@ -59,8 +59,7 @@ impl VersionAdapter for CodexAdapter {
             }
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 items.push(v);
-            } else if let Ok(v) =
-                serde_json::from_str::<serde_json::Value>(&format!("[{trimmed}]"))
+            } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(&format!("[{trimmed}]"))
             {
                 if let Some(arr) = v.as_array() {
                     for item in arr {

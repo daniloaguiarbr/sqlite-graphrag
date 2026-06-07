@@ -23,7 +23,10 @@ fn safe_concurrency_respects_max_ceiling() {
 fn legacy_formula_no_half_margin() {
     // v1.0.75 (G18): 8000 MB / 1000 MB per worker = 8, min(8 cpus, 8) = 8.
     let permits = legacy_calculate(8_000, 8, 1_000, 16);
-    assert_eq!(permits, 8, "halving margin removed: expected 8, got {permits}");
+    assert_eq!(
+        permits, 8,
+        "halving margin removed: expected 8, got {permits}"
+    );
 }
 
 #[test]

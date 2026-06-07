@@ -2,9 +2,7 @@
 //!
 //! Returns empty output for pipelines that want to skip extraction entirely.
 
-use super::{
-    BackendHealth, BackendKind, ExtractionBackend, ExtractionHints, ExtractionOutput,
-};
+use super::{BackendHealth, BackendKind, ExtractionBackend, ExtractionHints, ExtractionOutput};
 use crate::errors::AppError;
 use async_trait::async_trait;
 

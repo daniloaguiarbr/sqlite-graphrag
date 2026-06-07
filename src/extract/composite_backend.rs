@@ -97,7 +97,11 @@ impl ExtractionBackend for CompositeBackend {
                     if !h.healthy {
                         healthy = false;
                     }
-                    messages.push(format!("{}:{}", h.kind.as_str(), if h.healthy { "ok" } else { "degraded" }));
+                    messages.push(format!(
+                        "{}:{}",
+                        h.kind.as_str(),
+                        if h.healthy { "ok" } else { "degraded" }
+                    ));
                 }
                 Err(err) => {
                     healthy = false;
@@ -128,8 +132,7 @@ pub fn backend_from_kind(kind: BackendKind) -> SharedBackend {
         BackendKind::Embedding => Arc::new(super::embedding_backend::EmbeddingBackend::new()),
         BackendKind::None => Arc::new(super::none_backend::NoneBackend::new()),
         BackendKind::Composite => {
-            let llm: SharedBackend =
-                Arc::new(super::llm_backend::LlmBackend::with_default_codex());
+            let llm: SharedBackend = Arc::new(super::llm_backend::LlmBackend::with_default_codex());
             let embedding: SharedBackend =
                 Arc::new(super::embedding_backend::EmbeddingBackend::new());
             Arc::new(CompositeBackend::new(vec![llm, embedding]))

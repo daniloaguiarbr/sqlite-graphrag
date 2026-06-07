@@ -46,8 +46,10 @@ async fn llm_backend_skips_short_input() {
 #[tokio::test]
 async fn llm_backend_clamps_relations_on_skip() {
     let backend = LlmBackend::with_default_codex();
-    let mut hints = ExtractionHints::default();
-    hints.skip_relations = true;
+    let hints = ExtractionHints {
+        skip_relations: true,
+        ..ExtractionHints::default()
+    };
     let output = backend
         .extract("rust tokio sqlite graphrag memory tool", &hints)
         .await
@@ -79,8 +81,7 @@ async fn none_backend_returns_empty() {
 async fn composite_backend_merges_outputs() {
     let llm: Arc<dyn sqlite_graphrag::extract::ExtractionBackend> =
         Arc::new(LlmBackend::with_default_codex());
-    let none: Arc<dyn sqlite_graphrag::extract::ExtractionBackend> =
-        Arc::new(NoneBackend::new());
+    let none: Arc<dyn sqlite_graphrag::extract::ExtractionBackend> = Arc::new(NoneBackend::new());
     let composite = CompositeBackend::new(vec![llm, none]);
     let hints = ExtractionHints::default();
     let output = composite
@@ -114,10 +115,16 @@ async fn backend_from_kind_dispatch() {
 async fn backend_kind_parse() {
     assert_eq!(BackendKind::parse("llm"), Some(BackendKind::Llm));
     assert_eq!(BackendKind::parse("LLM"), Some(BackendKind::Llm));
-    assert_eq!(BackendKind::parse("embedding"), Some(BackendKind::Embedding));
+    assert_eq!(
+        BackendKind::parse("embedding"),
+        Some(BackendKind::Embedding)
+    );
     assert_eq!(BackendKind::parse("none"), Some(BackendKind::None));
     assert_eq!(BackendKind::parse("both"), Some(BackendKind::Composite));
-    assert_eq!(BackendKind::parse("composite"), Some(BackendKind::Composite));
+    assert_eq!(
+        BackendKind::parse("composite"),
+        Some(BackendKind::Composite)
+    );
     assert_eq!(BackendKind::parse("bogus"), None);
 }
 

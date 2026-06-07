@@ -452,22 +452,46 @@ fn request_if_available(
                 err.kind(),
                 std::io::ErrorKind::NotFound
                     | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
                     | std::io::ErrorKind::AddrNotAvailable
                     | std::io::ErrorKind::TimedOut
             ) =>
         {
+            // v1.0.75: ConnectionReset is what the kernel returns when the socket
+            // file exists but the daemon was killed (e.g., by `daemon --stop` or
+            // an upgrade auto-restart) between connect and handshake. Treat it as
+            // "daemon not available" and fall through to the local embedder.
             return Ok(None);
         }
         Err(err) => return Err(AppError::Io(err)),
     };
 
-    serde_json::to_writer(&mut stream, request).map_err(AppError::Json)?;
-    stream.write_all(b"\n").map_err(AppError::Io)?;
-    stream.flush().map_err(AppError::Io)?;
+    if let Err(err) = serde_json::to_writer(&mut stream, request) {
+        // serde_json serialisation errors are deterministic (caller bug), not
+        // daemon-gone, so surface them as JSON errors.
+        return Err(AppError::Json(err));
+    }
+    if let Err(err) = stream.write_all(b"\n") {
+        if is_daemon_gone(&err) {
+            return Ok(None);
+        }
+        return Err(AppError::Io(err));
+    }
+    if let Err(err) = stream.flush() {
+        if is_daemon_gone(&err) {
+            return Ok(None);
+        }
+        return Err(AppError::Io(err));
+    }
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(AppError::Io)?;
+    if let Err(err) = reader.read_line(&mut line) {
+        if is_daemon_gone(&err) {
+            return Ok(None);
+        }
+        return Err(AppError::Io(err));
+    }
     if line.trim().is_empty() {
         return Err(AppError::Embedding(
             "daemon returned an empty response".into(),
@@ -483,6 +507,19 @@ fn should_autostart(cli_flag: bool) -> bool {
         return false; // explicit CLI override wins
     }
     !autostart_disabled_by_env()
+}
+
+/// Returns true when an I/O error indicates the daemon died mid-request
+/// (Connection reset, broken pipe, hung up). Callers should treat these
+/// as "daemon not available" and fall back to the local embedder instead
+/// of surfacing a hard I/O error to the user.
+fn is_daemon_gone(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionAborted
+    )
 }
 
 /// Checks whether a running daemon has a different version from the current CLI binary.
@@ -576,6 +613,14 @@ fn request_or_autostart(
     // ORDERING: Acquire pairs with the Release store in maybe_restart_for_version_mismatch.
     if DAEMON_VERSION_STATE.load(Ordering::Acquire) == VERSION_NOT_CHECKED {
         maybe_restart_for_version_mismatch(models_dir)?;
+        // v1.0.75 (G22 follow-up): after a version-mismatch restart, the new daemon
+        // is detached and may not be listening yet. Wait for the socket to be live
+        // before issuing the first request, otherwise the client races the spawn
+        // and gets "Connection reset by peer" (IO error 104) on a freshly-killed
+        // socket.
+        if DAEMON_VERSION_STATE.load(Ordering::Acquire) == VERSION_RESTART_ATTEMPTED {
+            wait_for_daemon_ready(models_dir)?;
+        }
     }
 
     if let Some(response) = request_if_available(models_dir, request)? {
@@ -588,6 +633,12 @@ fn request_or_autostart(
     }
 
     if !ensure_daemon_running(models_dir)? {
+        return Ok(None);
+    }
+
+    // v1.0.75: ensure_daemon_running may have just spawned a fresh daemon; wait
+    // for the new socket to be live before issuing the request.
+    if !wait_for_daemon_ready(models_dir)? {
         return Ok(None);
     }
 

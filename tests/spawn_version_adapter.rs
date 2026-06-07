@@ -2,7 +2,8 @@
 
 use sqlite_graphrag::spawn::{
     claude_adapter::ClaudeAdapter, codex_adapter::CodexAdapter, compat_matrix,
-    executor_version::ExecutorVersion, opencode_adapter::OpencodeAdapter, CompatMode, VersionAdapter,
+    executor_version::ExecutorVersion, opencode_adapter::OpencodeAdapter, CompatMode,
+    VersionAdapter,
 };
 
 #[tokio::test]
@@ -10,7 +11,9 @@ async fn codex_137_caps_removed_old_flag() {
     let v = ExecutorVersion::parse("0.137.0").unwrap();
     let caps = compat_matrix::codex_capabilities(&v);
     assert!(!caps.supports_ask_for_approval_flag);
-    assert!(caps.removed_flags.contains(&"--ask-for-approval".to_string()));
+    assert!(caps
+        .removed_flags
+        .contains(&"--ask-for-approval".to_string()));
 }
 
 #[tokio::test]

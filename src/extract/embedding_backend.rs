@@ -3,9 +3,7 @@
 //! v1.0.74 behaviour preserved for users opting into the
 //! `embedding-legacy` feature. Compiles to a stub on default builds.
 
-use super::{
-    BackendHealth, BackendKind, ExtractionBackend, ExtractionHints, ExtractionOutput,
-};
+use super::{BackendHealth, BackendKind, ExtractionBackend, ExtractionHints, ExtractionOutput};
 use crate::errors::AppError;
 use async_trait::async_trait;
 
@@ -104,8 +102,9 @@ impl ExtractionBackend for EmbeddingBackend {
                 kind: self.kind(),
                 healthy: false,
                 model_name: self.model_name.clone(),
-                message: "embedding-legacy feature disabled; build with --features embedding-legacy"
-                    .to_string(),
+                message:
+                    "embedding-legacy feature disabled; build with --features embedding-legacy"
+                        .to_string(),
             })
         }
     }

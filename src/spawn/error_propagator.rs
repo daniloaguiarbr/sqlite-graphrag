@@ -27,11 +27,7 @@ impl ErrorPropagator {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let code = output.status.code().unwrap_or(-1);
-        let mut msg = format!(
-            "{} exited with code {}",
-            self.binary,
-            code
-        );
+        let mut msg = format!("{} exited with code {}", self.binary, code);
         if !stderr.trim().is_empty() {
             msg.push_str(&format!("\nstderr: {}", stderr.trim()));
         }
