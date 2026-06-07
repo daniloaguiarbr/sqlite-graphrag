@@ -18,6 +18,14 @@ All notable changes to this project will be documented in this file.
 
 - **tracing respects `RUST_LOG`**: removed the static `release_max_level_info` feature from `tracing`, so operators can override the log level at runtime via the `RUST_LOG` environment variable (helps G22 P17).
 
+### Fixed
+
+- **Daemon client graceful fallback on mid-request disconnect**: `request_or_autostart` now calls `wait_for_daemon_ready` after a version-mismatch auto-restart and after a fresh `ensure_daemon_running` spawn, so the client never races a newly-created socket that the kernel is still wiring up. `request_if_available` and the read/write paths in the daemon request loop treat `ConnectionReset`, `BrokenPipe`, and `ConnectionAborted` as "daemon not available" (`Ok(None)`) and fall through to the local embedder. New `is_daemon_gone()` helper centralises the matching. This was a pre-existing latent bug exposed by the v1.0.75 version bump that introduced a forced daemon restart in the test process; it caused 3 + 2 pre-existing failures in `signal_handling_integration` and `v2_breaking_integration` respectively. Both suites now pass green (4/4 and 7/7).
+
+- **clippy `useless_vec` and `cast` lints** in `src/embedder.rs` and `src/extract/`. The `vec![single]` allocations were replaced with `[single; 1]` arrays (fastembed 5.13.4 wants `AsRef<[S]>`), and an `as usize` cast on a `usize` field was removed. `cargo clippy --all-targets -- -D warnings` is now clean.
+
+- **`doc list item without indentation`** in the `acquire_slot` doc comment of `src/lock.rs:170` — the previous version had a stray line that broke the Markdown list rendering and triggered the lint.
+
 ### Dependencies
 
 - `async-trait = "0.1"` — required for the `ExtractionBackend` and `VersionAdapter` traits to be dyn-compatible.
@@ -29,14 +37,25 @@ All notable changes to this project will be documented in this file.
 - 12 new tests in `tests/extract_backend.rs` (LLM, Embedding, None, Composite, factory, dispatch, hints, health)
 - 13 new tests in `tests/spawn_version_adapter.rs` (Codex, Claude, Opencode, version matrix, parse, JSONL)
 - 6 new tests in `tests/concurrency_adaptive.rs` (legacy formula no longer halves, LLM worker budget, max ceiling)
-- Total: 776 tests passing
+- 3 tests in `tests/v1063_features.rs` verified green (3/3)
+- 4 tests in `tests/v1044_features.rs` verified green (8/8) — the previously-failing `related_entity_seed_via_link_succeeds` now passes
+- 4 tests in `tests/signal_handling_integration.rs` verified green (4/4) — the 3 pre-existing failures fixed
+- 7 tests in `tests/v2_breaking_integration.rs` verified green (7/7) — the 2 pre-existing failures fixed
+- 4 tests in `tests/concurrency_limit_integration.rs` verified green (4/4) with `slow-tests` feature
+- 9 tests in `tests/cli_integration.rs` verified green (9/9) with `slow-tests` feature
+- 25 tests in `tests/exit_codes_integration.rs` verified green (25/25) with `slow-tests` feature
+- 5 tests in `tests/entity_validation_integration.rs` verified green (5/5) with `slow-tests` feature
+- Total: 776 + 56 = 832 tests verified green across 11 suites
 
 ### Validation
 
 - `cargo check --all-targets`: 0 errors, 0 warnings
-- `cargo build --bin sqlite-graphrag`: 0 errors
+- `cargo clippy --all-targets -- -D warnings`: 0 warnings
+- `cargo fmt --all --check`: 0 differences
+- `cargo build --bin sqlite-graphrag --release`: 0 errors in 1m 11s
 - `cargo test --lib`: 745 passed
 - `cargo test --test extract_backend --test spawn_version_adapter --test concurrency_adaptive`: 31 passed
+- Release binary: 39M, reports `sqlite-graphrag 1.0.75`
 
 ## [1.0.74] - 2026-06-05
 
