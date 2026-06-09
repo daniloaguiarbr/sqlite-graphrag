@@ -29,6 +29,22 @@
 - `cargo test --workspace --features slow-tests` — runs the full contract suite including the 832-test integration matrix.
 
 
+## v1.0.78 Test Additions — G41 Fix Coverage
+### Test Count Delta
+- v1.0.77 baseline: 723 lib tests passing
+- v1.0.78 final: 726 lib tests passing (+3 new unit, +1 updated unit)
+### Unit Tests in `src/commands/migrate.rs`
+- `rehash_does_not_insert_missing_migrations` — verifies `run_rehash` no longer inserts phantom rows for unapplied migrations (UPDATED from `rehash_insert_includes_applied_on`)
+- `ensure_v013_tables_noop_when_no_history` — verifies no-op when `refinery_schema_history` does not exist
+- `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists
+- `ensure_v013_tables_creates_when_phantom` — verifies repair when V013 is in history but tables are missing
+### Coverage Rationale
+- G41 fixed a bug where `run_rehash` registered V013 as applied without executing its SQL
+- The updated test validates that the `else` branch removal is correct
+- The 3 new tests cover the `ensure_v013_tables_exist` helper for all 3 scenarios (no history, tables exist, phantom)
+- Auto-repair in `ensure_db_ready` is covered transitively via the ensure helper
+
+
 ## v1.0.77 Test Additions — G40 Fix Coverage
 ### Test Count Delta
 - v1.0.76 baseline: 719 lib tests passing
@@ -36,7 +52,7 @@
 ### Unit Tests in `src/commands/migrate.rs`
 - `sanitize_null_applied_on_fixes_null_rows` — verifies NULL `applied_on` rows get fixed
 - `sanitize_null_applied_on_noop_when_all_filled` — verifies no-op when no NULLs exist
-- `rehash_insert_includes_applied_on` — verifies INSERT now includes `applied_on`
+- `rehash_insert_includes_applied_on` — verifies INSERT now includes `applied_on` (renamed to `rehash_does_not_insert_missing_migrations` in v1.0.78)
 - `remove_vec_tables_noop_when_no_vec` — verifies no-op when no vec tables exist
 ### Integration Tests in `tests/schema_migration_integration.rs`
 - `migrate_rehash_fixes_null_applied_on` — end-to-end rehash with NULL fix

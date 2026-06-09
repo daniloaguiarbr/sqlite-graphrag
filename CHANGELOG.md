@@ -10,6 +10,28 @@ All notable changes to this project will be documented in this file.
 
 - **Daemon infrastructure fully removed**: `src/daemon.rs` (1120 lines), `src/commands/daemon.rs` (79 lines), `tests/daemon_integration.rs` (316 lines) deleted. `DaemonOpts` struct and `--autostart-daemon` flag removed from all command args. All `crate::daemon::embed_*_or_local` calls replaced with direct `crate::embedder::embed_*_local` wrappers. CLI is now 100% one-shot with zero IPC. 8 daemon constants removed from `src/constants.rs`. Net removal: ~764 lines.
 
+## [1.0.78] - 2026-06-09
+
+### Fixed
+
+- **G41**: `run_rehash` no longer inserts phantom rows for unapplied migrations — the `else` branch that caused V013 to be registered without executing its SQL has been removed
+- **G41 repair**: new helper `ensure_v013_tables_exist` detects and repairs databases where V013 was registered in `refinery_schema_history` but the BLOB-backed embedding tables (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`) were never created
+- Auto-repair integrated in `ensure_db_ready` — any CRUD command now heals G41-corrupted databases unconditionally
+
+### Added
+
+- Field `v013_tables_created` (boolean) in `RehashReport` and `ToLlmOnlyReport` JSON responses
+- 3 new unit tests for `ensure_v013_tables_exist` (noop, phantom repair, no history)
+- 1 updated unit test: `rehash_does_not_insert_missing_migrations` (replaces the test that validated buggy behavior)
+- ADR-0028 documenting the G41 fix and repair strategy
+
+### Migration
+
+- Upgrade: `cargo install sqlite-graphrag --version 1.0.78 --force`
+- Auto-repair is unconditional: any command (`remember`, `recall`, etc.) heals G41-corrupted databases
+- Explicit repair: `sqlite-graphrag migrate --rehash` or `migrate --to-llm-only --drop-vec-tables`
+- No manual SQL intervention needed
+
 ## [1.0.77] - 2026-06-09
 
 ### Fixed

@@ -211,6 +211,20 @@
 - `docs/COOKBOOK.md` ganhou subseção "v1.0.77 Fix" na receita de upgrade
 - `docs/MIGRATION.md` ganhou seção "MIGRATING TO v1.0.77 — G40 Fix" no topo
 
+### Mudanças na Camada 2 a Partir da v1.0.78
+- ADR-0028 documenta a correção do G41 (`run_rehash` registrava V013 sem executar SQL), com versão PT-BR
+- `docs/schemas/migrate-rehash.schema.json` atualizado com campo `v013_tables_created`
+- `docs/schemas/migrate-to-llm-only.schema.json` atualizado com campo `v013_tables_created`
+- `docs/AGENTS.md` ganhou seção "New in v1.0.78" cobrindo o G41 fix
+- `docs/AGENTS.pt-BR.md` ganhou seção "Novidades na v1.0.78" cobrindo o G41 fix
+- `docs/TESTING.md` ganhou seção "v1.0.78 Test Additions — G41 Fix Coverage"
+- `docs/TESTING.pt-BR.md` ganhou seção correspondente em português
+- `docs/COOKBOOK.md` ganhou subseção "v1.0.78 Fix" na receita de upgrade
+- `docs/COOKBOOK.pt-BR.md` ganhou subseção correspondente em português
+- `docs/MIGRATION.md` ganhou seção "MIGRATING TO v1.0.78 — G41 Phantom V013 Registration Fix" no topo
+- `docs/MIGRATION.pt-BR.md` ganhou seção correspondente em português
+- `README.md` e `README.pt-BR.md` atualizados para "Current release: v1.0.78"
+
 ### Objetivo e Entrega de Cada Arquivo da Pasta docs/
 
 #### docs/AGENTS.md + docs/AGENTS.pt-BR.md

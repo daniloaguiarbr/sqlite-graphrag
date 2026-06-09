@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.rs/sqlite-graphrag/schemas/migrate-rehash.schema.json",
   "title": "sqlite-graphrag migrate --rehash response",
-  "description": "JSON contract for the `migrate --rehash --json` subcommand added in v1.0.76, updated in v1.0.77 with null_rows_fixed (G40 sanitization). Rewrites recorded migration checksums in refinery_schema_history to match the current migration file content using SipHasher13. Required for v1.0.74 databases upgrading to v1.0.76 because V002 was intentionally emptied to a no-op.",
+  "description": "JSON contract for the `migrate --rehash --json` subcommand added in v1.0.76, updated in v1.0.77 with null_rows_fixed (G40 sanitization), updated in v1.0.78 with v013_tables_created (G41 phantom registration repair). Rewrites recorded migration checksums in refinery_schema_history to match the current migration file content using SipHasher13. Required for v1.0.74 databases upgrading to v1.0.76 because V002 was intentionally emptied to a no-op.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action", "rewritten", "skipped", "errors", "elapsed_ms"],
+  "required": ["action", "rewritten", "skipped", "errors", "v013_tables_created", "elapsed_ms"],
   "properties": {
     "action": {
       "type": "string",
@@ -55,6 +55,10 @@
       "minimum": 0,
       "description": "Number of refinery_schema_history rows where applied_on was NULL and got fixed with the current UTC timestamp. Added in v1.0.77 to report G40 sanitization."
     },
+    "v013_tables_created": {
+      "type": "boolean",
+      "description": "True if the BLOB-backed embedding tables (memory_embeddings, entity_embeddings, chunk_embeddings) were created by the G41 repair helper because V013 was registered in history but the tables did not exist. Added in v1.0.78."
+    },
     "elapsed_ms": {
       "type": "integer",
       "minimum": 0
@@ -67,6 +71,7 @@
       "skipped": 12,
       "errors": [],
       "null_rows_fixed": 0,
+      "v013_tables_created": false,
       "namespace": "global",
       "db_path": "/home/user/graphrag.sqlite",
       "elapsed_ms": 8

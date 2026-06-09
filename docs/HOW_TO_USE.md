@@ -203,9 +203,11 @@ includes the schema and the response is larger).
 - `optimize --yes` skips the confirmation prompt. Required for non-interactive CI.
 - `backup` defaults to `run_to_completion(1000, Duration::from_millis(5), None)` (was 100/50ms). For a 4.3 GB database this is a 25x speedup (~21s vs ~9 min).
 - `backup --backup-step-size <PAGES>` and `--backup-step-sleep-ms <MS>` tune the page-copy granularity. `--backup-no-sleep` removes the inter-step sleep entirely for maximum throughput. `--backup-progress <PAGES>` (default 100) emits a progress line every N pages.
-### `migrate` Subcommand Family (v1.0.76)
+### `migrate` Subcommand Family (v1.0.76, updated v1.0.77 and v1.0.78)
 - `migrate --rehash --json` rewrites recorded migration checksums to match the current file content. Idempotent. Required for v1.0.74 → v1.0.76 upgrades where the V002 migration was intentionally emptied to a no-op.
 - `migrate --to-llm-only --drop-vec-tables --json` is the one-shot upgrade for v1.0.74 / v1.0.75 databases. Combines `--rehash` with the V013 vec-table drop. The `--drop-vec-tables` flag is REQUIRED as an explicit safety guard. The BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables remain and are the source of truth going forward; embeddings are recomputed lazily on the next `remember` / `edit` / `ingest`.
+- v1.0.77 fix (G40): JSON response for both commands now includes `null_rows_fixed` (integer) and `vec_tables_removed_via_writable_schema` (integer). Databases with `applied_on = NULL` rows are auto-sanitized before the migration runner executes.
+- v1.0.78 fix (G41): JSON response for both commands now includes `v013_tables_created` (boolean). Databases where V013 was registered in `refinery_schema_history` but the BLOB-backed embedding tables were never created are auto-repaired. Any CRUD command also triggers this repair unconditionally via `ensure_db_ready`.
 
 
 ## Migration from v1.0.74 / v1.0.75

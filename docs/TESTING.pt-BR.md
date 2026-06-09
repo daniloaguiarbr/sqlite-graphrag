@@ -29,6 +29,22 @@
 - `cargo test --workspace --features slow-tests` — roda a suíte completa de contratos incluindo a matriz de integração de 832 testes.
 
 
+## Adições de Testes v1.0.78 — Cobertura da Correção G41
+### Delta de Contagem de Testes
+- Linha de base v1.0.77: 723 testes de lib passando
+- v1.0.78 final: 726 testes de lib passando (+3 novos unitários, +1 unitário atualizado)
+### Testes Unitários em `src/commands/migrate.rs`
+- `rehash_does_not_insert_missing_migrations` — verifica que `run_rehash` não insere mais linhas fantasma para migrações não aplicadas (ATUALIZADO de `rehash_insert_includes_applied_on`)
+- `ensure_v013_tables_noop_when_no_history` — verifica no-op quando `refinery_schema_history` não existe
+- `ensure_v013_tables_noop_when_tables_exist` — verifica no-op quando `memory_embeddings` já existe
+- `ensure_v013_tables_creates_when_phantom` — verifica reparo quando V013 está no histórico mas as tabelas não existem
+### Justificativa de Cobertura
+- G41 corrigiu um bug onde `run_rehash` registrava V013 como aplicada sem executar o SQL
+- O teste atualizado valida que a remoção do branch `else` está correta
+- Os 3 novos testes cobrem o helper `ensure_v013_tables_exist` para os 3 cenários (sem histórico, tabelas existem, phantom)
+- Reparo automático em `ensure_db_ready` é coberto transitivamente via o helper ensure
+
+
 ## Adições de Testes v1.0.77 — Cobertura da Correção G40
 ### Delta de Contagem de Testes
 - Linha de base v1.0.76: 719 testes de lib passando
@@ -36,7 +52,7 @@
 ### Testes Unitários em `src/commands/migrate.rs`
 - `sanitize_null_applied_on_fixes_null_rows` — verifica que linhas com `applied_on` NULL são corrigidas
 - `sanitize_null_applied_on_noop_when_all_filled` — verifica no-op quando não há NULLs
-- `rehash_insert_includes_applied_on` — verifica que INSERT agora inclui `applied_on`
+- `rehash_insert_includes_applied_on` — verifica que INSERT agora inclui `applied_on` (renomeado para `rehash_does_not_insert_missing_migrations` na v1.0.78)
 - `remove_vec_tables_noop_when_no_vec` — verifica no-op quando não há tabelas vec
 ### Testes de Integração em `tests/schema_migration_integration.rs`
 - `migrate_rehash_fixes_null_applied_on` — rehash end-to-end com correção de NULL

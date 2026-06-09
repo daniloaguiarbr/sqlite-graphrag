@@ -115,10 +115,20 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 - Veja ADR-0027 para a justificativa completa.
 
 ### PROIBIDO — Antipadrões da v1.0.76
-- NUNCA instale a v1.0.76 com `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn aborta.
-- NUNCA dependa do daemon em código novo; o daemon será REMOVIDO na v1.1.0.
-- NUNCA misture queries em `vec_memories` / `vec_entities` / `vec_chunks` (removidas na v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` no lugar.
-- NUNCA use `migrate --to-llm-only` sem `--drop-vec-tables`; a rede de segurança recusa a operação caso contrário.
+- NUNCA instale a v1.0.76 com `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn aborta
+- NUNCA dependa do daemon em código novo; o daemon será REMOVIDO na v1.1.0
+- NUNCA misture queries em `vec_memories` / `vec_entities` / `vec_chunks` (removidas na v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` no lugar
+- NUNCA use `migrate --to-llm-only` sem `--drop-vec-tables`; a rede de segurança recusa a operação caso contrário
+
+
+## Novidades na v1.0.78
+### OBRIGATÓRIO — Correção G41: `run_rehash` Registrava V013 Sem Executar o SQL
+- O branch `else` em `run_rehash` (migrate.rs:272-281) que inseria linhas fantasma para migrações não aplicadas foi removido
+- Novo helper `ensure_v013_tables_exist` detecta bancos onde V013 está em `refinery_schema_history` mas as tabelas BLOB-backed (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`) nunca foram criadas, e executa o SQL de V013 diretamente
+- Reparo automático integrado em `ensure_db_ready` (connection.rs) — qualquer comando CRUD repara bancos corrompidos por G41 incondicionalmente, mesmo quando `user_version=50` pularia o bloco de migração
+- Resposta JSON de `migrate --rehash` e `migrate --to-llm-only` agora inclui `v013_tables_created` (boolean)
+- 3 novos testes unitários e 1 teste unitário atualizado cobrem a correção
+- Veja ADR-0028 para a justificativa completa
 
 
 ## Novidades na v1.0.68

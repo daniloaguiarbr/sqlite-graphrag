@@ -98,6 +98,11 @@ pub fn ensure_db_ready(paths: &AppPaths) -> Result<(), AppError> {
         ensure_wal_mode(&conn)?;
     }
 
+    // G41 repair: if V013 is in history but embedding tables are missing,
+    // execute V013 SQL directly. Runs unconditionally because databases
+    // corrupted by G41 already have user_version=50 and skip the block above.
+    crate::commands::migrate::ensure_v013_tables_exist(&conn)?;
+
     Ok(())
 }
 

@@ -1,158 +1,168 @@
 # Gaps — sqlite-graphrag CLI
 
 
-## G40 — `migrate --rehash` insere linha com `applied_on = NULL` que bloqueia toda migração subsequente
-### Status: RESOLVIDO na v1.0.77
-### Severidade: CRITICAL
-### Versão afetada: v1.0.76
+## G41 — `run_rehash` registra V013 como aplicada sem executar o SQL — tabelas BLOB-backed nunca são criadas
+### Status: RESOLVIDO (v1.0.78)
+### Severidade: CRÍTICA — bloqueia `recall`, `hybrid-search`, `remember` e qualquer operação que dependa de embeddings
+### Versões afetadas: v1.0.76, v1.0.77
+### Versão da correção: v1.0.78
 ### Data de identificação: 2026-06-09
-### Data de resolução: 2026-06-09
+### Arquivo raiz: `src/commands/migrate.rs:272-281`
+
 
 ### Problema
-- O comando `migrate --rehash` insere linhas novas em `refinery_schema_history` SEM preencher o campo `applied_on`
-- Quando a migração V013 NUNCA foi aplicada no banco, o `run_rehash` detecta a ausência da linha 13 e cria um registro placeholder
-- Esse registro contém APENAS `version`, `name` e `checksum` — o campo `applied_on` fica NULL
-- Na execução SEGUINTE de `runner().run()`, o refinery-core 0.9.1 chama `get_applied_migrations` que lê TODAS as linhas da tabela
-- O driver rusqlite do refinery faz `let applied_on: String = row.get(2)?` (tipo `String`, NÃO `Option<String>`)
-- Quando `applied_on` é NULL, `row.get::<_, String>(2)` falha com `InvalidColumnType(Null at index: 2, name: applied_on)`
-- A partir desse ponto, QUALQUER comando que invoque o migration runner aborta com exit code 20
+- O comando `migrate --rehash` (e `migrate --to-llm-only`) registra V013 em `refinery_schema_history` como "já aplicada" SEM executar o SQL de V013
+- O `runner().run()` subsequente vê V013 no histórico e a PULA
+- As tabelas `memory_embeddings`, `entity_embeddings` e `chunk_embeddings` NUNCA são criadas
+- O banco fica em estado inconsistente: sem tabelas vec (removidas) E sem tabelas BLOB-backed (nunca criadas)
+- Toda operação que toca embeddings falha com exit 10: `no such table: memory_embeddings`
+
 
 ### Consequências do Problema
-- `migrate --to-llm-only --drop-vec-tables` falha imediatamente após o rehash interno
-- `migrate` sem flags falha com o mesmo erro
-- TODOS os comandos que dependem do runner de migração ficam bloqueados
-- O operador entra em loop destrutivo: tenta `--rehash`, que reinsere a linha fantasma, que bloqueia o runner de novo
-- Remoção manual da linha via `sqlite3` funciona, mas o próximo `migrate` reinsere a linha com NULL
-- Cenário real: bloqueio de ~28 horas na máquina do operador (incidente de 2026-06-09)
-- O banco inteiro fica inacessível para operações de escrita que passam pelo runner
+- `hybrid-search` falha com `no such table: memory_embeddings` (exit 10)
+- `recall` falha com o mesmo erro — busca vetorial impossível
+- `remember` e `edit` falham ao tentar gravar embeddings — novas memórias não são indexáveis
+- `ingest --mode claude-code` falha ao tentar inserir embeddings extraídos
+- `health --json` reporta `vec_memories_ok: false`, `vec_entities_ok: false`, `vec_chunks_ok: false`
+- `schema_meta` indica `schema_version: 13` mas as tabelas de V013 NÃO existem
+- O operador acredita que a migração foi bem-sucedida (exit 0, `status: "ok"`) mas o banco está quebrado
+- Rodar `migrate --rehash` novamente NÃO corrige — V013 já está no histórico (INSERT OR IGNORE é no-op)
+- Rodar `migrate` sem flags NÃO corrige — runner vê V013 como aplicada e pula
+- CICLO SEM SAÍDA: o operador não tem nenhum comando que execute o SQL de V013
 
-### Causa Raiz do Problema
-- Localização exata: `src/commands/migrate.rs:263-266`
-- O código:
-```rust
-conn.execute(
-    "INSERT OR IGNORE INTO refinery_schema_history (version, name, checksum) VALUES (?1, ?2, ?3)",
-    rusqlite::params![version, name, new_checksum.to_string()],
-)?;
-```
-- O INSERT omite o campo `applied_on`
-- O schema da tabela (definido pelo refinery-core em `traits/mod.rs:108-112`) declara `applied_on VARCHAR(255)` SEM constraint `NOT NULL`
-- O SQLite aceita o INSERT com `applied_on = NULL` sem erro
-- PORÉM o driver rusqlite do refinery (`drivers/rusqlite.rs:16`) EXIGE `String` (NOT NULL) ao ler o campo
-- Essa incompatibilidade entre escrita (permite NULL) e leitura (exige NOT NULL) é o defeito estrutural
+
+### Causa Raiz
+- `run_rehash` (migrate.rs:239) itera TODAS as 13 migrações via `crate::migrations::runner().get_migrations()`
+- Para cada migração, verifica se existe em `refinery_schema_history` (linha 248-254)
+- Se a migração NÃO existe no histórico (branch `else` na linha 272), INSERE a linha com checksum calculado
+- Esse INSERT marca a migração como "já aplicada" para o refinery-core
+- refinery-core 0.9.1 usa `get_applied_migrations()` que lê `refinery_schema_history`
+- O `Runner::run()` compara migrações do filesystem com o histórico e PULA as que já têm entrada
+- Resultado: V013 é registrada mas NUNCA executada — as 3 tabelas + 4 índices + 2 inserts de schema_meta do SQL nunca rodam
+
 
 ### Cadeia Causa-Efeito Completa
 ```
-CAUSA: run_rehash insere linha sem applied_on
+CAUSA RAIZ: run_rehash itera TODAS as migrações, incluindo as NÃO aplicadas
   ↓
-EFEITO: linha 13 gravada com applied_on = NULL
+EFEITO: INSERT OR IGNORE na linha 278 grava V013 em refinery_schema_history
   ↓
-CAUSA: runner().run() chama get_applied_migrations()
+CAUSA: runner().run() chama get_applied_migrations() do refinery-core
   ↓
-EFEITO: query SELECT lê TODAS as linhas incluindo a com NULL
+EFEITO: refinery-core vê V013 no histórico → considera "já aplicada"
   ↓
-CAUSA: driver rusqlite faz row.get::<_, String>(2) na linha com NULL
+EFEITO: runner PULA o SQL de V013 inteiramente
   ↓
-EFEITO: InvalidColumnType(Null at index: 2) → AppError::Internal → exit 20
+EFEITO: CREATE TABLE memory_embeddings / entity_embeddings / chunk_embeddings NUNCA executa
   ↓
-CAUSA: operador tenta migrate --rehash para "consertar"
+EFEITO: CREATE INDEX idx_memory_embeddings_ns / idx_entity_embeddings_ns NUNCA executa
   ↓
-EFEITO: rehash detecta que linha 13 já existe → não reescreve → runner falha de novo
+EFEITO: INSERT schema_meta vec_engine='rust-cosine' NUNCA executa
   ↓
-CAUSA: operador remove linha 13 via sqlite3 e tenta migrate de novo
+CONSEQUÊNCIA: qualquer query a memory_embeddings falha com "no such table"
   ↓
-EFEITO: rehash reinsere linha 13 SEM applied_on → ciclo infinito
+CONSEQUÊNCIA: recall, hybrid-search, remember, edit, ingest → exit 10
+  ↓
+CONSEQUÊNCIA: CLI inutilizável para TODA operação que envolva embeddings
+  ↓
+AGRAVANTE: nenhum comando existente executa o SQL de V013 — ciclo sem saída
 ```
 
-### Agravante — V013 e vec0
-- O problema é AGRAVADO pela interação com a migração V013
-- V013 executa `DROP TABLE IF EXISTS vec_memories` que requer o módulo `vec0`
-- O build LLM-only da v1.0.76 NÃO inclui `vec0`
-- O SQLite aborta com `no such module: vec0` ao tentar DROP em virtual tables
-- O refinery-core NÃO faz rollback da transação de INSERT do histórico quando o SQL falha no modo NÃO-batched (linhas 84-99 de `sync.rs`)
-- Na prática o INSERT do histórico (índice ímpar) e o SQL da migração (índice par) rodam em transações SEPARADAS por iteração
-- Se o SQL falha, o INSERT da PRÓXIMA iteração NUNCA roda, mas o estado da tabela pode ficar inconsistente com linhas fantasmas de tentativas anteriores
+### Evidência no Banco Real do Operador (2026-06-09)
+- `refinery_schema_history` contém V013 com `applied_on = '2026-06-09T15:46:28.395524+00:00'`
+- `sqlite_master` NÃO contém `memory_embeddings`, `entity_embeddings` nem `chunk_embeddings`
+- `schema_meta` NÃO contém `vec_engine` nem `embedding_default_dim` (seriam inseridos por V013)
+- `schema_meta.schema_version = 13` — o código assume V013 aplicada mas as tabelas não existem
+- `hybrid-search` retorna `{"error": true, "code": 10, "message": "no such table: memory_embeddings"}`
+
+
+### Diagnóstico Diferencial — Por Que Afeta Apenas Bancos Migrados
+- Bancos NOVOS (criados na v1.0.76+): `runner().run()` aplica V013 normalmente — SEM BUG
+- Bancos v1.0.74 migrados: `run_rehash` é chamado ANTES de `runner().run()` → V013 é "pré-registrada" → PULA
+- Bancos v1.0.76 com G40: o mesmo fluxo — `run_rehash` pré-registra, runner pula
+
 
 ### Solução Proposta
-- Alterar `run_rehash` em `src/commands/migrate.rs:263-266` para SEMPRE incluir `applied_on` com timestamp válido
-- Usar o mesmo formato RFC3339 que o refinery-core usa nativamente
-- Alternativa: usar `CURRENT_TIMESTAMP` do SQLite como valor default
-- O INSERT corrigido deve ser:
-```rust
-conn.execute(
-    "INSERT OR IGNORE INTO refinery_schema_history (version, name, applied_on, checksum) VALUES (?1, ?2, ?3, ?4)",
-    rusqlite::params![
-        version,
-        name,
-        time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
-        new_checksum.to_string()
-    ],
-)?;
-```
+- Separar a lógica de `run_rehash` em duas operações distintas:
+  - REESCREVER checksums de migrações que JÁ estão no histórico (UPDATE)
+  - NÃO INSERIR migrações que NÃO estão no histórico (remover o branch `else` das linhas 272-281)
+- Adicionar helper `ensure_v013_tables_exist` que verifica se as 3 tabelas BLOB-backed existem
+  - Se `refinery_schema_history` tem V013 MAS as tabelas NÃO existem: executar o SQL de V013 diretamente
+  - Isso cobre bancos que já foram corrompidos por versões anteriores
+- Chamar `ensure_v013_tables_exist` em 3 pontos: `run()`, `run_rehash`, `run_to_llm_only`
+- Atualizar `health --json` para reportar estado das tabelas BLOB-backed separadamente dos nomes legados vec_*
+
 
 ### Benefícios da Solução
-- Elimina o ciclo infinito de reinserção de linha fantasma
-- `migrate --to-llm-only --drop-vec-tables` passa a funcionar para bancos v1.0.74
-- O fluxo `rehash → runner` fica atômico sem estado intermediário inválido
-- Compatibilidade total com o contrato do refinery-core 0.9.1 (campo `applied_on` sempre preenchido)
-- Operadores não precisam de intervenção manual no banco
+- Bancos migrados que perderam as tabelas BLOB-backed são reparados automaticamente
+- `run_rehash` passa a ser idempotente e seguro — nunca registra migrações não executadas
+- O ciclo sem saída é quebrado — o helper detecta e corrige a inconsistência
+- `recall`, `hybrid-search`, `remember`, `edit` e `ingest` voltam a funcionar
+- `health --json` reporta o estado real das tabelas de embedding
+- Compatibilidade retroativa mantida — bancos novos e bancos corretamente migrados não são afetados
 
-### Como Solucionar — Passo a Passo
-- Passo 1: Adicionar `time` como dependência (já presente no projeto via refinery-core)
-- Passo 2: Alterar o INSERT na linha 263-266 de `src/commands/migrate.rs` para incluir `applied_on` com timestamp RFC3339
-- Passo 3: Adicionar lógica de SANITIZAÇÃO no início de `run_rehash` e `run_to_llm_only` para detectar e corrigir linhas existentes com `applied_on = NULL`
-- Passo 4: A sanitização deve ser:
-```sql
-UPDATE refinery_schema_history
-SET applied_on = datetime('now')
-WHERE applied_on IS NULL;
-```
-- Passo 5: Adicionar teste unitário que reproduz o cenário (inserir linha sem `applied_on`, rodar rehash, confirmar que o runner não falha)
-- Passo 6: Adicionar teste de integração para o fluxo completo `rehash → runner` em banco com histórico parcial
-- Passo 7: Documentar em `MIGRATION.pt-BR.md` que operadores com bancos afetados podem rodar a sanitização manual via `sqlite3` antes de atualizar
-- Passo 8: Considerar adicionar portão de segurança no `run_to_llm_only` que verifica `SELECT COUNT(*) FROM refinery_schema_history WHERE applied_on IS NULL` e corrige ANTES de chamar `runner().run()`
 
-### Agravante Secundário — vec0 e DROP TABLE em Virtual Tables
-- O problema de `applied_on = NULL` é o bloqueio PRIMÁRIO
-- Mas mesmo após corrigir o `applied_on`, a V013 AINDA falhará em bancos v1.0.74 com vec tables presentes
-- `DROP TABLE IF EXISTS vec_memories` exige que o módulo `vec0` esteja carregado no SQLite
-- O build LLM-only da v1.0.76 remove `sqlite-vec` das dependências
-- O SQLite do sistema (ex: macOS `/usr/bin/sqlite3`) NÃO tem `vec0`
-- Nem `DROP TABLE`, nem `ALTER TABLE RENAME`, nem `DELETE FROM sqlite_master` funcionam sem `vec0`
-- A ÚNICA forma de remover vec tables sem `vec0` é manipulação direta de `sqlite_master`:
-```sql
-PRAGMA writable_schema = ON;
-DELETE FROM sqlite_master WHERE type = 'table' AND name IN ('vec_memories', 'vec_entities', 'vec_chunks');
-DELETE FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_memories_%';
-DELETE FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_entities_%';
-DELETE FROM sqlite_master WHERE type = 'table' AND name LIKE 'vec_chunks_%';
-PRAGMA writable_schema = OFF;
-PRAGMA integrity_check;
-VACUUM;
-```
-- Essa lógica DEVE ser incorporada no `run_to_llm_only` ANTES de chamar `runner().run()`
-- O `run_to_llm_only` deve dropar as vec tables via `writable_schema` quando `vec0` não está disponível
-- Depois, a V013 faz `DROP TABLE IF EXISTS` que será no-op (tabelas já removidas)
-- E o `CREATE TABLE IF NOT EXISTS` das BLOB tables executará normalmente
+### Como Solucionar — Plano de Implementação
 
-### Referências
-- `src/commands/migrate.rs:263-266` — INSERT sem `applied_on`
-- `refinery-core-0.9.1/src/drivers/rusqlite.rs:16` — `row.get::<_, String>(2)` exige NOT NULL
-- `refinery-core-0.9.1/src/traits/mod.rs:95-104` — `insert_migration_query` com `applied_on` preenchido
-- `refinery-core-0.9.1/src/traits/mod.rs:108-112` — schema da tabela sem `NOT NULL` em `applied_on`
-- `refinery-core-0.9.1/src/traits/sync.rs:84-99` — loop alternado SQL/INSERT sem rollback cruzado
-- `migrations/V013__drop_vec_use_blob_embeddings.sql:14-16` — DROP das vec tables
-- `migrations/V002__vec_tables.sql` — no-op `SELECT 1;` na v1.0.76
-- `docs/decisions/adr-0026-v002-vec-tables-migration-drift.pt-BR.md` — contexto do drift V002
-- Stack Overflow: "Corrupted Database Table cannot DROP — No such module FTS5" — mesmo padrão com virtual tables
+#### Passo 1 — Corrigir `run_rehash` (migrate.rs:272-281)
+- REMOVER o branch `else` que faz INSERT de migrações ausentes
+- `run_rehash` deve APENAS reescrever checksums de migrações JÁ registradas
+- Migrações ausentes do histórico devem ser deixadas para o `runner().run()` aplicar
 
-### Resolução Aplicada na v1.0.77
-- Helper `sanitize_null_applied_on` adicionado em `src/commands/migrate.rs`
-- Chamado em 3 pontos de entrada: `run()`, `run_rehash`, `run_to_llm_only`
-- INSERT corrigido na linha 263 para incluir `applied_on` com `chrono::Utc::now().to_rfc3339()`
-- Helper `remove_vec_virtual_tables_without_module` adicionado para limpeza via `PRAGMA writable_schema`
-- `debug_schema.rs:36` corrigido: `applied_on: String` para `Option<String>`
-- Campos `null_rows_fixed` e `vec_tables_removed_via_writable_schema` adicionados nos reports JSON
-- 4 testes unitários novos cobrindo sanitização, INSERT e remoção de vec tables
-- Validação: 723 testes passaram, ZERO falhas, ZERO warnings do clippy
-- ADR: `docs/decisions/adr-0027-g40-applied-on-null-fix.pt-BR.md`
+#### Passo 2 — Criar helper `ensure_v013_tables_exist` (migrate.rs)
+- Verificar se `memory_embeddings` existe em `sqlite_master`
+- Se NÃO existe MAS V013 está em `refinery_schema_history`:
+  - Executar o SQL de V013 diretamente via `conn.execute_batch()`
+  - Isso é seguro porque V013 usa `CREATE TABLE IF NOT EXISTS` e `DROP TABLE IF EXISTS`
+- Retornar `bool` indicando se as tabelas foram criadas
+
+#### Passo 3 — Chamar `ensure_v013_tables_exist` nos pontos de entrada
+- Em `run()` (linha 175): após `sanitize_null_applied_on`, antes de `runner().run()`
+- Em `run_rehash` (linha 234): após `sanitize_null_applied_on`
+- Em `run_to_llm_only` (linha 323): após `sanitize_null_applied_on`
+
+#### Passo 4 — Adicionar campos nos Reports
+- `RehashReport`: adicionar `v013_tables_created: bool`
+- `ToLlmOnlyReport`: adicionar `v013_tables_created: bool`
+- `MigrateResponse`: adicionar `v013_tables_created: bool`
+
+#### Passo 5 — Atualizar schemas JSON
+- `docs/schemas/migrate-rehash.schema.json`: adicionar `v013_tables_created`
+- `docs/schemas/migrate-to-llm-only.schema.json`: adicionar `v013_tables_created`
+
+#### Passo 6 — Adicionar testes
+- Teste unitário: simular banco com V013 no histórico mas SEM as tabelas → `ensure_v013_tables_exist` cria
+- Teste unitário: `run_rehash` NÃO insere migrações ausentes (branch `else` removido)
+- Teste de integração: `migrate --rehash` seguido de `migrate` aplica V013 normalmente
+- Teste de integração: `migrate --to-llm-only` com banco corrompido repara as tabelas
+
+#### Passo 7 — Criar ADR-0028
+- Documentar decisão arquitetural da separação rehash/insert
+- Documentar o helper de reparo `ensure_v013_tables_exist`
+
+#### Passo 8 — Atualizar documentação
+- `CHANGELOG.md` e `CHANGELOG.pt-BR.md`
+- `docs/MIGRATION.md` e `docs/MIGRATION.pt-BR.md`
+- `docs/AGENTS.md` e `docs/AGENTS.pt-BR.md`
+- `docs/COOKBOOK.md` e `docs/COOKBOOK.pt-BR.md`
+- `docs/TESTING.md` e `docs/TESTING.pt-BR.md`
+
+
+### Arquivos Afetados
+- `src/commands/migrate.rs` — arquivo principal (corrigir `run_rehash`, adicionar helper)
+- `src/commands/health.rs` — melhorar diagnóstico de tabelas BLOB-backed
+- `docs/schemas/migrate-rehash.schema.json` — novo campo
+- `docs/schemas/migrate-to-llm-only.schema.json` — novo campo
+- `docs/decisions/adr-0028-*.md` — nova decisão arquitetural
+- `tests/schema_migration_integration.rs` — novos testes
+
+
+### Notas Técnicas
+- V013 SQL usa `CREATE TABLE IF NOT EXISTS` — execução direta é idempotente e segura
+- V013 SQL usa `DROP TABLE IF EXISTS vec_*` — se vec tables já foram removidas, é no-op
+- `schema_meta` inserts usam `INSERT OR REPLACE` — idempotente
+- A correção deve ser retrocompatível com 4 cenários de banco:
+  - Banco novo (v1.0.77+): sem V013 no histórico → runner aplica normalmente
+  - Banco v1.0.74 não migrado: sem V013 → runner aplica normalmente (rehash corrigido não insere)
+  - Banco v1.0.76/77 com bug: V013 no histórico mas SEM tabelas → helper cria
+  - Banco v1.0.76/77 correto: V013 no histórico COM tabelas → helper é no-op

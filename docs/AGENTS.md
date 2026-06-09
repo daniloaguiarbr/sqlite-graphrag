@@ -126,6 +126,14 @@ Agents that try to set them will see a clear validation error.
 - JSON response for `migrate --rehash` now includes `null_rows_fixed` (u64). Response for `migrate --to-llm-only` includes `null_rows_fixed` (u64) and `vec_tables_removed_via_writable_schema` (usize).
 - 4 new unit tests and 2 new integration tests cover the fix.
 - See ADR-0027 for the full rationale.
+## New in v1.0.78
+### REQUIRED — G41 Fix: `run_rehash` Registered V013 Without Executing SQL
+- The `else` branch in `run_rehash` (migrate.rs:272-281) that inserted phantom rows for unapplied migrations has been removed
+- New `ensure_v013_tables_exist` helper detects databases where V013 is in `refinery_schema_history` but the BLOB-backed embedding tables (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`) were never created, and executes V013 SQL directly
+- Auto-repair integrated in `ensure_db_ready` (connection.rs) — any CRUD command heals G41-corrupted databases unconditionally, even when `user_version=50` would skip the migration block
+- JSON response for `migrate --rehash` and `migrate --to-llm-only` now includes `v013_tables_created` (boolean)
+- 3 new unit tests and 1 updated unit test cover the fix
+- See ADR-0028 for the full rationale
 
 ### FORBIDDEN — v1.0.76 Anti-patterns
 - NEVER install v1.0.76 with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn aborts.

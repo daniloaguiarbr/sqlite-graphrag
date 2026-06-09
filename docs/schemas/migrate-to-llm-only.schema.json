@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.rs/sqlite-graphrag/schemas/migrate-to-llm-only.schema.json",
   "title": "sqlite-graphrag migrate --to-llm-only response",
-  "description": "JSON contract for the `migrate --to-llm-only --drop-vec-tables --json` subcommand added in v1.0.76, updated in v1.0.77 with null_rows_fixed (G40) and vec_tables_removed_via_writable_schema. The one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply V013 + report vec-table state. Requires --drop-vec-tables as an explicit safety guard.",
+  "description": "JSON contract for the `migrate --to-llm-only --drop-vec-tables --json` subcommand added in v1.0.76, updated in v1.0.77 with null_rows_fixed (G40) and vec_tables_removed_via_writable_schema, updated in v1.0.78 with v013_tables_created (G41 phantom registration repair). The one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply V013 + report vec-table state. Requires --drop-vec-tables as an explicit safety guard.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action", "rewritten", "v013_applied", "vec_tables_were_present", "vec_tables_dropped", "elapsed_ms"],
+  "required": ["action", "rewritten", "v013_applied", "vec_tables_were_present", "vec_tables_dropped", "v013_tables_created", "elapsed_ms"],
   "properties": {
     "action": {
       "type": "string",
@@ -60,6 +60,10 @@
       "minimum": 0,
       "description": "Number of sqlite_master entries removed via PRAGMA writable_schema when the vec0 module was absent. Includes root tables and shadow tables. Added in v1.0.77."
     },
+    "v013_tables_created": {
+      "type": "boolean",
+      "description": "True if the BLOB-backed embedding tables (memory_embeddings, entity_embeddings, chunk_embeddings) were created by the G41 repair helper because V013 was registered in history but the tables did not exist. Added in v1.0.78."
+    },
     "elapsed_ms": {
       "type": "integer",
       "minimum": 0
@@ -76,6 +80,7 @@
       "embedding_tables_created": ["memory_embeddings", "entity_embeddings", "chunk_embeddings"],
       "null_rows_fixed": 0,
       "vec_tables_removed_via_writable_schema": 0,
+      "v013_tables_created": false,
       "namespace": "global",
       "db_path": "/home/user/graphrag.sqlite",
       "elapsed_ms": 47

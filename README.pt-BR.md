@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.77 — LLM-Only e one-shot.** O build padrão embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. Para embutir localmente, instale com `--features embedding-legacy`.
+> **Release atual: v1.0.78 — LLM-Only e one-shot.** O build padrão embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. Para embutir localmente, instale com `--features embedding-legacy`.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -19,7 +19,7 @@
 - Veja o histórico completo de releases em [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md)
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
-- **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76 / v1.0.77.
+- **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76 / v1.0.77 / v1.0.78
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -30,7 +30,7 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- **Build padrão (v1.0.77):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
+- **Build padrão (v1.0.78):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
 - **Build legado:** `cargo install sqlite-graphrag --features embedding-legacy` restaura inferência ONNX local via fastembed (binário de ~39 MB)
 - Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
 - Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
@@ -567,7 +567,7 @@ RUN cargo install --path .
 - Invocações stateless da CLI tipicamente gastam cerca de um segundo recarregando o modelo em cada comando pesado
 - Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
-- **Build padrão (v1.0.77):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM
+- **Build padrão (v1.0.78):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM
 - **Build legado:** modelo de embedding usa aproximadamente 1100 MB de RAM por processo com `--features embedding-legacy`
 
 

@@ -93,6 +93,8 @@ struct RehashReport {
     inspected: usize,
     /// Rows where `applied_on` was NULL and got backfilled with a timestamp.
     null_rows_fixed: u64,
+    /// True if the BLOB-backed embedding tables were created by the G41 repair.
+    v013_tables_created: bool,
     status: String,
     elapsed_ms: u64,
 }
@@ -120,6 +122,8 @@ struct ToLlmOnlyReport {
     /// Number of vec0 virtual table entries removed from sqlite_master
     /// via PRAGMA writable_schema (includes shadow tables).
     vec_tables_removed_via_writable_schema: usize,
+    /// True if the BLOB-backed embedding tables were created by the G41 repair.
+    v013_tables_created: bool,
     status: String,
     elapsed_ms: u64,
 }
@@ -173,6 +177,7 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
     }
 
     sanitize_null_applied_on(&conn)?;
+    ensure_v013_tables_exist(&conn)?;
 
     crate::migrations::runner()
         .run(&mut conn)
@@ -226,12 +231,14 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
             rewritten: vec![],
             inspected: 0,
             null_rows_fixed: 0,
+            v013_tables_created: false,
             status: "ok_no_history".to_string(),
             elapsed_ms: start.elapsed().as_millis() as u64,
         });
     }
 
     let null_rows_fixed = sanitize_null_applied_on(conn)?;
+    let v013_tables_created = ensure_v013_tables_exist(conn)?;
 
     let mut rewritten: Vec<RehashEntry> = Vec::new();
     let mut inspected = 0usize;
@@ -269,16 +276,11 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
                     new_checksum: new_str,
                 });
             }
-        } else {
-            // Row missing for a migration file that the runner already has
-            // loaded. Insert with a matching checksum so future runs accept
-            // it as already applied. (Rare; happens only on partial history.)
-            let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "INSERT OR IGNORE INTO refinery_schema_history (version, name, applied_on, checksum) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![version, name, now, new_checksum.to_string()],
-            )?;
         }
+        // Migrations absent from history are intentionally NOT inserted.
+        // They must be applied by runner().run() which executes their SQL.
+        // Inserting them marks them as "applied" without running the SQL,
+        // causing phantom registrations (G41).
     }
 
     let status = if rewritten.is_empty() {
@@ -293,6 +295,7 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
         rewritten,
         inspected,
         null_rows_fixed,
+        v013_tables_created,
         status: status.to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })
@@ -321,6 +324,9 @@ fn run_to_llm_only(
 
     // 1.5. Sanitize NULL applied_on values before any runner call.
     let null_rows_fixed = sanitize_null_applied_on(conn)?;
+
+    // 1.6. G41 repair: ensure V013 tables exist if registered but missing.
+    let v013_tables_created = ensure_v013_tables_exist(conn)?;
 
     // 1.75. Remove vec virtual tables via writable_schema if vec0 is absent.
     let vec_tables_removed = if vec_tables_were_present {
@@ -364,6 +370,7 @@ fn run_to_llm_only(
         v013_applied,
         null_rows_fixed,
         vec_tables_removed_via_writable_schema: vec_tables_removed,
+        v013_tables_created,
         status: "ok".to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })
@@ -427,6 +434,57 @@ fn remove_vec_virtual_tables_without_module(
     conn.execute_batch("VACUUM;")?;
 
     Ok(removed)
+}
+
+/// Ensures the BLOB-backed embedding tables from V013 actually exist.
+/// Repairs databases where `run_rehash` registered V013 in the history
+/// without executing its SQL (G41 phantom registration bug).
+pub(crate) fn ensure_v013_tables_exist(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_embeddings'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if exists {
+        return Ok(false);
+    }
+
+    if !history_table_exists(conn) {
+        return Ok(false);
+    }
+    let v013_in_history: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM refinery_schema_history WHERE version = 13",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !v013_in_history {
+        return Ok(false);
+    }
+
+    let v013_sql = crate::migrations::runner()
+        .get_migrations()
+        .iter()
+        .find(|m| m.version() == 13)
+        .and_then(|m| m.sql().map(|s| s.to_string()));
+
+    if let Some(sql) = v013_sql {
+        conn.execute_batch(&sql)?;
+        tracing::warn!(
+            "G41 repair: V013 was registered but tables missing. \
+             Executed V013 SQL to create embedding tables."
+        );
+        Ok(true)
+    } else {
+        Err(AppError::Internal(anyhow::anyhow!(
+            "V013 migration SQL not found in embedded migrations"
+        )))
+    }
 }
 
 fn list_applied_migrations(conn: &rusqlite::Connection) -> Result<Vec<MigrationEntry>, AppError> {
@@ -761,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn rehash_insert_includes_applied_on() {
+    fn rehash_does_not_insert_missing_migrations() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         conn.execute_batch(
             "CREATE TABLE refinery_schema_history (
@@ -788,26 +846,19 @@ mod tests {
             )
             .unwrap();
         }
-        let report = run_rehash(&mut conn, Path::new("/tmp/test.sqlite")).unwrap();
-        let applied: Option<String> = conn
+        let _report = run_rehash(&mut conn, Path::new("/tmp/test.sqlite")).unwrap();
+        let v013_exists: bool = conn
             .query_row(
-                "SELECT applied_on FROM refinery_schema_history WHERE version = 13",
+                "SELECT COUNT(*) FROM refinery_schema_history WHERE version = 13",
                 [],
-                |r| r.get(0),
+                |r| r.get::<_, i64>(0),
             )
-            .optional()
             .unwrap()
-            .flatten();
+            > 0;
         assert!(
-            applied.is_some(),
-            "V013 row must have applied_on after rehash insert, got NULL"
+            !v013_exists,
+            "V013 must NOT be inserted by run_rehash (G41 fix)"
         );
-        let ts = applied.unwrap();
-        assert!(
-            chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
-            "applied_on must be valid RFC3339, got: {ts}"
-        );
-        assert_eq!(report.null_rows_fixed, 0, "no pre-existing NULLs to fix");
     }
 
     #[test]
@@ -815,5 +866,48 @@ mod tests {
         let conn = Connection::open_in_memory().expect("in-memory db");
         let removed = remove_vec_virtual_tables_without_module(&conn).unwrap();
         assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn ensure_v013_tables_noop_when_no_history() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let created = ensure_v013_tables_exist(&conn).unwrap();
+        assert!(!created, "must be no-op when history table is absent");
+    }
+
+    #[test]
+    fn ensure_v013_tables_noop_when_tables_exist() {
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        crate::migrations::runner().run(&mut conn).unwrap();
+        let created = ensure_v013_tables_exist(&conn).unwrap();
+        assert!(
+            !created,
+            "must be no-op when memory_embeddings already exists"
+        );
+    }
+
+    #[test]
+    fn ensure_v013_tables_creates_when_phantom() {
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        crate::migrations::runner().run(&mut conn).unwrap();
+        conn.execute_batch("DROP TABLE IF EXISTS memory_embeddings")
+            .unwrap();
+        conn.execute_batch("DROP TABLE IF EXISTS entity_embeddings")
+            .unwrap();
+        conn.execute_batch("DROP TABLE IF EXISTS chunk_embeddings")
+            .unwrap();
+        let created = ensure_v013_tables_exist(&conn).unwrap();
+        assert!(
+            created,
+            "must create tables when V013 is in history but tables are missing"
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_embeddings'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "memory_embeddings must exist after repair");
     }
 }

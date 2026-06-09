@@ -1,3 +1,30 @@
+# MIGRATING TO v1.0.78 — G41 Phantom V013 Registration Fix
+
+## What Changed
+
+- `run_rehash` no longer inserts phantom rows for unapplied migrations
+- New `ensure_v013_tables_exist` helper repairs databases where V013 was registered but its tables were never created
+- Auto-repair runs unconditionally in `ensure_db_ready` — any command heals corrupted databases
+
+## Who Is Affected
+
+- Users who ran `migrate --rehash` or `migrate --to-llm-only --drop-vec-tables` on v1.0.76 or v1.0.77
+- Symptoms: `no such table: memory_embeddings` (exit 10) on `recall`, `hybrid-search`, `remember`
+
+## How to Upgrade
+
+```bash
+cargo install sqlite-graphrag --version 1.0.78 --force
+sqlite-graphrag migrate --rehash   # explicit repair (optional — any command auto-repairs)
+```
+
+## What Happens Automatically
+
+- Any CRUD command (`remember`, `recall`, `hybrid-search`, etc.) detects and repairs the corrupted state
+- The `ensure_v013_tables_exist` helper checks if V013 is in `refinery_schema_history` but the BLOB-backed tables are missing, and executes the V013 SQL directly
+- V013 SQL is idempotent (`CREATE TABLE IF NOT EXISTS`) — safe to execute multiple times
+
+
 # MIGRATING TO v1.0.77 — G40 Fix
 
 > This guide is for operators affected by the v1.0.76 G40 bug where `migrate --rehash` inserted rows with `applied_on = NULL`

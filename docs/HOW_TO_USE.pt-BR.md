@@ -177,9 +177,11 @@ A LLM devolve JSON estruturado com entidades e relacionamentos no mesmo prompt q
 - `optimize --yes` pula o prompt de confirmação. Obrigatório para CI não interativo.
 - `backup` usa por padrão `run_to_completion(1000, Duration::from_millis(5), None)` (era 100/50ms). Para um banco de 4.3 GB isso é um speedup de 25x (~21s vs ~9 min).
 - `backup --backup-step-size <PAGES>` e `--backup-step-sleep-ms <MS>` ajustam a granularidade de cópia de páginas. `--backup-no-sleep` remove o sleep entre steps totalmente para máximo throughput. `--backup-progress <PAGES>` (padrão 100) emite uma linha de progresso a cada N páginas.
-### Família de Subcomandos `migrate` (v1.0.76)
+### Família de Subcomandos `migrate` (v1.0.76, atualizado v1.0.77 e v1.0.78)
 - `migrate --rehash --json` reescreve os checksums registrados de migração para casar com o conteúdo atual do arquivo. Idempotente. Obrigatório para upgrades v1.0.74 → v1.0.76 onde a migração V002 foi intencionalmente esvaziada para um no-op.
 - `migrate --to-llm-only --drop-vec-tables --json` é o upgrade one-shot para bancos v1.0.74 / v1.0.75. Combina `--rehash` com o descarte da V013 das vec tables. A flag `--drop-vec-tables` é OBRIGATÓRIA como rede de segurança explícita. As tabelas com backing BLOB `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` permanecem e são a fonte de verdade daqui em diante; embeddings são recomputados preguiçosamente no próximo `remember` / `edit` / `ingest`.
+- Correção v1.0.77 (G40): a resposta JSON de ambos os comandos agora inclui `null_rows_fixed` (inteiro) e `vec_tables_removed_via_writable_schema` (inteiro). Bancos com linhas `applied_on = NULL` são sanitizados automaticamente antes do migration runner executar.
+- Correção v1.0.78 (G41): a resposta JSON de ambos os comandos agora inclui `v013_tables_created` (boolean). Bancos onde V013 foi registrada em `refinery_schema_history` mas as tabelas BLOB-backed de embedding nunca foram criadas são reparados automaticamente. Qualquer comando CRUD também dispara esse reparo incondicionalmente via `ensure_db_ready`.
 
 
 ## Migração da v1.0.74 ou v1.0.75

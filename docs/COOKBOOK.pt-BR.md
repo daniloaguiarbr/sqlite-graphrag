@@ -122,6 +122,20 @@ cp target/release/sqlite-graphrag ~/.cargo/bin/sqlite-graphrag
 - Veja `docs/decisions/adr-0026-v002-vec-tables-migration-drift.pt-BR.md` para a causa raiz completa e o rastro de validação
 - Se você precisar manter o pipeline fastembed da v1.0.74 durante a janela de transição, instale com `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removido na v1.1.0)
 
+### Correção v1.0.78: `run_rehash` Registrava V013 Sem Executar o SQL (G41)
+- A v1.0.76 e v1.0.77 tinham um bug (G41) onde `migrate --rehash` inseria linhas fantasma para migrações não aplicadas em `refinery_schema_history`
+- Isso fazia o runner do refinery pular V013 inteiramente — as tabelas BLOB-backed de embedding nunca eram criadas
+- Sintomas: `no such table: memory_embeddings` (exit 10) em `recall`, `hybrid-search`, `remember`
+- A v1.0.78 remove a inserção fantasma e adiciona reparo automático em todo comando CRUD
+
+```bash
+cargo install sqlite-graphrag --version 1.0.78 --force
+# Qualquer comando repara automaticamente — não precisa de migrate explícito:
+sqlite-graphrag recall "consulta teste" --json
+```
+
+- Veja ADR-0028 e `docs/MIGRATION.pt-BR.md` para os detalhes completos
+
 ### Correção v1.0.77: `migrate --rehash` Inseria `applied_on = NULL`
 - A v1.0.76 tinha um bug (G40) onde `migrate --rehash` inseria linhas em `refinery_schema_history` sem o campo `applied_on`, deixando-o NULL
 - O driver rusqlite do refinery-core 0.9.1 lê `applied_on` como `String` (NOT NULL), crashando com `InvalidColumnType(Null at index: 2)` na próxima migração
