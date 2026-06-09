@@ -10,6 +10,31 @@ All notable changes to this project will be documented in this file.
 
 - **Daemon infrastructure fully removed**: `src/daemon.rs` (1120 lines), `src/commands/daemon.rs` (79 lines), `tests/daemon_integration.rs` (316 lines) deleted. `DaemonOpts` struct and `--autostart-daemon` flag removed from all command args. All `crate::daemon::embed_*_or_local` calls replaced with direct `crate::embedder::embed_*_local` wrappers. CLI is now 100% one-shot with zero IPC. 8 daemon constants removed from `src/constants.rs`. Net removal: ~764 lines.
 
+## [1.0.77] - 2026-06-09
+
+### Fixed
+
+- `run_rehash` INSERT now includes `applied_on` with RFC3339 timestamp via `chrono::Utc`
+- Helper `sanitize_null_applied_on` fixes existing NULL rows before refinery runs
+- Helper `remove_vec_virtual_tables_without_module` cleans vec0 shadow tables via `PRAGMA writable_schema`
+- `debug-schema` no longer crashes on databases with `applied_on = NULL`
+- Field `applied_on` changed from `String` to `Option<String>` in debug-schema output
+
+### Added
+
+- Field `null_rows_fixed` in `RehashReport` and `ToLlmOnlyReport` JSON responses
+- Field `vec_tables_removed_via_writable_schema` in `ToLlmOnlyReport` JSON response
+- 4 new unit tests covering sanitization, INSERT fix, and vec table removal
+- 2 new integration tests for the NULL `applied_on` fix flow
+- ADR-0027 documenting the G40 fix decision
+
+### Migration
+
+- Upgrade is automatic: `cargo install sqlite-graphrag --version 1.0.77 --force && sqlite-graphrag migrate`
+- No manual SQL intervention needed
+- v1.0.77 detects and fixes NULL `applied_on` rows automatically
+- See `docs/MIGRATION.md` for details
+
 ## [1.0.76] - 2026-06-07
 
 > **Breaking architectural change.** The default build is now **LLM-only and one-shot**.

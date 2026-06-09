@@ -26,8 +26,8 @@
 | `deep-research` | `deep-research.schema.json` |
 | `health` | `health.schema.json` |
 | `migrate` | `migrate.schema.json` |
-| `migrate --rehash` (v1.0.76) | `migrate-rehash.schema.json` |
-| `migrate --to-llm-only` (v1.0.76) | `migrate-to-llm-only.schema.json` |
+| `migrate --rehash` (v1.0.76, updated v1.0.77) | `migrate-rehash.schema.json` |
+| `migrate --to-llm-only` (v1.0.76, updated v1.0.77) | `migrate-to-llm-only.schema.json` |
 | `namespace-detect` | `namespace-detect.schema.json` |
 | `optimize` | `optimize.schema.json` |
 | `stats` | `stats.schema.json` |
@@ -72,8 +72,8 @@
 | `vec purge-orphan` (v1.0.69) | `vec-purge-orphan.schema.json` |
 | `vec stats` (v1.0.69) | `vec-stats.schema.json` |
 | `codex-models` (v1.0.69) | `codex-models.schema.json` |
-| `migrate --rehash` (v1.0.76) | `migrate-rehash.schema.json` |
-| `migrate --to-llm-only` (v1.0.76) | `migrate-to-llm-only.schema.json` |
+| `migrate --rehash` (v1.0.76, updated v1.0.77) | `migrate-rehash.schema.json` |
+| `migrate --to-llm-only` (v1.0.76, updated v1.0.77) | `migrate-to-llm-only.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Commands Without JSON Schemas
 - `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies

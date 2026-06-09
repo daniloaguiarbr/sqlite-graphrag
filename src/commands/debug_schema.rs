@@ -33,7 +33,7 @@ struct SchemaObject {
 struct MigrationRecord {
     version: i64,
     name: String,
-    applied_on: String,
+    applied_on: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -139,7 +139,7 @@ mod tests {
             migrations: vec![MigrationRecord {
                 version: 1,
                 name: "V001__init".to_string(),
-                applied_on: "2026-01-01T00:00:00Z".to_string(),
+                applied_on: Some("2026-01-01T00:00:00Z".to_string()),
             }],
             elapsed_ms: 7,
         };
@@ -170,7 +170,7 @@ mod tests {
         let rec = MigrationRecord {
             version: 3,
             name: "V003__indexes".to_string(),
-            applied_on: "2026-04-19T12:00:00Z".to_string(),
+            applied_on: Some("2026-04-19T12:00:00Z".to_string()),
         };
         let json: Value = serde_json::to_value(&rec).unwrap();
         assert_eq!(json["version"], 3);

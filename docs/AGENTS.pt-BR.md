@@ -104,6 +104,16 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 - Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração. `llm` é o caminho LLM; `embedding` é o pipeline fastembed legado (requer feature `embedding-legacy`); `none` é um no-op; `both` roda os dois em paralelo e funde.
 - O trait `ExtractionBackend` vive em `src/extract/` com quatro implementações concretas: `LlmBackend` (padrão), `EmbeddingBackend` (pipeline fastembed legado, stub quando LLM-only), `NoneBackend` (no-op) e `CompositeBackend` (funde múltiplos backends em paralelo).
 - O trait `VersionAdapter` vive em `src/spawn/` e abstrai invocações de spawn de executores. `CodexAdapter` detecta `codex 0.130.0` até `0.138+` e adapta flags — `codex 0.137.0` removeu `--ask-for-approval` em favor de `-a never`. `ClaudeAdapter` cobre claude code 2.1.0+. `OpencodeAdapter` cobre opencode headless.
+## Novidades na v1.0.77
+### OBRIGATÓRIO — Correção do G40: `applied_on = NULL` Bloqueia Todas as Migrações
+- O INSERT de `run_rehash` na v1.0.76 omitia o campo `applied_on`, deixando-o NULL. O driver rusqlite do refinery-core 0.9.1 lê `applied_on` como `String` (NOT NULL), crashando com `InvalidColumnType(Null at index: 2)`. Todas as migrações subsequentes ficavam bloqueadas (exit 20).
+- A v1.0.77 adiciona o helper `sanitize_null_applied_on` que executa UPDATE em linhas com `applied_on IS NULL` antes de qualquer chamada ao migration runner. O INSERT também foi corrigido para sempre incluir `applied_on` com timestamp RFC3339.
+- A v1.0.77 adiciona `remove_vec_virtual_tables_without_module` que limpa vec0 virtual tables via `PRAGMA writable_schema` quando o módulo `vec0` está ausente (build LLM-only).
+- `debug-schema` não crasha mais em bancos com `applied_on = NULL` — o campo foi alterado de `String` para `Option<String>`.
+- A resposta JSON de `migrate --rehash` agora inclui `null_rows_fixed` (u64). A resposta de `migrate --to-llm-only` inclui `null_rows_fixed` (u64) e `vec_tables_removed_via_writable_schema` (usize).
+- 4 novos testes unitários e 2 novos testes de integração cobrem a correção.
+- Veja ADR-0027 para a justificativa completa.
+
 ### PROIBIDO — Antipadrões da v1.0.76
 - NUNCA instale a v1.0.76 com `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn aborta.
 - NUNCA dependa do daemon em código novo; o daemon será REMOVIDO na v1.1.0.

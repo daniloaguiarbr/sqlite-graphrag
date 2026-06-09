@@ -126,6 +126,19 @@ cp target/release/sqlite-graphrag ~/.cargo/bin/sqlite-graphrag
 - See `docs/decisions/adr-0026-v002-vec-tables-migration-drift.md` for the full root cause and validation trail
 - If you must keep the v1.0.74 fastembed pipeline during the transition window, install with `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removed in v1.1.0)
 
+### v1.0.77 Fix: `migrate --rehash` Inserted `applied_on = NULL`
+- v1.0.76 had a bug (G40) where `migrate --rehash` inserted rows into `refinery_schema_history` without the `applied_on` field, leaving it NULL
+- The refinery-core 0.9.1 rusqlite driver reads `applied_on` as `String` (NOT NULL), crashing with `InvalidColumnType(Null at index: 2)` on the next migration
+- v1.0.77 automatically detects and fixes these NULL rows before running the migration runner
+- If you hit this bug on v1.0.76, upgrade to v1.0.77 — no manual SQL intervention is needed:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.77 --force
+sqlite-graphrag migrate
+```
+
+- See ADR-0027 and `docs/MIGRATION.md` for the full details
+
 
 ## How To Bulk-Import A Knowledge Base Directory
 ### Problem

@@ -201,6 +201,16 @@
 - 7 novos ADRs (0019-0025) cobrindo a arquitetura v1.0.76, todos com versão PT-BR
 - ADR 0026 documenta o drift de migração V002 (PT-BR incluso)
 
+### Mudanças na Camada 2 a Partir da v1.0.77
+- ADR-0027 documenta a correção do G40 (`applied_on = NULL` bloqueava migrações), com versão PT-BR
+- `docs/schemas/migrate-rehash.schema.json` atualizado com campo `null_rows_fixed`
+- `docs/schemas/migrate-to-llm-only.schema.json` atualizado com campos `null_rows_fixed` e `vec_tables_removed_via_writable_schema`
+- `docs/schemas/debug-schema.schema.json` atualizado: `applied_on` agora aceita `null` (tipo `["string", "null"]`)
+- `docs/AGENTS.md` ganhou seção "New in v1.0.77" cobrindo o G40 fix
+- `docs/TESTING.md` ganhou seção "v1.0.77 Test Additions — G40 Fix Coverage"
+- `docs/COOKBOOK.md` ganhou subseção "v1.0.77 Fix" na receita de upgrade
+- `docs/MIGRATION.md` ganhou seção "MIGRATING TO v1.0.77 — G40 Fix" no topo
+
 ### Objetivo e Entrega de Cada Arquivo da Pasta docs/
 
 #### docs/AGENTS.md + docs/AGENTS.pt-BR.md

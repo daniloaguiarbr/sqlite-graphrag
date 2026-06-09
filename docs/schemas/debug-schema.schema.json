@@ -15,12 +15,12 @@
     },
     "MigrationRecord": {
       "type": "object",
-      "required": ["version", "name", "applied_on"],
+      "required": ["version", "name"],
       "additionalProperties": false,
       "properties": {
         "version":    { "type": "integer" },
         "name":       { "type": "string" },
-        "applied_on": { "type": "string", "description": "ISO 8601 timestamp string." }
+        "applied_on": { "type": ["string", "null"], "description": "ISO 8601 timestamp string. May be null in databases affected by the v1.0.76 G40 bug where migrate --rehash omitted the applied_on field." }
       }
     }
   },

@@ -863,3 +863,94 @@ fn migrate_to_llm_only_requires_drop_vec_tables_safety_guard() {
         "error message must mention --drop-vec-tables, got: {msg}"
     );
 }
+
+#[test]
+#[serial]
+fn migrate_rehash_fixes_null_applied_on() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    // NULL out applied_on for all rows to simulate the G40 bug.
+    let conn = conn_ro(&db_path);
+    conn.execute_batch("UPDATE refinery_schema_history SET applied_on = NULL")
+        .expect("nullify applied_on");
+    drop(conn);
+
+    // migrate --rehash must succeed and fix the NULL rows.
+    let output = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate", "--rehash"])
+        .output()
+        .expect("migrate --rehash must run");
+
+    assert!(
+        output.status.success(),
+        "migrate --rehash must succeed on DB with NULL applied_on. stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    assert!(
+        json["null_rows_fixed"].as_u64().unwrap_or(0) > 0,
+        "must report null_rows_fixed > 0, got: {}",
+        json["null_rows_fixed"]
+    );
+
+    // A subsequent plain migrate must also succeed (runner reads applied_on).
+    let after = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args(["--skip-memory-guard", "migrate"])
+        .output()
+        .expect("migrate must run");
+    assert!(
+        after.status.success(),
+        "migrate must succeed after rehash fixed NULLs. stderr={}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+
+    // Verify zero NULL rows remain via rusqlite.
+    let conn = conn_ro(&db_path);
+    let null_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM refinery_schema_history WHERE applied_on IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(null_count, 0, "no NULL applied_on rows must remain");
+}
+
+#[test]
+#[serial]
+fn migrate_to_llm_only_fixes_null_applied_on() {
+    let (_tmp, db_path) = init_isolated_db();
+
+    let conn = conn_ro(&db_path);
+    conn.execute_batch("UPDATE refinery_schema_history SET applied_on = NULL")
+        .expect("nullify applied_on");
+    drop(conn);
+
+    let output = sgr_cmd()
+        .env("SQLITE_GRAPHRAG_DB_PATH", &db_path)
+        .args([
+            "--skip-memory-guard",
+            "migrate",
+            "--to-llm-only",
+            "--drop-vec-tables",
+        ])
+        .output()
+        .expect("migrate --to-llm-only must run");
+
+    assert!(
+        output.status.success(),
+        "migrate --to-llm-only must succeed with NULL applied_on. stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    assert!(
+        json["null_rows_fixed"].as_u64().unwrap_or(0) > 0,
+        "must report null_rows_fixed > 0, got: {}",
+        json["null_rows_fixed"]
+    );
+    assert_eq!(json["status"], "ok");
+}

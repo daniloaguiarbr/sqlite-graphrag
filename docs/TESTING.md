@@ -29,6 +29,24 @@
 - `cargo test --workspace --features slow-tests` — runs the full contract suite including the 832-test integration matrix.
 
 
+## v1.0.77 Test Additions — G40 Fix Coverage
+### Test Count Delta
+- v1.0.76 baseline: 719 lib tests passing
+- v1.0.77 final: 723 lib tests passing (+4 unit, +2 integration)
+### Unit Tests in `src/commands/migrate.rs`
+- `sanitize_null_applied_on_fixes_null_rows` — verifies NULL `applied_on` rows get fixed
+- `sanitize_null_applied_on_noop_when_all_filled` — verifies no-op when no NULLs exist
+- `rehash_insert_includes_applied_on` — verifies INSERT now includes `applied_on`
+- `remove_vec_tables_noop_when_no_vec` — verifies no-op when no vec tables exist
+### Integration Tests in `tests/schema_migration_integration.rs`
+- `migrate_rehash_fixes_null_applied_on` — end-to-end rehash with NULL fix
+- `migrate_to_llm_only_fixes_null_applied_on` — end-to-end `--to-llm-only` with NULL fix
+### Coverage Rationale
+- G40 fixed a bug where `applied_on` was NULL after rehash
+- The 4 unit tests cover each code path in the migrate module
+- The 2 integration tests validate the CLI end-to-end flow
+
+
 ## Why Categorized Tests
 ### The Thermal Livelock Incident — 2026-04-19
 - On 2026-04-19 at 11:37:40, the developer's Intel i9-14900KF reached Tjmax 100°C

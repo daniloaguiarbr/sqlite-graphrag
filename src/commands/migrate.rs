@@ -4,6 +4,7 @@ use crate::errors::AppError;
 use crate::output;
 use crate::paths::AppPaths;
 use crate::storage::connection::open_rw;
+use chrono::Utc;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use siphasher::sip::SipHasher13;
@@ -90,6 +91,8 @@ struct RehashReport {
     rewritten: Vec<RehashEntry>,
     /// Number of entries inspected.
     inspected: usize,
+    /// Rows where `applied_on` was NULL and got backfilled with a timestamp.
+    null_rows_fixed: u64,
     status: String,
     elapsed_ms: u64,
 }
@@ -112,6 +115,11 @@ struct ToLlmOnlyReport {
     vec_tables_were_present: bool,
     /// True if V013 was applied during this invocation.
     v013_applied: bool,
+    /// Rows where `applied_on` was NULL and got backfilled with a timestamp.
+    null_rows_fixed: u64,
+    /// Number of vec0 virtual table entries removed from sqlite_master
+    /// via PRAGMA writable_schema (includes shadow tables).
+    vec_tables_removed_via_writable_schema: usize,
     status: String,
     elapsed_ms: u64,
 }
@@ -164,6 +172,8 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
+    sanitize_null_applied_on(&conn)?;
+
     crate::migrations::runner()
         .run(&mut conn)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("migration failed: {e}")))?;
@@ -215,10 +225,13 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
             schema_version,
             rewritten: vec![],
             inspected: 0,
+            null_rows_fixed: 0,
             status: "ok_no_history".to_string(),
             elapsed_ms: start.elapsed().as_millis() as u64,
         });
     }
+
+    let null_rows_fixed = sanitize_null_applied_on(conn)?;
 
     let mut rewritten: Vec<RehashEntry> = Vec::new();
     let mut inspected = 0usize;
@@ -260,9 +273,10 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
             // Row missing for a migration file that the runner already has
             // loaded. Insert with a matching checksum so future runs accept
             // it as already applied. (Rare; happens only on partial history.)
+            let now = Utc::now().to_rfc3339();
             conn.execute(
-                "INSERT OR IGNORE INTO refinery_schema_history (version, name, checksum) VALUES (?1, ?2, ?3)",
-                rusqlite::params![version, name, new_checksum.to_string()],
+                "INSERT OR IGNORE INTO refinery_schema_history (version, name, applied_on, checksum) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![version, name, now, new_checksum.to_string()],
             )?;
         }
     }
@@ -278,6 +292,7 @@ fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashR
         schema_version,
         rewritten,
         inspected,
+        null_rows_fixed,
         status: status.to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })
@@ -304,6 +319,16 @@ fn run_to_llm_only(
         count > 0
     };
 
+    // 1.5. Sanitize NULL applied_on values before any runner call.
+    let null_rows_fixed = sanitize_null_applied_on(conn)?;
+
+    // 1.75. Remove vec virtual tables via writable_schema if vec0 is absent.
+    let vec_tables_removed = if vec_tables_were_present {
+        remove_vec_virtual_tables_without_module(conn)?
+    } else {
+        0
+    };
+
     // 2. Rehash checksums (in case V002 was the offender).
     let rehash_report = run_rehash(conn, db_path)?;
     let rehashed = rehash_report.rewritten;
@@ -311,6 +336,7 @@ fn run_to_llm_only(
     // 3. Apply pending migrations (V013 will run if it hasn't yet).
     //    If the user is on v1.0.75 the V013 migration was already applied,
     //    so this is a no-op; if they're on v1.0.74 the V013 drop will run.
+    //    If vec tables were removed in step 1.75, V013 DROP is a no-op.
     crate::migrations::runner()
         .run(conn)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("migration failed: {e}")))?;
@@ -336,6 +362,8 @@ fn run_to_llm_only(
         rehashed,
         vec_tables_were_present,
         v013_applied,
+        null_rows_fixed,
+        vec_tables_removed_via_writable_schema: vec_tables_removed,
         status: "ok".to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })
@@ -351,6 +379,54 @@ fn history_table_exists(conn: &rusqlite::Connection) -> bool {
     .ok()
     .flatten()
     .is_some()
+}
+
+fn sanitize_null_applied_on(conn: &rusqlite::Connection) -> Result<u64, AppError> {
+    if !history_table_exists(conn) {
+        return Ok(0);
+    }
+    let now = Utc::now().to_rfc3339();
+    let fixed = conn.execute(
+        "UPDATE refinery_schema_history SET applied_on = ?1 WHERE applied_on IS NULL",
+        rusqlite::params![now],
+    )?;
+    Ok(fixed as u64)
+}
+
+fn remove_vec_virtual_tables_without_module(
+    conn: &rusqlite::Connection,
+) -> Result<usize, AppError> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type='table' AND name IN ('vec_memories','vec_entities','vec_chunks')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if count == 0 {
+        return Ok(0);
+    }
+
+    let drop_works = conn
+        .execute_batch("DROP TABLE IF EXISTS vec_memories;")
+        .is_ok();
+    if drop_works {
+        let _ = conn.execute_batch("DROP TABLE IF EXISTS vec_entities;");
+        let _ = conn.execute_batch("DROP TABLE IF EXISTS vec_chunks;");
+        return Ok(count as usize);
+    }
+
+    conn.execute_batch("PRAGMA writable_schema = ON;")?;
+    let removed = conn.execute(
+        "DELETE FROM sqlite_master WHERE type='table'
+         AND (name LIKE 'vec_memories%' OR name LIKE 'vec_entities%' OR name LIKE 'vec_chunks%')",
+        [],
+    )?;
+    conn.execute_batch("PRAGMA writable_schema = OFF;")?;
+    conn.execute_batch("VACUUM;")?;
+
+    Ok(removed)
 }
 
 fn list_applied_migrations(conn: &rusqlite::Connection) -> Result<Vec<MigrationEntry>, AppError> {
@@ -629,5 +705,115 @@ mod tests {
         assert!(history_table_exists(&conn));
         let conn2 = create_db_without_history();
         assert!(!history_table_exists(&conn2));
+    }
+
+    #[test]
+    fn sanitize_null_applied_on_fixes_null_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE refinery_schema_history (
+                version INTEGER NOT NULL,
+                name TEXT,
+                applied_on TEXT,
+                checksum TEXT
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO refinery_schema_history (version, name, checksum) VALUES (1, 'init', '123')",
+            [],
+        )
+        .unwrap();
+        let fixed = sanitize_null_applied_on(&conn).unwrap();
+        assert_eq!(fixed, 1, "must fix exactly one NULL row");
+        let applied: String = conn
+            .query_row(
+                "SELECT applied_on FROM refinery_schema_history WHERE version = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&applied).is_ok(),
+            "applied_on must be valid RFC3339, got: {applied}"
+        );
+    }
+
+    #[test]
+    fn sanitize_null_applied_on_noop_when_all_filled() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE refinery_schema_history (
+                version INTEGER NOT NULL,
+                name TEXT,
+                applied_on TEXT,
+                checksum TEXT
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) VALUES (1, 'init', '2026-06-09T00:00:00+00:00', '123')",
+            [],
+        )
+        .unwrap();
+        let fixed = sanitize_null_applied_on(&conn).unwrap();
+        assert_eq!(fixed, 0, "must not touch rows with valid applied_on");
+    }
+
+    #[test]
+    fn rehash_insert_includes_applied_on() {
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE refinery_schema_history (
+                version INTEGER NOT NULL,
+                name TEXT,
+                applied_on TEXT,
+                checksum TEXT
+            );",
+        )
+        .unwrap();
+        let runner = crate::migrations::runner();
+        let migrations = runner.get_migrations();
+        for mig in migrations.iter() {
+            if mig.version() >= 13 {
+                break;
+            }
+            let name = mig.name().to_string();
+            let v = mig.version();
+            let sql = mig.sql().unwrap_or("").to_string();
+            let cs = compute_checksum(&name, v, &sql).to_string();
+            conn.execute(
+                "INSERT INTO refinery_schema_history (version, name, applied_on, checksum) VALUES (?1, ?2, '2026-01-01T00:00:00+00:00', ?3)",
+                rusqlite::params![v, name, cs],
+            )
+            .unwrap();
+        }
+        let report = run_rehash(&mut conn, Path::new("/tmp/test.sqlite")).unwrap();
+        let applied: Option<String> = conn
+            .query_row(
+                "SELECT applied_on FROM refinery_schema_history WHERE version = 13",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap()
+            .flatten();
+        assert!(
+            applied.is_some(),
+            "V013 row must have applied_on after rehash insert, got NULL"
+        );
+        let ts = applied.unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
+            "applied_on must be valid RFC3339, got: {ts}"
+        );
+        assert_eq!(report.null_rows_fixed, 0, "no pre-existing NULLs to fix");
+    }
+
+    #[test]
+    fn remove_vec_tables_noop_when_no_vec() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let removed = remove_vec_virtual_tables_without_module(&conn).unwrap();
+        assert_eq!(removed, 0);
     }
 }

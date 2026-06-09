@@ -117,6 +117,16 @@ Agents that try to set them will see a clear validation error.
 - New global flag `--extraction-backend llm|embedding|none|both` (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `embedding` is the legacy fastembed pipeline (requires `embedding-legacy` feature); `none` is a no-op; `both` runs them in parallel and merges.
 - The `ExtractionBackend` trait lives in `src/extract/` with four concrete implementations: `LlmBackend` (default), `EmbeddingBackend` (legacy fastembed pipeline, stub when LLM-only), `NoneBackend` (no-op), and `CompositeBackend` (merges multiple backends in parallel).
 - The `VersionAdapter` trait lives in `src/spawn/` and abstracts executor spawn invocations. `CodexAdapter` detects `codex 0.130.0` through `0.138+` and adapts flags — `codex 0.137.0` removed `--ask-for-approval` in favour of `-a never`. `ClaudeAdapter` covers claude code 2.1.0+. `OpencodeAdapter` covers opencode headless.
+## New in v1.0.77
+### REQUIRED — G40 Fix: `applied_on = NULL` Blocks All Migrations
+- The `run_rehash` INSERT in v1.0.76 omitted the `applied_on` field, leaving it NULL. The refinery-core 0.9.1 rusqlite driver reads `applied_on` as `String` (NOT NULL), crashing with `InvalidColumnType(Null at index: 2)`. All subsequent migrations were blocked (exit 20).
+- v1.0.77 adds a `sanitize_null_applied_on` helper that runs an UPDATE on rows with `applied_on IS NULL` before any migration runner call. The INSERT was also fixed to always include `applied_on` with an RFC3339 timestamp.
+- v1.0.77 adds `remove_vec_virtual_tables_without_module` that cleans up vec0 virtual tables via `PRAGMA writable_schema` when the `vec0` module is absent (LLM-only build).
+- `debug-schema` no longer crashes on databases with `applied_on = NULL` — the field was changed from `String` to `Option<String>`.
+- JSON response for `migrate --rehash` now includes `null_rows_fixed` (u64). Response for `migrate --to-llm-only` includes `null_rows_fixed` (u64) and `vec_tables_removed_via_writable_schema` (usize).
+- 4 new unit tests and 2 new integration tests cover the fix.
+- See ADR-0027 for the full rationale.
+
 ### FORBIDDEN — v1.0.76 Anti-patterns
 - NEVER install v1.0.76 with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn aborts.
 - NEVER depend on the daemon in new code; the daemon will be REMOVED in v1.1.0.

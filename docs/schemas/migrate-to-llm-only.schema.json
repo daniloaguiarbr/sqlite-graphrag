@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.rs/sqlite-graphrag/schemas/migrate-to-llm-only.schema.json",
   "title": "sqlite-graphrag migrate --to-llm-only response",
-  "description": "JSON contract for the `migrate --to-llm-only --drop-vec-tables --json` subcommand added in v1.0.76. The one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply V013 + report vec-table state. Requires --drop-vec-tables as an explicit safety guard.",
+  "description": "JSON contract for the `migrate --to-llm-only --drop-vec-tables --json` subcommand added in v1.0.76, updated in v1.0.77 with null_rows_fixed (G40) and vec_tables_removed_via_writable_schema. The one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply V013 + report vec-table state. Requires --drop-vec-tables as an explicit safety guard.",
   "type": "object",
   "additionalProperties": false,
   "required": ["action", "rewritten", "v013_applied", "vec_tables_were_present", "vec_tables_dropped", "elapsed_ms"],
@@ -50,6 +50,16 @@
     "db_path": {
       "type": "string"
     },
+    "null_rows_fixed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of refinery_schema_history rows where applied_on was NULL and got fixed. Added in v1.0.77."
+    },
+    "vec_tables_removed_via_writable_schema": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of sqlite_master entries removed via PRAGMA writable_schema when the vec0 module was absent. Includes root tables and shadow tables. Added in v1.0.77."
+    },
     "elapsed_ms": {
       "type": "integer",
       "minimum": 0
@@ -64,6 +74,8 @@
       "vec_tables_were_present": true,
       "vec_tables_dropped": ["vec_memories", "vec_entities", "vec_chunks"],
       "embedding_tables_created": ["memory_embeddings", "entity_embeddings", "chunk_embeddings"],
+      "null_rows_fixed": 0,
+      "vec_tables_removed_via_writable_schema": 0,
       "namespace": "global",
       "db_path": "/home/user/graphrag.sqlite",
       "elapsed_ms": 47

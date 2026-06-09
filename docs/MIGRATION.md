@@ -1,3 +1,32 @@
+# MIGRATING TO v1.0.77 — G40 Fix
+
+> This guide is for operators affected by the v1.0.76 G40 bug where `migrate --rehash` inserted rows with `applied_on = NULL`
+
+## What Changed in v1.0.77
+
+- Fixed the INSERT in `run_rehash` that omitted the `applied_on` field
+- Automatic sanitization of rows with `applied_on = NULL` before running the migration runner
+- Removal of vec virtual tables via `PRAGMA writable_schema` when the `vec0` module is absent
+- Fixed `debug-schema` crashing on databases with `applied_on = NULL`
+
+## Who Is Affected
+
+- Operators who ran `migrate --rehash` or `migrate --to-llm-only` on v1.0.76
+- Databases showing `InvalidColumnType(Null at index: 2, name: applied_on)` errors
+- v1.0.74 databases with vec virtual tables present
+
+## How to Upgrade
+
+```bash
+cargo install sqlite-graphrag --version 1.0.77 --force
+sqlite-graphrag migrate
+```
+
+- No manual SQL intervention is needed
+- v1.0.77 automatically detects and fixes rows with `applied_on = NULL`
+- Vec virtual tables are automatically removed via `writable_schema` if `vec0` is absent
+
+
 # MIGRATING TO v1.0.76 — LLM-Only One-Shot
 
 > This guide is for operators on v1.0.74 or v1.0.75 who want to

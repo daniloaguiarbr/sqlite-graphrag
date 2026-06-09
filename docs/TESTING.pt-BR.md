@@ -29,6 +29,24 @@
 - `cargo test --workspace --features slow-tests` — roda a suíte completa de contratos incluindo a matriz de integração de 832 testes.
 
 
+## Adições de Testes v1.0.77 — Cobertura da Correção G40
+### Delta de Contagem de Testes
+- Linha de base v1.0.76: 719 testes de lib passando
+- v1.0.77 final: 723 testes de lib passando (+4 unitários, +2 integração)
+### Testes Unitários em `src/commands/migrate.rs`
+- `sanitize_null_applied_on_fixes_null_rows` — verifica que linhas com `applied_on` NULL são corrigidas
+- `sanitize_null_applied_on_noop_when_all_filled` — verifica no-op quando não há NULLs
+- `rehash_insert_includes_applied_on` — verifica que INSERT agora inclui `applied_on`
+- `remove_vec_tables_noop_when_no_vec` — verifica no-op quando não há tabelas vec
+### Testes de Integração em `tests/schema_migration_integration.rs`
+- `migrate_rehash_fixes_null_applied_on` — rehash end-to-end com correção de NULL
+- `migrate_to_llm_only_fixes_null_applied_on` — `--to-llm-only` end-to-end com correção de NULL
+### Justificativa de Cobertura
+- G40 corrigiu um bug onde `applied_on` ficava NULL após rehash
+- Os 4 testes unitários cobrem cada caminho no módulo migrate
+- Os 2 testes de integração validam o fluxo CLI end-to-end
+
+
 ## Por Que Categorizar os Testes
 ### O Incidente de Livelock Térmico — 2026-04-19
 - Em 2026-04-19 às 11:37:40, o Intel i9-14900KF do desenvolvedor atingiu Tjmax 100°C
