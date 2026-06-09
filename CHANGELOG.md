@@ -4,6 +4,105 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+
+- **Daemon infrastructure fully removed**: `src/daemon.rs` (1120 lines), `src/commands/daemon.rs` (79 lines), `tests/daemon_integration.rs` (316 lines) deleted. `DaemonOpts` struct and `--autostart-daemon` flag removed from all command args. All `crate::daemon::embed_*_or_local` calls replaced with direct `crate::embedder::embed_*_local` wrappers. CLI is now 100% one-shot with zero IPC. 8 daemon constants removed from `src/constants.rs`. Net removal: ~764 lines.
+
+## [1.0.76] - 2026-06-07
+
+> **Breaking architectural change.** The default build is now **LLM-only and one-shot**.
+> There is no daemon, no ONNX runtime, and no local model cache in the default build.
+> All embedding generation, NER, and vector search are delegated to `claude -p` or `codex exec` headless (OAuth, no MCP, no hooks). The CI matrix now runs 3 feature flags in parallel: `default`, `llm-only`, and `embedding-legacy`.
+
+### Removed
+
+- **`fastembed` 5.13.4** — embedding generation now goes through `LlmEmbedding` in `src/extract/llm_embedding.rs`, which spawns `claude -p` or `codex exec` with `--output-schema` enforcing a 384-dim `f32` array.
+- **`ort` 2.0.0-rc.12** — no more ONNX runtime in the default build; the LLM does inference.
+- **`ndarray` 0.16** — no longer needed; vectors live in BLOB.
+- **`tokenizers` 0.22** — replaced with whitespace token heuristic in `src/tokenizer.rs`. `CHARS_PER_TOKEN` is the same calibration the rest of the crate uses.
+- **`huggingface-hub` 0.4** — no more model downloads.
+- **`GLiNER NER`** in `extraction_gliner.rs` — moved behind the `ner-legacy` feature. Default build uses URL regex only; full NER comes from the LLM `ExtractionBackend` in `src/extract/`.
+- **`sqlite-vec` 0.1.9** — REMOVED. The `vec_memories`, `vec_entities`, `vec_chunks` virtual tables are dropped by migration `V013` and replaced with regular BLOB-backed `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` tables. Cosine similarity is computed in pure Rust on demand in `src/similarity.rs`.
+- **Daemon as a performance optimization** — the `daemon` subcommand is still present for source compatibility but every `EmbedPassage`/`EmbedQuery` request now goes through the LLM one-shot, defeating the original purpose of the daemon. The daemon will be removed in v1.1.0.
+
+### Added
+
+- **`ExtractionBackend` trait (G21 solution)** — new `src/extract/` module exposes a trait with four implementations: `LlmBackend` (default, invokes `claude -p` or `codex exec` headless), `EmbeddingBackend` (legacy fastembed pipeline, stub when LLM-only), `NoneBackend` (no-op for explicit skip), and `CompositeBackend` (merges multiple backends in parallel). Global flag `--extraction-backend llm|embedding|none|both` selects the backend at runtime; the LLM backend is the new default.
+- **`VersionAdapter` trait (G22 solution)** — new `src/spawn/` module abstracts executor spawn invocations behind a trait. Three concrete adapters ship: `CodexAdapter` (detects `codex 0.130.0` through `0.138+` and adapts flags — `codex 0.137.0` removed `--ask-for-approval` in favour of `-a never`, and the adapter emits the new flag automatically), `ClaudeAdapter` (claude code 2.1.0+), and `OpencodeAdapter` (opencode headless). The trait also exposes `ExecutorVersion` (built on `semver::Version`), `CompatMode` (`strict` | `lenient` | `auto`), `ExecutorCapabilities`, `VersionCache`, and an `ErrorPropagator` that propagates subprocess stderr to the user instead of swallowing it (root cause of G22 P16).
+- **Adaptive concurrency (G18 solution)** — `MAX_CONCURRENT_CLI_INSTANCES` raised from 4 to 16 (legacy fallback). New `crate::lock::calculate_safe_concurrency()` function reads `sysinfo::System::available_memory()` and computes a dynamic permit count via `min(cpus, available_mb / worker_cost_mb)`. New `LLM_WORKER_RSS_MB = 350` constant for LLM-only workers (vs `EMBEDDING_LOAD_EXPECTED_RSS_MB = 1100` for the legacy fastembed path). The `* 0.5` halving factor that caused the 4-slot ceiling has been removed.
+- **Feature flag `llm-only` (G23 foundation)** — opt-in feature that opts the build out of the fastembed + ort pipeline. Already the default behaviour; the feature is now the explicit opt-in marker for the v1.1.0 flip. `embedding-legacy` is recognised by `cfg!()` checks in `src/lock.rs` so the adaptive concurrency formula can pick the right `worker_cost_mb` in feature-gated builds.
+- **`tracing` respects `RUST_LOG`** — removed the static `release_max_level_info` feature from `tracing`, so operators can override the log level at runtime via the `RUST_LOG` environment variable (helps G22 P17).
+- **`migrate --rehash`** — rewrites recorded migration checksums to match current file content via `SipHasher13(name|version|sql)`. Algorithm matches `refinery-core 0.9.1` (the version the binary embeds); same `SipHasher13` crate, same hashing order. Required for v1.0.74 databases upgrading to v1.0.76 because `V002` was intentionally emptied to a no-op.
+- **`migrate --to-llm-only`** — one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply `V013` + report vec-table state. Requires `--drop-vec-tables` as an explicit safety guard.
+- **BLOB-backed embedding tables** — `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` replace the old sqlite-vec virtual tables. Pure-Rust cosine similarity in `src/similarity.rs` (ADR-0020, ADR-0022).
+- **OAuth-only LLM credential flow (ADR-0025)** — the LLM spawn ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. Both variables are excluded from the env-clear whitelist as defence in depth.
+
+### Changed
+
+- **CLI is one-shot by default** — the `remember` / `ingest` / `edit` / `recall` / `hybrid-search` commands no longer autostart the daemon for embeddings. Each embedding is a fresh `claude -p` or `codex exec` subprocess (one OAuth turn per call).
+- **Operator workflow shift** — to keep embedding latency under control, operators should run `claude` or `codex` outside `sqlite-graphrag` (e.g., as a systemd unit or a watchexec loop) and let the binary call them when needed.
+
+### Migration
+
+- **Migration `V013` drops the vec tables.** Existing v1.0.74 databases will lose their old embeddings; they are recomputed lazily on the next `remember` / `ingest` / `edit`.
+- **Operators who want to preserve old vectors** can dump the vec tables before running `init --force`.
+- **Recommended upgrade path** — see `docs/MIGRATION.md` for the step-by-step v1.0.74 → v1.0.76 procedure, including `migrate --to-llm-only --drop-vec-tables`.
+- **Rollback procedure** — `cargo install sqlite-graphrag --version 1.0.75 --force` restores the legacy build, then re-`init --force` recreates the vec tables (embeddings are lost unless dumped beforehand).
+
+### Dependencies
+
+- `async-trait = "0.1"` — required for the `ExtractionBackend` and `VersionAdapter` traits to be dyn-compatible.
+- `semver = "1"` with `serde` feature — required for `ExecutorVersion` parsing in `src/spawn/`.
+- `siphasher = "1.x"` (pinned) — required to compute migration checksums deterministically. Already in the build graph transitively from `refinery-core 0.9.1`; this entry makes the link explicit.
+- **REMOVED:** `fastembed 5.13.4`, `ort 2.0.0-rc.12`, `ndarray 0.16`, `tokenizers 0.22`, `huggingface-hub 0.4`, `sqlite-vec 0.1.9`.
+
+### Tests
+
+- 745 lib tests preserved from v1.0.74 baseline.
+- Mock LLM CLI wired into 26 test files for the LLM-only build path.
+- 107/115 previously-slow tests fixed in commit `bd0a3f5` (mock LLM unblocks CI from real OAuth turns).
+- CI matrix 3 features: `default`, `llm-only`, `embedding-legacy` run clippy and tests in parallel.
+- 12 new tests in `tests/extract_backend.rs` (LLM, Embedding, None, Composite, factory, dispatch, hints, health).
+- 13 new tests in `tests/spawn_version_adapter.rs` (Codex, Claude, Opencode, version matrix, parse, JSONL).
+- 6 new tests in `tests/concurrency_adaptive.rs` (legacy formula no longer halves, LLM worker budget, max ceiling).
+- 4 new tests in `tests/migrate_rehash_integration.rs` (healthy DB no-op, corrupted checksum fix, to-llm-only success, safety guard refusal).
+- 11 new unit tests in `src/commands/migrate.rs` (checksum determinism, no-op history, corrupted checksum rewrite, idempotency, vec-table detection).
+- 4 tests in `tests/signal_handling_integration.rs` verified green (4/4) — 3 pre-existing failures fixed by the v1.0.75 daemon-fallback fix.
+- 7 tests in `tests/v2_breaking_integration.rs` verified green (7/7) — 2 pre-existing failures fixed.
+
+### Validation
+
+- `cargo check --all-targets --no-default-features --features llm-only`: 0 errors.
+- `cargo check --all-targets --no-default-features --features embedding-legacy`: 0 errors.
+- `cargo check --all-targets` (default): 0 errors.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
+- `cargo fmt --all --check`: 0 differences.
+- `cargo build --bin sqlite-graphrag --release` (default, LLM-only): builds in ~25s, binary 6 MB.
+- `cargo build --bin sqlite-graphrag --release --no-default-features --features embedding-legacy`: builds in ~1m 11s, binary 39 MB.
+- `cargo test --lib`: 745 passed.
+- `cargo test --all-features`: green across all 3 feature flags.
+- Release binary (default build) reports `sqlite-graphrag 1.0.76`, no ONNX runtime, no `libonnxruntime.so` required.
+
+### Documentation
+
+- New: `docs/HOW_TO_USE.md` (221 lines) — rewritten for v1.0.76 LLM-Only.
+- New: `docs/MIGRATION.md` (147 lines) — v1.0.74 → v1.0.76 step-by-step.
+- New: `docs/AGENTS.md` (1428 lines) — updated header, LLM-Only architecture, OAuth enforcement, hardening flags.
+- Updated: `docs/COOKBOOK.md` — added "How To Upgrade From v1.0.74 Or v1.0.75 To v1.0.76" recipe; updated daemon recipe with DEPRECATED notice; updated Latency Note.
+- New ADR: `adr-0019-llm-only-one-shot.md` (PT-BR: `adr-0019-llm-only-one-shot.pt-BR.md`).
+- New ADR: `adr-0020-pure-rust-cosine.md` (PT-BR).
+- New ADR: `adr-0021-deprecate-daemon.md` (PT-BR).
+- New ADR: `adr-0022-blob-embeddings.md` (PT-BR).
+- New ADR: `adr-0023-remove-tokenizers.md` (PT-BR).
+- New ADR: `adr-0024-fts5-coarse-cosine-refine.md` (PT-BR).
+- New ADR: `adr-0025-oauth-only-embedding.md` (PT-BR).
+- New ADR: `adr-0026-v002-vec-tables-migration-drift.md` (PT-BR).
+- New schema: `migrate-rehash.schema.json` (response of `migrate --rehash --json`).
+- New schema: `migrate-to-llm-only.schema.json` (response of `migrate --to-llm-only --json`).
+- New doc: `docs/HEADLESS_INVOCATION.md` (promoted from gaps.md) — how to invoke Claude/Codex/OpenCode headless without MCP, OAuth-safe.
+
 ## [1.0.75] - 2026-06-07
 
 ### Added
@@ -102,10 +201,6 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-_None yet. v1.0.72 is the latest in-progress release; new commits land in this section until the next version is cut._
 
 ## [1.0.72] - 2026-06-05
 

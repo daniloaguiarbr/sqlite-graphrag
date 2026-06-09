@@ -26,6 +26,8 @@
 | `deep-research` | `deep-research.schema.json` |
 | `health` | `health.schema.json` |
 | `migrate` | `migrate.schema.json` |
+| `migrate --rehash` (v1.0.76) | `migrate-rehash.schema.json` |
+| `migrate --to-llm-only` (v1.0.76) | `migrate-to-llm-only.schema.json` |
 | `namespace-detect` | `namespace-detect.schema.json` |
 | `optimize` | `optimize.schema.json` |
 | `stats` | `stats.schema.json` |
@@ -70,10 +72,12 @@
 | `vec purge-orphan` (v1.0.69) | `vec-purge-orphan.schema.json` |
 | `vec stats` (v1.0.69) | `vec-stats.schema.json` |
 | `codex-models` (v1.0.69) | `codex-models.schema.json` |
+| `migrate --rehash` (v1.0.76) | `migrate-rehash.schema.json` |
+| `migrate --to-llm-only` (v1.0.76) | `migrate-to-llm-only.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Commands Without JSON Schemas
 - `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies
-- `daemon`, `daemon --ping`, `daemon --stop` use plain-text status messages — no JSON schema applies
+- `daemon` was fully removed in v1.0.76 — no JSON schema applies (historical)
 ### Ingest Mode Schema Selection
 - `--mode none` and `--mode gliner` use `ingest-file-event.schema.json` and `ingest-summary.schema.json`
 - `--mode claude-code` uses `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, and `ingest-claude-summary.schema.json`
@@ -119,7 +123,7 @@
 - Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
 ### Comandos Sem JSON Schema
 - `completions` emite scripts de completion de shell (Bash, Zsh, Fish, PowerShell, Elvish) como texto puro — nenhum JSON schema se aplica
-- `daemon`, `daemon --ping`, `daemon --stop` usam mensagens de status em texto puro — nenhum JSON schema se aplica
+- `daemon` foi totalmente removido na v1.0.76 — nenhum JSON schema se aplica (histórico)
 ### Seleção de Schema por Modo de Ingestão
 - `--mode none` e `--mode gliner` usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
 - `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`

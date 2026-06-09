@@ -25,60 +25,6 @@ use std::sync::OnceLock;
 /// embedding; the daemon was removed in v1.0.76 to make the CLI one-shot.
 static EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 
-#[cfg(feature = "embedding-legacy")]
-mod legacy {
-    //! Legacy fastembed wrapper, kept behind the opt-in `embedding-legacy`
-    //! feature for the v1.0.76 → v1.1.0 transition window.
-    use super::*;
-    use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
-    use ort::execution_providers::CPUExecutionProvider;
-    use parking_lot::Mutex;
-    use std::path::Path;
-    use std::sync::OnceLock;
-
-    static LEGACY: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
-
-    pub fn get_legacy_embedder(
-        models_dir: &Path,
-    ) -> Result<&'static Mutex<TextEmbedding>, AppError> {
-        if let Some(e) = LEGACY.get() {
-            return Ok(e);
-        }
-        let model_root = models_dir.to_path_buf();
-        let _ = std::fs::create_dir_all(&model_root);
-
-        let init = TextInitOptions::new(EmbeddingModel::MultilingualE5Small)
-            .with_cache_dir(model_root)
-            .with_execution_providers(vec![CPUExecutionProvider::default().into()])
-            .with_max_length(crate::constants::EMBEDDING_MAX_TOKENS);
-
-        let embedder = TextEmbedding::try_new(init).map_err(|e| {
-            AppError::Embedding(format!("failed to initialise fastembed TextEmbedding: {e}"))
-        })?;
-        let _ = LEGACY.set(Mutex::new(embedder));
-        Ok(LEGACY.get().expect("LEGACY initialised above"))
-    }
-
-    pub fn legacy_embed_passage(text: &str) -> Result<Vec<f32>, AppError> {
-        let models_dir = crate::paths::AppPaths::resolve(None)
-            .map(|p| p.models)
-            .map_err(|e| AppError::Embedding(format!("models_dir resolve failed: {e}")))?;
-        let embedder = get_legacy_embedder(&models_dir)?;
-        let mut guard = embedder.lock();
-        let prefixed = format!("{}{}", crate::constants::PASSAGE_PREFIX, text);
-        let docs: [&str; 1] = [prefixed.as_str()];
-        let mut embeddings = guard
-            .embed(docs, Some(crate::constants::FASTEMBED_BATCH_SIZE))
-            .map_err(|e| AppError::Embedding(format!("embed_passage failed: {e}")))?;
-        if embeddings.is_empty() {
-            return Err(AppError::Embedding(
-                "embed_passage returned zero embeddings".into(),
-            ));
-        }
-        Ok(normalise_dim(embeddings.remove(0)))
-    }
-}
-
 /// Initialises the LLM-embedding client on first use and returns it.
 pub fn get_embedder(_models_dir: &Path) -> Result<&'static Mutex<LlmEmbedding>, AppError> {
     if let Some(e) = EMBEDDER.get() {
@@ -151,6 +97,25 @@ fn flush_group(
     }
     group.clear();
     Ok(())
+}
+
+pub fn embed_passage_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, AppError> {
+    let embedder = get_embedder(models_dir)?;
+    embed_passage(embedder, text)
+}
+
+pub fn embed_query_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, AppError> {
+    let embedder = get_embedder(models_dir)?;
+    embed_query(embedder, text)
+}
+
+pub fn embed_passages_controlled_local(
+    models_dir: &Path,
+    texts: &[&str],
+    token_counts: &[usize],
+) -> Result<Vec<Vec<f32>>, AppError> {
+    let embedder = get_embedder(models_dir)?;
+    embed_passages_controlled(embedder, texts, token_counts)
 }
 
 pub fn f32_to_bytes(v: &[f32]) -> Vec<u8> {

@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, offline embeddings, fastembed, sqlite-vec, multilingual-e5, KNN search, memory-safe copy, FTS5 and vec fusion. Auto-invokes even without explicit mention when user describes agent losing context between sessions or wants an offline vector database in Rust. MUST also trigger on OAuth-only enforcement, v1.0.69 migration, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, codex-spawn helper, vec orphan handling, or any G28-G39 gap remediation. Keywords memory RAG GraphRAG SQLite vector embeddings Claude Codex Cursor Windsurf offline local persistent graph entity OAuth-only v1.0.69.
+description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, memory migration v1.0.76, migrate to-llm-only, migrate rehash, vec tables drop, codex-spawn helper, vec orphan handling, or any G28-G39 gap remediation. Auto-invokes even without explicit mention when user describes agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, 7 hardening flags for Claude and Codex, Mock LLM CLI in CI, Mock LLM CLI in CI, or removal of the daemon subcommand. Keywords memory RAG GraphRAG SQLite LLM-only one-shot OAuth Claude Codex Cursor Windsurf offline local persistent graph entity v1.0.76.
 ---
 
 
@@ -29,7 +29,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ## Initialization and Health Check
 ### REQUIRED — Database Bootstrap
 - RUN `sqlite-graphrag init --namespace <project>` on first use
-- WAIT for offline download of the `multilingual-e5-small` model
+- SINCE v1.0.76, `init` validates that an LLM CLI (`claude` or `codex`) is reachable on PATH; there is no local model download
 - VALIDATE with `sqlite-graphrag health --json` before operating
 - TREAT exit code 10 as a database error or corrupted database
 - TREAT exit code 15 as a pending lock; widen `--wait-lock`
@@ -83,11 +83,10 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - HONORS cgroup constraints automatically when set
 - TRADE-OFF is 3 to 4 times more wall-clock time
 - COMBINE with the `--low-memory` flag in a specific `ingest`
-### REQUIRED — ONNX Runtime on ARM64 GNU
-- DISTRIBUTE `libonnxruntime.so` alongside the binary
-- SET `ORT_DYLIB_PATH` explicitly in CI and systemd
-- AFFECTS heavy embedding commands on `aarch64-unknown-linux-gnu`
-- FAILS on the first embedding operation without the runtime accessible
+### NOTE — ONNX Runtime No Longer Required (v1.0.76)
+- The ONNX runtime (`libonnxruntime.so`) and `ORT_DYLIB_PATH` are NO LONGER needed in the default LLM-only build
+- Embeddings are generated via headless `claude -p` or `codex exec` subprocess (OAuth)
+- No local model download or ONNX runtime is needed for the default build
 
 
 ## CRUD — Create with remember
@@ -312,6 +311,74 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER call `optimize` without checking `fts stats` first if you only want to verify health (use `fts check` instead)
 
 
+## New in v1.0.76
+### REQUIRED — LLM-Only and One-Shot Architecture (BREAKING)
+- KNOW that v1.0.76 is the first release where the default build no longer bundles any local model
+- KNOW that all embedding generation, NER, and vector search now delegate to headless `claude -p` or `codex exec` (OAuth, no MCP, no hooks)
+- KNOW that the CLI is one-shot — there is no daemon, no ONNX runtime, no model download
+- KNOW that the release binary is ~6 MB (down from 39 MB)
+- KNOW that the `fastembed`, `ort`, `ndarray`, `tokenizers`, `huggingface-hub`, `sqlite-vec`, and `GLiNER` crates are REMOVED from the default build
+- KNOW that the `daemon` subcommand was fully removed in v1.0.76 (ADR-0021)
+- KNOW that migration V013 drops the `vec_memories` / `vec_entities` / `vec_chunks` virtual tables and creates BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables
+- KNOW that cosine similarity is now computed in pure Rust on demand in `src/similarity.rs` (ADR-0020, ADR-0022)
+- KNOW that the `llm-only` feature is the canonical marker for the v1.1.0 default flip
+
+### REQUIRED — OAuth-Only LLM Embedding Flow
+- KNOW that v1.0.76 inherits the OAuth-only mandate from v1.0.69 and applies it to the embedding pipeline
+- KNOW that the LLM spawn ABORTS with `AppError::Validation` and exit code 1 if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment
+- KNOW that both API-key env vars are EXCLUDED from the env-clear whitelist in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs`
+- KNOW that the `--bare` flag (which would also demand an API key) is REMOVED from every executable path
+- KNOW that the OAuth flow (Claude Pro/Max or ChatGPT Pro subscription) is the ONLY accepted credential mechanism
+- REFERENCE `docs/decisions/adr-0011-oauth-only-enforcement.md` and `docs/decisions/adr-0025-oauth-only-embedding.md`
+
+### REQUIRED — Migrate Subcommands for v1.0.74 / v1.0.75 Databases
+- USE `migrate --rehash --json` to rewrite recorded migration checksums via SipHasher13 to match the current file content
+- USE `migrate --to-llm-only --drop-vec-tables --json` as the one-shot upgrade for v1.0.74 / v1.0.75 databases (rehash + V013 + drop vec tables)
+- KNOW that `--drop-vec-tables` is the explicit safety guard — the CLI refuses to run without it
+- KNOW that migration V002 was intentionally emptied to a no-op for v1.0.76, so `--rehash` is REQUIRED for v1.0.74 databases to upgrade cleanly
+- REFERENCE `docs/MIGRATION.md` for the full v1.0.74 → v1.0.76 → v1.1.0 path and `docs/decisions/adr-0026-v002-vec-tables-migration-drift.md` for the V002 root cause
+- SCHEMA: `migrate-rehash.schema.json` and `migrate-to-llm-only.schema.json` (both in `docs/schemas/`)
+
+### REQUIRED — 3-Feature CI Matrix and Mock LLM CLI
+- KNOW that the CI workflow runs `clippy` and `test` jobs with a stub `mock-llm` CLI on `PATH` so embedding round-trip tests run without real OAuth credentials
+- KNOW that 26 test files were wired to consume the mock LLM CLI as a drop-in replacement for `claude -p` and `codex exec`
+- KNOW that 107 of 115 previously-slow tests were fixed in commit `bd0a3f5` (mock LLM unblocks tests that depended on a real OAuth turn)
+- KNOW that 11 new unit tests cover the migrate subcommand and 4 new integration tests cover the CLI subcommands end-to-end
+
+### REQUIRED — 7 New ADRs (v1.0.76)
+- KNOW that 7 new Architecture Decision Records were added (all with PT-BR translations):
+  - `adr-0019-llm-only-one-shot.md` — rationale for removing fastembed, ort, ndarray, tokenizers, hf-hub, sqlite-vec
+  - `adr-0020-pure-rust-cosine.md` — replacement for sqlite-vec KNN with pure-Rust cosine
+  - `adr-0021-deprecate-daemon.md` — the daemon is no longer a performance optimization
+  - `adr-0022-blob-embeddings.md` — migration V013 drops vec tables; BLOB-backed tables
+  - `adr-0023-remove-tokenizers.md` — whitespace token heuristic replaces the tokenizers crate
+  - `adr-0024-fts5-coarse-cosine-refine.md` — FTS5 coarse filter + cosine refinement
+  - `adr-0025-oauth-only-embedding.md` — OAuth-only flow for the LLM embedding pipeline
+- KNOW that `adr-0026-v002-vec-tables-migration-drift.md` documents the V002 mismatch root cause
+
+### REQUIRED — 2 New JSON Schemas (v1.0.76)
+- KNOW that `migrate-rehash.schema.json` defines the JSON contract for `migrate --rehash --json` (fields: `action`, `rewritten`, `skipped`, `errors`, `namespace`, `db_path`, `elapsed_ms`)
+- KNOW that `migrate-to-llm-only.schema.json` defines the JSON contract for `migrate --to-llm-only --json` (fields: `action`, `rewritten`, `v013_applied`, `schema_version`, `vec_tables_were_present`, `vec_tables_dropped`, `embedding_tables_created`, `namespace`, `db_path`, `elapsed_ms`)
+- Both schemas follow the project convention `"additionalProperties": false` and are indexed in `docs/schemas/README.md`
+
+### REQUIRED — New Documentation (v1.0.76)
+- KNOW that `docs/HOW_TO_USE.md` and `docs/HOW_TO_USE.pt-BR.md` were rewritten for v1.0.76 LLM-Only
+- KNOW that `docs/MIGRATION.md` and `docs/MIGRATION.pt-BR.md` were created covering v1.0.74 → v1.0.76 → v1.1.0
+- KNOW that `docs/HEADLESS_INVOCATION.md` and `docs/HEADLESS_INVOCATION.pt-BR.md` were created covering Claude/Codex/OpenCode OAuth-safe headless invocation
+- KNOW that `docs/AGENTS.md` gained "v1.0.76 Architecture (LLM-Only)" and "OAuth Enforcement" sections
+- KNOW that `docs/TESTING.md` gained "v1.0.76 Test Infrastructure — 3-Feature CI Matrix" section
+- KNOW that `docs/COOKBOOK.md` gained "How To Upgrade From v1.0.74 Or v1.0.75 To v1.0.76" recipe
+
+### FORBIDDEN — v1.0.76 Anti-patterns
+- NEVER try to install `fastembed`, `tokenizers`, or `sqlite-vec` — these crates are removed from the default build
+- NEVER use the v1.0.76 default build on a host without `claude` or `codex` CLI on `PATH` — the embedding pipeline requires it
+- NEVER set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and expect a successful embedding call — the spawn ABORTS
+- NEVER depend on the `daemon` subcommand for new code — it is removed in v1.1.0
+- NEVER call `migrate --to-llm-only` without `--drop-vec-tables` — the CLI refuses to run for safety
+- NEVER add new code that depends on the v1.0.74 ONNX model cache — the default build is LLM-only
+- NEVER assume cosine similarity is computed by sqlite-vec — it is now pure-Rust on demand in `src/similarity.rs`
+
+
 ## CRUD — Bulk Ingest with ingest
 ### REQUIRED — When to Use ingest
 - USE `ingest <DIR>` to import entire directories as memories
@@ -368,7 +435,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
 - Ingest duplicates emit `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
 - PREFER `--graph-stdin` with LLM-curated entities for best quality (NER is off by default; `--skip-extraction` is deprecated since v1.0.45)
-- USE `--dry-run` to preview file-to-name mapping without loading ONNX model or persisting
+- USE `--dry-run` to preview file-to-name mapping without spawning LLM subprocess or persisting
 - NDJSON per-file events include `original_filename` field preserving the file basename before kebab-case normalization
 ### FORBIDDEN — ingest Anti-patterns
 - NEVER use `fd | xargs sqlite-graphrag remember` when `ingest` exists
@@ -738,7 +805,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - REDUCTION of context tokens by up to 72x vs markdown dump
 - INCREASE of accuracy by up to 18% over pure vector retrieval
 - INCREASE of multi-hop accuracy from 30% to 50% according to Microsoft
-- APPROXIMATE latency of 1 second on modern hardware with daemon
+- APPROXIMATE latency of 1-3 seconds on modern hardware (LLM one-shot subprocess)
 
 
 ## Graph — Construction and Inspection
@@ -845,25 +912,20 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER skip deduplication; search `hybrid-search` or `graph entities` before creating
 
 
-## Daemon and Reduced Latency
-### REQUIRED — Embedding Model Reuse
-- START `sqlite-graphrag daemon` in long agent sessions
-- CHECK health via `daemon --ping --json`
-- STOP via `daemon --stop` at session end
-- LET `init`, `remember`, `ingest`, `recall`, `hybrid-search` reuse automatically
-- TREAT daemon as optional for single-shot invocations
-- INSPECT the embedding request counter in `--ping`
-- `daemon --ping` warns when daemon version differs from CLI version; restart with `daemon --stop` followed by `daemon` after upgrades
-- Since v1.0.50, the CLI auto-restarts the daemon on version mismatch before the first embedding request; manual `daemon --stop` after upgrades is no longer required
-- `daemon --ping` response now includes `model_name` and `model_variant` fields showing the currently loaded embedding model
+## Architecture Note — No Daemon (v1.0.76)
+### NOTE — Daemon Infrastructure Fully Removed
+- The daemon IPC infrastructure (`sqlite-graphrag daemon`, `daemon --ping`, `daemon --stop`) was fully removed in v1.0.76
+- The CLI is now 100% one-shot: each embedding operation spawns a headless `claude -p` or `codex exec` subprocess via OAuth
+- There is no in-memory model server and no warm cache between invocations
+- Latency per embedding call is 1-3 seconds (LLM round-trip)
+- No Cargo feature restores the daemon — it is permanently removed
 
 
-## Cache — Model Management
-### REQUIRED — Cache Maintenance
-- LIST cached models via `cache list --json`
-- REMOVE model cache via `cache clear-models --json`
-- `clear-models` forces re-download on the next embedding operation
-- USE `cache list` to diagnose disk usage by ONNX models
+## Architecture Note — No Local Model Cache (v1.0.76)
+### NOTE — Cache Commands Removed
+- The `cache list` and `cache clear-models` commands were removed in v1.0.76
+- There is no local ONNX model cache in the default LLM-only build
+- Embedding health is verified via `health --json` (check `integrity_ok`) and `stats --json`
 
 
 ## JSON Contract and Pipelines
@@ -913,7 +975,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `ingest --mode claude-code` phase: `phase` (`"validate"`/`"scan"`), `claude_path?`, `version?`, `dir?`, `files_total?`, `files_new?`, `files_existing?`
 - `ingest --mode claude-code` per file: `file`, `name`, `status` (`"done"`/`"failed"`/`"preview"`), `memory_id?`, `entities?`, `rels?`, `cost_usd?`, `elapsed_ms?`, `error?`, `index`, `total`
 - `ingest --mode claude-code` summary: `summary` (true), `files_total`, `completed`, `failed`, `skipped`, `entities_total`, `rels_total`, `cost_usd`, `elapsed_ms`
-- `cache list` returns models with size in bytes and total disk usage
+- NOTE: `cache list` and `cache clear-models` were removed in v1.0.76 (no local model cache in LLM-only build)
 - `prune-relations` returns `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
 - `fts rebuild` returns `action` ("rebuilt"), `rows_indexed`, `elapsed_ms`
 - `fts check` returns `action` ("checked"), `integrity_ok`, `detail?`, `elapsed_ms`
@@ -952,8 +1014,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `5` equals namespace error (invalid name or conflict)
 - `6` equals payload above the size limit
 - `10` equals database error; run `vacuum` and `health`
-- `11` equals embedding failure (corrupted model or missing ORT)
-- `12` equals failure loading `sqlite-vec`; check SQLite ≥ 3.40
+- `11` equals embedding failure (LLM subprocess error or model load failure)
+- `12` equals failure loading vector extension (historical; `sqlite-vec` removed in v1.0.76)
 - `13` equals partial batch failure; reprocess only failed
 - `14` equals I/O error (inaccessible file, permission, disk full)
 - `15` equals database busy; widen `--wait-lock`
@@ -976,7 +1038,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - RESPECT the hard ceiling of `2×nCPUs` for heavy commands
 - TREAT `init`, `remember`, `ingest`, `recall`, `hybrid-search` as heavy
 - WIDEN `--wait-lock <ms>` when contention is expected
-- LIMIT parallel ingestion in CI without an active daemon
+- LIMIT parallel ingestion in CI to avoid LLM rate limits
 ### REQUIRED — Two Parallelism Axes in ingest
 - `--max-concurrency` governs simultaneous CLI invocations
 - `--ingest-parallelism` governs extract plus embed in parallel
@@ -998,7 +1060,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ## Safe Backup (v1.0.56)
 ### REQUIRED — backup Command
 - USE `backup --output <path> --json` for a safe, online backup using the SQLite Online Backup API
-- BACKUP is consistent even while writes are in progress — no need to stop the daemon
+- BACKUP is consistent even while writes are in progress
 - JSON response: `{action, source, destination, size_bytes, elapsed_ms}`
 - PREFER `backup` over `sync-safe-copy` for programmatic backups; both are safe but `backup` uses the native SQLite API
 - TREAT exit code 14 as an I/O error (destination path not writable, disk full)
@@ -1061,7 +1123,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 ### REQUIRED — Schema Diagnostics
 - USE `debug-schema --json` for troubleshooting
 - INSPECT `schema_version`, `objects`, `migrations`
-- CURRENT schema version is 12 (V012 adds relationship timestamps `created_at`/`updated_at` columns; V011 added `idx_relationships_ns_relation` index)
+- CURRENT schema version is 13 (V013 drops vec virtual tables and creates BLOB-backed embedding tables; V012 added relationship timestamps)
 - COMMAND is hidden from `--help`; invoke by exact name
 ### Correct Pattern — Weekly Cron
 - `sqlite-graphrag purge --retention-days 30 --yes`
@@ -1070,6 +1132,30 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `sqlite-graphrag vacuum --json`
 - `sqlite-graphrag optimize --json`
 - `sqlite-graphrag sync-safe-copy --dest ~/Dropbox/graphrag.sqlite`
+
+
+## New in v1.0.76 — LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
+### REQUIRED — Default Build Architecture Change
+- The default build of v1.0.76 is LLM-Only and one-shot. There is no daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). The release binary is approximately 6 MB.
+- The default build is LLM-only with no local model dependencies
+- See ADR-0019 for the full architectural rationale, ADR-0021 for the daemon deprecation timeline, ADR-0022 for the BLOB-backed embedding tables, ADR-0023 for the tokenizer removal, ADR-0024 for the FTS5 coarse-filter + cosine-refinement search path, and ADR-0025 for the reaffirmed OAuth-only credential flow.
+### REQUIRED — Migrate Subcommand Family
+- USE `migrate --rehash --json` to rewrite recorded migration checksums via `SipHasher13(name|version|sql)` so the algorithm matches `refinery-core 0.9.1`. The same SipHasher13 crate and the same hashing order are used. Response schema: `migrate-rehash.schema.json`.
+- USE `migrate --to-llm-only --drop-vec-tables --json` as the one-shot upgrade for v1.0.74 / v1.0.75 databases. Combines checksum rewrite (--rehash) with the V013 vec-table-drop migration and reports vec-table state. The `--drop-vec-tables` flag is REQUIRED as a safety guard. Response schema: `migrate-to-llm-only.schema.json`.
+- After `migrate --to-llm-only`, embeddings are recomputed lazily on the next `remember` / `edit` / `ingest`. Operators who want to pre-warm a large corpus can loop `edit --description "<same>"` over `list --json | jaq -r '.items[].name'`.
+- The V002 migration was intentionally emptied to a no-op for v1.0.76; this is the root cause of the `applied migration V2 is different than filesystem one V2` checksum mismatch that `migrate --rehash` repairs. See ADR-0026 for the full drift narrative.
+### REQUIRED — Schema Version and BLOB-Backed Embeddings
+- The current schema version is 13. Migration V013 drops the `vec_memories`, `vec_entities`, and `vec_chunks` virtual tables and replaces them with regular BLOB-backed `memory_embeddings`, `entity_embeddings`, and `chunk_embeddings` tables. Cosine similarity is computed in pure Rust on demand in `src/similarity.rs` (ADR-0020, ADR-0022).
+- Hybrid-search still uses FTS5 for coarse filtering and now refines the candidate set with a pure-Rust cosine over the BLOB embeddings. FTS5 stays healthy because the rebuild is gated by `optimize --fts-skip-when-functional` (G36 from v1.0.69).
+- The daemon infrastructure was fully removed in v1.0.76. The LLM subprocess is the new "model loader" — each call spawns a headless process.
+### REQUIRED — OAuth-Only Reaffirmed
+- The OAuth-only mandate from v1.0.69 is REAFFIRMED. The spawn ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. Both variables are excluded from the env-clear whitelist as defence in depth.
+- New `--extraction-backend llm|none` global flag (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `none` is a no-op
+### FORBIDDEN — v1.0.76 Anti-patterns
+- NEVER install v1.0.76 with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn aborts.
+- NEVER depend on the daemon in new code; the daemon will be REMOVED in v1.1.0.
+- NEVER mix `vec_memories` / `vec_entities` / `vec_chunks` queries (removed in v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` instead.
+- NEVER use `migrate --to-llm-only` without `--drop-vec-tables`; the safety guard refuses the operation otherwise.
 
 
 ## Shell Completions (v1.0.67)

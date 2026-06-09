@@ -11,11 +11,12 @@ set -euo pipefail
 
 ZEROS=$(python3 -c "import json,sys; sys.stdout.write(json.dumps([0.0]*384))")
 PAYLOAD=$(printf '{"embedding":%s}' "$ZEROS")
+PAYLOAD_JSON=$(PAYLOAD="$PAYLOAD" python3 -c 'import json, os, sys; sys.stdout.write(json.dumps(os.environ["PAYLOAD"]))')
 
 cat <<JSONL
 {"type":"thread.started","thread_id":"mock-thread-0"}
 {"type":"turn.started"}
-{"type":"item.completed","item":{"type":"agent_message","text":${PAYLOAD@Q}}}
+{"type":"item.completed","item":{"type":"agent_message","text":${PAYLOAD_JSON}}}
 {"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}
 JSONL
 

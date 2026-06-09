@@ -624,7 +624,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
     let embedding = if chunks_info.len() == 1 {
-        crate::daemon::embed_passage_or_local(&paths.models, &raw_body)?
+        crate::embedder::embed_passage_local(&paths.models, &raw_body)?
     } else {
         let chunk_texts: Vec<&str> = chunks_info
             .iter()
@@ -661,7 +661,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                     });
                 }
             }
-            chunk_embeddings.push(crate::daemon::embed_passage_or_local(
+            chunk_embeddings.push(crate::embedder::embed_passage_local(
                 &paths.models,
                 chunk_text,
             )?);
@@ -707,7 +707,7 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
                 Some(desc) => format!("{} {}", entity.name, desc),
                 None => entity.name.clone(),
             };
-            crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
+            crate::embedder::embed_passage_local(&paths.models, &entity_text)
         })
         .collect::<Result<Vec<_>, _>>()?;
 

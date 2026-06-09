@@ -4,6 +4,31 @@
 - Leia a versão em inglês em [TESTING.md](TESTING.md)
 
 
+## Infraestrutura de Testes da v1.0.76 — Matriz CI de 3 Features
+- O workflow de CI agora roda jobs de `clippy` e `test` em uma matriz de 3 features: `default`, `llm-only` e `embedding-legacy`.
+- Os jobs `default` e `llm-only` instalam uma CLI stub `mock-llm` no `PATH` para que os testes de round-trip de embedding rodem sem uma assinatura real de LLM.
+- O job `embedding-legacy` mantém o caminho de cache de modelo ONNX da v1.0.74 para os testes do pipeline fastembed.
+- 26 arquivos de teste foram cabeados para consumir a mock LLM CLI como substituto drop-in para `claude -p` e `codex exec`. Isso desbloqueia o CI de exigir credenciais OAuth reais.
+- 107 de 115 testes previamente lentos foram corrigidos no commit `bd0a3f5` (a mock LLM desbloqueia testes que dependiam de um turno OAuth real).
+- Veja o arquivo de workflow do GitHub Actions em `.github/workflows/ci.yml` para a definição da matriz.
+
+### Contrato da Mock LLM CLI
+- A mock LLM é um pequeno binário em `tests/fixtures/mock-llm/` que devolve JSON determinístico para qualquer prompt.
+- Para requisições de embedding: devolve um array `f32` de 384 dimensões (zeros com pequeno viés para garantir que a distância de cosseno seja computável).
+- Para requisições de extração de entidades: devolve um objeto JSON fixo `{entities: [], relationships: []}`.
+- Operadores rodando testes localmente precisam prepender a mock ao `PATH`:
+  ```bash
+  export PATH="$PWD/target/debug:$PATH"
+  cargo test --workspace
+  ```
+
+### Seleção de Testes por Feature Flag
+- `cargo test --lib` — roda contra features padrão (mock LLM em CI, LLM real requerida localmente).
+- `cargo test --lib --no-default-features --features llm-only` — mesmo comportamento que default, opt-in explícito.
+- `cargo test --lib --no-default-features --features embedding-legacy` — usa fastembed ONNX, sem LLM CLI necessária.
+- `cargo test --workspace --features slow-tests` — roda a suíte completa de contratos incluindo a matriz de integração de 832 testes.
+
+
 ## Por Que Categorizar os Testes
 ### O Incidente de Livelock Térmico — 2026-04-19
 - Em 2026-04-19 às 11:37:40, o Intel i9-14900KF do desenvolvedor atingiu Tjmax 100°C
@@ -39,7 +64,7 @@
 ### Testes End-to-End Lentos e Stress — Opt-in via Feature Flag
 - Localização: arquivos em `tests/` protegidos por `#[cfg(feature = "slow-tests")]`
 - Executar com: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
-- Escopo: suítes end-to-end longas, contratos, reuse de daemon, paridade i18n, roteamento de exit code, alta concorrência e loops de retry estendidos
+- Escopo: suítes end-to-end longas, contratos, paridade i18n, roteamento de exit code, alta concorrência e loops de retry estendidos
 - Gate: excluído dos profiles nextest `default` e `ci`
 - Suítes críticas de release: `/usr/bin/timeout 1200 cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
 - Suítes críticas de release: `/usr/bin/timeout 1200 cargo test --features slow-tests --test prd_compliance -- --nocapture`
@@ -134,18 +159,9 @@
 - O script usa por padrão o `sqlite-graphrag` instalado no `PATH`
 - Sobrescreva a binária com `BIN=./target/debug/sqlite-graphrag` para comparar mudanças locais com a build publicada
 - O script usa `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
-- O script inicializa um banco temporário isolado e um cache de modelo isolado para o daemon
-- O script tenta executar `daemon --stop` ao sair para evitar deixar um processo residente com o modelo carregado
+- O script inicializa um banco temporário isolado para cada execução
+- A CLI é one-shot (sem daemon); cada chamada de embedding spawna e descarta o subprocesso LLM
 - O script executa casos conhecidos de sucesso, limiar, falha e caso sintético
-
-
-## Testes do Daemon
-### Valide Explicitamente O Reuso Do Processo Persistente
-- Execute `/usr/bin/timeout 900 cargo test --all-features --test daemon_integration -- --nocapture` para validar o daemon ponta a ponta
-- A suíte do daemon prova `ping`, `shutdown`, auto-start, restart após stop, auto-restart por version mismatch (desde v1.0.50) e incrementos de contador em `init`, `remember`, `recall` e `hybrid-search`; v1.0.51 adicionou 6 testes unitários (capping de backoff, half-jitter, nome de socket, CAS de versão, roundtrip de state) elevando o total do daemon para 10
-- Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` para isolar o socket do daemon e o cache do modelo por execução
-- Se um teste do daemon travar, execute `sqlite-graphrag daemon --stop` com o mesmo cache dir antes de tentar de novo
-- A flag oculta de testes `--skip-memory-guard` agora desabilita auto-start do daemon por padrão, exceto quando `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1` estiver definido
 
 
 ## Testes de Concorrência Loom

@@ -3,20 +3,69 @@ name = "sqlite-graphrag"
 version = "1.0.76"
 edition = "2021"
 rust-version = "1.88"
-description = "Local GraphRAG memory for LLMs in a single SQLite file"
+description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 6 MB Rust binary. LLM-only and one-shot in v1.0.76: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/daniloaguiarbr/sqlite-graphrag"
 homepage = "https://docs.rs/sqlite-graphrag"
 documentation = "https://docs.rs/sqlite-graphrag"
 readme = "README.md"
-keywords = ["graphrag", "sqlite", "llm", "embeddings", "memory"]
-categories = ["command-line-utilities", "database"]
+keywords = ["graphrag", "sqlite", "llm", "embeddings", "memory", "ai-agents", "claude-code", "codex", "oauth", "rust"]
+categories = ["command-line-utilities", "database", "api-bindings"]
 default-run = "sqlite-graphrag"
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "README.pt-BR.md",
+    "CHANGELOG.md",
+    "CHANGELOG.pt-BR.md",
+    "LICENSE",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "CODE_OF_CONDUCT.md",
+    "CODE_OF_CONDUCT.pt-BR.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.pt-BR.md",
+    "SECURITY.md",
+    "SECURITY.pt-BR.md",
+    "INTEGRATIONS.md",
+    "INTEGRATIONS.pt-BR.md",
+    "llms.txt",
+    "llms-full.txt",
+    "llms.pt-BR.txt",
+    "docs/AGENTS.md",
+    "docs/AGENTS.pt-BR.md",
+    "docs/COOKBOOK.md",
+    "docs/COOKBOOK.pt-BR.md",
+    "docs/HOW_TO_USE.md",
+    "docs/HOW_TO_USE.pt-BR.md",
+    "docs/MIGRATION.md",
+    "docs/MIGRATION.pt-BR.md",
+    "docs/TESTING.md",
+    "docs/TESTING.pt-BR.md",
+    "docs/CROSS_PLATFORM.md",
+    "docs/CROSS_PLATFORM.pt-BR.md",
+    "docs/DOCUMENTATION_FRAMEWORK.md",
+    "docs/decisions/adr-*.md",
+    "docs/decisions/adr-*.pt-BR.md",
+    "docs/schemas/*.schema.json",
+    "docs/schemas/README.md",
+    "skill/sqlite-graphrag-en/SKILL.md",
+    "skill/sqlite-graphrag-pt/SKILL.md",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "benches/**/*.rs",
+    "tests/**/*.rs",
+    "migrations/**/*",
+    "scripts/**/*",
+]
 exclude = [
     ".serena/",
     ".claude/",
     ".vscode/",
     ".idea/",
+    "target/",
     "logs/",
     "memory/",
     "docs_rules/",

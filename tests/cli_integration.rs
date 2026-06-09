@@ -39,6 +39,37 @@ fn init_db(tmp: &TempDir) {
 
 #[test]
 #[serial]
+fn remember_never_autostarts_daemon_for_passage_embedding() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd(&tmp)
+        .args([
+            "remember",
+            "--name",
+            "remember-no-daemon",
+            "--type",
+            "user",
+            "--description",
+            "remember should embed locally",
+            "--body",
+            "codex headless local embedding regression guard",
+        ])
+        .env("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART", "1")
+        .assert()
+        .success();
+
+    let cache_dir = tmp.path().join("cache");
+    let spawn_lock = cache_dir.join("daemon-spawn.lock");
+    assert!(
+        !spawn_lock.exists(),
+        "daemon-spawn.lock must NOT exist for remember local embeddings; found at: {}",
+        spawn_lock.display()
+    );
+}
+
+#[test]
+#[serial]
 fn forget_response_emits_deleted_at_iso_when_soft_deleted() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);

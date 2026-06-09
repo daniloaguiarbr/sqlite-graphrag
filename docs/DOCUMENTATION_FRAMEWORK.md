@@ -175,7 +175,7 @@
 - VERSÃO única em inglês — documento técnico interno
 
 
-## Camada 2 — Pasta docs/ (12 arquivos MD + subpasta schemas/)
+## Camada 2 — Pasta docs/ (14 arquivos MD + subpasta schemas/)
 
 ### OBRIGATÓRIO — Inventário Completo da Pasta docs/
 - `docs/AGENTS.md` + `docs/AGENTS.pt-BR.md` — Guia completo para integração com agentes de IA
@@ -184,9 +184,22 @@
 - `docs/HOW_TO_USE.md` + `docs/HOW_TO_USE.pt-BR.md` — Guia de uso completo
 - `docs/MIGRATION.md` + `docs/MIGRATION.pt-BR.md` — Guia de migração entre versões
 - `docs/TESTING.md` + `docs/TESTING.pt-BR.md` — Guia de testes e estratégia de QA
+- `docs/HEADLESS_INVOCATION.md` + `docs/HEADLESS_INVOCATION.pt-BR.md` — Referência canônica de invocação headless OAuth-safe (adicionado na v1.0.76)
+- `docs/DOCUMENTATION_FRAMEWORK.md` — Este próprio framework (versão única EN, referencia regras de PT-BR indiretamente)
 - `docs/schemas/README.md` — Índice e documentação dos JSON Schemas (bilíngue inline)
 - `docs/schemas/*.schema.json` — Um schema JSON Draft 2020-12 por subcomando
 - `docs/decisions/adr-NNNN-*.md` — Architectural Decision Records (ADRs) documentando decisões de design v1.0.x
+
+### Mudanças na Camada 2 a Partir da v1.0.76
+- Adicionados `docs/HEADLESS_INVOCATION.md` + versão PT-BR (promovidos do gaps.md)
+- 2 novos schemas JSON para `migrate --rehash` e `migrate --to-llm-only`
+- `docs/AGENTS.md` ganhou seção "v1.0.76 Architecture (LLM-Only)" e "OAuth Enforcement"
+- `docs/TESTING.md` ganhou seção "v1.0.76 Test Infrastructure — 3-Feature CI Matrix"
+- `docs/COOKBOOK.md` ganhou receita "How To Upgrade From v1.0.74 Or v1.0.75 To v1.0.76"
+- `docs/MIGRATION.md` reescrito do zero para a breaking change v1.0.76
+- `docs/HOW_TO_USE.md` reescrito do zero para LLM-Only One-Shot
+- 7 novos ADRs (0019-0025) cobrindo a arquitetura v1.0.76, todos com versão PT-BR
+- ADR 0026 documenta o drift de migração V002 (PT-BR incluso)
 
 ### Objetivo e Entrega de Cada Arquivo da Pasta docs/
 
@@ -199,7 +212,7 @@
 - DEVE conter TODA a referência de CRUD (Create, Read, Update, Delete)
 - DEVE conter TODA a referência de pesquisa (recall, hybrid-search, related, graph traverse, deep-research)
 - DEVE conter referência de grafo (link, unlink, entities, stats, traverse)
-- DEVE conter referência de daemon, cache, manutenção
+- DEVE conter referência de cache e manutenção (daemon removido na v1.0.76)
 - DEVE conter contrato JSON completo com campos por comando
 - DEVE conter exit codes com estratégia de retry
 - DEVE conter seção de concorrência e recursos
@@ -214,7 +227,7 @@
 - CADA receita DEVE seguir formato "How To [Verbo] [Objeto] [Contexto]"
 - CADA receita DEVE conter bloco de código executável copiar-colar
 - CADA receita DEVE ser independente das demais
-- DEVE cobrir: bootstrap, daemon, ingest, search, graph, integração com agentes, backup, export, debug
+- DEVE cobrir: bootstrap, ingest, search, graph, integração com agentes, backup, export, debug
 - DEVE incluir receitas de integração para cada agente suportado
 - DEVE incluir receitas de operações avançadas (merge, rename, reclassify, prune)
 - ENTREGA: um operador RESOLVE qualquer tarefa comum copiando uma receita
@@ -231,7 +244,7 @@
 - OBJETIVO: guia narrativo de uso do início ao domínio completo
 - DEVE conter hero tagline com proposta de valor
 - DEVE conter links de navegação para README e outros docs
-- DEVE cobrir: instalação, inicialização, operações CRUD, busca, grafo, daemon
+- DEVE cobrir: instalação, inicialização, operações CRUD, busca, grafo
 - DEVE seguir progressão de complexidade crescente
 - DEVE incluir exemplos com saída esperada
 - ENTREGA: um novo usuário SAI operando o projeto após ler este arquivo
@@ -251,7 +264,18 @@
 - DEVE conter comandos exatos para executar cada categoria
 - DEVE conter política de cobertura mínima
 - DEVE conter instruções para adicionar novos testes
+- DEVE conter seção "v1.0.76 Test Matrix" com a matriz CI de 3 features (`default`, `llm-only`, `embedding-legacy`)
+- DEVE conter o contrato da Mock LLM CLI para rodar testes sem credenciais OAuth reais
 - ENTREGA: um contribuidor ESCREVE e EXECUTA testes seguindo este guia
+
+#### docs/HEADLESS_INVOCATION.md + docs/HEADLESS_INVOCATION.pt-BR.md
+- OBJETIVO: referência canônica de invocação headless OAuth-safe de Claude Code, Codex CLI e OpenCode
+- DEVE conter tabela comparativa dos interruptores de MCP e Hooks por CLI
+- DEVE conter os comandos exatos de hardening flags para cada CLI
+- DEVE conter seção de "Por Que NÃO Usar `--bare`" para Claude
+- DEVE conter ressalvas de bugs conhecidos (issue #14490 do Claude, issue #3441 do Codex)
+- DEVE ser referenciado em `docs/HOW_TO_USE.md` e `docs/AGENTS.md` para usuários finais
+- ENTREGA: um operador invoca LLM headless sem herdar MCPs ou hooks lendo este arquivo
 
 #### docs/schemas/README.md
 - OBJETIVO: índice e documentação de todos os JSON Schemas do projeto

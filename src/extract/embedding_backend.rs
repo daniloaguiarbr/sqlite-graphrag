@@ -7,6 +7,9 @@ use super::{BackendHealth, BackendKind, ExtractionBackend, ExtractionHints, Extr
 use crate::errors::AppError;
 use async_trait::async_trait;
 
+#[cfg(feature = "embedding-legacy")]
+use super::{ExtractedEntity, ExtractedRelationship};
+
 /// Embedding-based extraction backend.
 ///
 /// When the `embedding-legacy` feature is enabled this delegates to the

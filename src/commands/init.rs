@@ -119,7 +119,7 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         crate::i18n::validation::runtime_pt::initializing_embedding_model(),
     );
 
-    let test_emb = crate::daemon::embed_passage_or_local(&paths.models, "smoke test")?;
+    let test_emb = crate::embedder::embed_passage_local(&paths.models, "smoke test")?;
 
     output::emit_json(&InitResponse {
         db_path: paths.db.display().to_string(),

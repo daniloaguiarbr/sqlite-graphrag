@@ -7,6 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
+> **Release atual: v1.0.76 — LLM-Only e one-shot.** O build padrão embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. Para embutir localmente, instale com `--features embedding-legacy`.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -18,6 +19,7 @@
 - Veja o histórico completo de releases em [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md)
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
+- **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento one-shot da v1.0.76.
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -28,28 +30,28 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- Gera embeddings localmente via `fastembed` com o modelo `multilingual-e5-small`
-- Combina busca textual FTS5 com KNN do `sqlite-vec` em ranqueador híbrido Reciprocal Rank Fusion
-- Armazena e percorre um grafo explícito de entidades com arestas tipadas para recuperação multi-hop entre memórias
-- Preserva cada edição em tabela imutável de versões históricas para auditoria completa
-- Executa em Linux, macOS e Windows nativamente sem qualquer serviço externo necessário
+- **Build padrão (v1.0.76):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
+- **Build legado:** `cargo install sqlite-graphrag --features embedding-legacy` restaura inferência ONNX local via fastembed (binário de ~39 MB)
+- Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
+- Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
+- Preserva cada edição através de uma tabela imutável de histórico de versões para auditoria completa
+- Roda em Linux, macOS e Windows nativamente sem serviços externos (o build padrão precisa de `claude` ou `codex` CLI no `PATH`)
 
 
 ## Por que sqlite-graphrag?
 ### Diferenciais contra stacks RAG em nuvem
-- Arquitetura offline-first elimina custos recorrentes com embeddings OpenAI e Pinecone
+- **Fluxo LLM OAuth-only** — sem chaves de API no ambiente; o spawn ABORTA se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas (defesa em profundidade desde v1.0.69)
+- **Sem custos recorrentes de embedding** — embeddings vêm da assinatura Claude Pro / Max ou ChatGPT Pro existente
 - Armazenamento em arquivo SQLite único substitui clusters Docker de bancos vetoriais
 - Recuperação com grafo supera RAG vetorial puro em perguntas multi-hop por design
 - Saída JSON determinística habilita orquestração limpa por agentes de IA em pipelines
-- Binário cross-platform nativo dispensa dependências Python, Node ou Docker
+- Binário cross-platform nativo dispensa dependências Python, Node ou Docker (o build padrão precisa apenas de `claude` ou `codex` CLI)
 
 
 ## Superpoderes para Agentes de IA
 ### Contrato de CLI de primeira classe para orquestração
 - Todo subcomando aceita `--json` produzindo payloads determinísticos em stdout
-- Toda invocação pode continuar stateless, mas comandos pesados sobem um daemon persistente para inferência de embeddings automaticamente, reutilizando-o entre chamadas (este é o autostart do daemon, separado da extração automática de entidades)
-- Após upgrades do binário, a CLI detecta automaticamente incompatibilidade de versão com o daemon em execução e o reinicia de forma transparente antes do primeiro request de embedding (desde v1.0.50)
-- `sqlite-graphrag daemon` continua existindo para controle explícito, mas o caminho comum não exige mais startup manual
+- **v1.0.76 é one-shot por padrão** — sem processo em segundo plano; cada chamada de embedding spawna um novo `claude -p` ou `codex exec`
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin é explícito: use `--body-stdin` para texto ou `--graph-stdin` para um objeto `{body?, entities, relationships}`; arrays crus de entidades e relacionamentos usam `--entities-file` e `--relationships-file`
 - `remember` aceita payloads de body até `512000` bytes e até `512` chunks
@@ -111,7 +113,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 > **Flags obrigatórias para `remember`:** `--name`, `--type`, `--description`. Body via `--body "texto"`, `--body-file <caminho>`, ou `--body-stdin` (pipe do stdin).
 > **Limite do body: 500 KB (512000 bytes).** Entradas maiores são rejeitadas com código de saída 6 (`limit exceeded`); divida em múltiplas memórias ou reduza antes de enviar.
 > **Usuários Windows (G29):** v1.0.68 é o primeiro release desde v1.0.65 que compila com sucesso via `cargo install` no Windows. Se você precisa ficar em v1.0.66 ou v1.0.67, veja [docs/CROSS_PLATFORM.pt-BR.md](./docs/CROSS_PLATFORM.pt-BR.md) para a solução manual.
-- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` podem extrair entidades e relacionamentos via GLiNER zero-shot NER local quando `--enable-ner` é passado. `recall` e `hybrid-search` auto-iniciam o daemon de embedding sob demanda.
+- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` podem extrair entidades e relacionamentos via GLiNER zero-shot NER local quando `--enable-ner` é passado.
 
 ### GLiNER zero-shot NER
 - Passe `--enable-ner` ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração de entidades em `remember` e `ingest`
@@ -280,45 +282,6 @@ sqlite-graphrag purge --retention-days 90 --yes
 ```
 > **Retenção padrão: 90 dias.** Para purgar TODAS as memórias esquecidas independentemente da idade, passe `--retention-days 0`.
 
-### Execute ou controle o daemon persistente de embeddings
-<!-- skip-test: `daemon --idle-shutdown-secs` roda em foreground e bloquearia o teste indefinidamente. `--ping`/`--stop` exigem um daemon já em execução. -->
-```bash
-sqlite-graphrag daemon --idle-shutdown-secs 600
-sqlite-graphrag daemon --ping --json
-sqlite-graphrag daemon --stop --json
-```
-
-### Comportamento de auto-spawn do daemon
-
-`recall`, `hybrid-search` e outros subcomandos com embeddings pesados sobem automaticamente um daemon em segundo plano (`sqlite-graphrag daemon`) quando nenhum está em execução, amortizando o custo de aquecimento do modelo entre múltiplas invocações.
-
-**Padrão**: auto-spawn habilitado (timeout de ociosidade 600s).
-
-**Desabilitar por invocação** via flag:
-
-```bash
-sqlite-graphrag recall "consulta" --autostart-daemon=false
-```
-
-**Desabilitar globalmente** via variável de ambiente:
-
-```bash
-export SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1
-```
-
-A flag `--autostart-daemon` tem precedência sobre a variável de ambiente.
-
-**Controle explícito do ciclo de vida** (foreground, timeout padrão de 600s):
-
-<!-- skip-test: `daemon` roda em foreground e bloqueia; `--ping`/`--stop` requerem daemon em execução. -->
-```bash
-sqlite-graphrag daemon
-sqlite-graphrag daemon --idle-shutdown-secs 3600
-sqlite-graphrag daemon --ping            # verificação de saúde
-sqlite-graphrag daemon --stop            # desligamento gracioso
-```
-> **Convenção do daemon:** usa FLAGS `--ping`/`--stop`/`--idle-shutdown-secs`, não subcomandos. Espelha flags no estilo systemd em vez do padrão verbo-substantivo do git.
-
 ### Ingestão em massa de arquivos Markdown em um diretório
 <!-- skip-test: requer um diretório `./docs` com arquivos Markdown relativo ao cwd da invocação. -->
 ```bash
@@ -448,7 +411,6 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
 | `init` | `--namespace <ns>` | Inicializa banco e baixa modelo de embedding |
-| `daemon` | `--ping`, `--stop`, `--idle-shutdown-secs`, `--db`, `--json` | Executa ou controla o daemon persistente de embeddings |
 | `health` | `--json` | Exibe integridade, teste funcional FTS5, versão SQLite, detecção de super-hub (grau > 50) |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |
@@ -532,9 +494,6 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_LOG_FORMAT` | Formato da saída de tracing em stderr (`pretty` ou `json`) | `pretty` | `json` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
 | `SQLITE_GRAPHRAG_DISPLAY_TZ` | Fuso horário IANA para campos `*_iso` no JSON | `UTC` | `America/Sao_Paulo` |
-| `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART` | Força o autostart do daemon mesmo quando os guards o pulariam | indefinido | `1` |
-| `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART` | Desabilita completamente o autostart do daemon (útil em testes/CI) | indefinido | `1` |
-| `SQLITE_GRAPHRAG_DAEMON_CHILD` | Flag INTERNA setada automaticamente ao spawnar o filho do daemon; não setar manualmente | indefinido | `1` |
 | `SQLITE_GRAPHRAG_ENABLE_NER` | Habilita extração GLiNER NER automaticamente (equivalente a `--enable-ner` em toda chamada). Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (NER desligado) | `1` |
 | `SQLITE_GRAPHRAG_GLINER_VARIANT` | Variante de pesos ONNX do GLiNER: `fp32`, `fp16`, `int8`, `q4`, `q4f16` | `fp32` | `fp16` |
 | `SQLITE_GRAPHRAG_GLINER_THRESHOLD` | Limiar de confiança para predições GLiNER (float em [0.0, 1.0]) | `0.5` | `0.3` |
@@ -592,7 +551,7 @@ RUN cargo install --path .
 | `5` | Namespace não pôde ser resolvido | Sem `SQLITE_GRAPHRAG_NAMESPACE`, sem flag, sem padrão detectado |
 | `6` | Payload excedeu limites configurados | `--name` maior que 80 bytes, body acima de `512000` bytes, mais de `512` chunks |
 | `10` | Erro do banco SQLite | Arquivo corrompido, schema divergente, migração ausente |
-| `11` | Geração de embedding falhou | Erro ao carregar modelo ou falha de RPC do daemon de embedding |
+| `11` | Geração de embedding falhou | Erro no subprocesso LLM ou falha ao carregar modelo |
 | `12` | Extensão `sqlite-vec` falhou ao carregar | Extensão nativa ausente ou build do SQLite incompatível |
 | `13` | Falha parcial em lote | `import`, `reindex` ou stdin batch com pelo menos um registro com falha |
 | `14` | Erro de I/O do sistema de arquivos | Diretório de cache ou de banco sem permissão de escrita, diretório de destino `ingest` inexistente |
@@ -608,7 +567,8 @@ RUN cargo install --path .
 - Invocações stateless da CLI tipicamente gastam cerca de um segundo recarregando o modelo em cada comando pesado
 - Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
 - Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
-- Modelo de embedding usa aproximadamente 1100 MB de RAM por instância de processo após a calibração de RSS da v1.0.18 com daemon (regressão de 52 GiB na v1.0.17 reduzida a pico de 1.03 GiB)
+- **Build padrão (v1.0.76):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM
+- **Build legado:** modelo de embedding usa aproximadamente 1100 MB de RAM por processo com `--features embedding-legacy`
 
 
 ## Requisitos de Memória
@@ -827,7 +787,7 @@ let out = Command::new("sqlite-graphrag")
 ## JSON Schemas
 ### Contratos canônicos para cada resposta de subcomando
 - JSON Schemas autoritativos para cada resposta `--json` ficam em [`docs/schemas/`](docs/schemas/) e são versionados junto com a crate
-- 35 schemas cobrem `init`, `remember`, `recall`, `hybrid-search`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate`, `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event`, `ingest-summary`, `export-memory-line`, `export-summary`
+- 64 schemas cobrem `init`, `remember`, `remember-batch` (+ summary), `recall`, `hybrid-search`, `deep-research`, `list`, `read`, `forget`, `purge`, `rename`, `edit`, `history`, `restore`, `link`, `unlink`, `prune-relations`, `health`, `stats`, `migrate` (+ `migrate-rehash` + `migrate-to-llm-only`), `vacuum`, `optimize`, `cleanup-orphans`, `sync-safe-copy`, `backup`, `graph` (+ stats/traverse/entities), `related`, `namespace-detect`, `debug-schema`, `entities-input`, `relationships-input`, `ingest-file-event` (+ `ingest-summary`), `ingest-claude-phase` (+ file-event + summary), `export-memory-line` (+ summary), `enrich-phase` (+ item-event + summary), `fts rebuild` (+ `fts check` + `fts stats`), `vec orphan-list` (+ `vec purge-orphan` + `vec stats`), `codex-models`, `error-envelope`
 - Trate estes schemas como o contrato de agente; SKILL.md documenta as mesmas formas em formato humano
 - Valide consumidores downstream com qualquer validador JSON Schema padrão (e.g. `ajv`, `jsonschema`)
 

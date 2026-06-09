@@ -8,6 +8,10 @@ use serde::Serialize;
 use std::fs;
 use std::time::Instant;
 
+const MEMORY_EMBEDDING_TABLES: &[&str] = &["memory_embeddings", "vec_memories"];
+const ENTITY_EMBEDDING_TABLES: &[&str] = &["entity_embeddings", "vec_entities"];
+const CHUNK_EMBEDDING_TABLES: &[&str] = &["chunk_embeddings", "vec_chunks"];
+
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
     # Check database health (connectivity, integrity, vector index)\n  \
@@ -139,6 +143,57 @@ fn table_exists(conn: &rusqlite::Connection, table_name: &str) -> bool {
         > 0
 }
 
+fn first_existing_table<'a>(
+    conn: &rusqlite::Connection,
+    candidates: &'a [&'a str],
+) -> Option<&'a str> {
+    candidates
+        .iter()
+        .copied()
+        .find(|name| table_exists(conn, name))
+}
+
+fn count_rows(conn: &rusqlite::Connection, table_name: &str) -> i64 {
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |r| {
+        r.get(0)
+    })
+    .unwrap_or(0)
+}
+
+fn memory_embedding_health(conn: &rusqlite::Connection) -> (bool, i64, i64, i64) {
+    let Some(table_name) = first_existing_table(conn, MEMORY_EMBEDDING_TABLES) else {
+        return (false, 0, 0, 0);
+    };
+
+    let total = count_rows(conn, table_name);
+    let missing = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM memories m
+                 LEFT JOIN {table_name} me ON me.memory_id = m.id
+                 WHERE me.memory_id IS NULL AND m.deleted_at IS NULL"
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let orphaned = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM {table_name} me
+                 LEFT JOIN memories m ON m.id = me.memory_id
+                 WHERE m.id IS NULL OR m.deleted_at IS NOT NULL"
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    (true, total, missing, orphaned)
+}
+
 pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let start = Instant::now();
     let _ = args.json; // --json is a no-op because output is already JSON by default
@@ -216,8 +271,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let entities_count: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
     let relationships_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?;
-    let vec_memories_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |r| r.get(0))?;
+    let (vec_memories_ok, vec_memories_count, vec_memories_missing, vec_memories_orphaned) =
+        memory_embedding_health(&conn);
 
     let mentions_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM relationships WHERE relation = 'mentions'",
@@ -309,27 +364,8 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let schema_ok = schema_version > 0;
 
     // Checks vector tables via sqlite_master
-    let vec_memories_ok = table_exists(&conn, "vec_memories");
-    let vec_entities_ok = table_exists(&conn, "vec_entities");
-    let vec_chunks_ok = table_exists(&conn, "vec_chunks");
-
-    let vec_memories_missing: i64 = if vec_memories_ok {
-        conn.query_row(
-            "SELECT COUNT(*) FROM memories m LEFT JOIN vec_memories v ON v.memory_id = m.id WHERE v.memory_id IS NULL AND m.deleted_at IS NULL",
-            [], |r| r.get(0),
-        ).unwrap_or(0)
-    } else {
-        0
-    };
-
-    let vec_memories_orphaned: i64 = if vec_memories_ok {
-        conn.query_row(
-            "SELECT COUNT(*) FROM vec_memories v LEFT JOIN memories m ON m.id = v.memory_id WHERE m.id IS NULL",
-            [], |r| r.get(0),
-        ).unwrap_or(0)
-    } else {
-        0
-    };
+    let vec_entities_ok = first_existing_table(&conn, ENTITY_EMBEDDING_TABLES).is_some();
+    let vec_chunks_ok = first_existing_table(&conn, CHUNK_EMBEDDING_TABLES).is_some();
 
     tracing::info!(target: "health", vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, vec_missing = vec_memories_missing, vec_orphaned = vec_memories_orphaned, "vector table checks complete");
     let fts_ok = table_exists(&conn, "fts_memories");
@@ -410,7 +446,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_memories_ok {
             None
         } else {
-            Some("vec_memories table missing from sqlite_master".to_string())
+            Some("memory_embeddings/vec_memories table missing from sqlite_master".to_string())
         },
     });
 
@@ -420,7 +456,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_entities_ok {
             None
         } else {
-            Some("vec_entities table missing from sqlite_master".to_string())
+            Some("entity_embeddings/vec_entities table missing from sqlite_master".to_string())
         },
     });
 
@@ -430,7 +466,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         detail: if vec_chunks_ok {
             None
         } else {
-            Some("vec_chunks table missing from sqlite_master".to_string())
+            Some("chunk_embeddings/vec_chunks table missing from sqlite_master".to_string())
         },
     });
 
@@ -593,6 +629,89 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn open_health_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                deleted_at INTEGER
+            );
+            CREATE TABLE memory_embeddings (
+                memory_id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                source TEXT NOT NULL,
+                model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 384,
+                created_at TEXT NOT NULL DEFAULT '0'
+            );
+            CREATE TABLE vec_memories (
+                memory_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn memory_embedding_health_prefers_memory_embeddings_and_counts_soft_deleted_as_orphaned() {
+        let conn = open_health_test_db();
+        conn.execute("INSERT INTO memories (id, deleted_at) VALUES (1, NULL)", [])
+            .unwrap();
+        conn.execute("INSERT INTO memories (id, deleted_at) VALUES (2, NULL)", [])
+            .unwrap();
+        conn.execute("INSERT INTO memories (id, deleted_at) VALUES (3, 123)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim, created_at)
+             VALUES (1, 'global', X'00', 'llm', 'm', 384, '1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim, created_at)
+             VALUES (3, 'global', X'00', 'llm', 'm', 384, '2')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim, created_at)
+             VALUES (99, 'global', X'00', 'llm', 'm', 384, '3')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vec_memories(memory_id, embedding, created_at) VALUES (777, X'00', 0)",
+            [],
+        )
+        .unwrap();
+
+        let (ok, total, missing, orphaned) = memory_embedding_health(&conn);
+        assert!(ok);
+        assert_eq!(total, 3);
+        assert_eq!(missing, 1);
+        assert_eq!(orphaned, 2);
+    }
+
+    #[test]
+    fn first_existing_table_falls_back_to_legacy_vec_name() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vec_memories (
+                memory_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+
+        let resolved = first_existing_table(&conn, MEMORY_EMBEDDING_TABLES);
+        assert_eq!(resolved, Some("vec_memories"));
+    }
 
     #[test]
     fn health_check_serializes_all_new_fields() {

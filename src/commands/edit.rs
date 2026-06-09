@@ -182,7 +182,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
             "Re-computing embedding for edited body...",
             crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),
         );
-        let embedding = crate::daemon::embed_passage_or_local(&paths.models, &new_body)?;
+        let embedding = crate::embedder::embed_passage_local(&paths.models, &new_body)?;
         let snippet: String = new_body.chars().take(300).collect();
         memories::upsert_vec(
             &tx,

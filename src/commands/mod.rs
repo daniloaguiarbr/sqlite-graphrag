@@ -4,7 +4,6 @@ pub mod claude_runner;
 pub mod cleanup_orphans;
 pub mod codex_spawn;
 pub mod completions;
-pub mod daemon;
 pub mod debug_schema;
 pub mod deep_research;
 pub mod delete_entity;

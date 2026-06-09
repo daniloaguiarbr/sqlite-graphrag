@@ -22,7 +22,11 @@ const WORDS_TO_TOKENS_DENOMINATOR: usize = 2;
 /// Returns the approximate token count for `text` when prefixed with
 /// `prefix` (e.g. `passage:` for `embed_passage`).
 pub fn count_passage_tokens(text: &str) -> Result<usize, AppError> {
-    Ok(approx_tokens(text))
+    Ok(approx_tokens(&format!(
+        "{}{}",
+        crate::constants::PASSAGE_PREFIX,
+        text
+    )))
 }
 
 /// Returns the byte-offset pairs `(start, end)` for each whitespace-delimited
@@ -110,6 +114,19 @@ mod tests {
 
     #[test]
     fn count_passage_tokens_matches_approx_tokens() {
-        assert_eq!(count_passage_tokens("rust sqlite graphrag").unwrap(), 5);
+        assert_eq!(count_passage_tokens("rust sqlite graphrag").unwrap(), 6);
+    }
+
+    #[test]
+    fn count_passage_tokens_includes_prefix_for_short_inputs() {
+        assert_eq!(count_passage_tokens("teste fix real 4").unwrap(), 8);
+    }
+
+    #[test]
+    fn count_passage_tokens_matches_embedding_when_text_already_has_prefix() {
+        assert_eq!(
+            count_passage_tokens("passage: teste fix real 5").unwrap(),
+            9
+        );
     }
 }

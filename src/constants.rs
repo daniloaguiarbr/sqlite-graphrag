@@ -164,30 +164,6 @@ pub const REMEMBER_MAX_CONTROLLED_BATCH_CHUNKS: usize = 4;
 /// `BatchLongest` padding. Values exceeding this fall back to smaller batches or serialisation.
 pub const REMEMBER_MAX_CONTROLLED_BATCH_PADDED_TOKENS: usize = 512;
 
-/// Timeout in milliseconds for a single ping probe against the daemon socket.
-pub const DAEMON_PING_TIMEOUT_MS: u64 = 10;
-
-/// Idle duration in seconds before the daemon shuts itself down.
-pub const DAEMON_IDLE_SHUTDOWN_SECS: u64 = 600;
-
-/// Maximum wait time for the daemon to become healthy after auto-start.
-pub const DAEMON_AUTO_START_MAX_WAIT_MS: u64 = 5_000;
-
-/// Maximum wait time (ms) for a stale daemon to exit after a version-mismatch shutdown.
-pub const DAEMON_VERSION_RESTART_WAIT_MS: u64 = 5_000;
-
-/// Initial polling interval to check whether the daemon became healthy.
-pub const DAEMON_AUTO_START_INITIAL_BACKOFF_MS: u64 = 50;
-
-/// Ceiling on backoff between automatic daemon spawn attempts.
-pub const DAEMON_AUTO_START_MAX_BACKOFF_MS: u64 = 30_000;
-
-/// Base backoff used after daemon spawn/health failures.
-pub const DAEMON_SPAWN_BACKOFF_BASE_MS: u64 = 500;
-
-/// Maximum wait time to acquire the daemon spawn lock.
-pub const DAEMON_SPAWN_LOCK_WAIT_MS: u64 = 2_000;
-
 /// Prefix prepended to bodies before embedding as required by E5 models.
 pub const PASSAGE_PREFIX: &str = "passage: ";
 
@@ -335,7 +311,7 @@ pub const CLI_LOCK_EXIT_CODE: i32 = 75;
 
 /// Maximum number of CLI instances running simultaneously.
 ///
-/// Aligned with `DAEMON_MAX_CONCURRENT_CLIENTS` from the PRD. Limits the counting
+/// Limits the counting
 /// semaphore in [`crate::lock`] to prevent memory overload when multiple parallel
 /// v1.0.75 (G18 solution): removed the rigid 4-slot ceiling. The adaptive
 /// `calculate_safe_concurrency` function in [`crate::lock`]` now reports

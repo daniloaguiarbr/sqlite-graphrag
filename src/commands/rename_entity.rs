@@ -92,7 +92,7 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     }
 
     // Embed the normalized new name for vec_entities replacement.
-    let embedding = crate::daemon::embed_passage_or_local(&paths.models, &new_name)?;
+    let embedding = crate::embedder::embed_passage_local(&paths.models, &new_name)?;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute(

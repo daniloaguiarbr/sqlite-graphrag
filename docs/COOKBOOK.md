@@ -18,9 +18,9 @@
 
 
 ## Latency Note — v1.0.76 LLM-Only
-- The CLI is one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. There is no daemon and no in-process model.
-- Subprocess spawn cost is approximately 1-3 seconds per call. The LLM round-trip is the model; there is nothing to "keep warm".
-- `sqlite-graphrag daemon` is deprecated and kept for source compatibility through v1.0.76 → v1.1.0. The daemon no longer offers a speedup because the LLM subprocess is the new "model loader". Removed in v1.1.0.
+- The CLI is 100% one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude -p` or `codex exec` subprocess (OAuth) for embedding generation
+- There is no daemon, no IPC, no background process
+- Subprocess spawn cost is approximately 1-3 seconds per call
 - Batch pipelines should batch chunks on the LLM side (one prompt with N passages) via `embed_passages_controlled` to amortize spawn cost.
 - Operators with very large corpora should rely on FTS5 (`hybrid-search --k 50`) for coarse filtering before reaching the cosine refinement (see ADR-0024).
 
@@ -75,30 +75,11 @@ sqlite-graphrag health --json
 - Every `recall` and `remember` call paid a 1-second cold start to load the ONNX embedding model
 - Interactive agent sessions felt sluggish because the model loaded and unloaded on every invocation
 
-### Status (v1.0.76)
-- The `daemon` subcommand is **deprecated** and kept for source compatibility through v1.0.76 → v1.1.0. The daemon no longer offers a speedup because the LLM subprocess is the new "model loader". Removed in v1.1.0.
-- The CLI is now one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess for embedding generation. There is no in-process model to keep warm.
-- See ADR-0021 for the deprecation timeline and ADR-0019 for the LLM-only architecture.
-
-### Recipe (if you still use the daemon on v1.0.75 for transition)
-```bash
-sqlite-graphrag daemon
-sqlite-graphrag daemon --ping --json
-# At session end:
-sqlite-graphrag daemon --stop
-```
-
-### Explanation (legacy)
-- Daemon keeps the embedding model resident in memory with auto-shutdown after 600 seconds of idle
-- Commands `init`, `remember`, `ingest`, `recall`, and `hybrid-search` reuse the daemon automatically
-- `--ping` returns a JSON health check including the embedding request counter since startup
-- `--stop` requests graceful shutdown; the daemon exits after flushing in-progress embeddings
-- Treat the daemon as optional for single-shot invocations; it is a performance optimization not a requirement
-
-
-### Variants
-- Adjust idle timeout via `--idle-shutdown-secs 1800` for long coding sessions with idle gaps
-- Disable auto-spawn in CI with `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1` to avoid background processes
+### Status (v1.0.76+)
+- The `daemon` subcommand and ALL daemon infrastructure were REMOVED from the codebase
+- The CLI is 100% one-shot: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude -p` or `codex exec` subprocess for embedding generation
+- There is no IPC, no Unix socket, no background process
+- See ADR-0021 for the deprecation rationale and ADR-0019 for the LLM-only architecture
 
 
 ### See Also
@@ -111,6 +92,7 @@ sqlite-graphrag daemon --stop
 - You have a v1.0.74 or v1.0.75 database with vec0 virtual tables (`vec_memories`, `vec_entities`, `vec_chunks`)
 - The v1.0.76 binary removed `sqlite-vec`, `fastembed`, `GLiNER`, and the `tokenizers` crate
 - A plain `migrate` may fail with "applied migration V2 is different than filesystem one V2" (refinery checksum mismatch) because V002 was intentionally emptied to a no-op for v1.0.76
+- A mislabeled binary can still report `1.0.76` while embedding the old v1.0.54 V002 file
 - You want the upgrade to be one-shot, not a manual SQL session
 
 ### Solution
@@ -134,6 +116,14 @@ sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db /path/to/graphrag.s
 
 ### Variants
 - If you only need the checksum rewrite without applying migrations, use `sqlite-graphrag migrate --rehash`
+- If the mismatch persists even though `sqlite-graphrag --version` says `1.0.76`, rebuild from the local source checkout and replace the installed binary before touching `refinery_schema_history`:
+
+```bash
+cargo build --release
+cp target/release/sqlite-graphrag ~/.cargo/bin/sqlite-graphrag
+```
+
+- See `docs/decisions/adr-0026-v002-vec-tables-migration-drift.md` for the full root cause and validation trail
 - If you must keep the v1.0.74 fastembed pipeline during the transition window, install with `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removed in v1.1.0)
 
 
@@ -785,7 +775,7 @@ git commit -m "chore: track sqlite-graphrag db via LFS"
 ## How To Orchestrate Namespace Recall Safely
 ### Problem
 - Your multi-project agent needs one recall per namespace on the same host
-- Blind parallel fan-out can oversubscribe RAM because each `recall` subprocess may load the ONNX model independently
+- Blind parallel fan-out can oversubscribe RAM because each `recall` subprocess spawns an LLM subprocess
 
 
 ### Solution
@@ -895,30 +885,24 @@ sqlite-graphrag debug-schema --json | jaq '{schema_version, objects: (.objects |
 - Recipe "How to benchmark hybrid-search against pure vec search"
 
 
-## How To Manage The Embedding Model Cache
+## How To Verify Embedding Health (v1.0.76)
 ### Problem
-- Your CI environment runs out of disk space because cached ONNX models accumulate across binary upgrades
-- You cannot diagnose why the first recall takes 30 seconds without knowing which models are cached locally
+- You need to confirm that the LLM embedding pipeline is working after a binary upgrade
+- You want to check database integrity before running a large batch ingest
 
 
 ### Solution
 ```bash
-sqlite-graphrag cache list --json
-sqlite-graphrag cache clear-models --yes
+sqlite-graphrag health --json | jaq '{integrity_ok, fts_ok, fts_query_ok, vec_memories_ok}'
+sqlite-graphrag stats --json | jaq '{memories, entities, relationships}'
 ```
 
 
 ### Explanation
-- `cache list` shows cached models with size in bytes and total disk usage for capacity planning
-- `clear-models` forces re-download of the embedding model on the next embedding operation
-- Useful after binary upgrades when the model format may have changed between versions
-- `--yes` bypasses the interactive confirmation prompt for use in automated cleanup scripts
-- Clearing the cache does not affect existing embeddings stored in the database; only future operations re-download
-
-
-### Variants
-- Schedule `cache clear-models --yes` after every `cargo install` upgrade in CI to avoid stale model artifacts
-- Combine with `health --json | jaq '.model_ok'` to verify model integrity before clearing
+- The `cache` subcommand was removed in v1.0.76; all embedding is handled by the LLM subprocess
+- Use `health --json` to verify database integrity and FTS5 index status
+- `stats` provides global counts for capacity monitoring
+- No local model files to manage; the LLM subprocess handles model loading internally
 
 
 ### See Also
@@ -1153,7 +1137,7 @@ async fn retrieve_relevant_context(
 ```
 
 ### Explanation
-- sqlite-graphrag stores embeddings using `multilingual-e5-small` independently of any LLM provider
+- sqlite-graphrag stores embeddings via the LLM subprocess (claude or codex) independently of any other LLM provider
 - Switching from OpenAI to Mistral via `genai` does not invalidate existing memory entries
 - `hybrid-search` combines vector similarity and FTS giving richer context than vector alone
 - Formatting turns as `[role] content` preserves conversation structure in the memory body
@@ -1303,8 +1287,8 @@ fn build_context_prompt(query: &str, memories: &[String]) -> String {
 ```
 
 ### Explanation
-- sqlite-graphrag ships `multilingual-e5-small` ONNX model embedded so zero network calls occur
-- The single 25 MB binary writes to a local SQLite file that survives across process restarts
+- sqlite-graphrag delegates embedding to the LLM subprocess; the CLI binary is ~6 MB with no bundled model
+- The binary writes to a local SQLite file that survives across process restarts
 - `--namespace ollama-local` keeps offline memories isolated from any networked agent namespaces
 - `build_context_prompt` injects recalled memories into the Ollama prompt before each inference
 - Delivers persistent vector memory in fully air-gapped environments with no cloud dependencies
@@ -1889,7 +1873,7 @@ cat memories.ndjson | sqlite-graphrag remember-batch --transaction --force-merge
 - `--force-merge` upserts existing memories instead of failing with exit 9 on duplicates
 - Each input line supports the same fields as `remember`: `name`, `type`, `description`, `body`
 - Output is NDJSON: one result line per input memory plus a summary line with `summary: true`
-- Faster than a shell loop because embedding batches are dispatched together to the daemon
+- Faster than a shell loop because all memories share one CLI invocation and DB connection
 
 ### Variants
 - Pipe `jaq` output directly: `jaq -c '.[]' memories.json | sqlite-graphrag remember-batch --json`
@@ -1993,4 +1977,3 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --json
 ### See Also
 - Recipe "How to integrate sqlite-graphrag with Claude Code subprocess loop"
 - docs/HOW_TO_USE.md → "Capping process proliferation on Claude Code runs (G28, v1.0.68)"
-

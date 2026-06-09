@@ -17,6 +17,7 @@
 use crate::errors::AppError;
 use serde::Deserialize;
 use std::process::Stdio;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 /// Dimensionality of the embedding space. Matches the previous
@@ -49,9 +50,49 @@ impl EmbeddingFlavour {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     embedding: Vec<f32>,
+}
+
+/// Follows symlinks and shell-script shim `exec` targets to find
+/// the real ELF binary. Shim wrappers (like `~/.graphrag-shim/codex`)
+/// can strip hardening flags; bypassing them is a security requirement.
+pub fn resolve_real_binary(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        if is_elf_binary(&canonical) {
+            return canonical;
+        }
+        if let Some(exec_target) = extract_exec_target_from_shim(&canonical) {
+            if exec_target.exists() && is_elf_binary(&exec_target) {
+                return exec_target;
+            }
+        }
+        return canonical;
+    }
+    path.to_path_buf()
+}
+
+fn is_elf_binary(path: &std::path::Path) -> bool {
+    std::fs::read(path)
+        .map(|bytes| bytes.len() >= 4 && bytes[..4] == [0x7f, b'E', b'L', b'F'])
+        .unwrap_or(false)
+}
+
+fn extract_exec_target_from_shim(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let content = std::fs::read_to_string(path).ok()?;
+    if !content.starts_with("#!") {
+        return None;
+    }
+    for line in content.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("exec ") {
+            let after_exec = trimmed.strip_prefix("exec ")?;
+            let binary = after_exec.split_whitespace().next()?;
+            return Some(std::path::PathBuf::from(binary));
+        }
+    }
+    None
 }
 
 impl LlmEmbedding {
@@ -71,14 +112,14 @@ impl LlmEmbedding {
         if let Ok(path) = which::which("codex") {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Codex,
-                binary: path,
+                binary: resolve_real_binary(&path),
                 model: "gpt-5.4".to_string(),
             });
         }
         if let Ok(path) = which::which("claude") {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Claude,
-                binary: path,
+                binary: resolve_real_binary(&path),
                 model: "claude-sonnet-4-6".to_string(),
             });
         }
@@ -90,20 +131,22 @@ impl LlmEmbedding {
 
     pub fn with_codex() -> Result<Self, AppError> {
         Self::oauth_only_enforce()?;
+        let path = which::which("codex")
+            .map_err(|_| AppError::Embedding("`codex` not found on PATH".to_string()))?;
         Ok(Self {
             flavour: EmbeddingFlavour::Codex,
-            binary: which::which("codex")
-                .map_err(|_| AppError::Embedding("`codex` not found on PATH".to_string()))?,
+            binary: resolve_real_binary(&path),
             model: "gpt-5.4".to_string(),
         })
     }
 
     pub fn with_claude() -> Result<Self, AppError> {
         Self::oauth_only_enforce()?;
+        let path = which::which("claude")
+            .map_err(|_| AppError::Embedding("`claude` not found on PATH".to_string()))?;
         Ok(Self {
             flavour: EmbeddingFlavour::Claude,
-            binary: which::which("claude")
-                .map_err(|_| AppError::Embedding("`claude` not found on PATH".to_string()))?,
+            binary: resolve_real_binary(&path),
             model: "claude-sonnet-4-6".to_string(),
         })
     }
@@ -166,7 +209,9 @@ impl LlmEmbedding {
         };
 
         let parsed: EmbeddingResponse = parse_embedding_response(&stdout).map_err(|e| {
-            AppError::Embedding(format!("LLM embedding response parse failed: {e}; raw={stdout}"))
+            AppError::Embedding(format!(
+                "LLM embedding response parse failed: {e}; raw={stdout}"
+            ))
         })?;
         if parsed.embedding.len() != EMBEDDING_DIM {
             return Err(AppError::Embedding(format!(
@@ -242,33 +287,19 @@ impl LlmEmbedding {
         ));
         std::fs::write(&schema_path, SCHEMA)
             .map_err(|e| AppError::Embedding(format!("failed to write schema file: {e}")))?;
-        let mut cmd = Command::new(&self.binary);
-        cmd.arg("exec")
-            .arg(prompt)
-            .arg("--json")
-            .arg("--output-schema")
-            .arg(&schema_path)
-            .arg("--ephemeral")
-            .arg("--skip-git-repo-check")
-            .arg("--sandbox")
-            .arg("read-only")
-            .arg("--ignore-user-config")
-            .arg("--ignore-rules");
-        if crate::extract::codex_compat::codex_supports_ask_for_approval() {
-            cmd.arg("--ask-for-approval").arg("never");
-        }
-        let output = cmd
-            .arg("--model")
-            .arg(&self.model)
-            .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("HOME", std::env::var("HOME").unwrap_or_default())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
+        let mut child = build_codex_embedding_command(&self.binary, &self.model, &schema_path)
+            .spawn()
             .map_err(|e| AppError::Embedding(format!("codex spawn failed: {e}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(prompt.as_bytes())
+                .await
+                .map_err(|e| AppError::Embedding(format!("codex stdin write failed: {e}")))?;
+        }
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| AppError::Embedding(format!("codex wait failed: {e}")))?;
         let _ = std::fs::remove_file(&schema_path);
         if !output.status.success() {
             return Err(AppError::Embedding(format!(
@@ -281,31 +312,64 @@ impl LlmEmbedding {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn oauth_only_enforce_blocks_api_keys() {
-        // SAFETY: this test only sets and unsets env vars; no other test
-        // relies on the global env state.
-        unsafe {
-            std::env::set_var("ANTHROPIC_API_KEY", "test");
-            assert!(LlmEmbedding::oauth_only_enforce().is_err());
-            std::env::remove_var("ANTHROPIC_API_KEY");
-
-            std::env::set_var("OPENAI_API_KEY", "test");
-            assert!(LlmEmbedding::oauth_only_enforce().is_err());
-            std::env::remove_var("OPENAI_API_KEY");
-        }
-        assert!(LlmEmbedding::oauth_only_enforce().is_ok());
+fn build_codex_embedding_command(
+    binary: &std::path::Path,
+    model: &str,
+    schema_path: &std::path::Path,
+) -> Command {
+    let mut cmd = Command::new(binary);
+    // v1.0.77: `-c` TOML overrides bypass the codex exec --sandbox propagation
+    // bug (openai/codex#18113). CLI flags alone are insufficient — the exec
+    // subcommand may not inherit --sandbox from the parent codex command.
+    cmd.arg("exec")
+        .arg("-c")
+        .arg("sandbox_mode='read-only'")
+        .arg("-c")
+        .arg("approval_policy='never'")
+        .arg("--json")
+        .arg("--output-schema")
+        .arg(schema_path)
+        .arg("--ephemeral")
+        .arg("--skip-git-repo-check")
+        .arg("--sandbox")
+        .arg("read-only")
+        .arg("--ignore-user-config")
+        .arg("--ignore-rules");
+    if crate::extract::codex_compat::codex_supports_ask_for_approval() {
+        cmd.arg("--ask-for-approval").arg("never");
     }
-
-    #[test]
-    fn flavour_as_str_is_stable() {
-        assert_eq!(EmbeddingFlavour::Claude.as_str(), "claude");
-        assert_eq!(EmbeddingFlavour::Codex.as_str(), "codex");
+    // v1.0.77: isolate codex from user config by pointing CODEX_HOME at a
+    // minimal directory containing only auth.json (OAuth credentials).
+    let codex_home = prepare_isolated_codex_home();
+    cmd.arg("--model")
+        .arg(model)
+        .arg("-")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", std::env::var("HOME").unwrap_or_default());
+    if let Some(ref ch) = codex_home {
+        cmd.env("CODEX_HOME", ch);
     }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
+}
+
+fn prepare_isolated_codex_home() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let real_auth = std::path::Path::new(&home).join(".codex/auth.json");
+    if !real_auth.exists() {
+        return None;
+    }
+    let isolated =
+        std::env::temp_dir().join(format!("sqlite-graphrag-codex-home-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&isolated);
+    let target = isolated.join("auth.json");
+    if !target.exists() {
+        let _ = std::fs::copy(&real_auth, &target);
+    }
+    Some(isolated)
 }
 
 /// Parse the LLM embedding response. The two backends emit different
@@ -350,4 +414,154 @@ fn parse_embedding_response(stdout: &str) -> Result<EmbeddingResponse, String> {
         .ok_or_else(|| "no agent_message found in codex JSONL output".to_string())?;
     serde_json::from_str::<EmbeddingResponse>(&text)
         .map_err(|e| format!("codex agent_message text is not EmbeddingResponse: {e}; raw={text}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_only_enforce_blocks_api_keys() {
+        // SAFETY: this test only sets and unsets env vars; no other test
+        // relies on the global env state.
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "test");
+            assert!(LlmEmbedding::oauth_only_enforce().is_err());
+            std::env::remove_var("ANTHROPIC_API_KEY");
+
+            std::env::set_var("OPENAI_API_KEY", "test");
+            assert!(LlmEmbedding::oauth_only_enforce().is_err());
+            std::env::remove_var("OPENAI_API_KEY");
+        }
+        assert!(LlmEmbedding::oauth_only_enforce().is_ok());
+    }
+
+    #[test]
+    fn flavour_as_str_is_stable() {
+        assert_eq!(EmbeddingFlavour::Claude.as_str(), "claude");
+        assert_eq!(EmbeddingFlavour::Codex.as_str(), "codex");
+    }
+
+    #[test]
+    fn parse_embedding_response_accepts_claude_json() {
+        let stdout = r#"{"embedding":[0.0,1.0,2.0]}"#;
+
+        let parsed = parse_embedding_response(stdout).expect("claude JSON must parse");
+
+        assert_eq!(parsed.embedding, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn parse_embedding_response_accepts_codex_jsonl() {
+        let stdout = r#"{"type":"thread.started","thread_id":"mock-thread-0"}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"embedding\":[0.0,1.0,2.0]}"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
+
+        let parsed = parse_embedding_response(stdout).expect("codex JSONL must parse");
+
+        assert_eq!(parsed.embedding, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn parse_embedding_response_rejects_jsonl_without_agent_message() {
+        let stdout = r#"{"type":"thread.started","thread_id":"mock-thread-0"}"#;
+
+        let err = parse_embedding_response(stdout).expect_err("missing agent_message must fail");
+
+        assert!(err.contains("no agent_message"));
+    }
+
+    #[test]
+    fn codex_embedding_command_reads_prompt_from_stdin() {
+        let schema_path = std::env::temp_dir().join("sqlite-graphrag-embed-schema-test.json");
+        let cmd = build_codex_embedding_command(
+            std::path::Path::new("/bin/true"),
+            "gpt-5.4",
+            &schema_path,
+        );
+        let argv: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .filter_map(|arg| arg.to_str().map(|s| s.to_string()))
+            .collect();
+
+        assert!(
+            argv.iter().any(|arg| arg == "-"),
+            "codex embedding command must read prompt from stdin: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|arg| arg.starts_with("passage: ")),
+            "prompt text must not be passed as argv: {argv:?}"
+        );
+        for required in &[
+            "exec",
+            "-c",
+            "sandbox_mode='read-only'",
+            "approval_policy='never'",
+            "--json",
+            "--output-schema",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--model",
+            "gpt-5.4",
+        ] {
+            assert!(
+                argv.iter().any(|arg| arg == required),
+                "missing flag {required} in {argv:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn embed_passage_sends_prompt_to_codex_stdin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir must exist");
+        let binary = temp.path().join("codex-stdin-check");
+        let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+
+prompt="$(cat)"
+if [[ "$prompt" != "passage: codex-cli" ]]; then
+  echo "unexpected stdin: $prompt" >&2
+  exit 41
+fi
+
+python3 - <<'PY'
+import json
+payload = json.dumps({"embedding": [0.0] * 384})
+print(json.dumps({
+    "type": "item.completed",
+    "item": {
+        "type": "agent_message",
+        "text": payload,
+    },
+}))
+PY
+"#;
+        std::fs::write(&binary, script).expect("mock codex script must be written");
+        let mut perms = std::fs::metadata(&binary)
+            .expect("mock codex metadata must exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&binary, perms).expect("mock codex must be executable");
+
+        let mut embedding = LlmEmbedding {
+            flavour: EmbeddingFlavour::Codex,
+            binary,
+            model: "gpt-5.4".to_string(),
+        };
+
+        let vector = embedding
+            .embed_passage("codex-cli")
+            .expect("stdin-backed codex embedding must succeed");
+
+        assert_eq!(vector.len(), EMBEDDING_DIM);
+        assert!(vector.iter().all(|value| *value == 0.0));
+    }
 }

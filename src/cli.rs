@@ -6,17 +6,6 @@ use crate::commands::*;
 use crate::i18n::{current, Language};
 use clap::{Parser, Subcommand};
 
-/// Common daemon-control options shared across embedding-heavy subcommands.
-#[derive(clap::Args, Debug, Clone)]
-pub struct DaemonOpts {
-    /// Allow the CLI to spawn a background daemon if none is running.
-    ///
-    /// Default `true`. Pass `--autostart-daemon=false` to disable.
-    /// Env var `SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART=1` is honoured only when this flag is unset.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub autostart_daemon: bool,
-}
-
 /// Returns the maximum simultaneous invocations allowed by the CPU heuristic.
 fn max_concurrency_ceiling() -> usize {
     std::thread::available_parallelism()
@@ -257,7 +246,7 @@ impl Commands {
     }
 
     pub fn uses_cli_slot(&self) -> bool {
-        !matches!(self, Self::Daemon(_))
+        true
     }
 }
 
@@ -273,10 +262,8 @@ pub enum Commands {
         SQLITE_GRAPHRAG_HOME=/data sqlite-graphrag init\n\n\
         NOTES:\n  \
         - `init` is OPTIONAL: any subsequent CRUD command auto-initializes graphrag.sqlite if missing.\n  \
-        - As a side effect, `init` warms a smoke-test embedding which auto-spawns the persistent daemon (~600s idle timeout).")]
+        - As a side effect, `init` warms a smoke-test embedding via the LLM-only one-shot pipeline.")]
     Init(init::InitArgs),
-    /// Run or control the persistent embedding daemon
-    Daemon(daemon::DaemonArgs),
     /// Save a memory with optional entity graph
     #[command(after_long_help = "EXAMPLES:\n  \
         # Inline body\n  \

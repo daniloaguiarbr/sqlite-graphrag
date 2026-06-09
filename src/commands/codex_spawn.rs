@@ -254,8 +254,10 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
 
     let mut cmd = Command::new(args.binary);
     cmd.env_clear();
-    // OAuth flow: `CODEX_ACCESS_TOKEN` (Bearer) and `CODEX_HOME` (auth.json
-    // location) are whitelisted. `OPENAI_API_KEY` is INTENTIONALLY ABSENT.
+    // OAuth flow: `CODEX_ACCESS_TOKEN` (Bearer) is whitelisted.
+    // `OPENAI_API_KEY` is INTENTIONALLY ABSENT.
+    // v1.0.77: CODEX_HOME is overridden to an isolated dir (see below)
+    // to prevent loading ~/.codex/config.toml trust_level and sandbox_mode.
     for var in &[
         "PATH",
         "HOME",
@@ -268,7 +270,6 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         "XDG_RUNTIME_DIR",
         "XDG_CACHE_HOME",
         "CODEX_ACCESS_TOKEN",
-        "CODEX_HOME",
         "TMPDIR",
         "TMP",
         "TEMP",
@@ -277,6 +278,13 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         if let Ok(val) = std::env::var(var) {
             cmd.env(var, val);
         }
+    }
+    // v1.0.77: point CODEX_HOME at an isolated dir that only contains
+    // auth.json — this prevents the codex subprocess from loading
+    // ~/.codex/config.toml (which has trust_level=trusted for the project,
+    // causing sandbox escalation per openai/codex#18113).
+    if let Some(isolated) = prepare_isolated_codex_home_spawn() {
+        cmd.env("CODEX_HOME", isolated);
     }
 
     #[cfg(windows)]
@@ -293,7 +301,14 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         }
     }
 
+    // v1.0.77: `-c` TOML overrides bypass the codex exec --sandbox propagation
+    // bug (openai/codex#18113). CLI flags alone are insufficient — the exec
+    // subcommand may not inherit --sandbox from the parent codex command.
     cmd.arg("exec")
+        .arg("-c")
+        .arg("sandbox_mode='read-only'")
+        .arg("-c")
+        .arg("approval_policy='never'")
         .arg("--json")
         .arg("--output-schema")
         .arg(&args.schema_path)
@@ -566,6 +581,22 @@ pub fn parse_extraction_text(text: &str) -> Result<ExtractionResult, AppError> {
     })
 }
 
+fn prepare_isolated_codex_home_spawn() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let real_auth = std::path::Path::new(&home).join(".codex/auth.json");
+    if !real_auth.exists() {
+        return None;
+    }
+    let isolated =
+        std::env::temp_dir().join(format!("sqlite-graphrag-codex-home-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&isolated);
+    let target = isolated.join("auth.json");
+    if !target.exists() {
+        let _ = std::fs::copy(&real_auth, &target);
+    }
+    Some(isolated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,6 +711,9 @@ mod tests {
             .collect();
         for required in &[
             "exec",
+            "-c",
+            "sandbox_mode='read-only'",
+            "approval_policy='never'",
             "--json",
             "--output-schema",
             "--ephemeral",
@@ -764,6 +798,15 @@ mod tests {
         assert!(
             argv.contains(&"--ignore-rules"),
             "must have --ignore-rules (G31)"
+        );
+        // v1.0.77: -c TOML overrides bypass codex exec --sandbox bug (#18113)
+        assert!(
+            argv.contains(&"-c") && argv.contains(&"sandbox_mode='read-only'"),
+            "must have -c sandbox_mode='read-only' (v1.0.77, codex#18113)"
+        );
+        assert!(
+            argv.contains(&"approval_policy='never'"),
+            "must have -c approval_policy='never' (v1.0.77)"
         );
     }
 

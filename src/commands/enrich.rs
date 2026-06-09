@@ -6,7 +6,7 @@
 //! - `memory-bindings`: memories without `memory_entities` rows get entity extraction
 //! - `entity-descriptions`: entities with NULL/empty descriptions get LLM descriptions
 //! - `body-enrich`: memories with short bodies get expanded by the LLM (GAP-18)
-//! - all others: scan + structured NDJSON output (not-yet-implemented dispatch)
+//! - `re-embed`: memories without a vector row get re-embedded without rewriting body
 //!
 //! Architecture mirrors `ingest_claude.rs`: SCAN → JUDGE (LLM) → PERSIST, with a
 //! SQLite queue DB (`.enrich-queue.sqlite`) for resume/retry support.
@@ -299,6 +299,8 @@ pub enum EnrichOperation {
     EntityDescriptions,
     /// Expand short memory bodies into richer content (fully implemented, GAP-18).
     BodyEnrich,
+    /// Rebuild missing memory embeddings without rewriting the memory body.
+    ReEmbed,
     /// Calibrate relationship weights using LLM analysis (scan only).
     WeightCalibrate,
     /// Reclassify relationship types using LLM judgment (scan only).
@@ -350,6 +352,8 @@ impl std::fmt::Display for EnrichMode {
     sqlite-graphrag enrich --operation entity-descriptions --dry-run --json\n\n  \
     # Expand short memory bodies (GAP-18)\n  \
     sqlite-graphrag enrich --operation body-enrich --min-output-chars 600\n\n  \
+    # Rebuild only missing memory embeddings without rewriting bodies\n  \
+    sqlite-graphrag enrich --operation re-embed --limit 100\n\n  \
     # Resume an interrupted body-enrich run\n  \
     sqlite-graphrag enrich --operation body-enrich --resume --json\n\n  \
     # Retry only failed items from a previous run\n  \
@@ -1009,6 +1013,77 @@ fn scan_short_body_memories(
     Ok(rows)
 }
 
+/// Returns live memories that still have no row in `memory_embeddings`.
+///
+/// These are the targets for `re-embed`.
+fn scan_memories_without_embeddings(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+    name_filter: &[String],
+) -> Result<Vec<(i64, String, String)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT m.id, m.name, COALESCE(m.body,'')
+             FROM memories m
+             LEFT JOIN memory_embeddings me ON me.memory_id = m.id
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND me.memory_id IS NULL
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT m.id, m.name, COALESCE(m.body,'')
+             FROM memories m
+             LEFT JOIN memory_embeddings me ON me.memory_id = m.id
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND m.name IN ({in_clause})
+               AND me.memory_id IS NULL
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+        params_vec.push(&namespace);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
 /// G27: Returns relationships with weight >= 0.7 that may need recalibration.
 #[allow(clippy::type_complexity)]
 fn scan_weight_candidates(
@@ -1183,6 +1258,29 @@ fn persist_entity_description(
     Ok(())
 }
 
+fn reembed_memory_vector(
+    conn: &Connection,
+    namespace: &str,
+    memory_id: i64,
+    memory_name: &str,
+    memory_type: &str,
+    body: &str,
+    paths: &crate::paths::AppPaths,
+) -> Result<(), AppError> {
+    let snippet: String = body.chars().take(200).collect();
+    let embedding = crate::embedder::embed_passage_local(&paths.models, body)?;
+    memories::upsert_vec(
+        conn,
+        memory_id,
+        namespace,
+        memory_type,
+        &embedding,
+        memory_name,
+        &snippet,
+    )?;
+    Ok(())
+}
+
 /// Persists an enriched memory body (body-enrich, GAP-18).
 ///
 /// Uses `memories::update` to set the new body and `sync_fts_after_update`
@@ -1268,44 +1366,16 @@ fn persist_enriched_body(
     )?;
 
     // Re-embed for recall accuracy
-    let snippet: String = new_body.chars().take(200).collect();
-
-    let chunks_info = crate::chunking::split_into_chunks_hierarchical(new_body);
-    let embedding_result = if chunks_info.len() <= 1 {
-        crate::daemon::embed_passage_or_local(&paths.models, new_body)
-    } else {
-        let mut chunk_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_info.len());
-        let mut ok = true;
-        for chunk in &chunks_info {
-            let text = crate::chunking::chunk_text(new_body, chunk);
-            match crate::daemon::embed_passage_or_local(&paths.models, text) {
-                Ok(emb) => chunk_embeddings.push(emb),
-                Err(e) => {
-                    tracing::warn!(target: "enrich", error = %e, "chunk embedding failed");
-                    ok = false;
-                    break;
-                }
-            }
-        }
-        if ok {
-            Ok(crate::chunking::aggregate_embeddings(&chunk_embeddings))
-        } else {
-            crate::daemon::embed_passage_or_local(&paths.models, new_body)
-        }
-    };
-
-    if let Ok(embedding) = embedding_result {
-        if let Err(e) = memories::upsert_vec(
-            conn,
-            memory_id,
-            namespace,
-            &memory_type,
-            &embedding,
-            memory_name,
-            &snippet,
-        ) {
-            tracing::warn!(target: "enrich", memory = %memory_name, error = %e, "vec upsert failed after body-enrich");
-        }
+    if let Err(e) = reembed_memory_vector(
+        conn,
+        namespace,
+        memory_id,
+        memory_name,
+        &memory_type,
+        new_body,
+        paths,
+    ) {
+        tracing::warn!(target: "enrich", memory = %memory_name, error = %e, "vec upsert failed after body-enrich");
     }
 
     Ok(())
@@ -1422,36 +1492,38 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
         force_flag,
     )?;
 
-    // Validate provider binary upfront
-    let _effective_mode: EnrichMode = args.mode.clone();
-    let provider_binary = match args.mode {
-        EnrichMode::ClaudeCode => {
-            let bin = find_claude_binary(args.claude_binary.as_deref())?;
-            let version = super::claude_runner::validate_claude_version(&bin)?;
-            tracing::info!(target: "enrich", binary = %bin.display(), version = %version, "Claude Code binary validated");
-            emit_json(&PhaseEvent {
-                phase: "validate",
-                binary_path: bin.to_str(),
-                version: Some(&version),
-                items_total: None,
-                items_pending: None,
-                llm_parallelism: None,
-            });
-            bin
-        }
-        EnrichMode::Codex => {
-            // Codex provider: locate binary using env or PATH
-            let bin = find_codex_binary(args.codex_binary.as_deref())?;
-            emit_json(&PhaseEvent {
-                phase: "validate",
-                binary_path: bin.to_str(),
-                version: None,
-                items_total: None,
-                items_pending: None,
-                llm_parallelism: None,
-            });
-            bin
-        }
+    // Validate provider binary upfront only for LLM-backed operations.
+    let provider_binary = if matches!(args.operation, EnrichOperation::ReEmbed) {
+        None
+    } else {
+        Some(match args.mode {
+            EnrichMode::ClaudeCode => {
+                let bin = find_claude_binary(args.claude_binary.as_deref())?;
+                let version = super::claude_runner::validate_claude_version(&bin)?;
+                tracing::info!(target: "enrich", binary = %bin.display(), version = %version, "Claude Code binary validated");
+                emit_json(&PhaseEvent {
+                    phase: "validate",
+                    binary_path: bin.to_str(),
+                    version: Some(&version),
+                    items_total: None,
+                    items_pending: None,
+                    llm_parallelism: None,
+                });
+                bin
+            }
+            EnrichMode::Codex => {
+                let bin = find_codex_binary(args.codex_binary.as_deref())?;
+                emit_json(&PhaseEvent {
+                    phase: "validate",
+                    binary_path: bin.to_str(),
+                    version: None,
+                    items_total: None,
+                    items_pending: None,
+                    llm_parallelism: None,
+                });
+                bin
+            }
+        })
     };
 
     // G28-D: refuse to start when the system is saturated. This check
@@ -1472,7 +1544,8 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
     // different mode (typically codex) instead of failing the entire
     // batch. The probe itself consumes 1 OAuth turn, so it stays
     // opt-in (default off) to keep --dry-run and CI flows zero-cost.
-    if args.preflight_check && !args.dry_run {
+    if args.preflight_check && !args.dry_run && !matches!(args.operation, EnrichOperation::ReEmbed)
+    {
         let preflight_result = run_preflight_probe(args);
         match preflight_result {
             PreflightOutcome::Healthy => {
@@ -1559,7 +1632,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // All 13 operations are now implemented (G27 complete).
+    // All operations in this enum have an execution path.
 
     // Queue setup for resume/retry
     let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
@@ -1696,7 +1769,7 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     let stdout_mu = &stdout_mu;
                     let paths = &paths;
                     let namespace = &namespace;
-                    let provider_binary = &provider_binary;
+                    let provider_binary = provider_binary.as_deref();
                     let operation = &operation;
                     let mode = &mode;
                     let prompt_tpl = prompt_tpl.as_deref();
@@ -1759,18 +1832,19 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                             let current_index = w_completed + w_failed + w_skipped;
 
                             let call_result = match operation {
-                                EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths),
-                                EnrichOperation::WeightCalibrate => call_weight_calibrate(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::RelationReclassify => call_relation_reclassify(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => call_entity_connect(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::EntityTypeValidate => call_entity_type_validate(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::DescriptionEnrich => call_description_enrich(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::DomainClassify => call_domain_classify(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::GraphAudit => call_graph_audit(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::DeepResearchSynth => call_deep_research_synth(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
-                                EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_binary, provider_model, provider_timeout, mode),
+                                EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths),
+                                EnrichOperation::ReEmbed => call_reembed(&w_conn, namespace, &item_key, paths),
+                                EnrichOperation::WeightCalibrate => call_weight_calibrate(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::RelationReclassify => call_relation_reclassify(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => call_entity_connect(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::EntityTypeValidate => call_entity_type_validate(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::DescriptionEnrich => call_description_enrich(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::DomainClassify => call_domain_classify(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::GraphAudit => call_graph_audit(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::DeepResearchSynth => call_deep_research_synth(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                             };
 
                             match call_result {
@@ -1926,7 +2000,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1935,7 +2011,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1944,7 +2022,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1954,11 +2034,14 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     args.preserve_threshold,
                     &paths,
                 ),
+                EnrichOperation::ReEmbed => call_reembed(&conn, &namespace, &item_key, &paths),
                 EnrichOperation::WeightCalibrate => call_weight_calibrate(
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1967,7 +2050,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1977,7 +2062,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                         &conn,
                         &namespace,
                         &item_key,
-                        &provider_binary,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
                         &args.mode,
@@ -1987,7 +2074,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -1996,7 +2085,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -2005,7 +2096,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -2014,7 +2107,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -2023,7 +2118,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -2032,7 +2129,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     &conn,
                     &namespace,
                     &item_key,
-                    &provider_binary,
+                    provider_binary
+                        .as_deref()
+                        .expect("provider binary required"),
                     provider_model,
                     provider_timeout,
                     &args.mode,
@@ -2607,6 +2706,55 @@ fn call_body_enrich(
     })
 }
 
+fn call_reembed(
+    conn: &Connection,
+    namespace: &str,
+    memory_name: &str,
+    paths: &crate::paths::AppPaths,
+) -> Result<EnrichItemResult, AppError> {
+    let (memory_id, body, memory_type): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, COALESCE(body,''), COALESCE(type,'note')
+             FROM memories
+             WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
+            rusqlite::params![namespace, memory_name],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::NotFound(format!("memory '{memory_name}' not found"))
+            }
+            other => AppError::Database(other),
+        })?;
+
+    if body.trim().is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "body is empty".to_string(),
+        });
+    }
+
+    reembed_memory_vector(
+        conn,
+        namespace,
+        memory_id,
+        memory_name,
+        &memory_type,
+        &body,
+        paths,
+    )?;
+
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(memory_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: Some(body.chars().count()),
+        chars_after: Some(body.chars().count()),
+        cost: 0.0,
+        is_oauth: true,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Scan dispatcher — maps operation to scan query result (item keys)
 // ---------------------------------------------------------------------------
@@ -2630,6 +2778,10 @@ fn scan_operation(
         EnrichOperation::BodyEnrich => {
             let rows =
                 scan_short_body_memories(conn, namespace, args.min_output_chars, args.limit)?;
+            Ok(rows.into_iter().map(|(_, name, _)| name).collect())
+        }
+        EnrichOperation::ReEmbed => {
+            let rows = scan_memories_without_embeddings(conn, namespace, args.limit, &name_filter)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::WeightCalibrate => {
@@ -2703,7 +2855,9 @@ fn find_codex_binary(explicit: Option<&Path>) -> Result<PathBuf, AppError> {
         for dir in std::env::split_paths(&path_var) {
             let candidate = dir.join(name);
             if candidate.exists() {
-                return Ok(candidate);
+                return Ok(crate::extract::llm_embedding::resolve_real_binary(
+                    &candidate,
+                ));
             }
         }
     }
@@ -3508,6 +3662,8 @@ fn call_codex(
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     /// Opens an in-memory SQLite database with a minimal schema for unit tests.
     fn open_test_db() -> Connection {
@@ -3554,6 +3710,15 @@ mod tests {
                 weight     REAL NOT NULL DEFAULT 0.5,
                 description TEXT,
                 UNIQUE(source_id, target_id, relation)
+            );
+            CREATE TABLE memory_embeddings (
+                memory_id   INTEGER PRIMARY KEY,
+                namespace   TEXT NOT NULL,
+                embedding   BLOB NOT NULL,
+                source      TEXT NOT NULL,
+                model       TEXT NOT NULL DEFAULT '',
+                dim         INTEGER NOT NULL DEFAULT 384,
+                created_at  INTEGER NOT NULL DEFAULT (unixepoch())
             );",
         )
         .expect("schema creation must succeed");
@@ -3683,6 +3848,58 @@ mod tests {
     }
 
     #[test]
+    fn scan_memories_without_embeddings_finds_only_missing_rows() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'missing-vec', 'body one')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'has-vec', 'body two')",
+            [],
+        )
+        .unwrap();
+        let memory_id: i64 = conn
+            .query_row(
+                "SELECT id FROM memories WHERE namespace='global' AND name='has-vec'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let embedding = vec![0.0_f32; crate::constants::EMBEDDING_DIM];
+        memories::upsert_vec(
+            &conn, memory_id, "global", "note", &embedding, "has-vec", "body two",
+        )
+        .unwrap();
+
+        let results = scan_memories_without_embeddings(&conn, "global", None, &[]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "missing-vec");
+    }
+
+    #[test]
+    fn scan_memories_without_embeddings_respects_name_filter() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'match-me', 'body one')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'skip-me', 'body two')",
+            [],
+        )
+        .unwrap();
+
+        let results =
+            scan_memories_without_embeddings(&conn, "global", None, &["match-me".to_string()])
+                .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "match-me");
+    }
+
+    #[test]
     fn queue_db_schema_creates_correctly() {
         let tmp_path = format!("/tmp/test-enrich-queue-{}.sqlite", std::process::id());
         let conn = open_queue_db(&tmp_path).expect("queue db must open");
@@ -3736,6 +3953,36 @@ mod tests {
         ]"#;
         let err = crate::commands::claude_runner::parse_claude_output(output).unwrap_err();
         assert!(format!("{err}").contains("authentication failed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn call_codex_returns_raw_json_for_body_enrich_schema() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let binary = tmp.path().join("codex-mock");
+        std::fs::write(
+            &binary,
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"mock-thread-0"}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"enriched_body\":\"expanded body\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}
+JSONL
+"#,
+        )
+        .expect("mock codex write");
+        let mut perms = std::fs::metadata(&binary).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&binary, perms).expect("chmod");
+
+        let (value, cost, is_oauth) =
+            call_codex(&binary, "prompt", BODY_ENRICH_SCHEMA, "body", None, 5)
+                .expect("call_codex must accept body-enrich payload");
+
+        assert_eq!(value["enriched_body"], "expanded body");
+        assert_eq!(cost, 0.0);
+        assert!(!is_oauth);
     }
 
     #[test]

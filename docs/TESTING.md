@@ -4,6 +4,31 @@
 - Read the Portuguese version at [TESTING.pt-BR.md](TESTING.pt-BR.md)
 
 
+## v1.0.76 Test Infrastructure — 3-Feature CI Matrix
+- The CI workflow now runs `clippy` and `test` jobs across a 3-feature matrix: `default`, `llm-only`, and `embedding-legacy`.
+- The `default` and `llm-only` jobs install a stub `mock-llm` CLI on `PATH` so the embedding round-trip tests can run without a real LLM subscription.
+- The `embedding-legacy` job keeps the v1.0.74 ONNX model cache path for the fastembed pipeline tests.
+- 26 test files were wired to consume the mock LLM CLI as a drop-in replacement for `claude -p` and `codex exec`. This unblocks CI from requiring real OAuth credentials.
+- 107 of 115 previously-slow tests were fixed in commit `bd0a3f5` (mock LLM unblocks tests that depended on a real OAuth turn).
+- See the GitHub Actions workflow file `.github/workflows/ci.yml` for the matrix definition.
+
+### Mock LLM CLI Contract
+- The mock LLM is a small binary in `tests/fixtures/mock-llm/` that returns deterministic JSON for any prompt.
+- For embedding requests: returns a 384-dim `f32` array (zeros with a small bias to ensure cosine distance is computable).
+- For entity extraction requests: returns a fixed `{entities: [], relationships: []}` JSON object.
+- Operators running tests locally must prepend the mock to `PATH`:
+  ```bash
+  export PATH="$PWD/target/debug:$PATH"
+  cargo test --workspace
+  ```
+
+### Feature-Flag Test Selection
+- `cargo test --lib` — runs against default features (mock LLM in CI, real LLM required locally).
+- `cargo test --lib --no-default-features --features llm-only` — same behavior as default, explicit opt-in.
+- `cargo test --lib --no-default-features --features embedding-legacy` — uses fastembed ONNX, no LLM CLI needed.
+- `cargo test --workspace --features slow-tests` — runs the full contract suite including the 832-test integration matrix.
+
+
 ## Why Categorized Tests
 ### The Thermal Livelock Incident — 2026-04-19
 - On 2026-04-19 at 11:37:40, the developer's Intel i9-14900KF reached Tjmax 100°C
@@ -39,7 +64,7 @@
 ### Slow End-to-End and Stress Tests — Opt-in via Feature Flag
 - Location: `tests/` files guarded by `#[cfg(feature = "slow-tests")]`
 - Run with: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
-- Scope: long-running end-to-end smoke suites, contract suites, daemon reuse, i18n parity, exit-code routing, high-concurrency load, and extended retry loops
+- Scope: long-running end-to-end smoke suites, contract suites, i18n parity, exit-code routing, high-concurrency load, and extended retry loops
 - Gate: excluded from the default and `ci` nextest profiles
 - Critical release suites: `/usr/bin/timeout 1200 cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
 - Critical release suites: `/usr/bin/timeout 1200 cargo test --features slow-tests --test prd_compliance -- --nocapture`
@@ -134,18 +159,9 @@
 - The script defaults to the installed `sqlite-graphrag` in `PATH`
 - Override the binary with `BIN=./target/debug/sqlite-graphrag` to compare local changes against the published build
 - The script uses `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`
-- The script initializes an isolated temp database and an isolated model cache for the daemon
-- The script attempts `daemon --stop` on exit to avoid leaving a resident model process behind
+- The script initializes an isolated temp database for each run
+- The CLI is one-shot (no daemon); each embedding call spawns and discards the LLM subprocess
 - The script runs known pass, threshold, fail, and synthetic cases
-
-
-## Daemon Tests
-### Validate Persistent-Process Reuse Explicitly
-- Run `/usr/bin/timeout 900 cargo test --all-features --test daemon_integration -- --nocapture` to validate the daemon end to end
-- The daemon suite proves `ping`, `shutdown`, auto-start, restart after stop, version mismatch auto-restart (since v1.0.50), and counter increments across `init`, `remember`, `recall`, and `hybrid-search`; v1.0.51 added 6 unit tests (backoff capping, half-jitter, socket name, version CAS, state roundtrip) bringing the daemon total to 10
-- Use `SQLITE_GRAPHRAG_CACHE_DIR=/tmp/test-cache` to isolate the daemon socket and model cache per run
-- If a daemon test hangs, run `sqlite-graphrag daemon --stop` with the same cache dir before retrying
-- Hidden test flag `--skip-memory-guard` now disables daemon auto-start by default unless `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1` is set
 
 
 ## Loom Concurrency Tests

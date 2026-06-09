@@ -1,9 +1,9 @@
 //! Handler for the `vec` CLI subcommand family.
 //!
-//! Provides three maintenance operations for the `vec_memories` virtual
-//! table that backs the embedding KNN search:
+//! Provides maintenance operations for the memory embedding store,
+//! preferring `memory_embeddings` and falling back to legacy `vec_memories`:
 //!
-//! - `orphan-list`: lists `vec_memories` rows whose `memory_id` no longer
+//! - `orphan-list`: lists embedding rows whose `memory_id` no longer
 //!   references a live (non-soft-deleted) memory.
 //! - `purge-orphan`: deletes those orphan rows in a single transaction.
 //! - `stats`: surfaces total rows, orphan count, and coverage percentage.
@@ -18,12 +18,14 @@ use crate::paths::AppPaths;
 use crate::storage::connection::{open_ro, open_rw};
 use serde::Serialize;
 
+const MEMORY_VEC_TABLES: &[&str] = &["memory_embeddings", "vec_memories"];
+
 /// Arguments for the `vec` subcommand family.
 #[derive(clap::Args)]
 #[command(
     about = "Vector index maintenance (orphan detection, purge, stats)",
     after_long_help = "EXAMPLES:\n  \
-        # List orphan vec_memories rows whose memory_id is gone\n  \
+        # List orphan memory embedding rows whose memory_id is gone\n  \
         sqlite-graphrag vec orphan-list\n\n  \
         # Dry-run the purge (does not delete)\n  \
         sqlite-graphrag vec purge-orphan --dry-run\n\n  \
@@ -40,9 +42,9 @@ pub struct VecArgs {
 /// Subcommands nested under `vec`.
 #[derive(clap::Subcommand)]
 pub enum VecSubcommand {
-    /// List orphan vec_memories rows.
+    /// List orphan memory embedding rows.
     OrphanList(VecOrphanListArgs),
-    /// Delete orphan vec_memories rows. Requires `--yes` to confirm.
+    /// Delete orphan memory embedding rows. Requires `--yes` to confirm.
     PurgeOrphan(VecPurgeOrphanArgs),
     /// Show statistics for vec_memories, vec_entities, vec_chunks.
     Stats(VecStatsArgs),
@@ -96,7 +98,7 @@ pub struct VecStatsArgs {
 
 #[derive(Serialize)]
 struct VecOrphanListItem {
-    /// The orphan `memory_id` value stored in `vec_memories`.
+    /// The orphan `memory_id` value stored in the active memory embedding table.
     memory_id: i64,
     /// Hash of the float vector blob, for fingerprinting.
     vector_hash: String,
@@ -149,41 +151,78 @@ pub fn run(args: VecArgs) -> Result<(), AppError> {
     }
 }
 
+fn live_memory_embedding_stats(conn: &rusqlite::Connection) -> (i64, i64) {
+    if let Some(table_name) = first_existing_vec_table(conn, MEMORY_VEC_TABLES) {
+        let total = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+        let orphaned = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*)
+                     FROM {table_name} v
+                     LEFT JOIN memories m ON m.id = v.memory_id
+                     WHERE m.id IS NULL OR m.deleted_at IS NOT NULL"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        return (total, orphaned);
+    }
+
+    (0, 0)
+}
+
+fn first_existing_vec_table<'a>(
+    conn: &rusqlite::Connection,
+    candidates: &'a [&'a str],
+) -> Option<&'a str> {
+    candidates
+        .iter()
+        .copied()
+        .find(|table_name| vec_table_exists(conn, table_name))
+}
+
+fn count_rows_first_existing(conn: &rusqlite::Connection, candidates: &[&str]) -> Option<i64> {
+    for table in candidates {
+        if vec_table_exists(conn, table) {
+            return conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .ok();
+        }
+    }
+    None
+}
+
 fn run_orphan_list(args: VecOrphanListArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
-    // FTS5-style table existence gate so the command is a no-op on
-    // databases that were created before vec_memories existed.
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_memories'",
-            [],
-            |r| r.get::<_, i64>(0).map(|v| v > 0),
-        )
-        .unwrap_or(false);
-    if !table_exists {
+    let Some(memory_table) = first_existing_vec_table(&conn, MEMORY_VEC_TABLES) else {
         return output::emit_json(&VecOrphanListResponse {
             action: "orphan_list".to_string(),
             count: 0,
             items: Vec::new(),
             elapsed_ms: start.elapsed().as_millis() as u64,
         });
-    }
+    };
 
-    // List vec_memories rows that have no corresponding live memory row.
+    // List embedding rows that have no corresponding live memory row.
     // We use a hash of the float[] blob (BLAKE3) as a fingerprint so the
     // operator can detect duplicate embeddings even after the parent
     // memory has been re-embedded with new content.
-    let mut stmt = conn.prepare(
-        "SELECT v.memory_id, v.embedding, v.created_at
-         FROM vec_memories v
+    let mut stmt = conn.prepare(&format!(
+        "SELECT v.memory_id, v.embedding, CAST(v.created_at AS INTEGER)
+         FROM {memory_table} v
          LEFT JOIN memories m ON m.id = v.memory_id
-         WHERE m.id IS NULL
-         ORDER BY v.memory_id",
-    )?;
+         WHERE m.id IS NULL OR m.deleted_at IS NOT NULL
+         ORDER BY v.memory_id"
+    ))?;
     let rows: Vec<VecOrphanListItem> = stmt
         .query_map([], |r| {
             let memory_id: i64 = r.get(0)?;
@@ -214,15 +253,7 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_rw(&paths.db)?;
 
-    // Count first so we can return a deterministic response even on dry-run.
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_memories'",
-            [],
-            |r| r.get::<_, i64>(0).map(|v| v > 0),
-        )
-        .unwrap_or(false);
-    if !table_exists {
+    let Some(memory_table) = first_existing_vec_table(&conn, MEMORY_VEC_TABLES) else {
         return output::emit_json(&VecPurgeOrphanResponse {
             action: "purge_orphan".to_string(),
             deleted: 0,
@@ -231,13 +262,15 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
             dry_run: args.dry_run,
             elapsed_ms: start.elapsed().as_millis() as u64,
         });
-    }
+    };
 
     let orphan_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM vec_memories v
-             LEFT JOIN memories m ON m.id = v.memory_id
-             WHERE m.id IS NULL",
+            &format!(
+                "SELECT COUNT(*) FROM {memory_table} v
+                 LEFT JOIN memories m ON m.id = v.memory_id
+                 WHERE m.id IS NULL OR m.deleted_at IS NOT NULL"
+            ),
             [],
             |r| r.get(0),
         )
@@ -250,7 +283,7 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
         conn.query_row(
             "SELECT COUNT(*) FROM vec_entities v
              LEFT JOIN memories m ON m.id = v.memory_id
-             WHERE m.id IS NULL",
+             WHERE m.id IS NULL OR m.deleted_at IS NOT NULL",
             [],
             |r| r.get(0),
         )
@@ -262,7 +295,7 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
         conn.query_row(
             "SELECT COUNT(*) FROM vec_chunks v
              LEFT JOIN memories m ON m.id = v.memory_id
-             WHERE m.id IS NULL",
+             WHERE m.id IS NULL OR m.deleted_at IS NOT NULL",
             [],
             |r| r.get(0),
         )
@@ -285,20 +318,30 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
 
     if !args.yes {
         return Err(AppError::Validation(format!(
-            "refusing to delete {orphan_count} vec_memories + {orphan_entities_count} vec_entities + {orphan_chunks_count} vec_chunks orphan rows without --yes (use --dry-run to preview)"
+            "refusing to delete {orphan_count} memory embedding + {orphan_entities_count} vec_entities + {orphan_chunks_count} vec_chunks orphan rows without --yes (use --dry-run to preview)"
         )));
     }
 
     let deleted: i64 = conn.execute(
-        "DELETE FROM vec_memories
-         WHERE memory_id NOT IN (SELECT id FROM memories)",
+        &format!(
+            "DELETE FROM {memory_table}
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM memories m
+                 WHERE m.id = {memory_table}.memory_id
+                   AND m.deleted_at IS NULL
+             )"
+        ),
         [],
     )? as i64;
 
     let deleted_entities: i64 = if vec_table_exists(&conn, "vec_entities") {
         conn.execute(
             "DELETE FROM vec_entities
-             WHERE memory_id NOT IN (SELECT id FROM memories)",
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM memories m
+                 WHERE m.id = vec_entities.memory_id
+                   AND m.deleted_at IS NULL
+             )",
             [],
         )
         .unwrap_or(0) as i64
@@ -308,7 +351,11 @@ fn run_purge_orphan(args: VecPurgeOrphanArgs) -> Result<(), AppError> {
     let deleted_chunks: i64 = if vec_table_exists(&conn, "vec_chunks") {
         conn.execute(
             "DELETE FROM vec_chunks
-             WHERE memory_id NOT IN (SELECT id FROM memories)",
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM memories m
+                 WHERE m.id = vec_chunks.memory_id
+                   AND m.deleted_at IS NULL
+             )",
             [],
         )
         .unwrap_or(0) as i64
@@ -335,48 +382,16 @@ fn run_stats(args: VecStatsArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
     let conn = open_ro(&paths.db)?;
 
-    let vec_memories_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_memories'",
-            [],
-            |r| r.get::<_, i64>(0).map(|v| v > 0),
-        )
-        .unwrap_or(false);
-    let (total_rows, orphaned) = if vec_memories_exists {
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM vec_memories", [], |r| r.get(0))
-            .unwrap_or(0);
-        let orph: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_memories v
-                 LEFT JOIN memories m ON m.id = v.memory_id
-                 WHERE m.id IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        (total, orph)
-    } else {
-        (0, 0)
-    };
+    let (total_rows, orphaned) = live_memory_embedding_stats(&conn);
     let coverage_percent = if total_rows > 0 {
         ((total_rows - orphaned) as f64 / total_rows as f64) * 100.0
     } else {
         100.0
     };
 
-    let vec_entities_rows = if vec_table_exists(&conn, "vec_entities") {
-        conn.query_row("SELECT COUNT(*) FROM vec_entities", [], |r| r.get(0))
-            .ok()
-    } else {
-        None
-    };
-    let vec_chunks_rows = if vec_table_exists(&conn, "vec_chunks") {
-        conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |r| r.get(0))
-            .ok()
-    } else {
-        None
-    };
+    let vec_entities_rows =
+        count_rows_first_existing(&conn, &["entity_embeddings", "vec_entities"]);
+    let vec_chunks_rows = count_rows_first_existing(&conn, &["chunk_embeddings", "vec_chunks"]);
     let fts_memories_rows = conn
         .query_row("SELECT COUNT(*) FROM fts_memories", [], |r| r.get(0))
         .unwrap_or(0);
@@ -405,6 +420,54 @@ fn vec_table_exists(conn: &rusqlite::Connection, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn open_vec_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                deleted_at INTEGER
+            );
+            CREATE TABLE memory_embeddings (
+                memory_id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                source TEXT NOT NULL,
+                model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 384
+            );
+            CREATE TABLE vec_memories (
+                memory_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE entity_embeddings (
+                entity_id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                source TEXT NOT NULL,
+                model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 384
+            );
+            CREATE TABLE vec_entities (
+                memory_id INTEGER PRIMARY KEY
+            );
+            CREATE TABLE chunk_embeddings (
+                chunk_id INTEGER PRIMARY KEY,
+                memory_id INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                source TEXT NOT NULL,
+                model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 384
+            );
+            CREATE TABLE vec_chunks (
+                memory_id INTEGER PRIMARY KEY
+            );",
+        )
+        .unwrap();
+        conn
+    }
 
     #[test]
     fn vec_orphan_list_response_serializes_all_fields() {
@@ -451,5 +514,71 @@ mod tests {
         assert_eq!(v["coverage_percent"], 75.0);
         assert_eq!(v["vec_entities_rows"], 50i64);
         assert!(v.get("vec_chunks_rows").is_none());
+    }
+
+    #[test]
+    fn live_memory_embedding_stats_prefers_memory_embeddings() {
+        let conn = open_vec_test_db();
+        conn.execute("INSERT INTO memories (id, deleted_at) VALUES (1, NULL)", [])
+            .unwrap();
+        conn.execute("INSERT INTO memories (id, deleted_at) VALUES (2, 123)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim)
+             VALUES (1, 'global', X'00', 'llm', 'm', 384)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim)
+             VALUES (2, 'global', X'00', 'llm', 'm', 384)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings(memory_id, namespace, embedding, source, model, dim)
+             VALUES (3, 'global', X'00', 'llm', 'm', 384)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vec_memories(memory_id, embedding, created_at) VALUES (99, X'00', 0)",
+            [],
+        )
+        .unwrap();
+
+        let (total, orphaned) = live_memory_embedding_stats(&conn);
+        assert_eq!(total, 3);
+        assert_eq!(orphaned, 2);
+    }
+
+    #[test]
+    fn count_rows_first_existing_prefers_new_embedding_tables() {
+        let conn = open_vec_test_db();
+        conn.execute(
+            "INSERT INTO entity_embeddings(entity_id, namespace, embedding, source, model, dim)
+             VALUES (1, 'global', X'00', 'llm', 'm', 384)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO vec_entities(memory_id) VALUES (1)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO chunk_embeddings(chunk_id, memory_id, embedding, source, model, dim)
+             VALUES (1, 1, X'00', 'llm', 'm', 384)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO vec_chunks(memory_id) VALUES (1)", [])
+            .unwrap();
+
+        assert_eq!(
+            count_rows_first_existing(&conn, &["entity_embeddings", "vec_entities"]),
+            Some(1)
+        );
+        assert_eq!(
+            count_rows_first_existing(&conn, &["chunk_embeddings", "vec_chunks"]),
+            Some(1)
+        );
     }
 }

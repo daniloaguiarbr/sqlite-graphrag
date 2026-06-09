@@ -55,6 +55,16 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Supply chain é protegida via pinagem `constant_time_eq = "=0.4.2"` para proteger MSRV 1.88
 - Drift de MSRV de dependência transitiva é monitorado proativamente conforme política do PRD
 
+## v1.0.76 Aplicação OAuth-Only de Credencial LLM
+- O build padrão é apenas LLM e one-shot. Cada chamada de embedding spawna um subprocesso headless `claude code` ou `codex`.
+- O spawn ABORTA com `AppError::Validation` e código de saída 1 quando `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` são detectadas no ambiente.
+- O fluxo OAuth (assinatura Claude Pro/Max ou ChatGPT Pro) é o ÚNICO mecanismo de credencial aceito.
+- Ambas as variáveis de chave de API estão INTENCIONALMENTE AUSENTES da whitelist de env-clear em `claude_runner.rs`, `codex_spawn.rs` e `ingest_claude.rs`. Defesa em profundidade: mesmo se um refactor futuro mover a guarda OAuth-only, a variável nunca chega ao filho.
+- A flag `--bare` (que também exigiria uma chave de API) foi REMOVIDA de todo caminho executável desde a v1.0.69.
+- Quatro testes `#[serial_test::serial(env)]` validam o conjunto canônico de flags e o comportamento de aborto.
+- Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa e `docs/decisions/adr-0025-oauth-only-embedding.md` para a aplicação específica em embedding da v1.0.76.
+- Migração: qualquer operador que dependa de `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` precisa migrar para OAuth antes de atualizar.
+
 
 ## Hall da Fama
 - Reconhecemos publicamente pesquisadores que reportam vulnerabilidades de forma responsável

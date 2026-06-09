@@ -88,6 +88,14 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Run `cargo test --test terminal_compile_windows` after touching `src/terminal.rs` to confirm the public surface stays callable; the dedicated CI job `windows-build-check` runs the full cross-platform type check
 - Test assertions involving timestamps MUST be timezone-agnostic — parse ISO via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` instead of hardcoded `1970-01-01T00:00:00` strings; this rule was added after a `SQLITE_GRAPHRAG_DISPLAY_TZ` leak in v1.0.66/v1.0.67 made three pre-existing tests flaky
 
+### v1.0.76 Test Matrix (3 features)
+- The CI matrix runs `clippy` and `test` jobs across `default`, `llm-only`, and `embedding-legacy` features
+- The `default` and `llm-only` jobs install a stub `mock-llm` CLI on `PATH` so embedding round-trip tests can run without real OAuth credentials
+- The `embedding-legacy` job uses the v1.0.74 fastembed ONNX model cache path
+- New code that touches `src/extract/llm_embedding.rs` MUST be exercised via the mock LLM contract in `tests/fixtures/mock-llm/`
+- New code that depends on the daemon MUST NOT depend on daemon autostart; the daemon is deprecated and will be removed in v1.1.0
+- New code that introduces a new migration version MUST round-trip through `migrate --rehash` and `migrate --to-llm-only` integration tests to validate the SipHasher13 checksum rewrite path
+
 
 ## Documentation
 - Every public API MUST have `///` doc comments with at least one testable example when reasonable
@@ -121,6 +129,20 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Final publication to crates.io is done manually with `cargo publish --locked`
 
 ## Recent Releases
+### v1.0.76 - 2026-06-07 — LLM-Only One-Shot, OAuth-Only Embedding
+- **BREAKING ARCHITECTURAL CHANGE**: the default build no longer bundles any local model. All embedding generation, NER, and vector search delegate to `claude -p` or `codex exec` headless (OAuth, no MCP, no hooks). The CLI is one-shot. Binary drops from 39 MB to ~6 MB.
+- **Removed crates**: `fastembed 5.13.4`, `ort 2.0.0-rc.12`, `ndarray 0.16`, `tokenizers 0.22`, `huggingface-hub 0.4`, `sqlite-vec 0.1.9`
+- **Removed features**: `daemon` (as a performance optimization, kept for source compatibility until v1.1.0), `--enable-ner` GLiNER ONNX path (moved to `ner-legacy` feature)
+- **Added**: `ExtractionBackend` trait with `LlmBackend` / `EmbeddingBackend` / `NoneBackend` / `CompositeBackend`; `VersionAdapter` trait with `CodexAdapter` / `ClaudeAdapter` / `OpencodeAdapter`; `migrate --rehash` and `migrate --to-llm-only --drop-vec-tables`; BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables; pure-Rust cosine in `src/similarity.rs`; OAuth-only LLM credential flow with `AppError::Validation` abort on `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in env
+- **Migration V013** drops the `vec_memories` / `vec_entities` / `vec_chunks` virtual tables; old embeddings are recomputed lazily on next write
+- **CI matrix 3 features**: `default`, `llm-only`, `embedding-legacy`; mock LLM CLI wired into 26 test files; 107/115 previously-slow tests fixed
+- **7 new ADRs**: `adr-0019-llm-only-one-shot`, `adr-0020-pure-rust-cosine`, `adr-0021-deprecate-daemon`, `adr-0022-blob-embeddings`, `adr-0023-remove-tokenizers`, `adr-0024-fts5-coarse-cosine-refine`, `adr-0025-oauth-only-embedding`; all with PT-BR translations
+- **2 new JSON schemas**: `migrate-rehash.schema.json`, `migrate-to-llm-only.schema.json`
+- **3 new docs**: `docs/HOW_TO_USE.md`, `docs/MIGRATION.md`, `docs/AGENTS.md` (and PT-BR) for the v1.0.76 LLM-Only architecture
+- **1 new doc**: `docs/HEADLESS_INVOCATION.md` (and PT-BR) covering Claude/Codex/OpenCode OAuth-safe headless invocation
+- 745 lib tests pass, 0 fail, 3 ignored; `cargo clippy --all-targets --all-features -- -D warnings` zero warnings
+- See `gaps.md` for the full resolution history and `CHANGELOG.md` for the v1.0.76 entry
+
 ### v1.0.68 - 2026-06-03 — Process Lifecycle Governance and Windows Compile Fix
 - **G28-A** MCP server isolation via `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (subprocess receives `CLAUDE_CONFIG_DIR=<empty dir>`; `--strict-mcp-config` and `--mcp-config '{}'` are ignored upstream per anthropics/claude-code#10787)
 - **G28-B** `lock::acquire_job_singleton(JobType, namespace, wait_seconds)` plus `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) integrated into `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` to prevent process proliferation against the same database

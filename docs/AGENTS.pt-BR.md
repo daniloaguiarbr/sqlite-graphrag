@@ -1,9 +1,66 @@
-# sqlite-graphrag para Agentes de IA
+# sqlite-graphrag para Agentes de IA (v1.0.76)
 
 
-> Memória persistente para 27 agentes de IA em um único binário Rust de 25 MB
+> Memória persistente para 27 agentes de IA em um único binário Rust de 6 MB.
+> A v1.0.76 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code ou do codex CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
 
-- Leia a versão em inglês em [AGENTS.md](AGENTS.md)
+## Arquitetura v1.0.76 (Apenas LLM)
+
+A CLI é um orquestrador fino. Cada chamada de embedding spawna um subprocesso do claude code ou do codex que devolve um vetor `f32` de 384 dimensões em JSON. Cada chamada de extração de entidades faz o mesmo com um schema de saída diferente. A CLI nunca mantém um modelo de embedding em memória; o subprocesso LLM é o modelo.
+
+A infraestrutura do daemon foi totalmente removida na v1.0.76.
+A CLI é 100% one-shot: cada chamada de embedding spawna e
+descarta o subprocesso LLM. Não há processo persistente,
+não há socket, não há cache de modelo a gerenciar.
+
+Para a justificativa arquitetural completa, veja ADR-0019. Para o
+histórico de remoção, veja ADR-0021.
+
+## Endurecimento LLM (herdado da v1.0.69)
+
+Ao spawnar `claude code` headless, a CLI sempre passa:
+
+```
+--strict-mcp-config
+--mcp-config '{}'
+--settings '{"hooks":{}}'
+--dangerously-skip-permissions
+--output-schema <JSON schema para a resposta>
+--model <claude-sonnet-4-6 | gpt-5.4>
+-p <prompt>
+```
+
+Para `codex`:
+
+```
+--json
+--output-schema <JSON schema>
+--ephemeral
+--skip-git-repo-check
+--sandbox read-only
+--ignore-user-config
+--ignore-rules
+-c mcp_servers='{}'
+--ask-for-approval never
+--model <claude-sonnet-4-6 | gpt-5.4>
+```
+
+Estas flags são o conjunto canônico de endurecimento. São testadas em `src/commands/claude_runner.rs::tests` e `src/commands/codex_spawn.rs::tests` e não devem ser removidas sem um ADR.
+
+## Validação OAuth
+
+A CLI ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas no ambiente. O agente precisa usar o fluxo OAuth:
+
+```bash
+# Primeira vez
+claude login   # ou: codex login
+
+# Depois do login, verifique
+claude --version
+codex --version
+```
+
+As duas variáveis de chave de API também são excluídas da whitelist de env-clear, então não podem ser passadas via processo pai. Agentes que tentarem defini-las verão um erro claro de validação.
 
 
 ## Aliases de Flags CLI (desde v1.0.35)
@@ -28,6 +85,31 @@
 - `merge-entities --names "a,b,c" --into <target> --json` — funde dois ou mais nós de entidade em um nó alvo; todas as arestas dos nós fonte são redirecionadas para o alvo; nós fonte são deletados após a fusão
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
+
+## Novidades na v1.0.76
+### OBRIGATÓRIO — Arquitetura LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
+- O build padrão da v1.0.76 é LLM-Only e one-shot. Sem daemon, sem runtime ONNX, sem download do modelo `multilingual-e5-small`. A geração de embeddings e a NER delegam para um subprocesso headless `claude code` ou `codex` (OAuth, sem MCP, sem hooks). O binário de release tem aproximadamente 6 MB.
+- A feature `embedding-legacy` restaura o pipeline v1.0.74 de fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0. A feature é REMOVIDA na v1.1.0.
+- Veja ADR-0019 (LLM-Only One-Shot), ADR-0020 (Cosseno em Rust Puro), ADR-0021 (Depreciação do Daemon), ADR-0022 (Embeddings com Backing BLOB), ADR-0023 (Remoção do Tokenizer), ADR-0024 (Filtro Grosso FTS5 + Refinamento por Cosseno), ADR-0025 (Fluxo de Credencial LLM Apenas OAuth), ADR-0026 (Drift da Migração V002 `vec_tables`).
+### OBRIGATÓRIO — Família do Subcomando `migrate`
+- USAR `migrate --rehash --json` para reescrever os checksums registrados de migração via `SipHasher13(name|version|sql)`. O algoritmo casa com `refinery-core 0.9.1` (mesma crate SipHasher13, mesma ordem de hashing). Obrigatório para upgrades v1.0.74 → v1.0.76 onde V002 foi intencionalmente esvaziada para um no-op.
+- USAR `migrate --to-llm-only --drop-vec-tables --json` como o upgrade one-shot para bancos v1.0.74 / v1.0.75. Combina `--rehash` com o descarte da V013 das vec tables e reporta o estado das vec tables. A flag `--drop-vec-tables` é OBRIGATÓRIA como rede de segurança. Após a migração, os embeddings são recomputados preguiçosamente no próximo `remember` / `edit` / `ingest`.
+- Ambos `migrate --rehash` e `migrate --to-llm-only` têm schemas JSON dedicados (`migrate-rehash.schema.json` e `migrate-to-llm-only.schema.json`) em `docs/schemas/`.
+### OBRIGATÓRIO — Versão de Schema e Embeddings com Backing BLOB
+- A versão atual de schema é 13. A migração V013 descarta as virtual tables `vec_memories`, `vec_entities` e `vec_chunks` e as substitui pelas tabelas regulares com backing BLOB `memory_embeddings`, `entity_embeddings` e `chunk_embeddings`. A similaridade por cosseno é computada em Rust puro sob demanda em `src/similarity.rs`.
+- A `hybrid-search` usa FTS5 como filtro grosso e refina o conjunto de candidatos com cosseno em Rust puro sobre os embeddings BLOB. O FTS5 permanece saudável porque a reconstrução é bloqueada por `optimize --fts-skip-when-functional` (G36 da v1.0.69).
+- O subcomando `daemon` está DEPRECIADO e mantido para compatibilidade de fonte pela transição v1.0.76 → v1.1.0. Será REMOVIDO na v1.1.0.
+### OBRIGATÓRIO — Apenas OAuth Reafirmado
+- O mandato OAuth-only da v1.0.69 é REAFIRMADO. O spawn ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas no ambiente. Ambas as variáveis são excluídas da whitelist de env-clear como defesa em profundidade.
+- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração. `llm` é o caminho LLM; `embedding` é o pipeline fastembed legado (requer feature `embedding-legacy`); `none` é um no-op; `both` roda os dois em paralelo e funde.
+- O trait `ExtractionBackend` vive em `src/extract/` com quatro implementações concretas: `LlmBackend` (padrão), `EmbeddingBackend` (pipeline fastembed legado, stub quando LLM-only), `NoneBackend` (no-op) e `CompositeBackend` (funde múltiplos backends em paralelo).
+- O trait `VersionAdapter` vive em `src/spawn/` e abstrai invocações de spawn de executores. `CodexAdapter` detecta `codex 0.130.0` até `0.138+` e adapta flags — `codex 0.137.0` removeu `--ask-for-approval` em favor de `-a never`. `ClaudeAdapter` cobre claude code 2.1.0+. `OpencodeAdapter` cobre opencode headless.
+### PROIBIDO — Antipadrões da v1.0.76
+- NUNCA instale a v1.0.76 com `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn aborta.
+- NUNCA dependa do daemon em código novo; o daemon será REMOVIDO na v1.1.0.
+- NUNCA misture queries em `vec_memories` / `vec_entities` / `vec_chunks` (removidas na v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` no lugar.
+- NUNCA use `migrate --to-llm-only` sem `--drop-vec-tables`; a rede de segurança recusa a operação caso contrário.
+
 
 ## Novidades na v1.0.68
 ### Correções de Proliferação de Processos (G28)
@@ -92,7 +174,7 @@
 - Exit codes seguem `sysexits.h` para sua lógica de retry funcionar sem casar string
 - Nenhum runtime Python ou Node acompanha a binária Rust da CLI
 - Stdin aceita payloads estruturados para seus agentes jamais escaparem argumentos shell
-- Comandos pesados de embedding podem subir e reutilizar `sqlite-graphrag daemon` automaticamente em vez de pagar cold-start em cada loop
+- Arquitetura one-shot apenas LLM significa zero processos persistentes a gerenciar
 - Comportamento cross-platform permanece idêntico em Linux macOS e Windows desde o início
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 
@@ -102,7 +184,7 @@
 - Remova dependências recorrentes de bancos vetoriais cloud nos fluxos locais de agentes
 - Mantenha o retrieval local na workstation ou no runner de CI em vez de uma stack RAG remota
 - Reduza a superfície operacional para um arquivo SQLite e uma CLI
-- Reuse o daemon nos comandos pesados em vez de pagar cold-start completo em cada loop
+- Arquitetura one-shot elimina overhead de gerenciamento de daemon por completo
 - Preserve a orquestração determinística com JSON estável e exit codes estáveis
 
 
@@ -504,7 +586,7 @@ let output = Command::new("sqlite-graphrag")
 ## Inicialização e Verificação de Saúde
 ### OBRIGATÓRIO — Bootstrap do Banco
 - EXECUTAR `sqlite-graphrag init --namespace <projeto>` no primeiro uso
-- AGUARDAR download offline do modelo `multilingual-e5-small`
+- AGUARDAR o primeiro round-trip LLM para verificar conectividade OAuth
 - VALIDAR com `sqlite-graphrag health --json` antes de operar
 - TRATAR exit code 10 como erro de database ou banco corrompido
 - TRATAR exit code 15 como lock pendente, ampliar `--wait-lock`
@@ -560,11 +642,10 @@ let output = Command::new("sqlite-graphrag")
 - HONRA cgroup constraints automaticamente quando definido
 - TRADE-OFF é 3 a 4 vezes mais tempo de wall clock
 - COMBINAR com flag `--low-memory` em `ingest` específico
-### OBRIGATÓRIO — ONNX Runtime em ARM64 GNU
-- DISTRIBUIR `libonnxruntime.so` ao lado da binária
-- DEFINIR `ORT_DYLIB_PATH` explicitamente em CI e systemd
-- AFETA comandos pesados de embedding em `aarch64-unknown-linux-gnu`
-- FALHA na primeira operação de embedding sem o runtime acessível
+### NOTA — ONNX Runtime Não Mais Necessário (v1.0.76)
+- O runtime ONNX e o modelo fastembed foram removidos na v1.0.76
+- Todo embedding é feito via subprocesso LLM (claude ou codex)
+- Nenhum `libonnxruntime.so` ou `ORT_DYLIB_PATH` necessário
 
 
 ## CRUD — Create com remember
@@ -610,7 +691,7 @@ let output = Command::new("sqlite-graphrag")
 ### OBRIGATÓRIO — Quando Usar ingest
 - USAR `ingest <DIR>` para importar diretórios inteiros como memórias
 - PREFERIR sobre loop `fd | xargs remember` em qualquer caso
-- USAR `ingest --dry-run` para visualizar o mapeamento arquivo→nome sem carregar o modelo ONNX nem persistir nada
+- USAR `ingest --dry-run` para visualizar o mapeamento arquivo→nome sem spawnar nenhum subprocesso LLM nem persistir nada
 - A saída de `--dry-run` é NDJSON com `status: "preview"` por arquivo; use para detectar truncamentos e colisões antes de confirmar
 - CADA arquivo correspondente ao pattern vira memória individual
 - NOME da memória deriva do basename do arquivo sem extensão em kebab-case
@@ -985,7 +1066,7 @@ let output = Command::new("sqlite-graphrag")
 - REDUÇÃO de tokens de contexto em até 72x versus dump de markdown
 - AUMENTO de accuracy em até 18% sobre vector retrieval puro
 - AUMENTO de multi-hop accuracy de 30% a 50% segundo Microsoft
-- LATÊNCIA aproximada de 1 segundo em hardware moderno com daemon
+- LATÊNCIA aproximada de 1-3 segundos em hardware moderno (LLM one-shot)
 
 
 ## Grafo — Construção e Inspeção
@@ -1027,24 +1108,10 @@ let output = Command::new("sqlite-graphrag")
 - `organization`, `location`, `date`
 
 
-## Daemon e Latência Reduzida
-### OBRIGATÓRIO — Reuso do Modelo de Embeddings
-- INICIAR `sqlite-graphrag daemon` em sessões longas de agente
-- VERIFICAR saúde via `daemon --ping --json`
-- ENCERRAR via `daemon --stop` ao fim da sessão
-- DEIXAR `init`, `remember`, `ingest`, `recall`, `hybrid-search` reusarem automaticamente
-- TRATAR daemon como opcional para invocações single-shot
-- INSPECIONAR contador de embedding requests no `--ping`
-- `daemon --ping` emite um aviso quando a versão do daemon em execução difere da versão do binário CLI; reinicie o daemon após upgrades com `daemon --stop` seguido de `daemon`
-- Desde v1.0.50, a CLI reinicia automaticamente um daemon desatualizado em caso de incompatibilidade de versão antes do primeiro request de embedding; `daemon --stop` manual após upgrades não é mais necessário
-
-
-## Cache — Gestão de Modelos
-### OBRIGATÓRIO — Manutenção de Cache
-- LISTAR modelos em cache via `cache list --json`
-- REMOVER cache de modelos via `cache clear-models --json`
-- `clear-models` força re-download na próxima operação de embedding
-- USAR `cache list` para diagnosticar uso de disco por modelos ONNX
+## Nota de Arquitetura — Sem Cache de Modelo Local (v1.0.76)
+- O subcomando `cache` foi removido na v1.0.76 junto com o pipeline de modelo ONNX
+- Todo embedding é gerenciado pelo subprocesso LLM (claude ou codex via OAuth)
+- Não há modelo local para cachear, listar ou limpar
 
 
 ## Contrato JSON e Pipelines
@@ -1091,8 +1158,7 @@ let output = Command::new("sqlite-graphrag")
 - `export` por memória: uma linha JSON por memória (NDJSON); linha summary final inclui `exported`, `namespace`, `elapsed_ms`; suporta `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset`
 - `restore` retorna `memory_id`, `name`, `action` ("restored"), `version`, `elapsed_ms`
 - `prune-relations` retorna `action` (`"pruned"`/`"dry_run"`), `relation`, `count`, `entities_affected`, `affected_entity_names?`, `namespace`, `elapsed_ms`
-- `cache list` retorna modelos com tamanho em bytes e total de disco
-- `daemon --ping` retorna os campos existentes mais `model_name` (identificador do modelo de embedding ativo) e `model_variant` (ex.: `"fp32"` ou `"int8"`)
+- subcomando `cache` foi removido na v1.0.76 (sem cache de modelo local)
 
 
 ## Envelope JSON de Erro
@@ -1116,7 +1182,7 @@ let output = Command::new("sqlite-graphrag")
 - `5` igual erro de namespace (nome inválido ou conflito)
 - `6` igual payload acima do limite de tamanho
 - `10` igual erro de database, executar `vacuum` e `health`
-- `11` igual falha de embedding (modelo corrompido ou ORT ausente)
+- `11` igual falha de embedding (erro do subprocesso LLM ou falha ao carregar modelo)
 - `12` igual falha ao carregar `sqlite-vec`, verificar SQLite ≥ 3.40
 - `13` igual falha parcial em batch, reprocessar apenas falhos
 - `14` igual erro de I/O (arquivo inacessível, permissão, disco cheio)
@@ -1140,7 +1206,7 @@ let output = Command::new("sqlite-graphrag")
 - RESPEITAR teto rígido de `2×nCPUs` em comandos pesados
 - TRATAR `init`, `remember`, `ingest`, `recall`, `hybrid-search` como pesados
 - AMPLIAR `--wait-lock <ms>` quando contenção for esperada
-- LIMITAR ingestão paralela em CI sem daemon ativo
+- LIMITAR ingestão paralela em CI para não sobrecarregar o subprocesso LLM
 ### OBRIGATÓRIO — Dois Eixos de Paralelismo no ingest
 - `--max-concurrency` governa invocações CLI simultâneas
 - `--ingest-parallelism` governa extract mais embed paralelos
@@ -1291,12 +1357,11 @@ let output = Command::new("sqlite-graphrag")
 - Env `SQLITE_GRAPHRAG_LOG_FORMAT=json` alterna saída de tracing para JSON delimitado por linha; padrão é `pretty`
 
 
-## Contrato de Runtime em ARM64 GNU
-### Carregamento Dinâmico do ONNX Runtime — O Que Agentes DEVEM Fornecer
-- Em `aarch64-unknown-linux-gnu`, comandos de embedding NÃO dependem de linkedição do ONNX Runtime no build
-- Agentes DEVEM tornar `libonnxruntime.so` alcançável via `ORT_DYLIB_PATH`, diretório do executável, `./lib/` ou diretório de cache de modelos
-- Os comandos pesados afetados são `init`, `remember`, `recall` e `hybrid-search`
-- Se a biblioteca compartilhada estiver ausente, a primeira operação de embedding falha em runtime mesmo com a binária iniciando corretamente
+## Nota de Runtime em ARM64 GNU (v1.0.76)
+### ONNX Runtime Não Mais Necessário
+- Desde a v1.0.76, todo embedding é gerenciado pelo subprocesso LLM
+- Nenhum `libonnxruntime.so`, nenhum `ORT_DYLIB_PATH`, nenhum modelo ONNX local necessário
+- A binária é autocontida em todas as plataformas incluindo `aarch64-unknown-linux-gnu`
 
 
 ## Flag de Saída JSON
@@ -1354,6 +1419,6 @@ cargo install --path . && sqlite-graphrag init
 ```
 - Flag `--locked` reusa o `Cargo.lock` enviado para proteger MSRV de drift transitivo
 - Comando `init` cria `graphrag.sqlite` no diretório atual e baixa o modelo de embedding localmente
-- Primeira invocação pode levar um minuto enquanto `fastembed` baixa `multilingual-e5-small`
-- Invocações seguintes evitam apenas o primeiro download do modelo, mas comandos pesados ainda dependem da residência do modelo e do daemon
+- Primeira invocação requer uma sessão OAuth ativa (Claude Pro/Max ou OpenAI ChatGPT Pro)
+- Cada chamada de embedding spawna e descarta um subprocesso LLM; não há modelo persistente nem daemon
 - Remova com `cargo uninstall sqlite-graphrag` deixando o arquivo de banco intacto

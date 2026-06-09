@@ -7,6 +7,7 @@
 
 - Leia a versão em inglês em [INTEGRATIONS.md](INTEGRATIONS.md)
 - Cada receita abaixo está pronta para copiar e custa zero para executar
+- **v1.0.76: o build padrão é apenas LLM e one-shot.** A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth). Não há daemon e não há runtime ONNX no build padrão.
 
 
 ## Aliases de Flags CLI (desde v1.0.35)
@@ -34,6 +35,61 @@
 - `enrich` emite `tracing::warn!` (visível com `-v`) quando `--llm-parallelism > 4`, recomendando combinar com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` para manter a fan-out administrável.
 ### Build Windows (G29)
 - `cargo install sqlite-graphrag` no Windows agora compila.  O tipo `HANDLE` é tratado de forma type-safe via `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` está fixado em `=0.59.0` exato em `Cargo.toml`.  Novo job de CI `windows-build-check` roda `cargo check --target x86_64-pc-windows-msvc --lib --all-features` em todo push e PR.
+
+## Novos Comandos e Flags (desde v1.0.69)
+### Enforcement OAuth-Only (G28-A, G31, Mudança Comportamental)
+- Os spawns de `claude -p` e `codex exec` agora ABORTAM com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem presentes no ambiente.  OAuth (Claude Pro/Max ou ChatGPT Pro) é o ÚNICO fluxo de credencial aceito.  Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa.
+- A flag `--bare` (que exige uma chave de API e desabilita OAuth) foi REMOVIDA de todo caminho executável.  Ambas as variáveis de chave de API também são excluídas da whitelist de `env_clear` como defesa em profundidade.
+### `enrich` — Novo Subcomando (G29 + G35 + G37)
+- `enrich --operation <op> --mode <claude-code|codex> --json` roda qualidade do grafo curada por LLM.  Três operações estão totalmente implementadas: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (preenche descrições de entidade NULL ou vazias) e `body-enrich` (expande corpos curtos de memória, agora com sucesso 100% após o hotfix do G29 na CHECK constraint de `source` e a trilha de auditoria do G29 via `memory_versions`).
+- `--preserve-threshold <FLOAT>` (padrão 0.7) controla o portão de preservação trigrama Jaccard de `src/preservation.rs` (10 testes).  Scores abaixo do threshold são rejeitados e emitidos como `EnrichItemResult::PreservationFailed`.
+- `--preflight-check`, `--fallback-mode <claude-code|codex>` e `--rate-limit-buffer <SEGUNDOS>` (padrão 300) evitam perda de batch quando a janela OAuth de 5 horas do Claude fecha no meio do run.  A sondagem de preflight emite um ping de 1 turno; em rate limit aborta com erro claro ou troca para `--fallback-mode`.
+- `--names <a,b,c>` e `--names-file <CAMINHO>` selecionam um subconjunto específico de nomes de memória.  `--names-file` aceita comentários `#` e linhas em branco.  As duas flags se combinam como união.
+- O aviso de `--llm-parallelism <N>` é condicional ao modo: Claude avisa em 5 (fan-out OAuth-MCP), Codex avisa em 17 (risco de rate limit), Codex 5..16 fica silencioso (validado em 1161 itens, 0 falhas em produção).
+- `--max-load-check` recusa iniciar quando o load average > `2 × ncpus`.  `--circuit-breaker-threshold <N>` (padrão 5) aborta após N resultados `HardFailure` consecutivos.
+### Família de Subcomandos `vec` (G39)
+- `vec orphan-list --json` lista linhas de embedding de memória órfãs com `vector_hash` (BLAKE3 do blob de embedding).
+- `vec purge-orphan --yes --dry-run --json` faz preview da deleção.  `vec purge-orphan --yes --json` purga as TRÊS vec tables (`vec_memories`, `vec_entities`, `vec_chunks`) em uma única transação.
+- `vec stats --json` expõe `vec_memories_rows`, `vec_entities_rows`, `vec_chunks_rows`, `orphans` e o timestamp do último vacuum.
+- `forget` agora chama `memories::delete_vec` ANTES do soft-delete, prevenindo novos órfãos em estado estável.
+### Subcomando `codex-models` (G33)
+- `codex-models --json` lista a whitelist de modelos aceitos pelo ChatGPT Pro OAuth: `codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`.  Retorna `models`, `count` e `default`.
+- `codex-models --suggest <substring> --json` retorna a correspondência mais próxima via busca por substring com fallback Levenshtein.  `enrich --codex-model-validate` (padrão true) verifica o modelo ANTES de o subprocesso ser spawnado e aborta com uma sugestão quando inválido.  `--codex-model-fallback <MODELO>` auto-substitui em vez de abortar.
+### Endurecimento de `optimize` e `backup` (G36 + G38)
+- `optimize` faz pré-verificação da saúde do FTS5 via `check_fts_functional` ANTES de reconstruir.  `--fts-dry-run` sai com código 1 se a reconstrução for recomendada.  `--fts-progress <N>` (padrão 30) emite progresso a cada N segundos.  `--yes` pula o prompt de confirmação.  `--no-fts-skip-when-functional` força uma reconstrução.
+- `backup` usa por padrão `run_to_completion(1000, Duration::from_millis(5), None)` — 25x mais rápido que os padrões da v1.0.68.  `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-no-sleep` e `--backup-progress <PAGES>` (padrão 100) fornecem tunabilidade.
+### Singleton Escopado por `db_hash` (G30)
+- `lock::acquire_job_singleton(job_type, namespace, db_path, wait_seconds, force)`.  Duas invocações concorrentes de `enrich` em bancos DIFERENTES não colidem mais.  `db_hash` são os primeiros 12 caracteres hex de `blake3(canonicalize(db_path))`.
+- `--wait-job-singleton <SEGUNDOS>` sonda pelo lock.  `--force-job-singleton` quebra um lock obsoleto.  Ambos disponíveis em `enrich` e `ingest`.
+### Helper de Spawn do Codex Unificado (G31 + G32 + G33)
+- `src/commands/codex_spawn.rs` (~700 linhas, 11 testes) unifica o pipeline de spawn, parser JSONL e validação de modelo ChatGPT Pro OAuth.  Ambos `enrich --mode codex` e `ingest --mode codex` consomem o mesmo comando canônico.  O wrapper externo `~/.local/bin/codex-clean` agora é obsoleto.
+- 7 flags de endurecimento: `--json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules` mais `-c mcp_servers='{}' --ask-for-approval never`.  O schema JSON agora vive em `paths::AppPaths::cache_dir().join("schemas")` em vez de `/tmp` (diretório trusted).
+### Enum `MemorySource` e Preservação (G29)
+- `src/memory_source.rs` define um enum type-safe dos cinco valores da CHECK constraint: `Agent`, `User`, `System`, `Import`, `Sync`.  `TryFrom<&str>` retorna `AppError::Validation` listando os valores aceitos.  O guard runtime `validate_source` é chamado de `memories::insert` e `memories::update`.  O enum é a fundação para a migração da v1.0.70.
+- Idempotência via `blake3::hash`: quando `old_hash == new_hash`, o corpo é pulado com a razão `"enriched body hash matches original (blake3:{hash}); idempotency skip"`.  Reprocessar a mesma memória é seguro.
+### Circuit Breaker e System Load (G28-D)
+- `retry::CircuitBreaker` é integrado no loop de workers com `breaker.record(AttemptOutcome::HardFailure)`.  O loop aborta após `--circuit-breaker-threshold` falhas consecutivas (padrão 5, defina como 0 para desabilitar).
+- `src/system_load.rs` fornece `load_average_one`, `ncpus` e `is_system_saturated`.  `enrich` aborta o spawn quando `load_average_one() > 2 * ncpus` e `--max-load-check` está set (padrão true).
+### Reaper de Órfãos (G28-C)
+- `src/reaper.rs` varre `/proc` no startup, mata qualquer órfão `claude`/`codex` com `PPID=1` e idade maior que 60s.  Invocado do `main` ANTES de qualquer trabalho.  Suíte de 4 testes: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
+
+## Novos Comandos e Flags (desde v1.0.76)
+### Arquitetura LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
+- O build padrão da v1.0.76 é LLM-Only e one-shot.  Sem daemon, sem runtime ONNX, sem download do modelo `multilingual-e5-small`.  A geração de embeddings e a NER delegam para um subprocesso headless `claude code` ou `codex` (OAuth, sem MCP, sem hooks).  O binário de release tem aproximadamente 6 MB.
+- `cargo install sqlite-graphrag --features embedding-legacy --locked` restaura o pipeline legado fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0.  A feature é REMOVIDA na v1.1.0.
+- Veja ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026 para todas as decisões arquiteturais.
+### Família de Subcomandos `migrate` (v1.0.76)
+- `migrate --rehash --json` reescreve os checksums registrados de migração para casar com o conteúdo atual do arquivo.  Algoritmo casa com `refinery-core 0.9.1` (SipHasher13, mesma ordem de hashing).  Obrigatório para upgrades v1.0.74 → v1.0.76 onde V002 foi intencionalmente esvaziada para um no-op.  Schema de resposta: `migrate-rehash.schema.json`.
+- `migrate --to-llm-only --drop-vec-tables --json` é o upgrade one-shot para bancos v1.0.74 / v1.0.75: rehash + descarte da V013 das vec tables + relatório de estado das vec tables.  A flag `--drop-vec-tables` é OBRIGATÓRIA como rede de segurança.  Schema de resposta: `migrate-to-llm-only.schema.json`.
+### Tabelas de Embedding com Backing BLOB (G22)
+- A migração V013 descarta as virtual tables `vec_memories`, `vec_entities` e `vec_chunks` e as substitui por tabelas regulares com backing BLOB `memory_embeddings`, `entity_embeddings` e `chunk_embeddings`.  A similaridade por cosseno é computada em Rust puro sob demanda em `src/similarity.rs` (ADR-0020, ADR-0022).
+### Refinamento da Hybrid Search (G24)
+- A `hybrid-search` usa FTS5 como filtro grosso e refina o conjunto de candidatos com cosseno em Rust puro sobre os embeddings BLOB.  O FTS5 permanece saudável porque a reconstrução é bloqueada por `optimize --fts-skip-when-functional` (G36 da v1.0.69).
+### Seletor de Backend de Extração
+- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração.  `llm` é o caminho LLM; `embedding` é o pipeline fastembed legado (requer feature `embedding-legacy`); `none` é um no-op; `both` roda os dois em paralelo e funde os resultados.
+- `src/extract/` expõe o trait `ExtractionBackend` com as quatro implementações.  `src/spawn/` expõe o trait `VersionAdapter` com `CodexAdapter` (detecta `codex 0.130.0` até `0.138+` e adapta flags — `codex 0.137.0` removeu `--ask-for-approval` em favor de `-a never`), `ClaudeAdapter` (claude code 2.1.0+) e `OpencodeAdapter` (opencode headless).
+### Depreciação do Daemon (ADR-0021)
+- O subcomando `daemon` está DEPRECIADO e mantido para compatibilidade de fonte pela transição v1.0.76 → v1.1.0.  O daemon não oferece mais ganho de velocidade porque o subprocesso LLM é o novo "model loader".  REMOVIDO na v1.1.0.
 
 ## Novos Comandos e Flags (desde v1.0.67)
 - `remember-batch` cria memórias em lote via NDJSON no stdin em uma única invocação; `--transaction` para atomicidade, `--force-merge` para atualizações idempotentes, `--fail-fast` para parar no primeiro erro

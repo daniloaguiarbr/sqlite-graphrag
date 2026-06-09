@@ -107,6 +107,10 @@ pub mod chunking;
 /// Hybrid entity extraction: regex pre-filter + GLiNER zero-shot NER (graceful degradation).
 pub mod extraction;
 
+/// Legacy GLiNER extractor implementation compiled only for the transition feature.
+#[cfg(feature = "ner-legacy")]
+pub mod extraction_gliner;
+
 /// v1.0.75 (G21 solution): extraction backend abstraction with
 /// LLM/Embedding/None/Composite implementations.
 pub mod extract;
@@ -120,10 +124,7 @@ pub mod commands;
 /// Compile-time constants: embedding dimensions, limits and thresholds.
 pub mod constants;
 
-/// Daemon IPC for persistent embedding model reuse across CLI invocations.
-pub mod daemon;
-
-/// Local embedding generation backed by `fastembed`.
+/// Local embedding generation (LLM-only, one-shot per invocation).
 pub mod embedder;
 
 /// Canonical entity type taxonomy: 13 variants, ValueEnum + serde + rusqlite impls.

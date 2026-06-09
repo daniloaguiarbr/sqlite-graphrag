@@ -44,4 +44,3 @@ fn detect_codex_supports_ask_for_approval() -> bool {
     }
     true
 }
-

@@ -106,7 +106,7 @@ but the LLM side may cache the embedding model internally.
 
 | v1.0.74 behaviour | v1.0.76 behaviour |
 | --- | --- |
-| `sqlite-graphrag daemon` keeps the embedding model in memory | `sqlite-graphrag daemon` is deprecated; the daemon's embedding request now spawns the LLM per call (no speedup) |
+| `sqlite-graphrag daemon` keeps the embedding model in memory | `sqlite-graphrag daemon` was fully removed in v1.0.76; each embedding call spawns an LLM subprocess |
 | `--enable-ner` triggers the GLiNER ONNX loader (~30s cold start, 1.1 GB model download) | `--enable-ner` triggers URL regex only. Use `--extraction-backend llm` to get full NER via the LLM. |
 | `vec_memories`, `vec_entities`, `vec_chunks` are sqlite-vec virtual tables | `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` are regular BLOB-backed tables |
 | Fastembed model: `multilingual-e5-small` (local, deterministic) | LLM model: `claude-sonnet-4-6` (claude) or `gpt-5.4` (codex) (network round-trip) |
@@ -143,5 +143,5 @@ re-embed everything from scratch.
 | --- | --- | --- |
 | `--enable-ner` (GLiNER ONNX) | v1.0.76 default | `--extraction-backend llm` |
 | `vec_memories` / `vec_entities` / `vec_chunks` (sqlite-vec) | v1.0.76 | `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` (BLOB) |
-| `daemon` (as a performance optimization) | v1.0.76 default, REMOVED in v1.1.0 | None — the LLM subprocess is the new "model loader" |
+| `daemon` (infrastructure fully removed) | v1.0.76 | None — the LLM subprocess is the new "model loader" |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env vars | v1.0.69 (still enforced) | OAuth via `claude login` / `codex login` |

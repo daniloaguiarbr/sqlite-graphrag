@@ -44,12 +44,7 @@ fn cmd(temp: &TempDir) -> Command {
         .env("SQLITE_GRAPHRAG_LANG", "en")
         .env("SQLITE_GRAPHRAG_LOG_LEVEL", "warn")
         .current_dir(temp.path());
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-    ] {
+    for var in &["LOCALAPPDATA", "APPDATA", "USERPROFILE", "SystemRoot"] {
         if let Ok(v) = std::env::var(var) {
             c.env(var, v);
         }

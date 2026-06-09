@@ -374,7 +374,9 @@ fn list_applied_migrations(conn: &rusqlite::Connection) -> Result<Vec<MigrationE
                 version: r.get(0)?,
                 name: r.get(1)?,
                 applied_on: r.get(2)?,
-                checksum: checksum.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+                checksum: checksum
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -557,7 +559,10 @@ mod tests {
         .unwrap();
 
         let report = run_rehash(&mut conn, Path::new("/tmp/test.sqlite")).unwrap();
-        assert!(report.rewritten.is_empty(), "must not rewrite matching rows");
+        assert!(
+            report.rewritten.is_empty(),
+            "must not rewrite matching rows"
+        );
         assert_eq!(report.status, "ok_no_changes");
     }
 
@@ -571,9 +576,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("test.sqlite");
         let mut conn = open_rw(&path).expect("open_rw");
-        crate::migrations::runner()
-            .run(&mut conn)
-            .expect("migrate");
+        crate::migrations::runner().run(&mut conn).expect("migrate");
         let stored: String = conn
             .query_row(
                 "SELECT checksum FROM refinery_schema_history WHERE version = 1",
@@ -600,7 +603,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(stored, stored_after, "checksum must not change after rehash");
+        assert_eq!(
+            stored, stored_after,
+            "checksum must not change after rehash"
+        );
     }
 
     #[test]

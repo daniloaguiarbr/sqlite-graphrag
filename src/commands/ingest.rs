@@ -558,7 +558,7 @@ fn stage_file(
 
     let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
     let embedding = if chunks_info.len() == 1 {
-        crate::daemon::embed_passage_or_local(&paths.models, &raw_body)?
+        crate::embedder::embed_passage_local(&paths.models, &raw_body)?
     } else {
         let chunk_texts: Vec<&str> = chunks_info
             .iter()
@@ -587,7 +587,7 @@ fn stage_file(
                     });
                 }
             }
-            chunk_embeddings.push(crate::daemon::embed_passage_or_local(
+            chunk_embeddings.push(crate::embedder::embed_passage_local(
                 &paths.models,
                 chunk_text,
             )?);
@@ -604,7 +604,7 @@ fn stage_file(
                 Some(desc) => format!("{} {}", entity.name, desc),
                 None => entity.name.clone(),
             };
-            crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
+            crate::embedder::embed_passage_local(&paths.models, &entity_text)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -812,8 +812,7 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
 
     let mut conflicts: Vec<String> = Vec::new();
 
-    let is_local_mode =
-        args.mode == IngestMode::None || args.mode == IngestMode::Gliner;
+    let is_local_mode = args.mode == IngestMode::None || args.mode == IngestMode::Gliner;
 
     if is_local_mode {
         if args.claude_binary.is_some() {

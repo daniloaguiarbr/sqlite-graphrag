@@ -1056,13 +1056,13 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             let chunks_info = crate::chunking::split_into_chunks_hierarchical(&body_text);
 
             let embedding_result = if chunks_info.len() <= 1 {
-                crate::daemon::embed_passage_or_local(&paths.models, &body_text)
+                crate::embedder::embed_passage_local(&paths.models, &body_text)
             } else {
                 let mut chunk_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_info.len());
                 let mut multi_ok = true;
                 for chunk in &chunks_info {
                     let chunk_text = crate::chunking::chunk_text(&body_text, chunk);
-                    match crate::daemon::embed_passage_or_local(&paths.models, chunk_text) {
+                    match crate::embedder::embed_passage_local(&paths.models, chunk_text) {
                         Ok(emb) => chunk_embeddings.push(emb),
                         Err(e) => {
                             tracing::warn!(
@@ -1109,7 +1109,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     Ok(aggregated)
                 } else {
                     // fallback: embed whole body for the memory-level vector
-                    crate::daemon::embed_passage_or_local(&paths.models, &body_text)
+                    crate::embedder::embed_passage_local(&paths.models, &body_text)
                 }
             };
 
@@ -1137,7 +1137,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             entities::find_entity_id(&conn, &namespace, &ent.name)
                         {
                             let entity_text = ent.name.clone();
-                            match crate::daemon::embed_passage_or_local(&paths.models, &entity_text)
+                            match crate::embedder::embed_passage_local(&paths.models, &entity_text)
                             {
                                 Ok(emb) => {
                                     if let Err(e) = entities::upsert_entity_vec(

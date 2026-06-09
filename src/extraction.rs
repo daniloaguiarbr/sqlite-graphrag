@@ -138,9 +138,46 @@ pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
 }
 
 /// Top-level extraction entry point used by `remember`, `ingest`, and
-/// `enrich`. Runs the regex URL pass first (always available), then
-/// dispatches to the LLM backend for entities. With the `ner-legacy`
-/// feature, `extract_graph_with_gliner` is also available.
+/// `enrich`. Runs the regex URL pass first (always available). In the
+/// default build this remains URL-only; with `ner-legacy` enabled it
+/// delegates to the legacy GLiNER pipeline and adapts its output.
+#[cfg(feature = "ner-legacy")]
+pub fn extract_graph_auto(
+    body: &str,
+    paths: &crate::paths::AppPaths,
+    gliner_variant: GlinerVariant,
+) -> Result<ExtractionResult, crate::errors::AppError> {
+    let legacy_variant = match gliner_variant {
+        GlinerVariant::Fp32 => crate::extraction_gliner::GlinerVariant::Fp32,
+        GlinerVariant::Int8 => crate::extraction_gliner::GlinerVariant::Int8,
+    };
+    let extracted = crate::extraction_gliner::extract_graph_auto(body, paths, legacy_variant)
+        .map_err(crate::errors::AppError::from)?;
+    Ok(ExtractionResult {
+        entities: extracted
+            .entities
+            .into_iter()
+            .map(|entity| ExtractedEntity {
+                name: entity.name,
+                entity_type: entity.entity_type.to_string(),
+                start: 0,
+                end: 0,
+            })
+            .collect(),
+        urls: extracted
+            .urls
+            .into_iter()
+            .map(|url| ExtractedUrl {
+                end: url.offset + url.url.len(),
+                url: url.url,
+                start: url.offset,
+            })
+            .collect(),
+        elapsed_ms: 0,
+    })
+}
+
+#[cfg(not(feature = "ner-legacy"))]
 pub fn extract_graph_auto(
     body: &str,
     _paths: &crate::paths::AppPaths,
@@ -154,15 +191,6 @@ pub fn extract_graph_auto(
         elapsed_ms: start.elapsed().as_millis() as u64,
     })
 }
-
-/// ner-legacy only: full GLiNER + regex + relationship pipeline.
-/// Re-exported from `extraction_gliner.rs` so callers don't need to
-/// know which file the implementation lives in.
-#[cfg(feature = "ner-legacy")]
-pub use crate::extraction_gliner::extract_graph_with_gliner;
-
-#[cfg(feature = "ner-legacy")]
-pub use crate::extraction_gliner::RegexPrefilterExtractor;
 
 #[cfg(test)]
 mod tests {

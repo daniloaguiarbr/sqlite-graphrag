@@ -1,10 +1,16 @@
 # SUPORTE CROSS PLATFORM
 
-> Um binário, cinco targets, zero drama de configuração em todo sistema operacional moderno
-
+> Um binário de 6 MB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 
 - Leia este guia em inglês em [CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 - Volte ao [README.md](../README.md) principal para referência completa de comandos
+
+
+## Nota Arquitetural da v1.0.76
+- O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth) spawnado por chamada.
+- A feature `embedding-legacy` restaura o pipeline v1.0.74 de fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0. Será REMOVIDA na v1.1.0; não dependa dela em código novo.
+- A tabela cross-platform abaixo descreve o build padrão LLM-only. Operadores usando `--features embedding-legacy` verão um binário maior e o contrato ONNX ARM64 GNU da era v1.0.75.
+
 
 
 ## A Dor Que Você Já Conhece
@@ -47,13 +53,13 @@ cargo install --path .
 - Cross-compilação usa `cross` em hosts Linux para a célula `aarch64-unknown-linux-gnu` da matriz
 
 ### Targets de Release Não Suportados — Por Que Foram Excluídos
-- `x86_64-apple-darwin` foi excluído porque as releases atuais de `ort` não fornecem um caminho compatível de ONNX Runtime pré-compilado para macOS Intel nesta configuração do projeto
-- `x86_64-unknown-linux-musl` foi excluído porque as releases atuais de `ort` não fornecem um caminho suportado de ONNX Runtime pré-compilado para musl nesta configuração do projeto
-- Reintroduzir qualquer um desses targets agora EXIGE build custom do ONNX Runtime ou outra estratégia de backend
+- `x86_64-apple-darwin` foi excluído porque o build da v1.0.76 não exige mais um caminho de ONNX Runtime pré-compilado (e macOS Intel tem sido um target de macOS deprecado há muito tempo desde 2024)
+- `x86_64-unknown-linux-musl` foi excluído porque nenhuma dependência nativa glibc-only permanece no build padrão, mas um build musl não faz parte da matriz de release
+- Reintroduzir qualquer um desses targets é uma tarefa rotineira de cross-compile na v1.0.76 porque nenhuma extensão C precisa ser linkada
 
-### ARM64 GNU — Contrato da Biblioteca Compartilhada do ONNX Runtime
-- `aarch64-unknown-linux-gnu` usa carregamento dinâmico do ONNX Runtime em vez de bundling por linkedição
-- Distribua `libonnxruntime.so` ao lado da binária, em `./lib/`, ou configure `ORT_DYLIB_PATH` explicitamente
+### ARM64 GNU — Sem Mais Contrato de ONNX Runtime Compartilhado
+- A v1.0.76 NÃO tem dependência de ONNX runtime no build padrão. O contrato anterior do `aarch64-unknown-linux-gnu` (`libonnxruntime.so` ao lado da binária, env var `ORT_DYLIB_PATH`) está REMOVIDO.
+- Operadores que usam `--features embedding-legacy` precisam continuar distribuindo `libonnxruntime.so` no `aarch64-unknown-linux-gnu`. Esta é a única configuração que ainda precisa do contrato. Use carregamento dinâmico do ONNX Runtime em vez de bundling por linkedição, distribua `libonnxruntime.so` ao lado da binária, em `./lib/`, ou configure `ORT_DYLIB_PATH` explicitamente.
 - Isso evita falhas de link específicas do target ao usar arquivos pré-compilados do ONNX Runtime durante a cross-compilação
 
 

@@ -141,8 +141,6 @@ pub struct DeepResearchArgs {
     /// Database path.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    #[command(flatten)]
-    pub daemon: crate::cli::DaemonOpts,
 }
 
 #[derive(Serialize)]
@@ -300,11 +298,7 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
     );
     let mut sub_embeddings: Vec<Arc<Vec<f32>>> = Vec::with_capacity(sub_query_texts.len());
     for sq_text in &sub_query_texts {
-        let emb = crate::daemon::embed_query_or_local(
-            &paths.models,
-            sq_text,
-            args.daemon.autostart_daemon,
-        )?;
+        let emb = crate::embedder::embed_query_local(&paths.models, sq_text)?;
         sub_embeddings.push(Arc::new(emb));
     }
 

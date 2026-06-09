@@ -165,7 +165,7 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         "Re-computing embedding for restored memory...",
         crate::i18n::validation::runtime_pt::restore_recomputing_embedding(),
     );
-    let embedding = crate::daemon::embed_passage_or_local(&paths.models, &old_body)?;
+    let embedding = crate::embedder::embed_passage_local(&paths.models, &old_body)?;
     let snippet: String = old_body.chars().take(300).collect();
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

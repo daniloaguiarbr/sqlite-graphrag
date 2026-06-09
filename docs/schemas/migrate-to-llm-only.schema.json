@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.rs/sqlite-graphrag/schemas/migrate-to-llm-only.schema.json",
+  "title": "sqlite-graphrag migrate --to-llm-only response",
+  "description": "JSON contract for the `migrate --to-llm-only --drop-vec-tables --json` subcommand added in v1.0.76. The one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + apply V013 + report vec-table state. Requires --drop-vec-tables as an explicit safety guard.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "rewritten", "v013_applied", "vec_tables_were_present", "vec_tables_dropped", "elapsed_ms"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "migrated_to_llm_only"
+    },
+    "rewritten": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of migration rows whose checksum was rewritten by the rehash step."
+    },
+    "v013_applied": {
+      "type": "boolean",
+      "description": "True when migration V013 was applied during this invocation. False when the schema was already at or beyond V013."
+    },
+    "schema_version": {
+      "type": ["integer", "null"],
+      "description": "Current schema_version after the operation. Null when the database is uninitialized."
+    },
+    "vec_tables_were_present": {
+      "type": "boolean",
+      "description": "True when vec_memories, vec_entities, or vec_chunks virtual tables were detected in sqlite_master before the drop."
+    },
+    "vec_tables_dropped": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["vec_memories", "vec_entities", "vec_chunks"]
+      },
+      "description": "Names of the vec tables that were actually dropped. Empty when the tables were not present or the user declined --drop-vec-tables."
+    },
+    "embedding_tables_created": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["memory_embeddings", "entity_embeddings", "chunk_embeddings"]
+      },
+      "description": "Names of the BLOB-backed embedding tables created by V013. Empty when V013 was a no-op."
+    },
+    "namespace": {
+      "type": ["string", "null"]
+    },
+    "db_path": {
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "examples": [
+    {
+      "action": "migrated_to_llm_only",
+      "rewritten": 1,
+      "v013_applied": true,
+      "schema_version": 13,
+      "vec_tables_were_present": true,
+      "vec_tables_dropped": ["vec_memories", "vec_entities", "vec_chunks"],
+      "embedding_tables_created": ["memory_embeddings", "entity_embeddings", "chunk_embeddings"],
+      "namespace": "global",
+      "db_path": "/home/user/graphrag.sqlite",
+      "elapsed_ms": 47
+    }
+  ]
+}

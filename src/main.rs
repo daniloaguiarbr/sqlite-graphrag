@@ -53,8 +53,7 @@ fn main() -> std::process::ExitCode {
         }
     }
 
-    // Limit the Rayon pool to 2 threads — the tokio daemon uses worker_threads=2 and Rayon
-    // shares the same process; more than 2 threads is waste for sequential embeddings.
+    // Limit the Rayon pool to 2 threads — more is waste for sequential embeddings.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
         // SAFETY: called before tokio runtime starts; single-threaded context
         // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
@@ -158,22 +157,6 @@ fn main() -> std::process::ExitCode {
     }
 
     let cli = Cli::parse();
-
-    // `--skip-memory-guard` is a test escape hatch. Without this protection, suites that
-    // use exclusive `TempDir`s end up auto-spawning multiple daemons with the ONNX model
-    // loaded, inflating the host RSS during test execution. Auto-spawn can be
-    // explicitly re-enabled via `SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART=1`.
-    if cli.skip_memory_guard
-        && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_FORCE_AUTOSTART").is_none()
-        && std::env::var_os("SQLITE_GRAPHRAG_DAEMON_CHILD").is_none()
-    {
-        // SAFETY: called before tokio runtime starts; single-threaded context
-        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
-        // edition; this comment documents the invariant explicitly.
-        unsafe {
-            std::env::set_var("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1");
-        }
-    }
 
     // Initialize global language BEFORE any bilingual emit_progress.
     // This call is a no-op if the pre-parse above already initialized the OnceLock.
@@ -293,7 +276,6 @@ fn main() -> std::process::ExitCode {
 
     let result = match cli.command {
         sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
-        sqlite_graphrag::cli::Commands::Daemon(args) => commands::daemon::run(args),
         sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
         sqlite_graphrag::cli::Commands::RememberBatch(args) => commands::remember_batch::run(args),
         sqlite_graphrag::cli::Commands::Ingest(args) => commands::ingest::run(args),

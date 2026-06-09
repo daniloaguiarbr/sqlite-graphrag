@@ -27,7 +27,7 @@
 /// - `list`     → {items:[...], elapsed_ms}                   (not a root array)
 /// - `link`     → {action: "created", from, to, relation, ...}
 /// - `unlink`   → {action: "deleted", relationship_id, ...}
-/// - `__debug_schema` is tested when the installed binary supports it
+/// - `debug-schema` is tested when the installed binary supports it
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -809,9 +809,9 @@ fn smoke_24_cleanup_orphans() {
 }
 
 // ---------------------------------------------------------------------------
-// Suite 10 — Smoke #25: __debug_schema
+// Suite 10 — Smoke #25: debug-schema
 //
-// Some legacy binaries do not expose `__debug_schema`.
+// Some legacy binaries expose `__debug_schema` instead of `debug-schema`.
 // When the suite is running deliberately against an old binary,
 // este teste skippa sem falhar.
 // ---------------------------------------------------------------------------
@@ -823,32 +823,51 @@ fn smoke_25_debug_schema() {
 
     let out = env
         .cmd()
-        .arg("__debug_schema")
+        .arg("debug-schema")
         .output()
-        .expect("__debug_schema failed");
+        .expect("debug-schema failed");
 
     if !out.status.success() {
         let err = stderr(&out);
+        if err.contains("similar subcommand exists: '__debug_schema'")
+            || err.contains("a similar subcommand exists: '__debug_schema'")
+        {
+            let legacy = env
+                .cmd()
+                .arg("__debug_schema")
+                .output()
+                .expect("__debug_schema fallback failed");
+            if legacy.status.success() {
+                assert_json_stdout(&legacy);
+                let json: serde_json::Value = serde_json::from_slice(&legacy.stdout).unwrap();
+                assert!(
+                    json["objects"].is_array() || json["migrations"].is_array(),
+                    "debug-schema deve retornar informações de schema: {json}"
+                );
+                return;
+            }
+        }
+
         if allow_installed_version_mismatch()
             && (err.contains("unrecognized subcommand")
                 || err.contains("unexpected argument")
                 || err.contains("unknown subcommand")
-                || err.contains("unrecognized subcommand"))
+                || err.contains("similar subcommand exists"))
         {
             eprintln!(
-                "Suite 10 smoke_25: installed legacy binary does not expose __debug_schema — skip graceful"
+                "Suite 10 smoke_25: installed legacy binary does not expose debug-schema — skip graceful"
             );
             return;
         }
 
-        panic!("__debug_schema failed: {err}");
+        panic!("debug-schema failed: {err}");
     }
 
     assert_json_stdout(&out);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
         json["objects"].is_array() || json["migrations"].is_array(),
-        "__debug_schema deve retornar informações de schema: {json}"
+        "debug-schema deve retornar informações de schema: {json}"
     );
 }
 

@@ -38,8 +38,6 @@ pub struct RememberBatchArgs {
     /// Database path override.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    #[command(flatten)]
-    pub daemon: crate::cli::DaemonOpts,
 }
 
 #[derive(Deserialize)]
@@ -224,7 +222,7 @@ fn process_line(
             "edit",
         )?;
 
-        let embedding = crate::daemon::embed_passage_or_local(&paths.models, &input.body)?;
+        let embedding = crate::embedder::embed_passage_local(&paths.models, &input.body)?;
         memories::upsert_vec(
             tx,
             existing_id,
@@ -262,7 +260,7 @@ fn process_line(
         )?;
 
         let snippet: String = input.body.chars().take(200).collect();
-        let embedding = crate::daemon::embed_passage_or_local(&paths.models, &input.body)?;
+        let embedding = crate::embedder::embed_passage_local(&paths.models, &input.body)?;
         memories::upsert_vec(
             tx,
             id,
@@ -282,7 +280,7 @@ fn process_line(
             Some(desc) => format!("{} {}", entity.name, desc),
             None => entity.name.clone(),
         };
-        let entity_embedding = crate::daemon::embed_passage_or_local(&paths.models, &entity_text)?;
+        let entity_embedding = crate::embedder::embed_passage_local(&paths.models, &entity_text)?;
         entities::upsert_entity_vec(
             tx,
             entity_id,

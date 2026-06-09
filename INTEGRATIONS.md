@@ -7,6 +7,7 @@
 
 - Read the Portuguese version at [INTEGRATIONS.pt-BR.md](INTEGRATIONS.pt-BR.md)
 - Every recipe below is ready to copy and costs nothing to run
+- **v1.0.76: the default build is LLM-only and one-shot.** Embedding generation delegates to a headless `claude code` or `codex` subprocess (OAuth). There is no daemon and no ONNX runtime in the default build.
 
 
 ## CLI Flag Aliases (since v1.0.35)
@@ -34,6 +35,61 @@
 - `enrich` emits a `tracing::warn!` (visible with `-v`) when `--llm-parallelism > 4`, recommending to combine with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` to keep subprocess fan-out manageable.
 ### Windows Build (G29)
 - `cargo install sqlite-graphrag` on Windows now succeeds.  `HANDLE` type is treated type-safely via `!handle.is_null() && handle != INVALID_HANDLE_VALUE`.  `windows-sys` is pinned to `=0.59.0` exact in `Cargo.toml`.  New CI job `windows-build-check` runs `cargo check --target x86_64-pc-windows-msvc --lib --all-features` on every push and PR.
+
+## New Commands and Flags (since v1.0.69)
+### OAuth-Only Enforcement (G28-A, G31, Behaviour Change)
+- `claude -p` and `codex exec` spawns now ABORT with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are present in the environment.  OAuth (Claude Pro/Max or ChatGPT Pro) is the ONLY accepted credential flow.  See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale.
+- The `--bare` flag (which demands an API key and disables OAuth) is REMOVED from every executable path.  Both API key env vars are also excluded from the `env_clear` whitelist as defence in depth.
+### `enrich` — New Subcommand (G29 + G35 + G37)
+- `enrich --operation <op> --mode <claude-code|codex> --json` runs LLM-curated graph quality.  Three operations are fully implemented: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (fill NULL/empty entity descriptions), and `body-enrich` (expand short memory bodies, now succeeds 100% after the G29 hotfix on the `source` CHECK constraint and the G29 audit trail via `memory_versions`).
+- `--preserve-threshold <FLOAT>` (default 0.7) controls the Jaccard trigram preservation gate from `src/preservation.rs` (10 tests).  Scores below the threshold are rejected and emitted as `EnrichItemResult::PreservationFailed`.
+- `--preflight-check`, `--fallback-mode <claude-code|codex>`, and `--rate-limit-buffer <SECONDS>` (default 300) prevent batch loss when the Claude OAuth 5-hour window closes mid-run.  The preflight probe issues a 1-turn ping; on a rate limit it aborts with a clear error or switches to `--fallback-mode`.
+- `--names <a,b,c>` and `--names-file <PATH>` select a specific subset of memory names.  `--names-file` accepts `#` comments and blank lines.  Both flags combine as a union.
+- `--llm-parallelism <N>` warning is conditional to the mode: Claude warns at 5 (OAuth-MCP fan-out), Codex warns at 17 (rate-limit risk), Codex 5..16 is silent (validated at 1161 items, 0 failures in production).
+- `--max-load-check` refuses to start when load average > `2 × ncpus`.  `--circuit-breaker-threshold <N>` (default 5) aborts after N consecutive `HardFailure` outcomes.
+### `vec` Subcommand Family (G39)
+- `vec orphan-list --json` lists orphan memory embedding rows with `vector_hash` (BLAKE3 of the embedding blob).
+- `vec purge-orphan --yes --dry-run --json` previews the deletion.  `vec purge-orphan --yes --json` purges the THREE vec tables (`vec_memories`, `vec_entities`, `vec_chunks`) in a single transaction.
+- `vec stats --json` exposes `vec_memories_rows`, `vec_entities_rows`, `vec_chunks_rows`, `orphans`, and the last vacuum timestamp.
+- `forget` now calls `memories::delete_vec` BEFORE the soft-delete, preventing new orphans in the steady state.
+### `codex-models` Subcommand (G33)
+- `codex-models --json` lists the ChatGPT Pro OAuth accepted-model whitelist: `codex-auto-review`, `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`.  Returns `models`, `count`, and `default`.
+- `codex-models --suggest <substring> --json` returns the closest match via substring lookup with a Levenshtein fallback.  `enrich --codex-model-validate` (default true) checks the model BEFORE the subprocess is spawned and aborts with a suggestion when invalid.  `--codex-model-fallback <MODEL>` auto-substitutes instead of aborting.
+### `optimize` and `backup` Hardening (G36 + G38)
+- `optimize` pre-checks FTS5 health via `check_fts_functional` BEFORE rebuilding.  `--fts-dry-run` exits 1 if rebuild is recommended.  `--fts-progress <N>` (default 30) emits progress every N seconds.  `--yes` skips the confirmation prompt.  `--no-fts-skip-when-functional` forces a rebuild.
+- `backup` defaults to `run_to_completion(1000, Duration::from_millis(5), None)` — 25x faster than the v1.0.68 defaults.  `--backup-step-size <PAGES>`, `--backup-step-sleep-ms <MS>`, `--backup-no-sleep`, and `--backup-progress <PAGES>` (default 100) provide tunability.
+### Singleton Scoped by `db_hash` (G30)
+- `lock::acquire_job_singleton(job_type, namespace, db_path, wait_seconds, force)`.  Two concurrent `enrich` invocations against DIFFERENT databases no longer collide.  `db_hash` is the first 12 hex chars of `blake3(canonicalize(db_path))`.
+- `--wait-job-singleton <SECONDS>` polls for the lock.  `--force-job-singleton` breaks a stale lock.  Both available on `enrich` and `ingest`.
+### Codex Spawn Helper Unified (G31 + G32 + G33)
+- `src/commands/codex_spawn.rs` (~700 lines, 11 tests) unifies the spawn pipeline, JSONL parser, and ChatGPT Pro OAuth model validation.  Both `enrich --mode codex` and `ingest --mode codex` consume the same canonical command.  The external `~/.local/bin/codex-clean` wrapper is now obsolete.
+- 7 hardening flags: `--json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules` plus `-c mcp_servers='{}' --ask-for-approval never`.  Schema JSON now lives in `paths::AppPaths::cache_dir().join("schemas")` instead of `/tmp` (trusted dir).
+### `MemorySource` Enum and Preservation (G29)
+- `src/memory_source.rs` defines a type-safe enum of the five CHECK-constraint values: `Agent`, `User`, `System`, `Import`, `Sync`.  `TryFrom<&str>` returns `AppError::Validation` listing the accepted values.  Runtime guard `validate_source` is called from `memories::insert` and `memories::update`.  The enum is the foundation for the v1.0.70 migration.
+- Idempotency via `blake3::hash`: when `old_hash == new_hash`, the body is skipped with reason `"enriched body hash matches original (blake3:{hash}); idempotency skip"`.  Reprocessing the same memory is safe.
+### Circuit Breaker and System Load (G28-D)
+- `retry::CircuitBreaker` is integrated into the worker loop with `breaker.record(AttemptOutcome::HardFailure)`.  The loop aborts after `--circuit-breaker-threshold` consecutive failures (default 5, set to 0 to disable).
+- `src/system_load.rs` provides `load_average_one`, `ncpus`, and `is_system_saturated`.  `enrich` aborts the spawn when `load_average_one() > 2 * ncpus` and `--max-load-check` is set (default true).
+### Orphan Reaper (G28-C)
+- `src/reaper.rs` walks `/proc` at startup, kills any `claude`/`codex` orphan with `PPID=1` and age greater than 60s.  Invoked from `main` BEFORE any work.  4-test suite: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
+
+## New Commands and Flags (since v1.0.76)
+### LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
+- The default build of v1.0.76 is LLM-Only and one-shot.  No daemon, no ONNX runtime, no `multilingual-e5-small` model download.  Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks).  Release binary is approximately 6 MB.
+- `cargo install sqlite-graphrag --features embedding-legacy --locked` restores the legacy fastembed + ort + tokenizers pipeline for the v1.0.76 → v1.1.0 transition window.  The feature is REMOVED in v1.1.0.
+- See ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026 for the full architectural decisions.
+### `migrate` Subcommand Family (v1.0.76)
+- `migrate --rehash --json` rewrites recorded migration checksums to match the current file content.  Algorithm matches `refinery-core 0.9.1` (SipHasher13, same hashing order).  Required for v1.0.74 → v1.0.76 upgrades where V002 was intentionally emptied to a no-op.  Response schema: `migrate-rehash.schema.json`.
+- `migrate --to-llm-only --drop-vec-tables --json` is the one-shot upgrade for v1.0.74 / v1.0.75 databases: rehash + V013 vec-table drop + vec-table state report.  The `--drop-vec-tables` flag is REQUIRED as a safety guard.  Response schema: `migrate-to-llm-only.schema.json`.
+### BLOB-Backed Embedding Tables (G22)
+- V013 migration drops the `vec_memories`, `vec_entities`, `vec_chunks` virtual tables and replaces them with regular BLOB-backed `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` tables.  Cosine similarity is computed in pure Rust on demand in `src/similarity.rs` (ADR-0020, ADR-0022).
+### Hybrid Search Refinement (G24)
+- `hybrid-search` uses FTS5 for coarse filtering and refines the candidate set with a pure-Rust cosine over the BLOB embeddings.  FTS5 stays healthy because the rebuild is gated by `optimize --fts-skip-when-functional` (G36 from v1.0.69).
+### Extraction Backend Selector
+- New `--extraction-backend llm|embedding|none|both` global flag (default `llm`) selects the extraction backend.  `llm` is the LLM-backed path; `embedding` is the legacy fastembed pipeline (requires `embedding-legacy` feature); `none` is a no-op; `both` runs them in parallel and merges the results.
+- `src/extract/` exposes the `ExtractionBackend` trait with the four implementations.  `src/spawn/` exposes the `VersionAdapter` trait with `CodexAdapter` (detects `codex 0.130.0` through `0.138+` and adapts flags — `codex 0.137.0` removed `--ask-for-approval` in favour of `-a never`), `ClaudeAdapter` (claude code 2.1.0+), and `OpencodeAdapter` (opencode headless).
+### Daemon Deprecation (ADR-0021)
+- The `daemon` subcommand is DEPRECATED and kept for source compatibility through v1.0.76 → v1.1.0.  The daemon no longer offers a speedup because the LLM subprocess is the new "model loader".  REMOVED in v1.1.0.
 
 ## New Commands and Flags (since v1.0.67)
 - `remember-batch` batch-creates memories from NDJSON stdin in a single invocation; `--transaction` for atomicity, `--force-merge` for idempotent updates, `--fail-fast` to stop on first error

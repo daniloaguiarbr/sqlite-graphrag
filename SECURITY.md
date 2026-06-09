@@ -55,6 +55,16 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - Supply chain is enforced via pinned `constant_time_eq = "=0.4.2"` to protect MSRV 1.88
 - Transitive dependency MSRV drift is monitored proactively per PRD policy
 
+## v1.0.76 OAuth-Only LLM Credential Enforcement
+- The default build is LLM-only and one-shot. Every embedding call spawns a headless `claude code` or `codex` subprocess.
+- The spawn ABORTS with `AppError::Validation` and exit code 1 when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is detected in the environment.
+- The OAuth flow (Claude Pro/Max or ChatGPT Pro subscription) is the ONLY accepted credential mechanism.
+- Both API-key env vars are INTENTIONALLY ABSENT from the env-clear whitelist in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs`. Defence in depth: even if a future refactor moves the OAuth-only guard, the variable never reaches the child.
+- The `--bare` flag (which would also demand an API key) is REMOVED from every executable path since v1.0.69.
+- Four `#[serial_test::serial(env)]` tests validate the canonical flag set and the abort behaviour.
+- See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale and `docs/decisions/adr-0025-oauth-only-embedding.md` for the v1.0.76 embedding-specific application.
+- Migration: any operator currently relying on `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` must migrate to OAuth before upgrading.
+
 
 ## Hall of Fame
 - We publicly acknowledge researchers who report vulnerabilities responsibly

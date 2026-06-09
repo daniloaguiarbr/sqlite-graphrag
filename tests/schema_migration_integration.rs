@@ -740,8 +740,7 @@ fn migrate_rehash_is_noop_on_healthy_db() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value =
-        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("stdout must be valid JSON");
     assert_eq!(
         json["status"], "ok_no_changes",
         "healthy DB must report ok_no_changes, got: {stdout}"

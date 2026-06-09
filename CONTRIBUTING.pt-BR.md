@@ -121,6 +121,20 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Publicação final no crates.io é feita manualmente com `cargo publish --locked`
 
 ## Releases Recentes
+### v1.0.76 - 2026-06-07 — Apenas LLM One-Shot, Credencial LLM Apenas OAuth
+- **MUDANÇA ARQUITETURAL QUEBRANTE**: o build padrão não embute mais nenhum modelo local. Toda geração de embedding, NER e busca vetorial delega para `claude -p` ou `codex exec` headless (OAuth, sem MCP, sem hooks). A CLI é one-shot. Binário cai de 39 MB para ~6 MB.
+- **Crates removidos**: `fastembed 5.13.4`, `ort 2.0.0-rc.12`, `ndarray 0.16`, `tokenizers 0.22`, `huggingface-hub 0.4`, `sqlite-vec 0.1.9`
+- **Features removidas**: `daemon` (como otimização de performance, mantido para compatibilidade de fonte até v1.1.0), caminho `--enable-ner` GLiNER ONNX (movido para feature `ner-legacy`)
+- **Adicionado**: trait `ExtractionBackend` com `LlmBackend` / `EmbeddingBackend` / `NoneBackend` / `CompositeBackend`; trait `VersionAdapter` com `CodexAdapter` / `ClaudeAdapter` / `OpencodeAdapter`; `migrate --rehash` e `migrate --to-llm-only --drop-vec-tables`; tabelas BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings`; cosseno em Rust puro em `src/similarity.rs`; fluxo de credencial LLM OAuth-only com aborto `AppError::Validation` quando `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estão no env
+- **Migração V013** dropa as virtual tables `vec_memories` / `vec_entities` / `vec_chunks`; embeddings antigos são recomputados lazy na próxima escrita
+- **Matriz CI de 3 features**: `default`, `llm-only`, `embedding-legacy`; mock LLM CLI cabeada em 26 arquivos de teste; 107/115 testes previamente lentos corrigidos
+- **7 novos ADRs**: `adr-0019-llm-only-one-shot`, `adr-0020-pure-rust-cosine`, `adr-0021-deprecate-daemon`, `adr-0022-blob-embeddings`, `adr-0023-remove-tokenizers`, `adr-0024-fts5-coarse-cosine-refine`, `adr-0025-oauth-only-embedding`; todos com traduções PT-BR
+- **2 novos schemas JSON**: `migrate-rehash.schema.json`, `migrate-to-llm-only.schema.json`
+- **3 novos docs**: `docs/HOW_TO_USE.md`, `docs/MIGRATION.md`, `docs/AGENTS.md` (e PT-BR) para a arquitetura v1.0.76 LLM-Only
+- **1 novo doc**: `docs/HEADLESS_INVOCATION.md` (e PT-BR) cobrindo invocação headless OAuth-safe de Claude/Codex/OpenCode
+- 745 testes de lib passam, 0 falham, 3 ignorados; `cargo clippy --all-targets --all-features -- -D warnings` zero warnings
+- Veja `gaps.md` para o histórico completo de resolução e `CHANGELOG.pt-BR.md` para a entrada v1.0.76
+
 ### v1.0.68 - 2026-06-03 — Governança de Ciclo de Vida de Processos e Correção de Compilação Windows
 - **G28-A** Isolamento de servidores MCP via `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (subprocesso recebe `CLAUDE_CONFIG_DIR=<diretório vazio>`; `--strict-mcp-config` e `--mcp-config '{}'` são ignorados upstream conforme anthropics/claude-code#10787)
 - **G28-B** `lock::acquire_job_singleton(JobType, namespace, wait_seconds)` mais `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) integrado em `enrich`, `ingest --mode claude-code` e `ingest --mode codex` para prevenir proliferação de processos contra o mesmo banco
