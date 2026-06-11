@@ -16,7 +16,7 @@ include = [
     "src/**/*.rs",
     "Cargo.toml",
     "Cargo.lock",
-    "README.md",
+    "/README.md",
     "README.pt-BR.md",
     "CHANGELOG.md",
     "CHANGELOG.pt-BR.md",
@@ -58,7 +58,7 @@ include = [
     "benches/**/*.rs",
     "tests/**/*.rs",
     "migrations/**/*",
-    "scripts/**/*",
+    "scripts/*.sh",
 ]
 exclude = [
     ".serena/",
