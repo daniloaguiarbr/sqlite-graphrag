@@ -1,19 +1,39 @@
 #!/usr/bin/env bash
-# Mock claude code CLI for the v1.0.76 LLM-only test suite.
+# Mock claude code CLI for the LLM-only test suite.
 #
 # The real `claude` binary requires OAuth login and a network round-trip to
 # Anthropic. Tests must run hermetically on CI runners, so we substitute a
-# shell script that always returns a deterministic 384-dim zero vector.
+# shell script that returns deterministic 64-dim zero vectors (the active
+# default dimensionality since v1.0.79, G42/S1).
 #
-# The shape is fixed because the LlmEmbedding caller
-# (src/extract/llm_embedding.rs::EmbeddingResponse) always deserialises a
-# struct with one field: `embedding: Vec<f32>`. Tests that need entity
-# extraction JSON should mock at a higher level or call the library API
-# directly; this script is dedicated to the embedding path.
+# Two response shapes are supported, mirroring
+# src/extract/llm_embedding.rs:
+# - single: `{"embedding":[...]}` (EmbeddingResponse);
+# - batch (G42/S2): `{"items":[{"i":N,"v":[...]}]}` when the prompt asks
+#   for an "items" array containing EXACTLY N items.
+#
+# The prompt may arrive as an argv argument (claude -p) or on stdin;
+# `python3 -c` keeps stdin free so both channels are inspected.
+#
+# Tests that need entity extraction JSON should mock at a higher level or
+# call the library API directly; this script is dedicated to the
+# embedding path.
 
 set -euo pipefail
 
-ZEROS=$(python3 -c "import json,sys; sys.stdout.write(json.dumps([0.0]*384))")
-printf '{"embedding":%s}\n' "$ZEROS"
+ARGS="$*" python3 -c "
+import json, os, re, sys
+
+text = os.environ['ARGS']
+if not sys.stdin.isatty():
+    text += ' ' + sys.stdin.read()
+m = re.search(r'EXACTLY (\d+) items', text)
+if m:
+    n = int(m.group(1))
+    payload = {'items': [{'i': i + 1, 'v': [0.0] * 64} for i in range(n)]}
+else:
+    payload = {'embedding': [0.0] * 64}
+sys.stdout.write(json.dumps(payload) + '\n')
+"
 
 exit 0

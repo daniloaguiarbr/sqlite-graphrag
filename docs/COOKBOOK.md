@@ -70,7 +70,7 @@ sqlite-graphrag health --json
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
-## How To Start And Monitor The Daemon For Lower Latency — v1.0.76 DEPRECATED
+## How To Start And Monitor The Daemon For Lower Latency — REMOVED (v1.0.76+; code deleted in v1.0.79)
 ### Problem (v1.0.74 and earlier)
 - Every `recall` and `remember` call paid a 1-second cold start to load the ONNX embedding model
 - Interactive agent sessions felt sluggish because the model loaded and unloaded on every invocation
@@ -124,7 +124,7 @@ cp target/release/sqlite-graphrag ~/.cargo/bin/sqlite-graphrag
 ```
 
 - See `docs/decisions/adr-0026-v002-vec-tables-migration-drift.md` for the full root cause and validation trail
-- If you must keep the v1.0.74 fastembed pipeline during the transition window, install with `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removed in v1.1.0)
+- The `embedding-legacy` feature was removed in v1.0.79; to keep the v1.0.74 fastembed pipeline you must pin `--version 1.0.78` or older (unsupported)
 
 ### v1.0.78 Fix: `run_rehash` Registered V013 Without Executing SQL (G41)
 - v1.0.76 and v1.0.77 had a bug (G41) where `migrate --rehash` inserted phantom rows for unapplied migrations into `refinery_schema_history`
@@ -177,9 +177,9 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 
 ### Variants
-- GLiNER NER is disabled by default; use `--enable-ner` or `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic entity extraction
-- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
-- Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
+- Automatic extraction is disabled by default; use `--enable-ner` or `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate it — URL-regex ONLY since v1.0.79 (the GLiNER pipeline was removed)
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; `--gliner-variant` is a no-op since v1.0.79 and emits a `tracing::warn!` when set
+- Response field `extraction_method` reports `url-regex` or `none:extraction-failed`; the `gliner-<variant>+regex` and `regex-only` values are HISTORICAL (≤ v1.0.75)
 - Duplicate files return `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
 - Use `--fail-fast` to abort on the first per-file error instead of continuing with inline error reporting
 - Use `--max-rss-mb <MiB>` to abort embedding when process RSS exceeds the limit (default 8192 MiB); useful in memory-constrained CI or containers
@@ -1476,8 +1476,8 @@ sqlite-graphrag history --name authentication-flow --json | jaq '.versions | len
 
 ## How To Ingest Large Corpora On Memory-Constrained Hosts
 ### Problem
-- Your 5000-file ingestion pipeline takes hours because GLiNER NER runs on every body
-- Loading the GLiNER model (1.1 GB fp32 default, 349 MB with `--gliner-variant int8`) on first run exceeds your CI memory budget
+- Your 5000-file ingestion pipeline strains a memory-constrained host because each LLM embedding worker holds ~350 MB RSS
+- HISTORICAL (≤ v1.0.75): GLiNER NER ran on every body and its ONNX model (1.1 GB fp32, 349 MB int8) blew CI memory budgets; the pipeline was removed in v1.0.79
 
 
 ### Solution
@@ -1489,8 +1489,8 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 
 
 ### Explanation
-- GLiNER NER is disabled by default; pass `--enable-ner` to activate it (adds approximately 100-200 ms per file on warm cache)
-- Use `--gliner-variant int8` with `--enable-ner` to reduce model download from 1.1 GB to 349 MB with minimal accuracy loss
+- Automatic extraction (`--enable-ner`) is URL-regex only since v1.0.79 and adds negligible cost; the GLiNER model download no longer exists
+- Use `--llm-parallelism 1` to cap embedding workers at one subprocess (~350 MB RSS) on memory-constrained hosts
 - `--low-memory` forces `--ingest-parallelism 1`, reducing RSS by approximately 40 percent for constrained hosts
 - `--max-files 50000` raises the safety cap from the default 10000; the operation is rejected entirely if file count exceeds the cap
 - Two parallelism axes exist: `--max-concurrency` controls CLI invocations, `--ingest-parallelism` controls extract+embed threads
@@ -1607,7 +1607,7 @@ sqlite-graphrag remember --name test --type note --description "desc" --body-fil
 
 ## How To Clean Up Noisy NER Entities
 ### Recipe: Clean Up Noisy NER Entities
-- Problem: GLiNER NER created too many low-quality or spurious entities
+- Problem: the GLiNER-era auto-extraction (≤ v1.0.75) created too many low-quality or spurious entities
 - Solution: `sqlite-graphrag prune-ner --entity noisy-entity --json` or `--all --yes --json`
 - Follow up: `sqlite-graphrag cleanup-orphans --yes --json`
 
@@ -1710,7 +1710,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 ## How To Ingest Documents With LLM-Curated Entities (v1.0.62)
 ### Problem
 - Default `ingest` creates body-only memories with zero entities and zero relationships
-- GLiNER NER produces noisy entities (ALL_CAPS generics, stop words) and low-quality `mentions` relationships
+- The GLiNER-era NER (≤ v1.0.75) produced noisy entities (ALL_CAPS generics, stop words) and low-quality `mentions` relationships; clean-up of that legacy is still relevant on old databases
 - Manual `remember --graph-stdin` per file is time-consuming for large document sets
 ### Solution
 ```bash

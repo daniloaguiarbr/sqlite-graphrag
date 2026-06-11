@@ -120,7 +120,7 @@ cp target/release/sqlite-graphrag ~/.cargo/bin/sqlite-graphrag
 ```
 
 - Veja `docs/decisions/adr-0026-v002-vec-tables-migration-drift.pt-BR.md` para a causa raiz completa e o rastro de validação
-- Se você precisar manter o pipeline fastembed da v1.0.74 durante a janela de transição, instale com `cargo install sqlite-graphrag --features embedding-legacy --locked --force` (removido na v1.1.0)
+- A feature `embedding-legacy` foi removida na v1.0.79; para manter o pipeline fastembed da v1.0.74 é preciso fixar `--version 1.0.78` ou anterior (sem suporte)
 
 ### Correção v1.0.78: `run_rehash` Registrava V013 Sem Executar o SQL (G41)
 - A v1.0.76 e v1.0.77 tinham um bug (G41) onde `migrate --rehash` inseria linhas fantasma para migrações não aplicadas em `refinery_schema_history`
@@ -173,9 +173,9 @@ sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --json \
 
 
 ### Variants
-- GLiNER NER desabilitado por padrão; use `--enable-ner` ou `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática de entidades
+- Extração automática desabilitada por padrão; use `--enable-ner` ou `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar — SOMENTE URL-regex desde a v1.0.79 (o pipeline GLiNER foi removido)
 - `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
-- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
+- Campo de resposta `extraction_method` informa `url-regex` ou `none:extraction-failed`; os valores `gliner-<variant>+regex` e `regex-only` são HISTÓRICOS (≤ v1.0.75)
 - Arquivos duplicados retornam `status: "skipped"` com `action: "duplicate"` em vez de `status: "failed"`
 - Use `--fail-fast` para abortar no primeiro erro por arquivo em vez de continuar com report inline
 - Use `--max-rss-mb <MiB>` para abortar embedding quando o RSS do processo exceder o limite (padrão 8192 MiB); útil em CI ou containers com memória restrita
@@ -1470,8 +1470,8 @@ sqlite-graphrag history --name authentication-flow --json | jaq '.versions | len
 
 ## Como Importar Corpora Grandes Em Hosts Com Memória Limitada
 ### Problem
-- Seu pipeline de ingestão de 5000 arquivos leva horas porque GLiNER NER roda em cada corpo
-- Carregar o modelo GLiNER (1,1 GB fp32 padrão, 349 MB com `--gliner-variant int8`) na primeira execução excede o orçamento de memória do CI
+- Seu pipeline de ingestão de 5000 arquivos pressiona um host com memória restrita porque cada worker de embedding LLM segura ~350 MB de RSS
+- HISTÓRICO (≤ v1.0.75): o GLiNER NER rodava em cada corpo e seu modelo ONNX (1,1 GB fp32, 349 MB int8) estourava o orçamento de memória do CI; o pipeline foi removido na v1.0.79
 
 
 ### Solution
@@ -1483,8 +1483,8 @@ sqlite-graphrag ingest ./big-corpus --recursive \
 
 
 ### Explanation
-- GLiNER NER desabilitado por padrão; passe `--enable-ner` para ativar (adiciona aproximadamente 100-200 ms por arquivo em cache quente)
-- Use `--gliner-variant int8` com `--enable-ner` para reduzir download do modelo de 1,1 GB para 349 MB com perda mínima de acurácia
+- Extração automática (`--enable-ner`) é somente URL-regex desde a v1.0.79 e tem custo desprezível; o download do modelo GLiNER não existe mais
+- Use `--llm-parallelism 1` para limitar os workers de embedding a um subprocesso (~350 MB de RSS) em hosts com memória restrita
 - `--low-memory` força `--ingest-parallelism 1`, reduzindo RSS em aproximadamente 40 por cento para hosts restritos
 - `--max-files 50000` eleva o cap de segurança do padrão 10000; a operação é rejeitada inteiramente se contagem de arquivos exceder o cap
 - Dois eixos de paralelismo existem: `--max-concurrency` controla invocações CLI, `--ingest-parallelism` controla threads de extract+embed
@@ -1601,7 +1601,7 @@ sqlite-graphrag remember --name test --type note --description "desc" --body-fil
 
 ## Como Limpar Entidades NER de Baixa Qualidade
 ### Receita: Limpar Entidades NER Ruidosas
-- Problema: O GLiNER NER criou entidades demais com baixa qualidade ou espúrias
+- Problema: a auto-extração da era GLiNER (≤ v1.0.75) criou entidades demais com baixa qualidade ou espúrias
 - Solução: `sqlite-graphrag prune-ner --entity noisy-entity --json` ou `--all --yes --json`
 - Pós-limpeza: `sqlite-graphrag cleanup-orphans --yes --json`
 
@@ -1704,7 +1704,7 @@ sqlite-graphrag merge-entities --names "jwt-authentication,jwt-tokens" --into jw
 ## Como Ingestar Documentos Com Entidades Curadas por LLM (v1.0.62)
 ### Problema
 - `ingest` padrão cria memórias com apenas body, zero entidades e zero relacionamentos
-- NER via GLiNER produz entidades ruidosas (ALL_CAPS genéricos, stop words) e relações `mentions` de baixa qualidade
+- O NER da era GLiNER (≤ v1.0.75) produzia entidades ruidosas (ALL_CAPS genéricos, stop words) e relações `mentions` de baixa qualidade; a limpeza desse legado continua relevante em bancos antigos
 - `remember --graph-stdin` manual por arquivo é demorado para grandes volumes
 ### Solução
 ```bash

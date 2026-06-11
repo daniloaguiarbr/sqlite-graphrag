@@ -1,6 +1,7 @@
 # ADR-0020: Pure-Rust Cosine Similarity (v1.0.76)
 
 - Status: Accepted (2026-06-07)
+- Update (v1.0.79): the `embedding-legacy` escape hatch mentioned below was removed ahead of the v1.1.0 schedule; the transition window is closed
 - Deciders: Danilo Aguiar
 - Scope: src/similarity.rs, src/storage/memories.rs, src/storage/entities.rs, src/storage/chunks.rs
 

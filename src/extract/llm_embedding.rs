@@ -1,14 +1,30 @@
-//! LLM-based embedding backend (v1.0.76 default).
+//! LLM-based embedding backend (v1.0.76 default; reworked in v1.0.79 G42).
 //!
-//! `LlmEmbedding` is the production embedding client. It wraps a single
-//! headless invocation of `claude code` or `codex` and returns a 384-dim
-//! f32 vector parsed from the LLM's JSONL response.
+//! `LlmEmbedding` is the production embedding client. It wraps headless
+//! invocations of `claude code` or `codex` and returns f32 vectors of the
+//! active dimensionality (`crate::constants::embedding_dim()`, default 64).
 //!
-//! The embedding model is the same `multilingual-e5-small` from before, but
-//! the call now goes through the LLM's tool-use protocol (no MCP, no hooks).
-//! This is the single reason the binary is now one-shot: there is no daemon
-//! to keep the model loaded, the LLM subprocess is spawned on demand and
-//! killed when the response is parsed.
+//! v1.0.79 (G42) changes:
+//! - S1: the dimensionality is no longer hardcoded here — the single
+//!   source of truth lives in `crate::constants` and the JSON schemas
+//!   are generated dynamically.
+//! - S2: `embed_batch` embeds N numbered texts per LLM call with the
+//!   `{items:[{i,v}]}` schema, collapsing 39 subprocess spawns into 4-5.
+//! - S4: the codex `--output-schema` file is a `tempfile::NamedTempFile`
+//!   with a randomised name created once per client and shared across
+//!   clones via `Arc` — no per-call write+delete, no PID-path races.
+//! - S5: the claude model honours `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`
+//!   (symmetric to the codex env var). ZERO hardcoded models without
+//!   an env override.
+//! - S6: `CLAUDE_CONFIG_DIR` points at an empty managed directory BY
+//!   DEFAULT, because `--strict-mcp-config`/`--mcp-config '{}'` are
+//!   silently ignored upstream (anthropics/claude-code#10787) and a
+//!   full `~/.claude` costs ~223k cache-creation tokens per call.
+//! - S7: the codex `request_user_input` failure mode maps to an
+//!   actionable error instead of an opaque exit 11.
+//! - BLOCO 4: every subprocess uses `kill_on_drop(true)` plus an
+//!   explicit `tokio::time::timeout`, so cancellation never leaks a
+//!   child and a hung LLM cannot stall the pipeline forever.
 //!
 //! OAuth is the only supported credential path. The constructor rejects
 //! `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the environment — see
@@ -17,13 +33,39 @@
 use crate::errors::AppError;
 use serde::Deserialize;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-/// Dimensionality of the embedding space. Matches the previous
-/// `multilingual-e5-small` model output and the `memory_embeddings.embedding`
-/// BLOB column size.
-pub const EMBEDDING_DIM: usize = 384;
+/// Default per-LLM-call timeout in seconds. Consistent with the
+/// `--claude-timeout` / `--codex-timeout` defaults used by ingest.
+/// Override via `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`.
+const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 300;
+
+fn embed_timeout() -> std::time::Duration {
+    let secs = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&n| (10..=3_600).contains(&n))
+        .unwrap_or(DEFAULT_EMBED_TIMEOUT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// G42/S1: single-vector JSON schema generated from the active dim.
+fn build_single_schema(dim: usize) -> String {
+    format!(
+        r#"{{"type":"object","properties":{{"embedding":{{"type":"array","items":{{"type":"number"}},"minItems":{dim},"maxItems":{dim}}}}},"required":["embedding"],"additionalProperties":false}}"#
+    )
+}
+
+/// G42/S2: batch JSON schema `{items:[{i,v}]}`. The `items` array length
+/// is deliberately unconstrained so ONE schema file serves every batch
+/// size (index coverage is validated in Rust after parsing).
+fn build_batch_schema(dim: usize) -> String {
+    format!(
+        r#"{{"type":"object","properties":{{"items":{{"type":"array","items":{{"type":"object","properties":{{"i":{{"type":"integer"}},"v":{{"type":"array","items":{{"type":"number"}},"minItems":{dim},"maxItems":{dim}}}}},"required":["i","v"],"additionalProperties":false}}}}}},"required":["items"],"additionalProperties":false}}"#
+    )
+}
 
 #[derive(Clone, Debug)]
 pub struct LlmEmbedding {
@@ -31,8 +73,18 @@ pub struct LlmEmbedding {
     flavour: EmbeddingFlavour,
     /// Cached path to the binary to avoid PATH lookups on every call.
     binary: std::path::PathBuf,
-    /// Optional model name passed via `--model`. Defaults are pinned.
+    /// Model name. Resolved from env overrides at construction time.
     model: String,
+    /// G42/S4: lazily-created codex `--output-schema` tempfiles, shared
+    /// across clones. Keyed by dim so an env change between tests cannot
+    /// serve a stale schema.
+    codex_schemas: Arc<parking_lot::Mutex<CodexSchemaFiles>>,
+}
+
+#[derive(Debug, Default)]
+struct CodexSchemaFiles {
+    single: Option<(usize, Arc<tempfile::NamedTempFile>)>,
+    batch: Option<(usize, Arc<tempfile::NamedTempFile>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -53,6 +105,17 @@ impl EmbeddingFlavour {
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     embedding: Vec<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BatchEmbeddingResponse {
+    items: Vec<BatchEmbeddingItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BatchEmbeddingItem {
+    i: usize,
+    v: Vec<f32>,
 }
 
 /// Follows symlinks and shell-script shim `exec` targets to find
@@ -95,6 +158,17 @@ fn extract_exec_target_from_shim(path: &std::path::Path) -> Option<std::path::Pa
     None
 }
 
+/// G42/S5: claude embedding model with env override, symmetric to the
+/// codex `SQLITE_GRAPHRAG_CODEX_EMBED_MODEL` introduced in v1.0.78.
+fn claude_embed_model() -> String {
+    std::env::var("SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string())
+}
+
+fn codex_embed_model() -> String {
+    std::env::var("SQLITE_GRAPHRAG_CODEX_EMBED_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string())
+}
+
 impl LlmEmbedding {
     /// Detects which LLM CLI is available on PATH and returns the
     /// matching embedding client.
@@ -103,9 +177,10 @@ impl LlmEmbedding {
     /// - Claude Code 2.1+ ships a 180k+ token system context (plugins,
     ///   skills, agents, MCP) that overflows the 200k context window
     ///   for even trivial embedding prompts and returns "Prompt is too
-    ///   long".
+    ///   long". (v1.0.79/S6 mitigates this with an empty
+    ///   `CLAUDE_CONFIG_DIR`, but codex stays the lighter default.)
     /// - Codex 0.134+ is lightweight (~5k system context) and the
-    ///   `StructuredOutput` tool reliably returns 384-dim vectors.
+    ///   `StructuredOutput` tool reliably returns the requested vectors.
     pub fn detect_available() -> Result<Self, AppError> {
         Self::oauth_only_enforce()?;
 
@@ -113,14 +188,16 @@ impl LlmEmbedding {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Codex,
                 binary: resolve_real_binary(&path),
-                model: "gpt-5.4".to_string(),
+                model: codex_embed_model(),
+                codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
             });
         }
         if let Ok(path) = which::which("claude") {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Claude,
                 binary: resolve_real_binary(&path),
-                model: "claude-sonnet-4-6".to_string(),
+                model: claude_embed_model(),
+                codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
             });
         }
         Err(AppError::Embedding(
@@ -136,7 +213,8 @@ impl LlmEmbedding {
         Ok(Self {
             flavour: EmbeddingFlavour::Codex,
             binary: resolve_real_binary(&path),
-            model: "gpt-5.4".to_string(),
+            model: codex_embed_model(),
+            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
         })
     }
 
@@ -147,7 +225,8 @@ impl LlmEmbedding {
         Ok(Self {
             flavour: EmbeddingFlavour::Claude,
             binary: resolve_real_binary(&path),
-            model: "claude-sonnet-4-6".to_string(),
+            model: claude_embed_model(),
+            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
         })
     }
 
@@ -173,72 +252,209 @@ impl LlmEmbedding {
         Ok(())
     }
 
-    /// Embeds a single passage (chunk of a memory body). Returns a
-    /// 384-dim f32 vector suitable for cosine similarity.
-    pub fn embed_passage(&mut self, text: &str) -> Result<Vec<f32>, AppError> {
+    /// Embeds a single passage (chunk of a memory body). Returns an
+    /// f32 vector of the active dimensionality.
+    pub fn embed_passage(&self, text: &str) -> Result<Vec<f32>, AppError> {
         self.invoke_with_prefix(crate::constants::PASSAGE_PREFIX, text)
     }
 
     /// Embeds a single query. The LLM uses a different prompt prefix
     /// to disambiguate query from passage.
-    pub fn embed_query(&mut self, text: &str) -> Result<Vec<f32>, AppError> {
+    pub fn embed_query(&self, text: &str) -> Result<Vec<f32>, AppError> {
         self.invoke_with_prefix(crate::constants::QUERY_PREFIX, text)
     }
 
-    fn invoke_with_prefix(&mut self, prefix: &str, text: &str) -> Result<Vec<f32>, AppError> {
-        // v1.0.76: tolerate being called from inside an existing tokio
-        // runtime (e.g. a test marked `#[tokio::test]`) by reusing the
-        // current Handle via block_in_place. When no runtime is in scope
-        // we build a one-shot current-thread runtime.
-        let prompt = format!("{prefix}{text}");
-        let inner = async {
-            match self.flavour {
-                EmbeddingFlavour::Claude => self.invoke_claude(&prompt).await,
-                EmbeddingFlavour::Codex => self.invoke_codex(&prompt).await,
+    /// G42/S2: embeds a batch of `(global_index, text)` pairs in ONE
+    /// LLM call. Returns `(global_index, vector)` pairs. Async — this
+    /// is the unit of work scheduled by the bounded fan-out in
+    /// `crate::embedder`.
+    ///
+    /// Cancel safety: the future owns its subprocess via
+    /// `kill_on_drop(true)`, so dropping it (e.g. losing a
+    /// `tokio::select!` race against a cancellation token) kills the
+    /// child and leaks nothing.
+    pub async fn embed_batch_async(
+        &self,
+        prefix: &str,
+        batch: &[(usize, String)],
+    ) -> Result<Vec<(usize, Vec<f32>)>, AppError> {
+        let dim = crate::constants::embedding_dim();
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+        if batch.len() == 1 {
+            let (idx, text) = (&batch[0].0, &batch[0].1);
+            let v = self.invoke_single_async(prefix, text, dim).await?;
+            return Ok(vec![(*idx, v)]);
+        }
+
+        let mut prompt = format!(
+            "Generate {dim}-dimensional semantic embedding vectors for each numbered text below.\n\
+             Return a JSON object with an \"items\" array containing EXACTLY {n} items.\n\
+             Each item has \"i\" (the 1-based index) and \"v\" (the {dim}-float vector, values between -1 and 1).\n\n",
+            n = batch.len()
+        );
+        for (pos, (_, text)) in batch.iter().enumerate() {
+            prompt.push_str(&format!("{}: {prefix}{text}\n", pos + 1));
+        }
+
+        let stdout = match self.flavour {
+            EmbeddingFlavour::Claude => {
+                self.invoke_claude(&prompt, &build_batch_schema(dim))
+                    .await?
             }
-        };
-        let stdout: String = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(inner))?,
-            Err(_) => {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| AppError::Embedding(format!("tokio runtime init failed: {e}")))?;
-                rt.block_on(inner)?
+            EmbeddingFlavour::Codex => {
+                let schema = self.codex_schema_file(dim, true)?;
+                self.invoke_codex(&prompt, schema.path()).await?
             }
         };
 
-        let parsed: EmbeddingResponse = parse_embedding_response(&stdout).map_err(|e| {
+        let parsed: BatchEmbeddingResponse = parse_llm_json(&stdout).map_err(|e| {
+            AppError::Embedding(format!(
+                "LLM batch embedding response parse failed: {e}; raw={stdout}"
+            ))
+        })?;
+        if parsed.items.len() != batch.len() {
+            return Err(AppError::Embedding(format!(
+                "LLM batch returned {} items, expected {} (G42/S2 coverage check)",
+                parsed.items.len(),
+                batch.len()
+            )));
+        }
+        let mut out: Vec<Option<Vec<f32>>> = vec![None; batch.len()];
+        for item in parsed.items {
+            if item.i == 0 || item.i > batch.len() {
+                return Err(AppError::Embedding(format!(
+                    "LLM batch item index {} out of range 1..={}",
+                    item.i,
+                    batch.len()
+                )));
+            }
+            if item.v.len() != dim {
+                return Err(AppError::Embedding(format!(
+                    "LLM batch item {} returned {} dims, expected {dim}; \
+                     refusing to truncate or pad silently (G42/C5)",
+                    item.i,
+                    item.v.len()
+                )));
+            }
+            out[item.i - 1] = Some(item.v);
+        }
+        let mut result = Vec::with_capacity(batch.len());
+        for (pos, slot) in out.into_iter().enumerate() {
+            let v = slot.ok_or_else(|| {
+                AppError::Embedding(format!(
+                    "LLM batch response is missing item index {} (G42/S2 coverage check)",
+                    pos + 1
+                ))
+            })?;
+            result.push((batch[pos].0, v));
+        }
+        Ok(result)
+    }
+
+    fn invoke_with_prefix(&self, prefix: &str, text: &str) -> Result<Vec<f32>, AppError> {
+        let dim = crate::constants::embedding_dim();
+        let inner = self.invoke_single_async(prefix, text, dim);
+        // v1.0.79 (G42/A2): reuse the process-wide multi-thread runtime
+        // instead of building a current-thread runtime PER CALL. Inside
+        // an existing runtime (tests, async commands) block_in_place
+        // keeps the worker pool healthy.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(inner)),
+            Err(_) => crate::embedder::shared_runtime()?.block_on(inner),
+        }
+    }
+
+    async fn invoke_single_async(
+        &self,
+        prefix: &str,
+        text: &str,
+        dim: usize,
+    ) -> Result<Vec<f32>, AppError> {
+        let prompt = format!("{prefix}{text}");
+        let stdout = match self.flavour {
+            EmbeddingFlavour::Claude => {
+                self.invoke_claude(&prompt, &build_single_schema(dim))
+                    .await?
+            }
+            EmbeddingFlavour::Codex => {
+                let schema = self.codex_schema_file(dim, false)?;
+                self.invoke_codex(&prompt, schema.path()).await?
+            }
+        };
+        let parsed: EmbeddingResponse = parse_llm_json(&stdout).map_err(|e| {
             AppError::Embedding(format!(
                 "LLM embedding response parse failed: {e}; raw={stdout}"
             ))
         })?;
-        if parsed.embedding.len() != EMBEDDING_DIM {
+        if parsed.embedding.len() != dim {
             return Err(AppError::Embedding(format!(
-                "LLM returned {} dims, expected {EMBEDDING_DIM}",
+                "LLM returned {} dims, expected {dim}; \
+                 refusing to truncate or pad silently (G42/C5)",
                 parsed.embedding.len()
             )));
         }
         Ok(parsed.embedding)
     }
 
-    async fn invoke_claude(&self, prompt: &str) -> Result<String, AppError> {
+    /// G42/S4: returns the lazily-created, process-shared codex schema
+    /// tempfile for the requested mode. `NamedTempFile` randomises the
+    /// filename (no PID-based collisions) and removes the file on drop
+    /// of the last `Arc` clone.
+    fn codex_schema_file(
+        &self,
+        dim: usize,
+        batch: bool,
+    ) -> Result<Arc<tempfile::NamedTempFile>, AppError> {
+        let mut guard = self.codex_schemas.lock();
+        let slot = if batch {
+            &mut guard.batch
+        } else {
+            &mut guard.single
+        };
+        if let Some((cached_dim, file)) = slot {
+            if *cached_dim == dim {
+                return Ok(Arc::clone(file));
+            }
+        }
+        let content = if batch {
+            build_batch_schema(dim)
+        } else {
+            build_single_schema(dim)
+        };
+        let file = tempfile::Builder::new()
+            .prefix("sqlite-graphrag-embed-schema-")
+            .suffix(".json")
+            .tempfile()
+            .map_err(|e| AppError::Embedding(format!("schema tempfile create failed: {e}")))?;
+        std::fs::write(file.path(), content)
+            .map_err(|e| AppError::Embedding(format!("schema tempfile write failed: {e}")))?;
+        let file = Arc::new(file);
+        *slot = Some((dim, Arc::clone(&file)));
+        Ok(file)
+    }
+
+    async fn invoke_claude(&self, prompt: &str, schema: &str) -> Result<String, AppError> {
         // v1.0.69 hardening: --strict-mcp-config --mcp-config '{}' --settings
         // '{"hooks":{}}' --dangerously-skip-permissions.
         //
         // v1.0.76 hardening: Claude Code 2.1+ renamed --output-schema to
         // --json-schema and accepts the schema as an inline JSON string
         // (NOT a file path). Also pass --output-format json so the
-        // response is a single JSON object on stdout (the default text
-        // mode returns prose which fails the `embedding` field check).
-        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}},"required":["embedding"],"additionalProperties":false}"#;
-        let output = Command::new(&self.binary)
-            .arg("-p")
+        // response is a single JSON object on stdout.
+        //
+        // v1.0.79 (G42/S6): CLAUDE_CONFIG_DIR points at an empty managed
+        // directory BY DEFAULT — the MCP-isolation flags above are
+        // silently ignored upstream (anthropics/claude-code#10787) and a
+        // populated ~/.claude costs ~223k cache-creation tokens per call.
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("-p")
             .arg(prompt)
             .arg("--model")
             .arg(&self.model)
             .arg("--json-schema")
-            .arg(SCHEMA)
+            .arg(schema)
             .arg("--output-format")
             .arg("json")
             .arg("--strict-mcp-config")
@@ -253,8 +469,20 @@ impl LlmEmbedding {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
+            // BLOCO 4: cancellation (dropped future) must kill the child.
+            .kill_on_drop(true);
+        if let Some(config_dir) = claude_embedding_config_dir() {
+            cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
+        }
+        let output = tokio::time::timeout(embed_timeout(), cmd.output())
             .await
+            .map_err(|_| {
+                AppError::Embedding(format!(
+                    "claude embedding call timed out after {}s \
+                     (override via SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS)",
+                    embed_timeout().as_secs()
+                ))
+            })?
             .map_err(|e| AppError::Embedding(format!("claude spawn failed: {e}")))?;
         if !output.status.success() {
             return Err(AppError::Embedding(format!(
@@ -266,28 +494,12 @@ impl LlmEmbedding {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    async fn invoke_codex(&self, prompt: &str) -> Result<String, AppError> {
-        // v1.0.69 hardening: --json --output-schema --ephemeral --skip-git-repo-check
-        // --sandbox read-only --ignore-user-config --ignore-rules
-        //
-        // v1.0.76 hardening (G31 + G33 + codex 0.134+ compat):
-        // - --ask-for-approval removed in 0.134+ (Issue #26602) — gated
-        //   by the codex_compat helper
-        // - -c mcp_servers='{}' removed — value is parsed as string and
-        //   rejected ("expected a map"). --ignore-user-config already
-        //   covers the MCP isolation requirement.
-        // - --output-schema is a FILE PATH (not inline JSON like
-        //   claude's --json-schema). Write to a temp file in the
-        //   cache dir (matches the trusted-schema-path pattern used by
-        //   codex_spawn).
-        const SCHEMA: &str = r#"{"type":"object","properties":{"embedding":{"type":"array","items":{"type":"number"},"minItems":384,"maxItems":384}},"required":["embedding"],"additionalProperties":false}"#;
-        let schema_path = std::env::temp_dir().join(format!(
-            "sqlite-graphrag-embed-schema-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(&schema_path, SCHEMA)
-            .map_err(|e| AppError::Embedding(format!("failed to write schema file: {e}")))?;
-        let mut child = build_codex_embedding_command(&self.binary, &self.model, &schema_path)
+    async fn invoke_codex(
+        &self,
+        prompt: &str,
+        schema_path: &std::path::Path,
+    ) -> Result<String, AppError> {
+        let mut child = build_codex_embedding_command(&self.binary, &self.model, schema_path)
             .spawn()
             .map_err(|e| AppError::Embedding(format!("codex spawn failed: {e}")))?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -296,20 +508,88 @@ impl LlmEmbedding {
                 .await
                 .map_err(|e| AppError::Embedding(format!("codex stdin write failed: {e}")))?;
         }
-        let output = child
-            .wait_with_output()
+        let output = tokio::time::timeout(embed_timeout(), child.wait_with_output())
             .await
+            .map_err(|_| {
+                AppError::Embedding(format!(
+                    "codex embedding call timed out after {}s \
+                     (override via SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS)",
+                    embed_timeout().as_secs()
+                ))
+            })?
             .map_err(|e| AppError::Embedding(format!("codex wait failed: {e}")))?;
-        let _ = std::fs::remove_file(&schema_path);
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // G42/S7: the headless spawn can still hit interactive
+            // prompts on some codex builds; map the failure to an
+            // actionable message instead of an opaque exit.
+            if stderr.contains("request_user_input") {
+                return Err(AppError::Embedding(format!(
+                    "codex requested interactive input in a headless embedding call \
+                     (exit {}). This codex build ignores the non-interactive flags; \
+                     upgrade codex (>= 0.134) or switch the embedding backend to \
+                     claude by removing `codex` from PATH or installing `claude`. \
+                     stderr={stderr}",
+                    output.status
+                )));
+            }
             return Err(AppError::Embedding(format!(
-                "codex exited with {}: stderr={}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
+                "codex exited with {}: stderr={stderr}",
+                output.status
             )));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+}
+
+/// G42/S6: resolves the empty `CLAUDE_CONFIG_DIR` used for embedding
+/// subprocesses.
+///
+/// - `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` is honoured when set and
+///   pointing at a directory (same contract as G28-A in claude_runner);
+/// - otherwise a managed directory is created at
+///   `~/.local/state/sqlite-graphrag/claude-empty-config` (mode 0700).
+///   If `~/.claude/.credentials.json` exists (Linux OAuth storage) it is
+///   copied in so authentication still works; on macOS credentials live
+///   in the Keychain and the empty dir is sufficient.
+///
+/// Returns `None` only when HOME is unset AND no override is given —
+/// in that case the subprocess falls back to claude's own default.
+fn claude_embedding_config_dir() -> Option<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR") {
+        let path = std::path::PathBuf::from(dir);
+        if path.is_dir() {
+            return Some(path);
+        }
+        tracing::warn!(
+            target: "embedding",
+            path = %path.display(),
+            "SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR is set but not a directory; \
+             falling back to the managed empty config dir"
+        );
+    }
+    let home = std::env::var("HOME").ok()?;
+    let dir = std::path::Path::new(&home)
+        .join(".local/state/sqlite-graphrag")
+        .join("claude-empty-config");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    // Linux stores OAuth credentials on disk; copy them so the isolated
+    // config dir still authenticates. Best-effort: macOS uses Keychain.
+    let creds = std::path::Path::new(&home).join(".claude/.credentials.json");
+    if creds.exists() {
+        let target = dir.join(".credentials.json");
+        if !target.exists() {
+            let _ = std::fs::copy(&creds, &target);
+        }
+    }
+    Some(dir)
 }
 
 fn build_codex_embedding_command(
@@ -352,7 +632,9 @@ fn build_codex_embedding_command(
     }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // BLOCO 4: cancellation (dropped future) must kill the child.
+        .kill_on_drop(true);
     cmd
 }
 
@@ -362,8 +644,8 @@ fn prepare_isolated_codex_home() -> Option<std::path::PathBuf> {
     if !real_auth.exists() {
         return None;
     }
-    let isolated =
-        std::env::temp_dir().join(format!("sqlite-graphrag-codex-home-{}", std::process::id()));
+    let base = std::path::Path::new(&home).join(".local/share/sqlite-graphrag");
+    let isolated = base.join(format!("codex-home-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&isolated);
     let target = isolated.join("auth.json");
     if !target.exists() {
@@ -372,17 +654,17 @@ fn prepare_isolated_codex_home() -> Option<std::path::PathBuf> {
     Some(isolated)
 }
 
-/// Parse the LLM embedding response. The two backends emit different
-/// shapes:
+/// Parse an LLM JSON response of type `T`. The two backends emit
+/// different shapes:
 /// - Claude (with `--output-format json`): single JSON object on stdout.
 /// - Codex (with `--json`): JSONL stream with one event per line; the
 ///   `agent_message` event's `text` field is the JSON payload.
 ///
-/// This helper accepts both shapes and returns the parsed
-/// `EmbeddingResponse` (or an error describing the first mismatch).
-fn parse_embedding_response(stdout: &str) -> Result<EmbeddingResponse, String> {
+/// This helper accepts both shapes and returns the parsed value (or an
+/// error describing the first mismatch).
+fn parse_llm_json<T: serde::de::DeserializeOwned>(stdout: &str) -> Result<T, String> {
     // Strategy 1: try the whole stdout as JSON (Claude path).
-    if let Ok(parsed) = serde_json::from_str::<EmbeddingResponse>(stdout) {
+    if let Ok(parsed) = serde_json::from_str::<T>(stdout) {
         return Ok(parsed);
     }
     // Strategy 2: walk the JSONL line by line and pick the last
@@ -412,18 +694,28 @@ fn parse_embedding_response(stdout: &str) -> Result<EmbeddingResponse, String> {
     }
     let text = last_agent_text
         .ok_or_else(|| "no agent_message found in codex JSONL output".to_string())?;
-    serde_json::from_str::<EmbeddingResponse>(&text)
-        .map_err(|e| format!("codex agent_message text is not EmbeddingResponse: {e}; raw={text}"))
+    serde_json::from_str::<T>(&text)
+        .map_err(|e| format!("codex agent_message text does not match schema: {e}; raw={text}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn test_client(flavour: EmbeddingFlavour, binary: std::path::PathBuf) -> LlmEmbedding {
+        LlmEmbedding {
+            flavour,
+            binary,
+            model: "gpt-5.4".to_string(),
+            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+        }
+    }
+
     #[test]
+    #[serial_test::serial(env)]
     fn oauth_only_enforce_blocks_api_keys() {
-        // SAFETY: this test only sets and unsets env vars; no other test
-        // relies on the global env state.
+        // SAFETY: this test only sets and unsets env vars; the
+        // `serial(env)` group prevents cross-test interference.
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "test");
             assert!(LlmEmbedding::oauth_only_enforce().is_err());
@@ -443,32 +735,95 @@ mod tests {
     }
 
     #[test]
-    fn parse_embedding_response_accepts_claude_json() {
+    fn single_schema_embeds_active_dim() {
+        let schema = build_single_schema(64);
+        assert!(schema.contains(r#""minItems":64"#));
+        assert!(schema.contains(r#""maxItems":64"#));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&schema).expect("single schema must be valid JSON");
+        assert_eq!(parsed["properties"]["embedding"]["minItems"], 64);
+    }
+
+    #[test]
+    fn batch_schema_is_valid_json_and_unbounded_items() {
+        let schema = build_batch_schema(64);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&schema).expect("batch schema must be valid JSON");
+        // The items array must NOT constrain its length so one schema
+        // file serves every batch size (G42/S4).
+        assert!(parsed["properties"]["items"].get("minItems").is_none());
+        assert_eq!(
+            parsed["properties"]["items"]["items"]["properties"]["v"]["minItems"],
+            64
+        );
+    }
+
+    #[test]
+    fn parse_llm_json_accepts_claude_json() {
         let stdout = r#"{"embedding":[0.0,1.0,2.0]}"#;
 
-        let parsed = parse_embedding_response(stdout).expect("claude JSON must parse");
+        let parsed: EmbeddingResponse = parse_llm_json(stdout).expect("claude JSON must parse");
 
         assert_eq!(parsed.embedding, vec![0.0, 1.0, 2.0]);
     }
 
     #[test]
-    fn parse_embedding_response_accepts_codex_jsonl() {
+    fn parse_llm_json_accepts_codex_jsonl() {
         let stdout = r#"{"type":"thread.started","thread_id":"mock-thread-0"}
 {"type":"item.completed","item":{"type":"agent_message","text":"{\"embedding\":[0.0,1.0,2.0]}"}}
 {"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
 
-        let parsed = parse_embedding_response(stdout).expect("codex JSONL must parse");
+        let parsed: EmbeddingResponse = parse_llm_json(stdout).expect("codex JSONL must parse");
 
         assert_eq!(parsed.embedding, vec![0.0, 1.0, 2.0]);
     }
 
     #[test]
-    fn parse_embedding_response_rejects_jsonl_without_agent_message() {
+    fn parse_llm_json_rejects_jsonl_without_agent_message() {
         let stdout = r#"{"type":"thread.started","thread_id":"mock-thread-0"}"#;
 
-        let err = parse_embedding_response(stdout).expect_err("missing agent_message must fail");
+        let err = parse_llm_json::<EmbeddingResponse>(stdout)
+            .expect_err("missing agent_message must fail");
 
         assert!(err.contains("no agent_message"));
+    }
+
+    #[test]
+    fn parse_llm_json_accepts_batch_response() {
+        let stdout = r#"{"items":[{"i":1,"v":[0.0,1.0]},{"i":2,"v":[2.0,3.0]}]}"#;
+
+        let parsed: BatchEmbeddingResponse = parse_llm_json(stdout).expect("batch JSON must parse");
+
+        assert_eq!(parsed.items.len(), 2);
+        assert_eq!(parsed.items[0].i, 1);
+        assert_eq!(parsed.items[1].v, vec![2.0, 3.0]);
+    }
+
+    #[test]
+    fn codex_schema_file_is_created_once_and_reused() {
+        let client = test_client(
+            EmbeddingFlavour::Codex,
+            std::path::PathBuf::from("/bin/true"),
+        );
+        let first = client
+            .codex_schema_file(64, false)
+            .expect("schema file must be created");
+        let second = client
+            .codex_schema_file(64, false)
+            .expect("schema file must be reused");
+        assert_eq!(first.path(), second.path(), "same dim must reuse the file");
+
+        let batch = client
+            .codex_schema_file(64, true)
+            .expect("batch schema file must be created");
+        assert_ne!(
+            first.path(),
+            batch.path(),
+            "single and batch schemas are distinct files"
+        );
+
+        let content = std::fs::read_to_string(first.path()).expect("schema file must be readable");
+        assert!(content.contains(r#""minItems":64"#));
     }
 
     #[test]
@@ -518,8 +873,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[serial_test::serial(env)]
     fn embed_passage_sends_prompt_to_codex_stdin() {
         use std::os::unix::fs::PermissionsExt;
+
+        // Pin the dimensionality so the mock script and the validation
+        // agree regardless of test execution order.
+        // SAFETY: guarded by serial(env).
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_EMBEDDING_DIM", "64");
+        }
 
         let temp = tempfile::tempdir().expect("tempdir must exist");
         let binary = temp.path().join("codex-stdin-check");
@@ -532,17 +895,13 @@ if [[ "$prompt" != "passage: codex-cli" ]]; then
   exit 41
 fi
 
-python3 - <<'PY'
-import json
-payload = json.dumps({"embedding": [0.0] * 384})
-print(json.dumps({
-    "type": "item.completed",
-    "item": {
-        "type": "agent_message",
-        "text": payload,
-    },
-}))
-PY
+vals="0.0"
+for _ in $(seq 2 64); do
+  vals="$vals,0.0"
+done
+payload="{\"embedding\":[$vals]}"
+escaped="${payload//\"/\\\"}"
+echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"$escaped\"}}"
 "#;
         std::fs::write(&binary, script).expect("mock codex script must be written");
         let mut perms = std::fs::metadata(&binary)
@@ -551,17 +910,18 @@ PY
         perms.set_mode(0o755);
         std::fs::set_permissions(&binary, perms).expect("mock codex must be executable");
 
-        let mut embedding = LlmEmbedding {
-            flavour: EmbeddingFlavour::Codex,
-            binary,
-            model: "gpt-5.4".to_string(),
-        };
+        let embedding = test_client(EmbeddingFlavour::Codex, binary);
 
         let vector = embedding
             .embed_passage("codex-cli")
             .expect("stdin-backed codex embedding must succeed");
 
-        assert_eq!(vector.len(), EMBEDDING_DIM);
+        // SAFETY: guarded by serial(env).
+        unsafe {
+            std::env::remove_var("SQLITE_GRAPHRAG_EMBEDDING_DIM");
+        }
+
+        assert_eq!(vector.len(), 64);
         assert!(vector.iter().all(|value| *value == 0.0));
     }
 }

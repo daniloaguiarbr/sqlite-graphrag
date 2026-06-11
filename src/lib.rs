@@ -107,10 +107,6 @@ pub mod chunking;
 /// Hybrid entity extraction: regex pre-filter + GLiNER zero-shot NER (graceful degradation).
 pub mod extraction;
 
-/// Legacy GLiNER extractor implementation compiled only for the transition feature.
-#[cfg(feature = "ner-legacy")]
-pub mod extraction_gliner;
-
 /// v1.0.75 (G21 solution): extraction backend abstraction with
 /// LLM/Embedding/None/Composite implementations.
 pub mod extract;

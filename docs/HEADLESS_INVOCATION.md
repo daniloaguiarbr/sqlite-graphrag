@@ -1,53 +1,61 @@
-# Headless Invocation — Claude Code, Codex, OpenCode sem MCP e sem Hooks
+# Headless Invocation — Claude Code, Codex, OpenCode without MCP and without Hooks
 
-> Como invocar LLMs headless neste projeto sem herdar MCPs ou hooks do ambiente, mantendo o login OAuth de assinatura.
+> How to invoke headless LLMs in this project without inheriting MCPs or hooks from the environment, while keeping the subscription OAuth login.
 
-- Versão em inglês deste guia vive em [HOW_TO_USE.md](HOW_TO_USE.md) e nos ADRs 0019-0025 em [decisions/](decisions/)
-- Voltar ao [README.md](../README.md) para referência de comandos
-
-
-## Resumo
-
-- Claude Code OAuth sem MCP usa `--strict-mcp-config --mcp-config '{}'`
-- Codex OAuth sem MCP usa `codex exec -c mcp_servers='{}'`
-- OpenCode OAuth sem MCP usa `OPENCODE_CONFIG_CONTENT` com `enabled` falso por servidor
-- A descoberta mais importante: no Claude, a flag `--bare` corta os MCP mas DESLIGA o OAuth. `--bare` passa a exigir chave de API, que aqui é proibida. Por isso NÃO se usa `--bare` quando o login é por assinatura
+- Portuguese version of this guide lives in [HEADLESS_INVOCATION.pt-BR.md](HEADLESS_INVOCATION.pt-BR.md)
+- Back to [README.md](../README.md) for the command reference
 
 
-## Tabela de Comandos OAuth-Safe
+## Summary
 
-| CLI | Comando headless OAuth-safe | Mantém OAuth | Corta MCP | Corta Hooks |
+- Claude Code OAuth without MCP uses `--strict-mcp-config --mcp-config '{}'`
+- Codex OAuth without MCP uses `codex exec -c mcp_servers='{}'`
+- OpenCode OAuth without MCP uses `OPENCODE_CONFIG_CONTENT` with `enabled` false per server
+- The most important finding: on Claude, the `--bare` flag cuts MCPs but DISABLES OAuth. `--bare` then requires an API key, which is forbidden here. That is why `--bare` is NEVER used when login is subscription-based
+
+
+## OAuth-Safe Command Table
+
+| CLI | OAuth-safe headless command | Keeps OAuth | Cuts MCP | Cuts Hooks |
 | --- | --- | --- | --- | --- |
-| Claude Code | `claude -p "TAREFA" --strict-mcp-config --mcp-config '{}' ...` | sim | sim | sim |
-| Codex CLI | `codex exec -c mcp_servers='{}' ...` | sim | sim | N/A |
-| OpenCode | `OPENCODE_CONFIG_CONTENT='{...enabled:false...}' opencode run ...` | sim | sim | N/A |
+| Claude Code | `claude -p "TASK" --strict-mcp-config --mcp-config '{}' ...` | yes | yes | yes |
+| Codex CLI | `codex exec -c mcp_servers='{}' ...` | yes | yes | N/A |
+| OpenCode | `OPENCODE_CONFIG_CONTENT='{...enabled:false...}' opencode run ...` | yes | yes | N/A |
 
 
-## Claude Code Headless OAuth sem MCP e sem Hooks
+## Claude Code Headless OAuth without MCP and without Hooks
 
-### O Que Fazer
+### What To Do
 
-Rodar `claude -p` com a config de MCP travada e vazia, e a config de hooks zerada.
+Run `claude -p` with the MCP config locked down and empty, and the hooks config zeroed out.
 
-### Por Que Fazer
+### Why
 
-- O `-p` ativa o modo headless de uma tacada só
-- O `--strict-mcp-config` manda ignorar TODA config de MCP do ambiente
-- O `--mcp-config '{}'` entrega uma lista vazia de servidores
-- O `--settings '{"hooks":{}}'` desliga os hooks naquela chamada específica
-- A combinação garante zero MCP e zero hooks no ar, mantendo o login por assinatura (OAuth Pro ou Max)
+- `-p` enables one-shot headless mode
+- `--strict-mcp-config` tells it to ignore ALL MCP config from the environment
+- `--mcp-config '{}'` provides an empty server list
+- `--settings '{"hooks":{}}'` disables hooks for that specific call
+- The combination guarantees zero MCPs and zero hooks running, while keeping the subscription login (OAuth Pro or Max)
 
-### Por Que NÃO Usar `--bare`
+### v1.0.79 Update — The Real Isolation Is an Empty `CLAUDE_CONFIG_DIR`
 
-- O `--bare` também corta MCP, hooks, skills, plugins e auto memory
-- MAS o `--bare` desativa o OAuth e o keychain (issue #39069 de `anthropics/claude-code`)
-- Com `--bare`, o Claude exige `ANTHROPIC_API_KEY`, que é proibido neste projeto
-- Para manter OAuth, o caminho certo é `--strict-mcp-config`, nunca `--bare`
+- Issue #10787 of `anthropics/claude-code` documents that `--strict-mcp-config` and `--mcp-config` are silently IGNORED by upstream
+- The only mechanism upstream honours is `CLAUDE_CONFIG_DIR` pointing to an empty directory
+- Since v1.0.79 (G42/S6), the CLI embedding pipeline uses an empty `CLAUDE_CONFIG_DIR` BY DEFAULT: it honours `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, otherwise a managed directory `~/.local/state/sqlite-graphrag/claude-empty-config` (mode 0700, copies `.credentials.json` when present)
+- A populated `~/.claude` used to cost ~223k cache-creation tokens per call (~40-50s); the empty config dir brings it down to ~10-15s
+- The flags below are still passed as defence in depth, but do NOT rely on them for isolation
 
-### Como Fazer
+### Why NOT To Use `--bare`
+
+- `--bare` also cuts MCP, hooks, skills, plugins and auto memory
+- BUT `--bare` disables OAuth and the keychain (issue #39069 of `anthropics/claude-code`)
+- With `--bare`, Claude requires `ANTHROPIC_API_KEY`, which is forbidden in this project
+- To keep OAuth, the right path is `--strict-mcp-config`, never `--bare`
+
+### How To Do It
 
 ```bash
-claude -p "SUA TAREFA AQUI" \
+claude -p "YOUR TASK HERE" \
   --strict-mcp-config \
   --mcp-config '{}' \
   --dangerously-skip-permissions \
@@ -57,182 +65,181 @@ claude -p "SUA TAREFA AQUI" \
   --output-format json
 ```
 
-### O Que Cada Pedaço Faz
+### What Each Piece Does
 
-- `--strict-mcp-config` ignora MCP de settings global e de projeto
-- `--mcp-config '{}'` fornece a lista vazia que zera os servidores
-- `--dangerously-skip-permissions` evita travar pedindo confirmação (modo `bypassPermissions`)
-- `--settings '{"hooks":{}}'` desliga os hooks naquela chamada específica
-- `--model sonnet` escolhe o modelo sem depender de variável de ambiente
-- `--max-turns 8` limita as voltas do agente como rede de segurança contra loop infinito
-- `--output-format json` entrega saída fácil de parsear com `jaq`
+- `--strict-mcp-config` ignores MCP from global and project settings
+- `--mcp-config '{}'` provides the empty list that zeroes out servers
+- `--dangerously-skip-permissions` avoids stalling on confirmation prompts (`bypassPermissions` mode)
+- `--settings '{"hooks":{}}'` disables hooks for that specific call
+- `--model sonnet` picks the model without depending on an environment variable
+- `--max-turns 8` caps agent turns as a safety net against infinite loops
+- `--output-format json` delivers output that is easy to parse with `jaq`
 
-### Como Garantir o OAuth
+### How To Guarantee OAuth
 
-- Fazer login uma vez com a conta Pro ou Max antes de automatizar (`claude auth login`)
-- NÃO definir `ANTHROPIC_API_KEY` no ambiente da chamada
-- NÃO usar `--bare`
-- Sem a variável e sem `--bare`, o Claude usa a sessão logada via OAuth
+- Log in once with the Pro or Max account before automating (`claude auth login`)
+- Do NOT set `ANTHROPIC_API_KEY` in the call environment
+- Do NOT use `--bare`
+- Without the variable and without `--bare`, Claude uses the logged-in OAuth session
 
-### Ressalva do Bug Conhecido
+### Known Bug Caveat
 
-- Issue #14490 do `anthropics/claude-code` documenta que `--strict-mcp-config` NÃO sobrescreve a lista `disabledMcpServers` armazenada em `~/.claude.json`
-- Para ambiente limpo, garantir que `~/.claude.json` não contém o servidor em `disabledMcpServers` ou usar `--bare` somente em ambiente controlado com `ANTHROPIC_API_KEY` (cenário explicitamente PROIBIDO neste projeto)
-- A solução robusta é combinar `--strict-mcp-config --mcp-config '{}'` e garantir que o servidor não está em `disabledMcpServers` em `~/.claude.json`
+- Issue #14490 of `anthropics/claude-code` documents that `--strict-mcp-config` does NOT override the `disabledMcpServers` list stored in `~/.claude.json`
+- For a clean environment, ensure `~/.claude.json` does not contain the server in `disabledMcpServers`, or use `--bare` only in a controlled environment with `ANTHROPIC_API_KEY` (a scenario explicitly FORBIDDEN in this project)
+- The robust solution is to combine `--strict-mcp-config --mcp-config '{}'` and ensure the server is not in `disabledMcpServers` in `~/.claude.json`
 
 
-## Codex CLI Headless OAuth sem MCP
+## Codex CLI Headless OAuth without MCP
 
-### O Que Fazer
+### What To Do
 
-Rodar `codex exec` zerando a tabela de servidores MCP do config.
+Run `codex exec` zeroing out the MCP server table from the config.
 
-### Por Que Fazer
+### Why
 
-- O `codex exec` é o modo não interativo feito para scripts
-- Ele escreve só a mensagem final no stdout e progresso no stderr
-- O override `-c mcp_servers='{}'` substitui a tabela inteira por vazia
-- Assim nenhum servidor MCP do `config.toml` sobe naquela chamada
+- `codex exec` is the non-interactive mode built for scripts
+- It writes only the final message to stdout and progress to stderr
+- The `-c mcp_servers='{}'` override replaces the entire table with an empty one
+- That way no MCP server from `config.toml` comes up for that call
 
-### Como Fazer
+### How To Do It
 
 ```bash
 codex exec \
   -c mcp_servers='{}' \
   --sandbox workspace-write \
   --ask-for-approval never \
-  "SUA TAREFA AQUI"
+  "YOUR TASK HERE"
 ```
 
-### Alternativa Mais Agressiva
+### More Aggressive Alternative
 
-- Usar `--ignore-user-config` para nem ler o `config.toml` do usuário
-- Isso zera MCP junto com tudo mais que estiver no config
-- O login OAuth fica salvo em `auth.json`, que é arquivo separado
-- Por isso o `--ignore-user-config` NÃO derruba o login
+- Use `--ignore-user-config` to skip reading the user `config.toml` entirely
+- That zeroes out MCP along with everything else in the config
+- The OAuth login is stored in `auth.json`, which is a separate file
+- That is why `--ignore-user-config` does NOT break the login
 
 ```bash
-codex exec --ignore-user-config --sandbox workspace-write "SUA TAREFA AQUI"
+codex exec --ignore-user-config --sandbox workspace-write "YOUR TASK HERE"
 ```
 
-### O Que Cada Pedaço Faz
+### What Each Piece Does
 
-- `-c mcp_servers='{}'` zera só os MCP e preserva modelo e resto do config
-- `--ignore-user-config` é o corte total quando você quer ambiente limpo
-- `--sandbox workspace-write` libera edição de arquivos sem rede
-- `--ask-for-approval never` roda sem pausar pedindo permissão
+- `-c mcp_servers='{}'` zeroes only the MCPs and preserves the model and the rest of the config
+- `--ignore-user-config` is the full cut when you want a clean environment
+- `--sandbox workspace-write` allows file editing without network access
+- `--ask-for-approval never` runs without pausing for permission
 
-### Como Garantir o OAuth
+### How To Guarantee OAuth
 
-- Rodar `codex login` uma vez para o fluxo do navegador com o ChatGPT
-- Em máquina remota ou sem navegador, usar `codex login --device-auth`
-- NÃO definir `OPENAI_API_KEY` no ambiente da chamada
-- O login fica salvo em `~/.codex/auth.json` e o `codex exec` reaproveita a sessão
+- Run `codex login` once for the browser flow with ChatGPT
+- On a remote or browserless machine, use `codex login --device-auth`
+- Do NOT set `OPENAI_API_KEY` in the call environment
+- The login is stored in `~/.codex/auth.json` and `codex exec` reuses the session
 
-### Ressalva do Bug Antigo
+### Old Bug Caveat
 
-- Versões antigas do Codex (0.33.0) instaladas via Homebrew não liam `[mcp_servers]` corretamente
-- Issue #3441 do repositório `openai/codex` confirma que o fix está em 0.34.0+
-- Validar versão com `codex --version` antes de usar o override `-c mcp_servers='{}'`
+- Old Codex versions (0.33.0) installed via Homebrew did not read `[mcp_servers]` correctly
+- Issue #3441 of the `openai/codex` repository confirms the fix landed in 0.34.0+
+- Validate the version with `codex --version` before using the `-c mcp_servers='{}'` override
 
 
-## OpenCode Headless sem MCP
+## OpenCode Headless without MCP
 
-### A Diferença Honesta
+### The Honest Difference
 
-- O OpenCode NÃO tem uma flag única de CLI para desligar MCP
-- O Claude tem `--strict-mcp-config` e o Codex tem `-c mcp_servers='{}'`
-- O OpenCode controla MCP só pela config em JSON
-- As configs do OpenCode são somadas, não trocadas, então é preciso desligar por servidor
+- OpenCode does NOT have a single CLI flag to disable MCP
+- Claude has `--strict-mcp-config` and Codex has `-c mcp_servers='{}'`
+- OpenCode controls MCP only through the JSON config
+- OpenCode configs are merged, not replaced, so each server must be disabled individually
 
-### O Que Fazer
+### What To Do
 
-- Descobrir os nomes dos servidores ativos com `opencode mcp list`
-- Desligar cada um com `enabled: false` no config
+- Discover the active server names with `opencode mcp list`
+- Disable each one with `enabled: false` in the config
 
-### Por Que Fazer
+### Why
 
-- O `opencode run` é o modo headless que recebe o prompt e devolve resultado
-- Como a config é somada, apagar a chave não basta para remover o servidor
-- Setar `enabled` falso com o mesmo nome sobrescreve e desliga aquele MCP
-- O override de runtime via `OPENCODE_CONFIG_CONTENT` evita mexer nos arquivos do projeto
+- `opencode run` is the headless mode that takes the prompt and returns the result
+- Because the config is merged, deleting the key is not enough to remove the server
+- Setting `enabled` false under the same name overrides and disables that MCP
+- The runtime override via `OPENCODE_CONFIG_CONTENT` avoids touching project files
 
-### Como Fazer — Passo 1 Listar Servidores Ativos
+### How To Do It — Step 1 List Active Servers
 
 ```bash
 opencode mcp list
 ```
 
-### Como Fazer — Passo 2 Rodar Headless Desligando Cada Servidor
+### How To Do It — Step 2 Run Headless Disabling Each Server
 
 ```bash
-OPENCODE_CONFIG_CONTENT='{"mcp":{"nome-do-server-1":{"enabled":false},"nome-do-server-2":{"enabled":false}}}' \
-  opencode run --model anthropic/claude-sonnet-4-5 "SUA TAREFA AQUI"
+OPENCODE_CONFIG_CONTENT='{"mcp":{"server-name-1":{"enabled":false},"server-name-2":{"enabled":false}}}' \
+  opencode run --model anthropic/claude-sonnet-4-5 "YOUR TASK HERE"
 ```
 
-### Alternativa Permanente
+### Permanent Alternative
 
-- Editar o `opencode.json` e marcar cada MCP com `enabled` falso
-- Vale quando você nunca quer aquele servidor em execução automática
+- Edit `opencode.json` and mark each MCP with `enabled` false
+- Worth it when you never want that server in automatic execution
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "nome-do-server-1": { "enabled": false },
-    "nome-do-server-2": { "enabled": false }
+    "server-name-1": { "enabled": false },
+    "server-name-2": { "enabled": false }
   }
 }
 ```
 
-### O Que Cada Pedaço Faz
+### What Each Piece Does
 
-- `opencode mcp list` mostra nomes e status de conexão dos servidores
-- `OPENCODE_CONFIG_CONTENT` injeta config inline com alta precedência
-- `enabled` falso por servidor é o que de fato impede a subida do MCP
-- `--model` escolhe o modelo no formato `provedor/modelo`
+- `opencode mcp list` shows server names and connection status
+- `OPENCODE_CONFIG_CONTENT` injects inline config with high precedence
+- `enabled` false per server is what actually prevents the MCP from coming up
+- `--model` picks the model in `provider/model` format
 
-### Como Garantir o OAuth
+### How To Guarantee OAuth
 
-- Rodar `opencode auth login` uma vez e escolher o provedor
-- A credencial fica salva em `auth.json` na pasta de dados do OpenCode
-- O `opencode run` reaproveita essa credencial nas chamadas seguintes
+- Run `opencode auth login` once and choose the provider
+- The credential is stored in `auth.json` in the OpenCode data folder
+- `opencode run` reuses that credential on subsequent calls
 
 
-## Login OAuth por CLI
+## OAuth Login per CLI
 
-- Claude: login na sessão via `claude auth login`. NÃO usar `--bare` para preservar OAuth
-- Codex: `codex login` ou `codex login --device-auth` (sem navegador)
+- Claude: session login via `claude auth login`. Do NOT use `--bare` to preserve OAuth
+- Codex: `codex login` or `codex login --device-auth` (browserless)
 - OpenCode: `opencode auth login`
 
 
-## Modo Headless por CLI
+## Headless Mode per CLI
 
 - Claude: `claude -p`
 - Codex: `codex exec`
 - OpenCode: `opencode run`
 
 
-## Referências Externas Validadas
+## Validated External References
 
 ### Claude Code
 
-- `code.claude.com/docs/en/headless` — modo headless e exit codes claros
-- `amux.io/guides/claude-code-headless/` — guia completo de self-hosting headless (2026)
-- `github.com/anthropics/claude-code/issues/39069` — `--bare` mode skips OAuth/keychain, unusable para OAuth-only
-- `computingforgeeks.com/claude-code-cheat-sheet/` — cheat sheet com `--mcp-config` e `--strict-mcp-config`
-- `github.com/anthropics/claude-code/issues/14490` — `--strict-mcp-config` não sobrescreve `disabledMcpServers`
+- `code.claude.com/docs/en/headless` — headless mode and clear exit codes
+- `amux.io/guides/claude-code-headless/` — complete headless self-hosting guide (2026)
+- `github.com/anthropics/claude-code/issues/39069` — `--bare` mode skips OAuth/keychain, unusable for OAuth-only
+- `computingforgeeks.com/claude-code-cheat-sheet/` — cheat sheet covering `--mcp-config` and `--strict-mcp-config`
+- `github.com/anthropics/claude-code/issues/14490` — `--strict-mcp-config` does not override `disabledMcpServers`
 
 ### Codex CLI
 
-- `developers.openai.com/codex/cli/reference` — referência canônica de CLI options
-- `deepwiki.com/openai/codex/6.1-mcp-server-configuration` — MCP server config no `config.toml`
-- `ofox.ai/blog/codex-cli-config-toml-deep-dive/` — cada setting do `config.toml` explicado
-- `github.com/openai/codex/issues/3441` — bug de `[mcp_servers]` não funcionar em versão antiga do Codex
+- `developers.openai.com/codex/cli/reference` — canonical CLI options reference
+- `deepwiki.com/openai/codex/6.1-mcp-server-configuration` — MCP server config in `config.toml`
+- `ofox.ai/blog/codex-cli-config-toml-deep-dive/` — every `config.toml` setting explained
+- `github.com/openai/codex/issues/3441` — bug where `[mcp_servers]` did not work in an old Codex version
 
 ### OpenCode
 
-- `opencode.ai/docs/mcp-servers/` — controle de MCP via `enabled: false` por servidor
-- `open-code.ai/en/docs/config` — referência de `opencode.json` com providers, models, MCP
-- `computingforgeeks.com/opencode-cli-cheat-sheet/` — cheat sheet com flags headless e MCP
-
+- `opencode.ai/docs/mcp-servers/` — MCP control via `enabled: false` per server
+- `open-code.ai/en/docs/config` — `opencode.json` reference with providers, models, MCP
+- `computingforgeeks.com/opencode-cli-cheat-sheet/` — cheat sheet with headless and MCP flags

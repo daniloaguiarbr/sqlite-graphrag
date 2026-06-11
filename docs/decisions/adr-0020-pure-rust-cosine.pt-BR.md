@@ -1,6 +1,7 @@
 # ADR-0020: Cosseno em Rust Puro (v1.0.76)
 
 - Status: Aceito (2026-06-07)
+- Atualização (v1.0.79): a válvula de escape `embedding-legacy` mencionada abaixo foi removida antecipando o cronograma da v1.1.0; a janela de transição está fechada
 - Decisores: Danilo Aguiar
 - Escopo: src/similarity.rs, src/storage/memories.rs, src/storage/entities.rs, src/storage/chunks.rs
 

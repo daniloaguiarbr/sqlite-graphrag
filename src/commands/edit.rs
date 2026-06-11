@@ -61,6 +61,23 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// G42/S9 (v1.0.79): regenerate the embedding even when the body is
+    /// unchanged. This is the supported way to re-embed a memory (the
+    /// pre-v1.0.79 docs suggested `edit --description "<same>"`, which
+    /// is a no-op and never re-embeds).
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Regenerate the embedding even when the body is unchanged (G42/S9)"
+    )]
+    pub force_reembed: bool,
+    /// G42/S3 (v1.0.79): maximum simultaneous LLM embedding subprocesses.
+    /// Only relevant for future multi-item edit paths; a single-body edit
+    /// performs one LLM call regardless.
+    #[arg(long, default_value_t = 4, value_name = "N",
+          value_parser = clap::value_parser!(u64).range(1..=32),
+          help = "Maximum simultaneous LLM embedding subprocesses (default: 4, clamp [1,32])")]
+    pub llm_parallelism: u64,
 }
 
 #[derive(Serialize)]
@@ -177,7 +194,7 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
         ));
     }
 
-    if body_changed || type_changed {
+    if body_changed || type_changed || args.force_reembed {
         output::emit_progress_i18n(
             "Re-computing embedding for edited body...",
             crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),

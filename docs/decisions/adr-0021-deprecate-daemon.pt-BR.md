@@ -1,6 +1,7 @@
 # ADR-0021: Depreciação do Comando `daemon` (v1.0.76)
 
 - Status: Aceito (2026-06-07)
+- Atualização (v1.0.79): o código restante do daemon foi deletado antecipando o cronograma da v1.1.0; a janela de transição está fechada
 - Decisores: Danilo Aguiar
 - Escopo: src/daemon.rs, src/commands/daemon.rs, src/main.rs, src/cli.rs
 

@@ -7,7 +7,7 @@
 
 - Leia a versão em inglês em [INTEGRATIONS.md](INTEGRATIONS.md)
 - Cada receita abaixo está pronta para copiar e custa zero para executar
-- **v1.0.76: o build padrão é apenas LLM e one-shot.** A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth). Não há daemon e não há runtime ONNX no build padrão.
+- **v1.0.79: todo build é apenas LLM e one-shot.** A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth). O daemon, o runtime ONNX e a feature `embedding-legacy` foram totalmente removidos; os embeddings são em lote, paralelos (`--llm-parallelism`) e com 64 dimensões por padrão (`--embedding-dim`, faixa [8, 4096]).
 
 
 ## Aliases de Flags CLI (desde v1.0.35)
@@ -22,9 +22,9 @@
 - `--graph-stdin` em `remember` lê um único objeto JSON do stdin contendo `body`, `entities` e `relationships`, sendo a forma preferida de fornecer grafos curados por um LLM.
 
 ## Novas Flags (desde v1.0.47)
-- A extração NER agora usa **GLiNER** zero-shot (substitui BERT); resolve 13 tipos de entidade específicos do domínio em vez dos 4 tipos fixos do BERT.
-- `--gliner-variant` em `remember` e `ingest` seleciona o peso ONNX: `fp32` (padrão, melhor qualidade), `fp16`, `int8`, `q4`, `q4f16`. Defina `SQLITE_GRAPHRAG_GLINER_VARIANT` para override persistente.
-- `SQLITE_GRAPHRAG_GLINER_THRESHOLD` ajusta o limiar de confiança das entidades (float, padrão `0.5`).
+- O pipeline GLiNER zero-shot NER foi REMOVIDO na v1.0.79 com a feature `ner-legacy`; `--enable-ner` agora executa apenas extração de URL por regex.
+- `--gliner-variant`, `SQLITE_GRAPHRAG_GLINER_VARIANT` e `SQLITE_GRAPHRAG_GLINER_THRESHOLD` são aceitas por compatibilidade mas NÃO têm efeito desde a v1.0.79.
+- Para extração de entidades/relacionamentos curada por LLM use `ingest --mode claude-code` ou `ingest --mode codex`.
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
 ## Novos Comandos e Flags (desde v1.0.68)
@@ -76,7 +76,7 @@
 ## Novos Comandos e Flags (desde v1.0.76)
 ### Arquitetura LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
 - O build padrão da v1.0.76 é LLM-Only e one-shot.  Sem daemon, sem runtime ONNX, sem download do modelo `multilingual-e5-small`.  A geração de embeddings e a NER delegam para um subprocesso headless `claude code` ou `codex` (OAuth, sem MCP, sem hooks).  O binário de release tem aproximadamente 6 MB.
-- `cargo install sqlite-graphrag --features embedding-legacy --locked` restaura o pipeline legado fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0.  A feature é REMOVIDA na v1.1.0.
+- A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o cronograma da v1.1.0).  O pipeline legado fastembed + ort + tokenizers não existe mais; todo build é LLM-only.
 - Veja ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026 para todas as decisões arquiteturais.
 ### Família de Subcomandos `migrate` (v1.0.76)
 - `migrate --rehash --json` reescreve os checksums registrados de migração para casar com o conteúdo atual do arquivo.  Algoritmo casa com `refinery-core 0.9.1` (SipHasher13, mesma ordem de hashing).  Obrigatório para upgrades v1.0.74 → v1.0.76 onde V002 foi intencionalmente esvaziada para um no-op.  Schema de resposta: `migrate-rehash.schema.json`.
@@ -86,10 +86,18 @@
 ### Refinamento da Hybrid Search (G24)
 - A `hybrid-search` usa FTS5 como filtro grosso e refina o conjunto de candidatos com cosseno em Rust puro sobre os embeddings BLOB.  O FTS5 permanece saudável porque a reconstrução é bloqueada por `optimize --fts-skip-when-functional` (G36 da v1.0.69).
 ### Seletor de Backend de Extração
-- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração.  `llm` é o caminho LLM; `embedding` é o pipeline fastembed legado (requer feature `embedding-legacy`); `none` é um no-op; `both` roda os dois em paralelo e funde os resultados.
+- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração.  `llm` é o caminho LLM; `embedding` é um stub permanente desde a v1.0.79 (pipeline legado removido) que retorna erro de migração; `none` é um no-op; `both` roda os dois em paralelo e funde os resultados.
 - `src/extract/` expõe o trait `ExtractionBackend` com as quatro implementações.  `src/spawn/` expõe o trait `VersionAdapter` com `CodexAdapter` (detecta `codex 0.130.0` até `0.138+` e adapta flags — `codex 0.137.0` removeu `--ask-for-approval` em favor de `-a never`), `ClaudeAdapter` (claude code 2.1.0+) e `OpencodeAdapter` (opencode headless).
-### Depreciação do Daemon (ADR-0021)
-- O subcomando `daemon` está DEPRECIADO e mantido para compatibilidade de fonte pela transição v1.0.76 → v1.1.0.  O daemon não oferece mais ganho de velocidade porque o subprocesso LLM é o novo "model loader".  REMOVIDO na v1.1.0.
+### Remoção do Daemon (ADR-0021)
+- O subcomando `daemon` foi DEPRECIADO na v1.0.76 e TOTALMENTE REMOVIDO na v1.0.79 (antecipando o cronograma da v1.1.0).  O subprocesso LLM é o "model loader"; a CLI é 100% one-shot com zero IPC.
+
+## Novos Comandos e Flags (v1.0.79 — pipeline de embedding G42)
+- Flag global `--embedding-dim <N>` define a dimensionalidade do embedding (padrão 64, faixa [8, 4096]); precedência: flag > env `SQLITE_GRAPHRAG_EMBEDDING_DIM` > o `dim` gravado em `schema_meta` > 64; bancos 384-dim existentes continuam funcionando sem mudança
+- `--llm-parallelism <N>` agora disponível em `remember` (padrão 4), `ingest` (padrão 2) e `edit` — fan-out limitado via `Semaphore` + `JoinSet`, permits com clamp [1, 32]
+- `enrich --operation re-embed --limit N --resume` é o caminho canônico de re-embed one-shot (ex.: após mudar `--embedding-dim`)
+- `edit --force-reembed` regenera o embedding de uma memória sem alterar o corpo
+- `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` sobrescreve o modelo de embedding do claude (simétrica à variável do codex); `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` limita cada chamada LLM de embedding (padrão 300)
+- Chamadas LLM são em lote (schema `{items:[{i,v}]}` — bases de calibração de 8 chunks / 25 nomes de entidade em dim 64, adaptativas por clamp(base×64/dim, 1, base) desde o G44) e todo subprocesso usa `kill_on_drop` mais timeout explícito
 
 ## Novos Comandos e Flags (desde v1.0.67)
 - `remember-batch` cria memórias em lote via NDJSON no stdin em uma única invocação; `--transaction` para atomicidade, `--force-merge` para atualizações idempotentes, `--fail-fast` para parar no primeiro erro
@@ -121,8 +129,8 @@
 - `health` reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` quando qualquer relação excede 40%
 - Nomes de entidade normalizados para kebab-case em todo path de escrita (remember, ingest, link, rename-entity)
 
-## Comportamento do Daemon (desde v1.0.50)
-- Após upgrades do binário, a CLI reinicia automaticamente o daemon em caso de incompatibilidade de versão (desde v1.0.50)
+## Comportamento do Daemon (HISTÓRICO — daemon removido na v1.0.79)
+- Apenas da v1.0.50 até a v1.0.78: a CLI reiniciava automaticamente o daemon em caso de incompatibilidade de versão.  Desde a v1.0.79 não existe processo daemon
 
 ## Novos Comandos e Flags (desde v1.0.56)
 - `fts rebuild` reconstrói o índice FTS5 de busca textual do zero
@@ -150,7 +158,7 @@
 - `unlink --relation` agora opcional (remove todos entre o par); `--entity <nome> --all` para massa
 - `graph entities --sort-by degree|name|created_at --order asc|desc`; campo `degree` na resposta
 - `ingest --max-name-length N` configura truncagem; `body_length` no NDJSON; auto-prefixo `doc-` para nomes numéricos
-- `daemon --ping` adiciona campos `model_name`, `model_variant`
+- `daemon --ping` adicionava campos `model_name`, `model_variant` (HISTÓRICO — o daemon foi removido na v1.0.79)
 - TODOS os caminhos de erro agora emitem JSON no stdout: `{"error": true, "code": N, "message": "..."}`
 - Sync FTS5 corrigido em `edit`, `rename`, `restore` — memórias editadas agora imediatamente localizáveis via busca textual
 
@@ -492,7 +500,7 @@
 ## Jenkins
 ### CI/CD — Jenkins 2.400+
 - Receita pronta para colar em stage de Jenkinsfile, zero custo, funciona em ambientes air-gapped
-- Enquanto MCPs exigem servidor dedicado, sqlite-graphrag instala via cargo e pode rodar só como subprocesso ou ativar `sqlite-graphrag daemon` para menor latência
+- Enquanto MCPs exigem servidor dedicado, sqlite-graphrag instala via cargo e roda como subprocesso one-shot sem daemon algum (o daemon foi removido na v1.0.79)
 - Propósito é integrar backups sqlite-graphrag em pipelines Jenkins self-hosted para ambientes regulados
 - Use stage em Jenkinsfile rodando `cargo install --path .` e comandos operacionais
 - Versão mínima exige Jenkins 2.400 ou posterior para pipeline declarative e gerência de agent estáveis

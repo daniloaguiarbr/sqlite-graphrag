@@ -96,9 +96,13 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', 'multilingual-e5-small')",
         [],
     )?;
+    // G43: pre-v1.0.79 this hardcoded '384', stamping NEW databases with a
+    // dimensionality that contradicts the active default (64 since G42/S1).
+    // INSERT OR IGNORE preserves the recorded dim on re-init of an existing
+    // database; the active dim (env > database > default) fills new ones.
     conn.execute(
-        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', '384')",
-        [],
+        "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('dim', ?1)",
+        rusqlite::params![crate::constants::embedding_dim().to_string()],
     )?;
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('created_at', CAST(unixepoch() AS TEXT))",
@@ -197,11 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn init_response_dim_aligned_with_constant() {
+    fn init_default_dim_is_64() {
+        // G42/S1 (v1.0.79): the default dimensionality dropped from 384
+        // to 64 (MRL, arXiv 2205.13147). The active dim may differ when
+        // an env override or an existing database sets it.
         assert_eq!(
-            crate::constants::EMBEDDING_DIM,
-            384,
-            "dim must be aligned with EMBEDDING_DIM=384"
+            crate::constants::DEFAULT_EMBEDDING_DIM,
+            64,
+            "default dim must be 64 in the LLM-only build"
         );
     }
 

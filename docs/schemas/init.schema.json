@@ -10,7 +10,7 @@
     "db_path":        { "type": "string", "description": "Resolved path to the SQLite database file for this invocation." },
     "schema_version": { "type": ["integer", "string"], "description": "SQLite PRAGMA user_version after migration. Emitted as string by binary." },
     "model":          { "type": "string", "description": "Embedding model name downloaded or reused." },
-    "dim":            { "type": "integer", "description": "Embedding vector dimension (e.g. 384)." },
+    "dim":            { "type": "integer", "description": "Embedding vector dimension (default 64 since v1.0.79; e.g. 384 on pre-v1.0.79 databases)." },
     "namespace":      { "type": "string", "description": "Active namespace resolved at init time." },
     "status":         { "type": "string", "enum": ["created", "already_exists", "ok"], "description": "Whether the database was newly created or already existed." },
     "elapsed_ms":     { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }

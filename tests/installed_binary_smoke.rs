@@ -897,9 +897,17 @@ fn smoke_26_default_db_in_current_dir() {
         db_path.exists(),
         "smoke_26: init deve criar graphrag.sqlite no diretorio atual"
     );
+    // macOS: TempDir devolve /var/... enquanto o binario canonicaliza
+    // para /private/var/...; canonicalizar ambos os lados evita o falso
+    // negativo de symlink.
+    let reported = std::path::PathBuf::from(init_json["db_path"].as_str().unwrap());
     assert_eq!(
-        init_json["db_path"],
-        db_path.display().to_string(),
+        reported
+            .canonicalize()
+            .expect("canonicalize reported db_path"),
+        db_path
+            .canonicalize()
+            .expect("canonicalize expected db_path"),
         "smoke_26: init deve reportar o path default no cwd"
     );
 

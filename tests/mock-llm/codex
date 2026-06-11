@@ -1,23 +1,50 @@
 #!/usr/bin/env bash
-# Mock codex CLI for the v1.0.76 LLM-only test suite.
+# Mock codex CLI for the LLM-only test suite.
 #
 # Mirrors tests/mock-llm/claude but emits the JSONL event stream that
 # src/commands/codex_spawn.rs::parse_codex_jsonl consumes. The function
 # ignores every JSONL line except `item.completed` whose `item.type` is
-# `agent_message`; the last such `item.text` wins. We emit exactly one
-# such event with a 384-dim zero vector encoded as the agent message.
+# `agent_message`; the last such `item.text` wins.
+#
+# Two payload shapes are supported, mirroring
+# src/extract/llm_embedding.rs (64-dim zero vectors — the active default
+# dimensionality since v1.0.79, G42/S1):
+# - single: `{"embedding":[...]}` (EmbeddingResponse);
+# - batch (G42/S2): `{"items":[{"i":N,"v":[...]}]}` when the prompt asks
+#   for an "items" array containing EXACTLY N items.
+#
+# The prompt arrives on stdin for `codex exec`; `python3 -c` keeps stdin
+# free so the heredoc does not shadow it. argv is inspected too for
+# symmetry with the claude mock.
 
 set -euo pipefail
 
-ZEROS=$(python3 -c "import json,sys; sys.stdout.write(json.dumps([0.0]*384))")
-PAYLOAD=$(printf '{"embedding":%s}' "$ZEROS")
-PAYLOAD_JSON=$(PAYLOAD="$PAYLOAD" python3 -c 'import json, os, sys; sys.stdout.write(json.dumps(os.environ["PAYLOAD"]))')
+ARGS="$*" python3 -c "
+import json, os, re, sys
 
-cat <<JSONL
-{"type":"thread.started","thread_id":"mock-thread-0"}
-{"type":"turn.started"}
-{"type":"item.completed","item":{"type":"agent_message","text":${PAYLOAD_JSON}}}
-{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}
-JSONL
+text = os.environ['ARGS']
+if not sys.stdin.isatty():
+    text += ' ' + sys.stdin.read()
+m = re.search(r'EXACTLY (\d+) items', text)
+if m:
+    n = int(m.group(1))
+    payload = {'items': [{'i': i + 1, 'v': [0.0] * 64} for i in range(n)]}
+else:
+    payload = {'embedding': [0.0] * 64}
+
+events = [
+    {'type': 'thread.started', 'thread_id': 'mock-thread-0'},
+    {'type': 'turn.started'},
+    {
+        'type': 'item.completed',
+        'item': {'type': 'agent_message', 'text': json.dumps(payload)},
+    },
+    {
+        'type': 'turn.completed',
+        'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+    },
+]
+sys.stdout.write('\n'.join(json.dumps(e) for e in events) + '\n')
+"
 
 exit 0

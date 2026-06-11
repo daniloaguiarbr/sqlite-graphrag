@@ -1,10 +1,34 @@
-# HOW TO USE sqlite-graphrag (v1.0.76 — LLM-Only)
+# HOW TO USE sqlite-graphrag (v1.0.79 — LLM-Only)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
 
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
+
+
+## What v1.0.79 Changed (G42 + G43)
+
+The G42 work made the embedding pipeline fast, parallel and
+batched; G43 made the dimensionality adoption universal:
+
+- Default embedding dimensionality dropped from 384 to 64
+  (configurable via `SQLITE_GRAPHRAG_EMBEDDING_DIM`, range
+  [8, 4096]); pre-existing databases keep their recorded
+  `schema_meta.dim` on every command (`open_rw`/`open_ro`
+  adoption, G43).
+- Embedding calls are batched (`{items:[{i,v}]}`; chunks at 8,
+  entity names at 25 at dim 64; dim-adaptive — G44) and run in parallel under a bounded
+  semaphore: `--llm-parallelism` on `remember` (default 4),
+  `ingest` (default 2) and `edit` (default 4), clamp [1, 32].
+- `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` selects the claude
+  embedding model; `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`
+  (default 300) bounds each LLM call.
+- `enrich --operation re-embed` and `edit --force-reembed` are
+  the canonical re-embed paths.
+- The remaining daemon code was deleted; the `embedding-legacy`
+  and `ner-legacy` features were removed; `--enable-ner` is
+  URL-regex only and the GLiNER-era flags warn as no-ops.
 
 
 ## What v1.0.76 Changed
@@ -65,21 +89,22 @@ set in a parent process.
 ## Install
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.76 --force
+cargo install sqlite-graphrag --version 1.0.79 --force
 ```
 
 This installs the LLM-only default build. Verify:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.76
+# sqlite-graphrag 1.0.79
 ```
 
-For the legacy fastembed pipeline (transition window, REMOVED
-in v1.1.0):
+For the legacy fastembed pipeline (REMOVED in v1.0.79):
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.76 --features embedding-legacy --force
+# REMOVED in v1.0.79: the embedding-legacy feature no longer exists.
+# Versions 1.0.76-1.0.78 accepted it; pin one of those versions if you
+# absolutely need the legacy fastembed pipeline (unsupported).
 ```
 
 
@@ -126,7 +151,8 @@ Where `entities.json` is:
 
 The `remember` command:
 
-1. Calls the LLM to embed the body (1-3 s).
+1. Calls the LLM to embed the body — batched and parallel since
+   v1.0.79 (`--llm-parallelism`, default 4; 1-3 s per call).
 2. Stores the memory in `memories` (FTS5 indexed).
 3. Stores the embedding as a BLOB in `memory_embeddings`.
 4. Links the entities via the `entities` table.
@@ -181,7 +207,7 @@ includes the schema and the response is larger).
 - `--rate-limit-buffer <SECONDS>` defaults to 300. When the preflight probe detects that the OAuth rate-limit reset is less than the buffer away, it aborts with a suggestion to wait.
 - `--names <a,b,c>` and `--names-file <PATH>` select a specific subset of memory names instead of scanning all candidates. `--names-file` accepts `#` comments and blank lines. Both flags combine as a union when both are set.
 - `--preserve-threshold <FLOAT>` (default 0.7) controls the Jaccard trigram similarity gate for `body-enrich`. When the LLM rewrite scores below the threshold, the enriched body is REJECTED and emitted as `EnrichItemResult::PreservationFailed`. Protects against LLM invention.
-- `--llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32). Codex tolerates up to 16 in production; Claude warns above 4 because of the OAuth-MCP fan-out.
+- `--llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32). Codex tolerates up to 16 in production; Claude warns above 4 because of the OAuth-MCP fan-out. Since v1.0.79 the same flag also exists on `remember` (default 4), `ingest` (default 2) and `edit` (default 4) for the embedding fan-out.
 - `--max-load-check` refuses to start when the 1-minute load average exceeds `2 × ncpus`. Set to false on contended CI runners.
 - `--circuit-breaker-threshold <N>` (default 5) aborts the job after N consecutive `HardFailure` outcomes. Transient rate-limit and timeout errors do not count.
 - `--codex-model-validate` (default true) checks `--codex-model` against the ChatGPT Pro OAuth accepted-model list BEFORE the subprocess is spawned. Use `--codex-model-fallback <MODEL>` to auto-substitute a known-good model instead of aborting.
@@ -220,13 +246,16 @@ short version:
 3. Old vec tables are dropped; new `memory_embeddings` is empty.
 4. Memories are re-embedded lazily on the next `edit` / `ingest`.
 
-For a large corpus, batch-pre-warm with:
+For a large corpus, use the canonical one-shot re-embed loop
+(G42/S9, v1.0.79) — each invocation processes a small batch and exits:
 
 ```bash
-sqlite-graphrag list --json | jaq -r '.items[].name' | \
-    xargs -I {} sqlite-graphrag edit --name {} \
-        --description "$(sqlite-graphrag read --name {} --json | jaq -r .description)"
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
 ```
+
+Note: the old `edit --description "<same>"` recipe never re-embedded
+anything (description-only edits are a no-op for embeddings); use
+`edit --force-reembed` for a single memory.
 
 
 ## CI Test Environment
@@ -242,11 +271,7 @@ Workarounds:
 
 1. Install `claude` in the CI image and authenticate via OAuth
    (requires storing OAuth tokens in CI secrets).
-2. Build with `--features embedding-legacy` to restore the
-   fastembed pipeline; the relevant tests then pass without an
-   LLM. The CI workflow is updated in v1.0.76 to test all three
-   configurations (default, llm-only, embedding-legacy).
-3. Use a mock LLM CLI that returns a fixed JSON response for
+2. Use a mock LLM CLI that returns a fixed JSON response for
    the embedding prompt (used internally for the unit tests in
    `src/extract/llm_embedding.rs`).
 

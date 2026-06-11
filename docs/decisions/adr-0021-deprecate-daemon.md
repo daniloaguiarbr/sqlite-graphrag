@@ -1,6 +1,7 @@
 # ADR-0021: Deprecation of `daemon` Command (v1.0.76)
 
 - Status: Accepted (2026-06-07)
+- Update (v1.0.79): the remaining daemon code was deleted ahead of the v1.1.0 schedule; the transition window is closed
 - Deciders: Danilo Aguiar
 - Scope: src/daemon.rs, src/commands/daemon.rs, src/main.rs, src/cli.rs
 

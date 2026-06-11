@@ -7,7 +7,7 @@ use tempfile::TempDir;
 ///
 /// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
 /// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
-/// 384-dim zero vector so the binary finishes without a real OAuth
+/// 64-dim zero vector so the binary finishes without a real OAuth
 /// login. The mock directory is leaked (no TempDir cleanup) so the
 /// spawned subprocess always finds the mocks.
 fn sgr_cmd() -> Command {
@@ -356,17 +356,35 @@ fn test_health_ok_after_init() {
 }
 
 // ---------------------------------------------------------------------------
-// daemon
+// daemon — REMOVED in v1.0.79 (the CLI is 100% one-shot)
 // ---------------------------------------------------------------------------
 
+/// v1.0.79 regression guard: the `daemon` subcommand was fully removed
+/// (ADR-0021; code deleted in v1.0.79). Invoking it must fail with the
+/// clap unknown-subcommand error (exit 2), never start any process.
 #[test]
-fn test_daemon_help_lists_db_flag() {
+fn test_daemon_subcommand_is_removed() {
+    let tmp = TempDir::new().unwrap();
+
+    sgr_cmd()
+        .current_dir(tmp.path())
+        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
+        .args(["daemon", "--ping", "--json"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+/// v1.0.79 regression guard: the top-level help must not advertise the
+/// removed `daemon` subcommand.
+#[test]
+fn test_help_does_not_list_daemon() {
     let tmp = TempDir::new().unwrap();
 
     let output = sgr_cmd()
         .current_dir(tmp.path())
         .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .args(["daemon", "--help"])
+        .args(["--help"])
         .assert()
         .success()
         .get_output()
@@ -374,20 +392,10 @@ fn test_daemon_help_lists_db_flag() {
         .clone();
 
     let help = String::from_utf8(output).unwrap();
-    assert!(help.contains("--db"));
-}
-
-#[test]
-fn test_daemon_accepts_db_ping_json_without_parse_error() {
-    let tmp = TempDir::new().unwrap();
-
-    sgr_cmd()
-        .current_dir(tmp.path())
-        .env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"))
-        .args(["daemon", "--db", "foo.sqlite", "--ping", "--json"])
-        .assert()
-        .failure()
-        .code(4);
+    assert!(
+        !help.contains("daemon"),
+        "top-level help must not list the removed daemon subcommand"
+    );
 }
 
 // ---------------------------------------------------------------------------

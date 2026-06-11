@@ -3867,7 +3867,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        let embedding = vec![0.0_f32; crate::constants::EMBEDDING_DIM];
+        let embedding = vec![0.0_f32; crate::constants::embedding_dim()];
         memories::upsert_vec(
             &conn, memory_id, "global", "note", &embedding, "has-vec", "body two",
         )

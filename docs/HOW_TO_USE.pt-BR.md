@@ -1,9 +1,20 @@
-# COMO USAR sqlite-graphrag (v1.0.76 — Apenas LLM)
+# COMO USAR sqlite-graphrag (v1.0.79 — Apenas LLM)
 
 > Entregue memória persistente a qualquer agente de IA com um binário local, um único arquivo SQLite, e a CLI de LLM que você já confia.
 
 - Versão em inglês: [HOW_TO_USE.md](HOW_TO_USE.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
+
+
+## O Que Mudou na v1.0.79 (G42 + G43)
+
+O trabalho do G42 tornou o pipeline de embedding rápido, paralelo e em lote; o G43 tornou universal a adoção da dimensionalidade:
+
+- A dimensionalidade default de embedding caiu de 384 para 64 (configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM`, faixa [8, 4096]); bancos pré-existentes mantêm a `schema_meta.dim` registrada em todo comando (adoção em `open_rw`/`open_ro`, G43).
+- Chamadas de embedding são em lote (`{items:[{i,v}]}`; chunks em 8, nomes de entidade em 25 em dim 64; adaptativos à dim — G44) e rodam em paralelo sob semáforo bounded: `--llm-parallelism` em `remember` (default 4), `ingest` (default 2) e `edit` (default 4), clamp [1, 32].
+- `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` seleciona o modelo de embedding do claude; `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300) limita cada chamada LLM.
+- `enrich --operation re-embed` e `edit --force-reembed` são os caminhos canônicos de re-embedding.
+- O código restante do daemon foi deletado; as features `embedding-legacy` e `ner-legacy` foram removidas; `--enable-ner` é somente URL-regex e as flags da era GLiNER avisam como no-ops.
 
 
 ## O Que Mudou na v1.0.76
@@ -50,20 +61,22 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 ## Instalação
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.76 --force
+cargo install sqlite-graphrag --version 1.0.79 --force
 ```
 
 Isso instala o build padrão LLM-only. Verifique:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.76
+# sqlite-graphrag 1.0.79
 ```
 
-Para o pipeline legado fastembed (janela de transição, REMOVIDO na v1.1.0):
+Para o pipeline legado fastembed (REMOVIDO na v1.0.79):
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.76 --features embedding-legacy --force
+# REMOVIDO na v1.0.79: a feature embedding-legacy não existe mais.
+# As versões 1.0.76-1.0.78 a aceitavam; fixe uma dessas versões se
+# precisar do pipeline fastembed legado (sem suporte).
 ```
 
 
@@ -107,7 +120,7 @@ Onde `entidades.json` é:
 
 O comando `remember`:
 
-1. Chama a LLM para embutir o corpo (1-3 s).
+1. Chama a LLM para embutir o corpo — em lote e em paralelo desde a v1.0.79 (`--llm-parallelism`, default 4; 1-3 s por chamada).
 2. Armazena a memória em `memories` (indexada por FTS5).
 3. Armazena o embedding como BLOB em `memory_embeddings`.
 4. Liga as entidades via tabela `entities`.
@@ -155,7 +168,7 @@ A LLM devolve JSON estruturado com entidades e relacionamentos no mesmo prompt q
 - `--rate-limit-buffer <SEGUNDOS>` padrão 300. Quando a sondagem detecta que o reset do rate limit OAuth está a menos do que o buffer de distância, aborta com sugestão para esperar.
 - `--names <a,b,c>` e `--names-file <CAMINHO>` selecionam um subconjunto específico de nomes de memória em vez de varrer todos os candidatos. `--names-file` aceita comentários `#` e linhas em branco. As duas flags se combinam como união quando ambas estão setadas.
 - `--preserve-threshold <FLOAT>` (padrão 0.7) controla o portão de similaridade trigrama Jaccard para `body-enrich`. Quando a reescrita do LLM pontua abaixo do threshold, o corpo enriquecido é REJEITADO e emitido como `EnrichItemResult::PreservationFailed`. Protege contra invenção do LLM.
-- `--llm-parallelism <N>` spawna N threads de worker LLM em paralelo (padrão 1, máximo 32). Codex tolera até 16 em produção; Claude avisa acima de 4 por causa da fan-out OAuth-MCP.
+- `--llm-parallelism <N>` spawna N threads de worker LLM em paralelo (padrão 1, máximo 32). Codex tolera até 16 em produção; Claude avisa acima de 4 por causa da fan-out OAuth-MCP. Desde a v1.0.79 a mesma flag também existe em `remember` (default 4), `ingest` (default 2) e `edit` (default 4) para o fan-out de embedding.
 - `--max-load-check` recusa iniciar quando o load average de 1 minuto excede `2 × ncpus`. Defina como false em runners de CI disputados.
 - `--circuit-breaker-threshold <N>` (padrão 5) aborta o job após N resultados `HardFailure` consecutivos. Erros transient de rate limit e timeout não contam.
 - `--codex-model-validate` (padrão true) verifica `--codex-model` contra a lista de modelos aceitos pelo ChatGPT Pro OAuth ANTES de o subprocesso ser spawnado. Use `--codex-model-fallback <MODELO>` para auto-substituir um modelo conhecido em vez de abortar.
@@ -193,13 +206,13 @@ Veja [MIGRATION.md](MIGRATION.md) para o passo a passo completo. A versão curta
 3. As vec tables antigas são dropadas; a nova `memory_embeddings` começa vazia.
 4. As memórias são re-embutidas lazy no próximo `edit` ou `ingest`.
 
-Para um corpus grande, faça pre-warm em lote com:
+Para um corpus grande, use o loop one-shot canônico de re-embed (G42/S9, v1.0.79) — cada invocação processa um lote pequeno e encerra:
 
 ```bash
-sqlite-graphrag list --json | jaq -r '.items[].name' | \
-    xargs -I {} sqlite-graphrag edit --name {} \
-        --description "$(sqlite-graphrag read --name {} --json | jaq -r .description)"
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
 ```
+
+Nota: a receita antiga `edit --description "<mesmo>"` nunca re-embedou nada (edições somente de descrição são no-op para embeddings); use `edit --force-reembed` para uma única memória.
 
 
 ## Ambiente de Teste em CI
@@ -209,8 +222,7 @@ Se você quer rodar a suíte completa de testes em CI, precisa de uma CLI de LLM
 Soluções alternativas:
 
 1. Instale `claude` na imagem de CI e autentique via OAuth (requere guardar tokens OAuth em segredos de CI).
-2. Faça build com `--features embedding-legacy` para restaurar o pipeline fastembed; os testes relevantes passam sem uma LLM. O workflow de CI é atualizado na v1.0.76 para testar as três configurações (default, llm-only, embedding-legacy).
-3. Use uma CLI de LLM mock que devolve uma resposta JSON fixa para o prompt de embedding (usada internamente pelos testes unitários em `src/extract/llm_embedding.rs`).
+2. Use uma CLI de LLM mock que devolve uma resposta JSON fixa para o prompt de embedding (usada internamente pelos testes unitários em `src/extract/llm_embedding.rs`).
 
 
 ## Veja Também

@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use this skill WHENEVER the user asks about adding persistent memory or GraphRAG or long-term context to Claude Code Codex Cursor Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, memory migration v1.0.76, migrate to-llm-only, migrate rehash, vec tables drop, codex-spawn helper, vec orphan handling, or any G28-G39 gap remediation. Auto-invokes even without explicit mention when user describes agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, 7 hardening flags for Claude and Codex, Mock LLM CLI in CI, Mock LLM CLI in CI, or removal of the daemon subcommand. Keywords memory RAG GraphRAG SQLite LLM-only one-shot OAuth Claude Codex Cursor Windsurf offline local persistent graph entity v1.0.76.
+description: Use this skill WHENEVER the user asks about adding persistent memory, GraphRAG or long-term context to Claude Code, Codex, Cursor, Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding dimensionality, embedding-dim, llm-parallelism, batched embedding, adaptive batch, re-embed, force-reembed, or any G28-G44 gap remediation. Auto-invokes even without explicit mention when the user describes an agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, hardening flags for Claude and Codex, Mock LLM CLI in CI, or daemon removal. Keywords memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.79.
 ---
 
 
@@ -98,9 +98,9 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51)
 - USE `--dry-run` to validate inputs without persisting or running embeddings
 - USE `--clear-body` to explicitly clear the body of an existing memory when using `--force-merge`; without `--clear-body`, `--force-merge` with an empty body PRESERVES the existing body
-- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
-- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
-- `--skip-extraction` is deprecated since v1.0.45 and has no effect; use `--enable-ner` to activate NER
+- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic extraction — URL-regex ONLY since v1.0.79 (the GLiNER pipeline was removed)
+- Response field `extraction_method` reports: `url-regex` or `none:extraction-failed` (the `gliner-<variant>+regex` and `regex-only` values are HISTORICAL, ≤ v1.0.75)
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; `--gliner-variant` is a no-op since v1.0.79 and emits a `tracing::warn!` when set
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 - USE `--max-rss-mb <MiB>` to abort embedding if process RSS exceeds the threshold (default 8192 MiB); lower this in memory-constrained environments
 ### REQUIRED — Attaching Graph in remember
@@ -116,7 +116,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER use `strength` outside the range `[0.0, 1.0]`
 - NEVER duplicate a name without explicit `--force-merge`
 - NEVER mix `--body`, `--body-file`, `--body-stdin`, `--graph-stdin`
-- NEVER rely on GLiNER auto-extraction in RAM-sensitive CI
+- NEVER rely on `--enable-ner` for semantic entity extraction (URL-regex only since v1.0.79); use `--graph-stdin` with LLM-curated entities or `ingest --mode claude-code|codex`
 - NEVER exceed the relations cap per memory without adjusting env
 - NEVER use `remember` in a loop when `ingest` covers the case
 - NEVER pass empty body with no entities via `--graph-stdin`; since v1.0.54 this returns exit 1 (Validation) instead of silently creating an inert memory with zero chunks
@@ -311,6 +311,27 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER call `optimize` without checking `fts stats` first if you only want to verify health (use `fts check` instead)
 
 
+## New in v1.0.79
+### REQUIRED — G42: Fast, Parallel, Batched LLM Embedding Pipeline
+- KNOW that the default embedding dimensionality dropped from 384 to 64 (MRL, arXiv 2205.13147); precedence: `SQLITE_GRAPHRAG_EMBEDDING_DIM` env (range [8, 4096]) > `schema_meta.dim` of the opened database > 64
+- KNOW that pre-existing databases keep their recorded dimensionality unchanged on EVERY command — ZERO schema change
+- KNOW that embedding calls are BATCHED (`{items:[{i,v}]}` schema; calibration bases of 8 chunks / 25 entity names at dim 64, adapted as clamp(base×64/dim, 1, base) — G44) — 39 subprocess spawns collapse into 4-5
+- USE `--llm-parallelism <N>` on `remember` (default 4), `ingest` (default 2) and `edit` (default 4), clamp [1, 32], for the bounded `Semaphore` embedding fan-out
+- USE `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` to select the claude embedding model (symmetric to the codex var); `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300) bounds each LLM call with `kill_on_drop(true)`
+- KNOW that the embedding path uses an EMPTY `CLAUDE_CONFIG_DIR` by default (honours `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`); the MCP-isolation flags are silently ignored upstream (anthropics/claude-code#10787); a populated `~/.claude` cost ~223k cache tokens per call (~40-50s → ~10-15s)
+- USE `enrich --operation re-embed --limit N --resume` as the canonical one-shot re-embed path; `edit --force-reembed` regenerates one embedding without changing the body
+- KNOW that divergent vectors FAIL with an explicit error (no silent truncation or zero-padding, G42/C5)
+- KNOW that batch sizes adapt to the database dimensionality (G44): 384-dim databases automatically use 1 chunk / 4 entity names per call (constant float budget) — the `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS=900` workaround is no longer required; the env remains available for extreme bodies
+### REQUIRED — G43: Dimensionality Adoption on Every Connection
+- KNOW that `open_rw` AND `open_ro` adopt `schema_meta.dim` on every database open — `remember` / `edit` / `recall` / `hybrid-search` operate at the database dimensionality (pre-G43 they silently used the compiled default against pre-v1.0.79 384-dim databases, writing mixed-dim embeddings invisible to cosine)
+- KNOW that `init` no longer stamps `dim=384` and `rename-entity` records the real vector length
+### FORBIDDEN — v1.0.79 Anti-patterns
+- NEVER pass `--gliner-variant` expecting model selection — it is a formal no-op with a `tracing::warn!`
+- NEVER use `ingest --mode gliner` for semantic extraction — DEPRECATED, URL-regex only
+- NEVER depend on the daemon — the remaining code was DELETED in v1.0.79; the CLI is 100% one-shot
+- NEVER install with `--features embedding-legacy` or `ner-legacy` — both features were REMOVED
+
+
 ## New in v1.0.76
 ### REQUIRED — LLM-Only and One-Shot Architecture (BREAKING)
 - KNOW that v1.0.76 is the first release where the default build no longer bundles any local model
@@ -373,7 +394,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER try to install `fastembed`, `tokenizers`, or `sqlite-vec` — these crates are removed from the default build
 - NEVER use the v1.0.76 default build on a host without `claude` or `codex` CLI on `PATH` — the embedding pipeline requires it
 - NEVER set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and expect a successful embedding call — the spawn ABORTS
-- NEVER depend on the `daemon` subcommand for new code — it is removed in v1.1.0
+- NEVER depend on the `daemon` subcommand — the remaining code was DELETED in v1.0.79; the CLI is 100% one-shot
 - NEVER call `migrate --to-llm-only` without `--drop-vec-tables` — the CLI refuses to run for safety
 - NEVER add new code that depends on the v1.0.74 ONNX model cache — the default build is LLM-only
 - NEVER assume cosine similarity is computed by sqlite-vec — it is now pure-Rust on demand in `src/similarity.rs`
@@ -426,13 +447,10 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - DISTINGUISH the two axes clearly before adjusting
 - WIDEN `--wait-lock <SECONDS>` to wait for a slot before exit 75
 ### REQUIRED — Performance and Extraction
-- NER is disabled by default; pass `--enable-ner` to activate GLiNER extraction
-- GLiNER NER adds approximately 100-200 ms per file with model loaded on modern hardware
-- GLiNER NER adds 2 to 30 seconds per file in `--low-memory` or on first load
-- GLiNER NER downloads the ONNX model on first run (fp32: 1.1 GB, int8: 349 MB via `--gliner-variant`)
-- USE `--gliner-variant int8` for CI/containers to reduce model size from 1.1 GB to 349 MB
-- USE `--enable-ner` only when automated entity enrichment is valuable
-- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
+- NER is disabled by default; pass `--enable-ner` to activate automatic extraction — URL-regex ONLY since v1.0.79 (the ONNX GLiNER pipeline, the 1.1 GB model download and the `--gliner-variant` selection were removed)
+- `--gliner-variant` is a no-op since v1.0.79 and emits a `tracing::warn!` when set
+- USE `--enable-ner` only when URL-as-entity extraction is valuable
+- Response field `extraction_method` reports: `url-regex` or `none:extraction-failed` (the `gliner-*` and `regex-only` values are HISTORICAL, ≤ v1.0.75)
 - Ingest duplicates emit `status: "skipped"` with `action: "duplicate"` instead of `status: "failed"`
 - PREFER `--graph-stdin` with LLM-curated entities for best quality (NER is off by default; `--skip-extraction` is deprecated since v1.0.45)
 - USE `--dry-run` to preview file-to-name mapping without spawning LLM subprocess or persisting
@@ -465,7 +483,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NUMERIC basenames (e.g. `123.md`) are automatically prefixed with `doc-` to produce valid kebab-case names (e.g. `doc-123`)
 ### REQUIRED — Ingest Modes (v1.0.62)
 - `--mode none` (default): body-only ingestion without entity/relationship extraction
-- `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
+- `--mode gliner`: DEPRECATED since v1.0.79 (URL-regex only; emits a `tracing::warn!`); use `--mode claude-code` or `--mode codex` for semantic extraction
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
 - Claude Code mode spawns `claude -p` per file with `--json-schema` for guaranteed structured output
 - Requires Claude Code >= 2.1.0 installed on user's machine with active Pro/Max subscription
@@ -538,6 +556,8 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - CHANGE memory type via `--type <kind>` (e.g., `note` to `decision`) without recreating the memory (v1.0.67); skips re-embedding when body is unchanged
 - EACH edit creates a new immutable version preserving history
 - EDIT re-generates vector embedding when body changes — `recall` and `hybrid-search` return accurate scores after edit (since v1.0.63; description-only edits skip re-embedding)
+- USE `edit --force-reembed` (v1.0.79) to regenerate the embedding WITHOUT changing the body — the surgical fix for a memory with a missing or wrong-dimensionality embedding
+- USE `--llm-parallelism <N>` (v1.0.79, default 4, clamp [1, 32]) to bound the embedding subprocess fan-out
 - VALIDATE exit code 3 as an optimistic locking conflict
 - JSON response: `memory_id`, `name`, `action` ("updated"), `version`, `elapsed_ms`
 - v1.0.56: FTS5 desync bug fixed — edited memories are immediately findable via full-text search
@@ -642,7 +662,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - USE `prune-ner --entity <name> --json` to remove NER bindings for a specific entity
 - USE `prune-ner --all --yes --json` to remove ALL NER bindings in the namespace
 - JSON response: `action`, `bindings_removed`, `elapsed_ms`
-- NER bindings are the links created automatically by GLiNER extraction; manual graph links are NOT affected
+- NER bindings are the links created automatically by NER extraction (GLiNER ≤ v1.0.75; URL-regex since v1.0.79); manual graph links are NOT affected
 
 
 ## Immutable Version History
@@ -707,7 +727,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - JSON response: `action`, `normalized_count`, `merged_count`, `namespace`, `elapsed_ms`
 ### Enrich Graph Quality With LLM (v1.0.65)
 - `sqlite-graphrag enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline
-- 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions for entities with none), `body-enrich` (expand short memory bodies)
+- Operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions for entities with none), `body-enrich` (expand short memory bodies), and `re-embed` (v1.0.79 — rebuild missing memory embeddings without rewriting bodies; the canonical one-shot re-embed path with `--limit N --resume`)
 - `--dry-run` previews without spawning LLM (zero tokens)
 - `--max-cost-usd N` caps cumulative API spend (ignored for OAuth users)
 - `--resume` and `--retry-failed` for crash resilience via queue DB
@@ -912,7 +932,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER skip deduplication; search `hybrid-search` or `graph entities` before creating
 
 
-## Architecture Note — No Daemon (v1.0.76)
+## Architecture Note — No Daemon (v1.0.76; code deleted in v1.0.79)
 ### NOTE — Daemon Infrastructure Fully Removed
 - The daemon IPC infrastructure (`sqlite-graphrag daemon`, `daemon --ping`, `daemon --stop`) was fully removed in v1.0.76
 - The CLI is now 100% one-shot: each embedding operation spawns a headless `claude -p` or `codex exec` subprocess via OAuth
@@ -1153,7 +1173,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - New `--extraction-backend llm|none` global flag (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `none` is a no-op
 ### FORBIDDEN — v1.0.76 Anti-patterns
 - NEVER install v1.0.76 with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn aborts.
-- NEVER depend on the daemon in new code; the daemon will be REMOVED in v1.1.0.
+- NEVER depend on the daemon in new code; the daemon was fully removed (code deleted in v1.0.79).
 - NEVER mix `vec_memories` / `vec_entities` / `vec_chunks` queries (removed in v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` instead.
 - NEVER use `migrate --to-llm-only` without `--drop-vec-tables`; the safety guard refuses the operation otherwise.
 

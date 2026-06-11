@@ -21,7 +21,7 @@ use tempfile::TempDir;
 ///
 /// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
 /// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
-/// 384-dim zero vector so the binary finishes without a real OAuth
+/// 64-dim zero vector so the binary finishes without a real OAuth
 /// login. The mock directory is leaked (no TempDir cleanup) so the
 /// spawned subprocess always finds the mocks.
 fn sgr_cmd() -> Command {

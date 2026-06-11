@@ -146,7 +146,7 @@ pub fn upsert_entity_vec(
                 &embedding_bytes,
                 "llm-headless",
                 crate::constants::SQLITE_GRAPHRAG_VERSION,
-                crate::constants::EMBEDDING_DIM as i64,
+                crate::constants::embedding_dim() as i64,
             ],
         )?;
         Ok(())
@@ -668,11 +668,11 @@ pub fn knn_search(
     namespace: &str,
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
-    if embedding.len() != crate::constants::EMBEDDING_DIM {
+    if embedding.len() != crate::constants::embedding_dim() {
         return Err(AppError::Embedding(format!(
             "knn_search embedding has {} dims, expected {}",
             embedding.len(),
-            crate::constants::EMBEDDING_DIM
+            crate::constants::embedding_dim()
         )));
     }
     let mut stmt = conn.prepare_cached(
@@ -705,7 +705,7 @@ pub fn knn_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::EMBEDDING_DIM;
+    use crate::constants::embedding_dim;
     use crate::entity_type::EntityType;
     use crate::storage::connection::register_vec_extension;
     use rusqlite::Connection;
@@ -740,7 +740,7 @@ mod tests {
     }
 
     fn embedding_zero() -> Vec<f32> {
-        vec![0.0f32; EMBEDDING_DIM]
+        vec![0.0f32; embedding_dim()]
     }
 
     // ------------------------------------------------------------------ //

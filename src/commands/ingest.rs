@@ -63,7 +63,7 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./docs --type document\n\n  \
     # Ingest .txt files recursively under ./notes\n  \
     sqlite-graphrag ingest ./notes --type note --pattern '*.txt' --recursive\n\n  \
-    # Enable GLiNER NER extraction (disabled by default, slower)\n  \
+    # Enable automatic URL extraction (URL-regex only since v1.0.79)\n  \
     sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
     # Preview file-to-name mapping without ingesting\n  \
     sqlite-graphrag ingest ./docs --dry-run\n\n  \
@@ -114,14 +114,14 @@ pub struct IngestArgs {
         num_args = 0..=1,
         default_missing_value = "true",
         default_value = "false",
-        help = "Enable automatic GLiNER NER entity/relationship extraction (disabled by default)"
+        help = "Enable automatic URL-regex extraction (the GLiNER NER pipeline was removed in v1.0.79)"
     )]
     pub enable_ner: bool,
     #[arg(
         long,
         env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
         default_value = "fp32",
-        help = "GLiNER model variant: fp32 (1.1GB, best quality), fp16 (580MB), int8 (349MB, fastest but may miss entities on short texts), q4, q4f16"
+        help = "DEPRECATED: no effect since v1.0.79 (the GLiNER pipeline was removed); accepted for compatibility only"
     )]
     pub gliner_variant: String,
 
@@ -184,6 +184,15 @@ pub struct IngestArgs {
           help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
     pub max_rss_mb: u64,
 
+    /// G42/S3 (v1.0.79): maximum simultaneous LLM embedding subprocesses
+    /// PER FILE. Multiplies with --ingest-parallelism (files staged
+    /// concurrently), hence the conservative default of 2. The effective
+    /// value is further bounded by CPU count and available RAM.
+    #[arg(long, default_value_t = 2, value_name = "N",
+          value_parser = clap::value_parser!(u64).range(1..=32),
+          help = "Maximum simultaneous LLM embedding subprocesses per file (default: 2, clamp [1,32])")]
+    pub llm_parallelism: u64,
+
     /// Maximum character length for derived memory names from file basenames.
     ///
     /// Overrides the compile-time `DERIVED_NAME_MAX_LEN` constant (default 60).
@@ -192,7 +201,7 @@ pub struct IngestArgs {
           help = "Maximum length for derived memory names (default: 60)")]
     pub max_name_length: usize,
 
-    /// Extraction mode: `none` (body-only, default), `gliner` (NER), or `claude-code` (LLM-curated via Claude Code CLI).
+    /// Extraction mode: `none` (body-only, default), `claude-code`/`codex` (LLM-curated), or `gliner` (DEPRECATED: URL-regex only since v1.0.79).
     #[arg(long, value_enum, default_value_t = IngestMode::None)]
     pub mode: IngestMode,
 
@@ -275,7 +284,7 @@ pub struct IngestArgs {
 pub enum IngestMode {
     /// Body-only ingestion without entity/relationship extraction (default).
     None,
-    /// GLiNER zero-shot NER extraction (requires --enable-ner).
+    /// DEPRECATED: URL-regex extraction only since v1.0.79 (the GLiNER pipeline was removed; requires --enable-ner).
     Gliner,
     /// LLM-curated extraction via locally installed Claude Code CLI.
     ClaudeCode,
@@ -431,6 +440,10 @@ struct StagedFile {
 
 /// Phase A worker: reads, chunks, embeds and extracts NER for one file.
 /// Never touches the database — safe to run on any rayon thread.
+// G42/S3 added `llm_parallelism` as the 8th parameter; grouping the
+// stage knobs into a struct is a wider refactor than the surgical
+// scope of v1.0.79 allows.
+#[allow(clippy::too_many_arguments)]
 fn stage_file(
     _idx: usize,
     path: &Path,
@@ -439,6 +452,7 @@ fn stage_file(
     enable_ner: bool,
     gliner_variant: crate::extraction::GlinerVariant,
     max_rss_mb: u64,
+    llm_parallelism: usize,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -560,53 +574,52 @@ fn stage_file(
     let embedding = if chunks_info.len() == 1 {
         crate::embedder::embed_passage_local(&paths.models, &raw_body)?
     } else {
-        let chunk_texts: Vec<&str> = chunks_info
+        // G42/S2+S3 (v1.0.79): batched bounded fan-out replaces the
+        // serial per-chunk subprocess loop.
+        let chunk_texts: Vec<String> = chunks_info
             .iter()
-            .map(|c| chunking::chunk_text(&raw_body, c))
+            .map(|c| chunking::chunk_text(&raw_body, c).to_string())
             .collect();
-        let embed_cap = chunk_texts.len();
-        let mut chunk_embeddings = Vec::new();
-        chunk_embeddings.try_reserve(embed_cap).map_err(|_| {
-            AppError::LimitExceeded(format!(
-                "allocation of {embed_cap} chunk embeddings would exceed available memory"
-            ))
-        })?;
-        for chunk_text in &chunk_texts {
-            if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
-                if rss > max_rss_mb {
-                    tracing::error!(
-                        target: "ingest",
-                        rss_mb = rss,
-                        max_rss_mb = max_rss_mb,
-                        file = %path.display(),
-                        "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
-                    );
-                    return Err(AppError::LowMemory {
-                        available_mb: crate::memory_guard::available_memory_mb(),
-                        required_mb: max_rss_mb,
-                    });
-                }
+        if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
+            if rss > max_rss_mb {
+                tracing::error!(
+                    target: "ingest",
+                    rss_mb = rss,
+                    max_rss_mb = max_rss_mb,
+                    file = %path.display(),
+                    "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
+                );
+                return Err(AppError::LowMemory {
+                    available_mb: crate::memory_guard::available_memory_mb(),
+                    required_mb: max_rss_mb,
+                });
             }
-            chunk_embeddings.push(crate::embedder::embed_passage_local(
-                &paths.models,
-                chunk_text,
-            )?);
         }
+        let chunk_embeddings = crate::embedder::embed_passages_parallel_local(
+            &paths.models,
+            &chunk_texts,
+            llm_parallelism,
+            crate::embedder::chunk_embed_batch_size(),
+        )?;
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
         chunk_embeddings_opt = Some(chunk_embeddings);
         aggregated
     };
 
-    let entity_embeddings = extracted_entities
+    // G42/S2+A4 (v1.0.79): entity names use the short-text batch profile.
+    let entity_texts: Vec<String> = extracted_entities
         .iter()
-        .map(|entity| {
-            let entity_text = match &entity.description {
-                Some(desc) => format!("{} {}", entity.name, desc),
-                None => entity.name.clone(),
-            };
-            crate::embedder::embed_passage_local(&paths.models, &entity_text)
+        .map(|entity| match &entity.description {
+            Some(desc) => format!("{} {}", entity.name, desc),
+            None => entity.name.clone(),
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
+    let entity_embeddings = crate::embedder::embed_passages_parallel_local(
+        &paths.models,
+        &entity_texts,
+        llm_parallelism,
+        crate::embedder::entity_embed_batch_size(),
+    )?;
 
     Ok(StagedFile {
         body: raw_body,
@@ -1210,6 +1223,20 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     }
     let enable_ner = args.enable_ner;
     let max_rss_mb = args.max_rss_mb;
+    let llm_parallelism = args.llm_parallelism as usize;
+    // v1.0.79: `--mode gliner` and `--gliner-variant` are no-ops kept for
+    // compatibility (the GLiNER pipeline was removed); warn explicitly so
+    // callers do not silently expect NER-quality extraction.
+    if args.mode == IngestMode::Gliner {
+        tracing::warn!(
+            "--mode gliner is deprecated since v1.0.79 (the GLiNER pipeline was removed); it now performs URL-regex extraction only — use --mode claude-code or --mode codex for LLM-curated extraction"
+        );
+    }
+    if args.gliner_variant != "fp32" {
+        tracing::warn!(
+            "--gliner-variant is deprecated and has no effect since v1.0.79 (the GLiNER pipeline was removed)"
+        );
+    }
     let gliner_variant: crate::extraction::GlinerVariant = match args.gliner_variant.as_str() {
         "int8" => crate::extraction::GlinerVariant::Int8,
         _ => crate::extraction::GlinerVariant::Fp32,
@@ -1250,6 +1277,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     enable_ner,
                     gliner_variant,
                     max_rss_mb,
+                    llm_parallelism,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

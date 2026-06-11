@@ -37,6 +37,14 @@ Rodar `claude -p` com a config de MCP travada e vazia, e a config de hooks zerad
 - O `--settings '{"hooks":{}}'` desliga os hooks naquela chamada específica
 - A combinação garante zero MCP e zero hooks no ar, mantendo o login por assinatura (OAuth Pro ou Max)
 
+### Atualização v1.0.79 — O Isolamento Real É `CLAUDE_CONFIG_DIR` Vazio
+
+- A issue #10787 de `anthropics/claude-code` documenta que `--strict-mcp-config` e `--mcp-config` são silenciosamente IGNORADAS pelo upstream
+- O único mecanismo que o upstream honra é `CLAUDE_CONFIG_DIR` apontando para um diretório vazio
+- Desde a v1.0.79 (G42/S6), o pipeline de embedding da CLI usa `CLAUDE_CONFIG_DIR` vazio POR PADRÃO: honra `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, senão um diretório gerenciado `~/.local/state/sqlite-graphrag/claude-empty-config` (modo 0700, copia `.credentials.json` quando presente)
+- Um `~/.claude` populado custava ~223k tokens de cache-creation por chamada (~40-50s); o config dir vazio derruba para ~10-15s
+- As flags abaixo continuam sendo passadas por defesa em profundidade, mas NÃO confie nelas como isolamento
+
 ### Por Que NÃO Usar `--bare`
 
 - O `--bare` também corta MCP, hooks, skills, plugins e auto memory

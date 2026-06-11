@@ -72,7 +72,7 @@ filter = 'binary(doc_contract_integration) & test(=contract_15_link)'
 test-group = 'graphrag-serial'
 
 [[profile.default.overrides]]
-filter = 'binary(daemon_integration) | binary(cookbook_recipes)'
+filter = 'binary(cookbook_recipes)'
 test-group = 'graphrag-serial'
 
 [[profile.ci.overrides]]
@@ -80,5 +80,5 @@ filter = 'binary(doc_contract_integration) & test(=contract_15_link)'
 test-group = 'graphrag-serial'
 
 [[profile.ci.overrides]]
-filter = 'binary(daemon_integration) | binary(cookbook_recipes)'
+filter = 'binary(cookbook_recipes)'
 test-group = 'graphrag-serial'

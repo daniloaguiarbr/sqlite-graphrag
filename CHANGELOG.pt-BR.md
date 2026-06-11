@@ -5,9 +5,42 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 ## [Sem Versão]
 
+## [1.0.79] - 2026-06-11
+
 ### Removido
 
 - **Infraestrutura de daemon totalmente removida**: `src/daemon.rs` (1120 linhas), `src/commands/daemon.rs` (79 linhas), `tests/daemon_integration.rs` (316 linhas) deletados. Struct `DaemonOpts` e flag `--autostart-daemon` removidos de todos os argumentos de comando. Todas as chamadas `crate::daemon::embed_*_or_local` substituídas por wrappers diretos `crate::embedder::embed_*_local`. CLI agora é 100% one-shot com zero IPC. 8 constantes de daemon removidas de `src/constants.rs`. Remoção líquida: ~764 linhas.
+- **Features legadas de modelo local totalmente removidas (antecipando o cronograma da v1.1.0)**: as features Cargo `embedding-legacy`, `ner-legacy` e `full` sumiram, junto com as dependências opcionais `fastembed`, `ort`, `ndarray`, `tokenizers` e `hf-hub` e o arquivo `src/extraction_gliner.rs`. `EmbeddingBackend` agora é um stub permanente que retorna erro de migração claro; `extract_graph_auto` perdeu o caminho de delegação GLiNER; `calculate_safe_concurrency` orça comandos pesados com `LLM_WORKER_RSS_MB` (350) em vez da constante ONNX obsoleta de 1100 MB (`EMBEDDING_LOAD_EXPECTED_RSS_MB` deletada). A matriz de CI encolhe para `default` + `llm-only`. Todo build é LLM-only; não existe caminho de modelo local.
+
+### Depreciado
+
+- **Flags da era GLiNER são no-ops formais com aviso explícito**: `--gliner-variant` (em `remember` e `ingest`) e `ingest --mode gliner` agora emitem um aviso de deprecação via `tracing::warn!` quando usadas; `--enable-ner` executa apenas extração de URL por regex. Todos os help strings foram reescritos para parar de prometer o pipeline GLiNER removido (variantes de modelo, tamanhos, thresholds); `SQLITE_GRAPHRAG_GLINER_VARIANT`/`_MODEL`/`_THRESHOLD` continuam aceitas por compatibilidade mas sem efeito.
+
+### Corrigido — G42: pipeline de embedding LLM lento, serializado e frágil
+
+- **S1 — dimensão de embedding configurável (default 64)**: fonte única de verdade em `constants.rs` (`DEFAULT_EMBEDDING_DIM` + `embedding_dim()`); precedência flag `--embedding-dim` > env `SQLITE_GRAPHRAG_EMBEDDING_DIM` > `schema_meta.dim` do banco aberto > 64. Bancos 384-dim existentes continuam funcionando sem mudança. ZERO alteração de schema (a chave `dim` e as colunas já existiam). Base: MRL, arXiv 2205.13147 — output por vetor cai de ~3072 para ~512 tokens (~6x)
+- **S2 — chamadas LLM em lote**: `embed_batch_async` embeda N textos numerados por chamada com o schema `{items:[{i,v}]}`; chunks em lotes de 8, nomes de entidade em lotes de 25 (bases de calibração em dim 64; adaptativos à dim desde o G44) — 39 spawns de subprocesso viram 4-5
+- **S3 — paralelismo real**: fan-out bounded com `Arc<Semaphore>` + `acquire_owned` + `JoinSet` + `join_next`/`is_panic` em `embedder.rs`; o Mutex global agora protege APENAS o clone da config (o antigo `flush_group` o segurava durante 30-60s de I/O de rede, forçando paralelismo efetivo 1); resultados fluem por canal mpsc BOUNDED (backpressure + entrega incremental); permits = min(`--llm-parallelism`, cpus, ram*0.5/350MB, 32); nova flag `--llm-parallelism` em `remember` (default 4), `ingest` (default 2, multiplica com `--ingest-parallelism`) e `edit`
+- **S4 — schema tempfile RAII**: os arquivos `--output-schema` do codex são `NamedTempFile`s com nome randomizado criados uma vez por processo (sem write+delete por chamada, sem race por PID); o reaper de órfãos agora também remove diretórios `codex-home-{pid}` cujo PID morreu
+- **S5 — modelo claude via env**: `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` (simétrico à var do codex); zero modelo hardcoded sem override
+- **S6 — `CLAUDE_CONFIG_DIR` vazio por padrão** no caminho de embedding: honra `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, senão usa o gerenciado `~/.local/state/sqlite-graphrag/claude-empty-config` (mode 0700, copia `.credentials.json` quando presente); as flags de isolamento MCP são silenciosamente ignoradas upstream (anthropics/claude-code#10787) e um `~/.claude` completo custava ~223k tokens por chamada (~40-50s → ~10-15s)
+- **S7 — erro codex headless acionável**: falhas `request_user_input` agora explicam causa e remediação em vez de um exit 11 opaco
+- **S8 — handler de sinais sem panic**: primeiro sinal usa `writeln!` best-effort (BrokenPipe ignorado); segundo sinal sai com 130 e ZERO I/O — elimina o SIGABRT em processos orfanados (`panic = "abort"` + pipe de stderr fechado)
+- **S9 — re-embed one-shot canônico**: `enrich --operation re-embed --limit N --resume` documentado como caminho oficial; nova flag `edit --force-reembed` regenera o embedding sem alterar o body; removida das docs MIGRATION/HOW_TO_USE a receita QUEBRADA de pre-warm (`edit --description "<mesmo>"` nunca re-embedou)
+- **C5 — sem normalização silenciosa de dimensão**: `normalise_dim` (truncar/preencher) substituída por `validate_dim`, que falha em vetores divergentes; o parser de batch valida cobertura de índices e dimensão por item
+- Todo subprocesso LLM agora usa `kill_on_drop(true)` mais `tokio::time::timeout` explícito (`SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`, default 300s); um runtime multi-thread por processo substitui o runtime current-thread por chamada
+- Novos testes de concorrência: pico nunca excede os permits (AtomicUsize), task que panica devolve o permit via RAII e aparece como `is_panic`, cancelamento encerra o fan-out rapidamente, dimensão divergente falha o fan-out
+
+### Corrigido — G43: adoção da dimensionalidade não cobria os comandos principais
+
+- **Adoção da dim em toda abertura de conexão**: o sync do G42/S1 (`schema_meta.dim` → dim ativa) só rodava dentro de `ensure_db_ready`, que `remember` / `edit` / `recall` / `hybrid-search` nunca chamam — esses comandos usavam silenciosamente o default compilado (64) contra bancos 384 pré-v1.0.79, gravando embeddings de dimensões misturadas que pontuam cosseno 0.0 entre si (o recall vetorial ficava cego ao corpus antigo). `open_rw` E `open_ro` agora adotam a dim registrada do banco (best-effort, o override por env continua vencendo); 4 testes de regressão cobrem adoção rw/ro, precedência do env e bancos virgens
+- **`init` não carimba mais `dim=384`**: o `INSERT OR REPLACE ... ('dim', '384')` hardcoded marcava bancos NOVOS com uma dim que contradiz o default ativo; substituído por `INSERT OR IGNORE` com a dim ativa (preserva a dim registrada em re-init de banco existente)
+- **`rename-entity` não grava mais `dim=384` e nome de modelo removido**: o INSERT duplicado (`384` + `multilingual-e5-small` hardcoded) foi substituído pelo writer canônico `upsert_entity_vec` (tamanho real do vetor, versão da CLI como `model`)
+- **Mocks de teste falam os dois formatos de embedding**: `tests/mock-llm/{claude,codex}` devolviam um vetor fixo de 384 dims no formato single, então TODA a suíte de integração `slow-tests` falhava desde o G42/S1+S2 (o gate nunca roda no CI, escondendo o problema); os mocks agora devolvem vetores de 64 dims e respondem ao schema de batch `{items:[{i,v}]}`; os 2 testes obsoletos de daemon viraram guardas de regressão da remoção; `.config/nextest.toml` não filtra mais pelo binário deletado `daemon_integration` — suíte de integração `--features slow-tests` de volta ao verde
+
+### Corrigido — G44: tamanho do lote de embedding não escalava com a dimensionalidade
+
+- **Lote adaptativo à dim**: os lotes do G42/S2 eram FIXOS (8 chunks / 25 nomes de entidade por chamada LLM), calibrados para o default dim 64 (~512 / ~1600 floats por resposta); em bancos legados 384 o mesmo lote de chunks pedia ~3072 floats — medido em produção: claude devolveu 3 de 8 itens (capturado pelo coverage check G42/C5) e codex estourou os 300s, falhando o `remember` 2 vezes. O tamanho do lote agora se adapta por `clamp(base×64/dim, 1, base)` (`embedder.rs::adaptive_batch_for_dim`): dim 64 mantém 8/25, dim 384 usa 1/4 — orçamento de floats constante por chamada, sem necessidade do workaround `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`; 6 testes de regressão cobrem a fórmula e os wrappers de env-dim
 
 ## [1.0.78] - 2026-06-09
 

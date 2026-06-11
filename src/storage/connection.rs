@@ -21,7 +21,37 @@ pub fn open_rw(path: &Path) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;
     apply_connection_pragmas(&conn)?;
     apply_secure_permissions(path);
+    adopt_embedding_dim(&conn);
     Ok(conn)
+}
+
+/// G42/S1 follow-up (G43): adopts the dimensionality recorded in
+/// `schema_meta.dim` for this process, so EVERY command that opens the
+/// database — not only the `ensure_db_ready` auto-init path — produces
+/// and queries vectors of the database dimensionality. Pre-G43 the
+/// adoption only ran in `ensure_db_ready`, which `remember` / `edit` /
+/// `recall` / `hybrid-search` never call; those commands silently used
+/// the compiled default (64) against pre-v1.0.79 384-dim databases,
+/// writing mixed-dim embeddings that cosine-score 0.0 against each
+/// other.
+///
+/// Read-only and best-effort by design: a virgin database without
+/// `schema_meta` is a no-op (the table is created and persisted later
+/// by `ensure_schema` / `ensure_db_ready`). The env/flag override
+/// always wins and is handled inside `constants::embedding_dim`.
+fn adopt_embedding_dim(conn: &Connection) {
+    if crate::constants::embedding_dim_from_env().is_some() {
+        return;
+    }
+    if let Ok(value) = conn.query_row(
+        "SELECT value FROM schema_meta WHERE key = 'dim'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
+        if let Ok(dim) = value.parse::<usize>() {
+            crate::constants::set_active_embedding_dim(dim);
+        }
+    }
 }
 
 pub fn ensure_schema(conn: &mut Connection) -> Result<(), AppError> {
@@ -103,6 +133,53 @@ pub fn ensure_db_ready(paths: &AppPaths) -> Result<(), AppError> {
     // corrupted by G41 already have user_version=50 and skip the block above.
     crate::commands::migrate::ensure_v013_tables_exist(&conn)?;
 
+    // G42/S1 (v1.0.79): synchronise the active embedding dimensionality
+    // with the database. Existing databases keep their recorded `dim`
+    // (e.g. 384 from pre-v1.0.79); an explicit env/flag override is
+    // persisted back so `health --json` reports the truth. This is an
+    // UPDATE of an existing `schema_meta` key — ZERO schema change.
+    sync_embedding_dim_meta(&conn)?;
+
+    Ok(())
+}
+
+/// G42/S1: two-way sync between `schema_meta.dim` and the process-wide
+/// active embedding dimensionality.
+///
+/// - env/flag override set → persist it into `schema_meta.dim`;
+/// - no override → adopt the database value via
+///   [`crate::constants::set_active_embedding_dim`] so old 384-dim
+///   databases keep producing and querying 384-dim vectors;
+/// - key missing (legacy/corrupt meta) → write the resolved default.
+fn sync_embedding_dim_meta(conn: &Connection) -> Result<(), AppError> {
+    let db_dim: Option<usize> = conn
+        .query_row(
+            "SELECT value FROM schema_meta WHERE key = 'dim'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok());
+
+    if let Some(env_dim) = crate::constants::embedding_dim_from_env() {
+        if db_dim != Some(env_dim) {
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', ?1)",
+                rusqlite::params![env_dim.to_string()],
+            )?;
+        }
+        return Ok(());
+    }
+
+    match db_dim {
+        Some(dim) => crate::constants::set_active_embedding_dim(dim),
+        None => {
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', ?1)",
+                rusqlite::params![crate::constants::embedding_dim().to_string()],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -116,8 +193,8 @@ fn insert_default_schema_meta(conn: &Connection) -> Result<(), AppError> {
         [],
     )?;
     conn.execute(
-        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', '384')",
-        [],
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', ?1)",
+        rusqlite::params![crate::constants::embedding_dim().to_string()],
     )?;
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('created_at', CAST(unixepoch() AS TEXT))",
@@ -181,5 +258,103 @@ pub fn open_ro(path: &Path) -> Result<Connection, AppError> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    // G43: read-only commands (`recall`, `hybrid-search`) embed the QUERY
+    // text, so they must adopt the database dimensionality too.
+    adopt_embedding_dim(&conn);
     Ok(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// G43 regression: `open_rw` must adopt `schema_meta.dim` so EVERY
+    /// command (not only the `ensure_db_ready` auto-init path) produces
+    /// vectors of the database dimensionality. Pre-G43, `remember` /
+    /// `edit` / `recall` / `hybrid-search` used the compiled default
+    /// against pre-v1.0.79 384-dim databases, silently writing
+    /// mixed-dim embeddings that cosine-score 0.0 against each other.
+    #[test]
+    #[serial_test::serial(env)]
+    fn open_rw_adopts_schema_meta_dim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("g43.sqlite");
+        {
+            let conn = Connection::open(&db).expect("create seed db");
+            conn.execute_batch(
+                "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+                 INSERT INTO schema_meta VALUES ('dim', '128');",
+            )
+            .expect("seed schema_meta");
+        }
+        std::env::remove_var("SQLITE_GRAPHRAG_EMBEDDING_DIM");
+        let _conn = open_rw(&db).expect("open_rw");
+        let adopted = crate::constants::embedding_dim();
+        // Restore the process-wide default before asserting so a failure
+        // does not leak 128 into parallel tests.
+        crate::constants::set_active_embedding_dim(crate::constants::DEFAULT_EMBEDDING_DIM);
+        assert_eq!(adopted, 128, "open_rw must adopt the recorded db dim (G43)");
+    }
+
+    /// G43 regression: `open_ro` (used by `recall` / `hybrid-search` to
+    /// embed the QUERY text) must adopt the database dim too.
+    #[test]
+    #[serial_test::serial(env)]
+    fn open_ro_adopts_schema_meta_dim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("g43-ro.sqlite");
+        {
+            let conn = Connection::open(&db).expect("create seed db");
+            conn.execute_batch(
+                "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+                 INSERT INTO schema_meta VALUES ('dim', '256');",
+            )
+            .expect("seed schema_meta");
+        }
+        std::env::remove_var("SQLITE_GRAPHRAG_EMBEDDING_DIM");
+        let _conn = open_ro(&db).expect("open_ro");
+        let adopted = crate::constants::embedding_dim();
+        crate::constants::set_active_embedding_dim(crate::constants::DEFAULT_EMBEDDING_DIM);
+        assert_eq!(adopted, 256, "open_ro must adopt the recorded db dim (G43)");
+    }
+
+    /// G43: the env override always wins over the recorded database dim
+    /// (precedence contract of `constants::embedding_dim`).
+    #[test]
+    #[serial_test::serial(env)]
+    fn env_override_wins_over_schema_meta_dim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("g43-env.sqlite");
+        {
+            let conn = Connection::open(&db).expect("create seed db");
+            conn.execute_batch(
+                "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+                 INSERT INTO schema_meta VALUES ('dim', '128');",
+            )
+            .expect("seed schema_meta");
+        }
+        std::env::set_var("SQLITE_GRAPHRAG_EMBEDDING_DIM", "96");
+        let _conn = open_rw(&db).expect("open_rw");
+        let adopted = crate::constants::embedding_dim();
+        std::env::remove_var("SQLITE_GRAPHRAG_EMBEDDING_DIM");
+        crate::constants::set_active_embedding_dim(crate::constants::DEFAULT_EMBEDDING_DIM);
+        assert_eq!(adopted, 96, "env override must win over the db dim (G43)");
+    }
+
+    /// G43: a virgin database without `schema_meta` must open cleanly
+    /// (best-effort adoption is a no-op, never an error).
+    #[test]
+    #[serial_test::serial(env)]
+    fn open_rw_on_virgin_db_is_a_noop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("g43-virgin.sqlite");
+        std::env::remove_var("SQLITE_GRAPHRAG_EMBEDDING_DIM");
+        crate::constants::set_active_embedding_dim(crate::constants::DEFAULT_EMBEDDING_DIM);
+        let _conn = open_rw(&db).expect("open_rw on virgin db must not fail");
+        assert_eq!(
+            crate::constants::embedding_dim(),
+            crate::constants::DEFAULT_EMBEDDING_DIM,
+            "virgin db must keep the compiled default (G43)"
+        );
+    }
 }

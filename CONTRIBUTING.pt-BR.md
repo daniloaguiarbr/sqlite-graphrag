@@ -127,7 +127,7 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - **Features removidas**: `daemon` (como otimização de performance, mantido para compatibilidade de fonte até v1.1.0), caminho `--enable-ner` GLiNER ONNX (movido para feature `ner-legacy`)
 - **Adicionado**: trait `ExtractionBackend` com `LlmBackend` / `EmbeddingBackend` / `NoneBackend` / `CompositeBackend`; trait `VersionAdapter` com `CodexAdapter` / `ClaudeAdapter` / `OpencodeAdapter`; `migrate --rehash` e `migrate --to-llm-only --drop-vec-tables`; tabelas BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings`; cosseno em Rust puro em `src/similarity.rs`; fluxo de credencial LLM OAuth-only com aborto `AppError::Validation` quando `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estão no env
 - **Migração V013** dropa as virtual tables `vec_memories` / `vec_entities` / `vec_chunks`; embeddings antigos são recomputados lazy na próxima escrita
-- **Matriz CI de 3 features**: `default`, `llm-only`, `embedding-legacy`; mock LLM CLI cabeada em 26 arquivos de teste; 107/115 testes previamente lentos corrigidos
+- **Matriz CI**: `default` e `llm-only` desde a v1.0.79 (`embedding-legacy` removida); mock LLM CLI cabeada em 26 arquivos de teste; 107/115 testes previamente lentos corrigidos
 - **7 novos ADRs**: `adr-0019-llm-only-one-shot`, `adr-0020-pure-rust-cosine`, `adr-0021-deprecate-daemon`, `adr-0022-blob-embeddings`, `adr-0023-remove-tokenizers`, `adr-0024-fts5-coarse-cosine-refine`, `adr-0025-oauth-only-embedding`; todos com traduções PT-BR
 - **2 novos schemas JSON**: `migrate-rehash.schema.json`, `migrate-to-llm-only.schema.json`
 - **3 novos docs**: `docs/HOW_TO_USE.md`, `docs/MIGRATION.md`, `docs/AGENTS.md` (e PT-BR) para a arquitetura v1.0.76 LLM-Only

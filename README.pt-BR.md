@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.78 — LLM-Only e one-shot.** O build padrão embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. Para embutir localmente, instale com `--features embedding-legacy`.
+> **Release atual: v1.0.79 — LLM-Only e one-shot.** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A feature `embedding-legacy` foi REMOVIDA na v1.0.79; não existe mais build com modelo local.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -30,8 +30,8 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- **Build padrão (v1.0.78):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
-- **Build legado:** `cargo install sqlite-graphrag --features embedding-legacy` restaura inferência ONNX local via fastembed (binário de ~39 MB)
+- **Build (v1.0.79):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
+- **Build legado:** REMOVIDO na v1.0.79 — a feature `embedding-legacy` e o caminho local fastembed/ONNX não existem mais
 - Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
 - Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
 - Preserva cada edição através de uma tabela imutável de histórico de versões para auditoria completa
@@ -113,17 +113,17 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 > **Flags obrigatórias para `remember`:** `--name`, `--type`, `--description`. Body via `--body "texto"`, `--body-file <caminho>`, ou `--body-stdin` (pipe do stdin).
 > **Limite do body: 500 KB (512000 bytes).** Entradas maiores são rejeitadas com código de saída 6 (`limit exceeded`); divida em múltiplas memórias ou reduza antes de enviar.
 > **Usuários Windows (G29):** v1.0.68 é o primeiro release desde v1.0.65 que compila com sucesso via `cargo install` no Windows. Se você precisa ficar em v1.0.66 ou v1.0.67, veja [docs/CROSS_PLATFORM.pt-BR.md](./docs/CROSS_PLATFORM.pt-BR.md) para a solução manual.
-- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. `remember` e `ingest` podem extrair entidades e relacionamentos via GLiNER zero-shot NER local quando `--enable-ner` é passado.
+- **GraphRAG está habilitado por padrão e roda automaticamente.** Cada subcomando auto-inicializa `graphrag.sqlite` no diretório de trabalho atual se ele não existir. A extração de entidades/relacionamentos vem do backend LLM (`--extraction-backend llm`, o padrão) ou de grafo curado (`--graph-stdin`, `--entities-file`).
 
-### GLiNER zero-shot NER
-- Passe `--enable-ner` ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração de entidades em `remember` e `ingest`
-- Funciona com `--graph-stdin`: passe `"entities": []` no payload JSON e o GLiNER extrai entidades automaticamente
-- Selecione variante do modelo com `--gliner-variant`: `fp32` (1,1 GB, melhor qualidade), `fp16` (580 MB), `int8` (349 MB, mais rápido), `q4` (894 MB), `q4f16` (472 MB)
-- Sobrescreva modelo padrão via `SQLITE_GRAPHRAG_GLINER_MODEL`; ajuste confiança com `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (padrão `0.5`)
-- Campo `extraction_method` na resposta reporta: `gliner-<variant>+regex`, `regex-only` ou `none:extraction-failed`
-- `--skip-extraction` está obsoleto desde v1.0.45; NER está desligado por padrão, use `--enable-ner` para ativar
+### Extração automática (`--enable-ner`)
+- Passe `--enable-ner` ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática em `remember` e `ingest`
+- Desde a v1.0.79 isso executa APENAS extração de URL por regex — o pipeline local GLiNER zero-shot foi removido junto com a feature `ner-legacy`
+- `--gliner-variant`, `SQLITE_GRAPHRAG_GLINER_MODEL` e `SQLITE_GRAPHRAG_GLINER_THRESHOLD` continuam aceitas por compatibilidade mas NÃO têm efeito
+- Campo `extraction_method` na resposta reporta `url-regex`, `regex-only` ou `none:extraction-failed`
+- Para extração de alta qualidade prefira `ingest --mode claude-code`/`--mode codex` (curada por LLM) ou passe entidades curadas via `--graph-stdin`
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito
 
-- **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque pré-baixa o modelo de embedding e aquece um embedding de teste (comandos subsequentes são mais rápidos). Sem `init`, o primeiro comando paga o custo de download do modelo.
+- **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque cria o banco, aplica migrações e valida que uma CLI `claude` ou `codex` está alcançável no `PATH` (não há download de modelo desde a v1.0.76 — os embeddings vêm do subprocesso LLM).
 - **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
 - Reexecute `sqlite-graphrag --version` após qualquer upgrade para confirmar o binário ativo
@@ -132,6 +132,16 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 ## Destaques da Versão
 
+- **v1.0.79**: G42 fechado — o pipeline de embedding LLM deixou de ser lento, serializado e frágil. **(S1)** dimensionalidade de embedding configurável, padrão 64 (`--embedding-dim`, `SQLITE_GRAPHRAG_EMBEDDING_DIM`, faixa [8, 4096]; precedência flag > env > `schema_meta.dim` > 64; bancos 384-dim existentes continuam funcionando sem mudança, ZERO alteração de schema). **(S2)** chamadas LLM em lote (schema `{items:[{i,v}]}` — chunks de 8, nomes de entidade de 25 em dim 64, adaptativos via clamp(base×64/dim, 1, base) desde o G44; 39 spawns viram 4-5). **(S3)** paralelismo real limitado via `Semaphore` + `JoinSet` com a nova flag `--llm-parallelism` em `remember` (padrão 4), `ingest` (padrão 2) e `edit`; resultados fluem por canal mpsc limitado. **(S4)** tempfiles de schema do codex são `NamedTempFile` RAII; o reaper também remove diretórios `codex-home-{pid}` obsoletos. **(S5)** override de modelo via env `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`. **(S6)** `CLAUDE_CONFIG_DIR` vazio por padrão no caminho de embedding (~40-50s → ~10-15s por chamada). **(S7)** erro acionável no codex headless. **(S8)** handler de sinais sem panic (segundo sinal sai com 130 e ZERO I/O). **(S9)** re-embed canônico: `enrich --operation re-embed` mais `edit --force-reembed`. **(C5)** `validate_dim` falha em vetores divergentes em vez de normalizar silenciosamente. Todo subprocesso LLM usa `kill_on_drop` mais `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (padrão 300s). Também REMOVIDOS: a infraestrutura do daemon e as features legadas `embedding-legacy`/`ner-legacy`/`full` com as dependências opcionais fastembed/ort/ndarray/tokenizers/hf-hub — todo build é LLM-only.
+- **v1.0.78**: Correção G41 — `migrate --rehash` não insere mais linhas fantasma para migrações não aplicadas (a V013 era registrada sem executar o SQL)
+- **v1.0.77**: Correção G40 — o INSERT do `run_rehash` agora grava `applied_on` (RFC3339); um NULL ali bloqueava todas as migrações seguintes
+- **v1.0.76**: **Mudança arquitetural quebrante** — o build padrão vira LLM-only e one-shot: sem daemon, sem runtime ONNX, sem download de modelo local; embeddings/NER delegam para `claude -p` ou `codex exec` headless (OAuth). A migração V013 dropa as virtual tables `vec_*` em favor de tabelas de embedding BLOB com cosseno em Rust puro. Novos caminhos de upgrade `migrate --rehash` e `migrate --to-llm-only --drop-vec-tables`. 7 ADRs novos (0019-0025) mais o ADR-0026 documentando a causa raiz do drift da V002
+- **v1.0.75**: novo trait `ExtractionBackend` (G21) atrás da flag global `--extraction-backend llm|embedding|none|both`; a extração via LLM vira o padrão
+- **v1.0.74**: compatibilidade no-op de `--skip-extraction` restaurada (promessa da v1.0.45 honrada) — o erro de validação introduzido na v1.0.67 voltou a ser `tracing::warn!`
+- **v1.0.73**: Correção de CI — `clang`/`mold`/`lld` instalados dentro do container `cross` para builds `aarch64-unknown-linux-gnu`
+- **v1.0.72**: Correção de CI — linker mold instalado nos runners `ubuntu-latest` (12+ jobs falhavam com `invalid linker name in argument`)
+- **v1.0.71**: Correção de CI — `Swatinem/rust-cache` repinado da ref inexistente `v2.8` para `v2.9.1` em 17 pontos
+- **v1.0.70**: Correção de i18n — precedência POSIX manual `LC_ALL > LC_MESSAGES > LANG` (o locale de sistema cacheado ignorava env vars de runtime)
 - **v1.0.69**: 12 gaps fechados (G28-G39) com enforcement OAuth-only total. **(Mudança comportamental OAuth-only)** Os spawns de `claude -p` e `codex exec` agora ABORTAM com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas; a flag `--bare` foi REMOVIDA de todo código executável. Operadores que usam chaves de API DEVEM migrar para OAuth. **(G28 CRÍTICA)** 4 correções reforçadas para proliferação de processos: 7 flags de endurecimento em `claude_runner::build_claude_command` (sempre passa `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions`), `SIGTERM` no timeout, novo `src/reaper.rs` que varre `/proc` no startup, e `src/system_load.rs` mais integração do `CircuitBreaker`. **(G29)** `enrich --operation body-enrich` agora tem sucesso 100% (era 100% falha de CHECK constraint), com trilha de auditoria via `memory_versions`, enum type-safe `MemorySource`, portão de preservação Jaccard (10 testes, padrão 0.7) e idempotência via `blake3`. **(G30)** Lock singleton com escopo por `(job_type, namespace, db_hash)` com novas flags `--wait-job-singleton` e `--force-job-singleton`. **(G31+G32+G33)** Novo `src/commands/codex_spawn.rs` (~700 linhas, 11 testes) unifica o pipeline de spawn, parser JSONL e validação de modelo ChatGPT Pro OAuth; `enrich --mode codex` e `ingest --mode codex` compartilham o mesmo comando canônico (antes divergentes, motivaram o wrapper `~/.local/bin/codex-clean`). **(G34)** Aviso de worker condicional ao modo (Claude > 4, Codex > 16). **(G35)** `--preflight-check`, `--fallback-mode`, `--rate-limit-buffer` evitam perda de batch em rate limit do Claude. **(G36)** `optimize` faz pré-verificação da saúde do FTS5 antes de reconstruir, mais novas `--fts-dry-run`, `--fts-progress`, `--yes`. **(G37)** `--names <NOME>` e `--names-file <CAMINHO>` para enriquecimento seletivo. **(G38)** Padrões de backup 25x mais rápidos (1000/5ms vs 100/50ms) com 4 novas flags de ajuste. **(G39)** Nova família de subcomandos `vec orphan-list`/`vec purge-orphan`/`vec stats` mais hook em `forget` para prevenir novos órfãos. **+53 testes** (692 → 745). 7 novos ADRs (`docs/decisions/adr-0011-0017-*.md`) documentam cada decisão arquitetural.
 - **v1.0.68**: 2 correções CRÍTICAS para Windows + proliferação de processos.  **(G29)** `cargo install` no Windows estava quebrando com `error[E0308]` em `src/terminal.rs:29` porque `HANDLE` em `windows-sys >= 0.59` é `*mut c_void` (era `isize` em 0.48/0.52).  Substituímos pelo idiom type-safe `!handle.is_null() && handle != INVALID_HANDLE_VALUE`, fixamos `windows-sys` em `=0.59.0` exato, e adicionamos o job de CI `windows-build-check` que roda `cargo check --target x86_64-pc-windows-msvc` em todo push.  **(G28-B)** Adicionado `lock::acquire_job_singleton` por `(job_type, namespace)` para que duas invocações paralelas de `enrich`/`ingest --mode claude-code|codex` no mesmo banco falhem rápido com a nova variante de exit-75 `AppError::JobSingletonLocked { job_type, namespace }` em vez de empilhar 4 × N workers × 10 processos MCP (causa raiz do incidente de load average 276 em 2026-06-03).  **(G28-A)** `claude_runner::build_claude_command` agora respeita `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` — quando definido para um diretório vazio, o subprocesso é iniciado com `CLAUDE_CONFIG_DIR=<esse dir>`, suprimindo servidores MCP do escopo user e a fan-out de 8-10 processos.  Deliberadamente evita `--strict-mcp-config` / `--mcp-config '{}'` porque [anthropics/claude-code#10787] documenta que o Claude Code CLI ignora ambas as flags.  **(G28-D)** Helper `retry::CircuitBreaker` mais `tracing::warn!` quando `--llm-parallelism > 4` (combine com o override `CLAUDE_CONFIG_DIR` para manter a fan-out administrável).  Também corrigimos 3 falhas de teste pré-existentes em `src/commands/{history,list,read}.rs` que vazavam o env var `SQLITE_GRAPHRAG_DISPLAY_TZ` entre testes paralelos.
 - **v1.0.67**: 2 NOVOS comandos: `remember-batch` (criação em lote via NDJSON com `--transaction`/`--force-merge`), `completions` (completions de shell para Bash/Zsh/Fish/PowerShell/Elvish); `read --id` para busca direta por memory_id, `enrich --llm-parallelism` para workers LLM paralelos, `health` detecta super-hubs (grau > 50), `edit` otimização skip-embed via comparação body_hash, `rename` purge de ghost para conflitos de nome soft-deleted, validação de flags em hybrid-search/recall/ingest, migração V012 timestamps em relationships, 24 correções de gaps no total
@@ -196,8 +206,8 @@ sqlite-graphrag init --namespace projeto-foo
 ```
 - Sem `--db` ou `SQLITE_GRAPHRAG_DB_PATH`, todo comando CRUD nessa pasta usa `./graphrag.sqlite`
 ### Grave uma memória com grafo de entidades explícito opcional
-- Por padrão, `remember` NÃO executa extração automática de entidades (GLiNER NER desabilitado por padrão)
-- Passe `--enable-ner` para ativar a extração GLiNER zero-shot nessa chamada, ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1`
+- Por padrão, `remember` NÃO executa extração automática de URLs (desligada por padrão)
+- Passe `--enable-ner` para ativar a extração de URL por regex nessa chamada, ou defina `SQLITE_GRAPHRAG_ENABLE_NER=1` (o pipeline GLiNER foi removido na v1.0.79)
 ```bash
 sqlite-graphrag remember \
   --name testes-integracao-postgres \
@@ -222,19 +232,11 @@ sqlite-graphrag remember \
   "relationships_truncated": false
 }
 ```
-### Ative auto-extração GLiNER NER para enriquecimento de entidades
-- GLiNER zero-shot NER é desabilitado por padrão; passe `--enable-ner` para ativar extração automática de entidades/relacionamentos
-- GLiNER substitui o modelo BERT NER anterior e resolve 13 tipos de entidade específicos do domínio vs. 4 tipos fixos do BERT
-- Use `--gliner-variant` para equilibrar qualidade e tamanho de download: `fp32` (padrão, 1,1 GB), `fp16` (580 MB), `int8` (349 MB), `q4` (894 MB), `q4f16` (472 MB)
-- O campo `extraction_method` é populado na resposta JSON quando NER roda
-
-| Variante | Tamanho | Notas |
-|----------|---------|-------|
-| `fp32` | 1,1 GB | Padrão; melhor acurácia |
-| `fp16` | 580 MB | Boa acurácia, metade do tamanho |
-| `int8` | 349 MB | Menor; leve redução de acurácia |
-| `q4` | 894 MB | Pesos quantizados em 4 bits |
-| `q4f16` | 472 MB | Pesos 4 bits, ativações fp16 |
+### Status da extração automática (GLiNER removido na v1.0.79)
+- O pipeline local GLiNER zero-shot NER foi REMOVIDO na v1.0.79 com a feature `ner-legacy`; `--enable-ner` agora executa apenas extração de URL por regex
+- Para extração de entidades/relacionamentos curada por LLM use `ingest --mode claude-code` ou `ingest --mode codex`
+- Para controle exato passe entidades curadas via `--graph-stdin`, `--entities-file` e `--relationships-file`
+- O campo `extraction_method` na resposta JSON reporta qual caminho executou
 
 ```bash
 sqlite-graphrag remember \
@@ -242,7 +244,7 @@ sqlite-graphrag remember \
   --type document \
   --description "notas de release para v1.0.0" \
   --enable-ner \
-  --gliner-variant fp16 \
+  --llm-parallelism 4 \
   --body-stdin < notas.md
 ```
 ### Leia, esqueça, edite e renomeie usando argumento posicional
@@ -410,7 +412,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Núcleo de ciclo de vida do banco
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `init` | `--namespace <ns>` | Inicializa banco e baixa modelo de embedding |
+| `init` | `--namespace <ns>` | Inicializa banco, aplica migrações e valida que uma CLI `claude`/`codex` está alcançável (sem download de modelo) |
 | `health` | `--json` | Exibe integridade, teste funcional FTS5, versão SQLite, detecção de super-hub (grau > 50) |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |
@@ -421,20 +423,20 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Ciclo de vida do conteúdo de memória
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--enable-ner`, `--gliner-variant`, `--force-merge`, `--clear-body`, `--dry-run` | Salva memória com grafo opcional; `--type`/`--description` opcionais com `--force-merge` (herdados do existente); `--dry-run` valida sem persistir |
+| `remember` | `--name`, `--type`, `--description`, `--body` (ou `--body-file`/`--body-stdin`), `--entities-file`, `--relationships-file`, `--graph-stdin`, `--llm-parallelism <N>` (padrão 4), `--enable-ner` (apenas regex de URL desde v1.0.79), `--force-merge`, `--clear-body`, `--dry-run` | Salva memória com grafo opcional; `--type`/`--description` opcionais com `--force-merge` (herdados do existente); `--dry-run` valida sem persistir |
 | `remember-batch` | `--transaction`, `--force-merge`, `--fail-fast` | Criação em lote de memórias via NDJSON no stdin; uma invocação, um slot, uma conexão DB |
 | `recall` | `<query>`, `-k`/`--k` (alias `--limit` desde v1.0.35), `--type`, `--max-hops`, `--max-distance`, `--all-namespaces`, `--no-graph` | Busca memórias semanticamente via KNN + travessia do grafo |
 | `read` | `[nome]` ou `--name <nome>`, `--id <N>`, `--with-graph` | Recupera memória por nome kebab-case exato ou `memory_id` inteiro via `--id`; `--with-graph` inclui entidades e relacionamentos vinculados |
 | `list` | `--type`, `--limit`, `--offset`, `--include-deleted` | Pagina memórias por `updated_at`; limite padrão é tudo com `--json`, 50 para texto; resposta inclui `total_count`, `truncated`, `body_length` |
 | `forget` | `[nome]` ou `--name <nome>` | Remove memória logicamente preservando histórico |
 | `rename` | `[antigo]`, ou `--name`/`--old`/`--from <NOME>` (desde v1.0.35), `--new-name`/`--new`/`--to <NOME>` (desde v1.0.35) | Renomeia memória mantendo versões |
-| `edit` | `[nome]` ou `--name`, `--body`, `--description`, `--type` | Edita corpo, descrição ou tipo gerando nova versão; `--type` altera tipo de memória; pula re-embedding quando conteúdo do body é inalterado |
+| `edit` | `[nome]` ou `--name`, `--body`, `--description`, `--type`, `--force-reembed`, `--llm-parallelism <N>` | Edita corpo, descrição ou tipo gerando nova versão; pula re-embedding quando conteúdo do body é inalterado; `--force-reembed` (v1.0.79) regenera o embedding sem alterar o corpo |
 | `history` | `[nome]` ou `--name <nome>`, `--diff` | Lista versões da memória; `--diff` inclui resumo de mudanças por caractere |
 | `memory-entities` | `[nome]` ou `--name <nome>`, `--entity <nome>` | Lista entidades de uma memória, ou memórias vinculadas a uma entidade (busca reversa via `--entity`) |
 | `restore` | `--name`, `--version` | Restaura memória para versão anterior |
-| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--mode` (`none`/`gliner`/`claude-code`), `--ingest-parallelism N`, `--low-memory`, `--enable-ner`, `--gliner-variant`, `--fail-fast`, `--dry-run`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--max-cost-usd`, `--claude-timeout`, `--rate-limit-wait`, `--keep-queue`, `--queue-db` | Ingere em massa cada arquivo como memória separada (NDJSON); `--mode claude-code` usa Claude Code CLI local para extração curada por LLM; `--dry-run` pré-visualiza mapeamento; `--claude-timeout` define timeout por arquivo (padrão 300s) |
+| `ingest` | `<DIR>`, `--type`, `--pattern <GLOB>` (padrão `*.md`), `--recursive`, `--mode` (`none`/`claude-code`/`codex`; `gliner` aceito mas apenas regex de URL desde v1.0.79), `--ingest-parallelism N`, `--llm-parallelism N` (padrão 2, workers de embedding), `--low-memory`, `--enable-ner` (apenas regex de URL desde v1.0.79), `--fail-fast`, `--dry-run`, `--claude-binary`, `--claude-model`, `--resume`, `--retry-failed`, `--max-cost-usd`, `--claude-timeout`, `--rate-limit-wait`, `--keep-queue`, `--queue-db` | Ingere em massa cada arquivo como memória separada (NDJSON); `--mode claude-code` usa Claude Code CLI local para extração curada por LLM; `--dry-run` pré-visualiza mapeamento; `--claude-timeout` define timeout por arquivo (padrão 300s) |
 | `export` | `--namespace`, `--type`, `--include-deleted`, `--limit`, `--offset` | Exporta memórias como NDJSON para backup ou migração |
-| `cache clear-models` | `--yes` | Remove arquivos de modelo de embedding/GLiNER do diretório XDG cache |
+| `cache clear-models` | `--yes` | Remove arquivos de modelo cacheados por versões ≤ v1.0.75 do diretório XDG cache (nenhum build baixa modelos desde a v1.0.76) |
 
 > **Validação de nomes de memória.** Nomes devem corresponder a `[a-z0-9-]+` (kebab-case, somente ASCII).
 > Unicode e maiúsculas são rejeitados com exit code 1. Nomes maiores que 60 caracteres
@@ -494,17 +496,20 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_LOG_FORMAT` | Formato da saída de tracing em stderr (`pretty` ou `json`) | `pretty` | `json` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Override de namespace ignorando detecção | nenhum | `projeto-foo` |
 | `SQLITE_GRAPHRAG_DISPLAY_TZ` | Fuso horário IANA para campos `*_iso` no JSON | `UTC` | `America/Sao_Paulo` |
-| `SQLITE_GRAPHRAG_ENABLE_NER` | Habilita extração GLiNER NER automaticamente (equivalente a `--enable-ner` em toda chamada). Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (NER desligado) | `1` |
-| `SQLITE_GRAPHRAG_GLINER_VARIANT` | Variante de pesos ONNX do GLiNER: `fp32`, `fp16`, `int8`, `q4`, `q4f16` | `fp32` | `fp16` |
-| `SQLITE_GRAPHRAG_GLINER_THRESHOLD` | Limiar de confiança para predições GLiNER (float em [0.0, 1.0]) | `0.5` | `0.3` |
-| `SQLITE_GRAPHRAG_GLINER_MODEL` | Sobrescreve o identificador do repositório do modelo GLiNER | `onnx-community/gliner_multi-v2.1` | caminho personalizado |
+| `SQLITE_GRAPHRAG_EMBEDDING_DIM` | Override da dimensionalidade do embedding (v1.0.79); precedência: flag `--embedding-dim` > esta env > `schema_meta.dim` > 64; faixa [8, 4096] | `64` (bancos novos) | `384` |
+| `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` | Override de modelo para chamadas de embedding `claude -p` (v1.0.79, simétrica à variável do codex) | modelo padrão da CLI | `claude-haiku-4-5-20251001` |
+| `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` | Timeout por chamada de subprocesso LLM de embedding (v1.0.79) | `300` | `600` |
+| `SQLITE_GRAPHRAG_ENABLE_NER` | Habilita extração automática em `remember`/`ingest`. Desde a v1.0.79 executa apenas extração de URL por regex (o pipeline GLiNER foi removido). Aceita `1`/`true`/`yes`/`on` | indefinido (desligado) | `1` |
+| `SQLITE_GRAPHRAG_GLINER_VARIANT` | SEM EFEITO desde a v1.0.79 (GLiNER removido) — aceita por compatibilidade, ignorada | — | — |
+| `SQLITE_GRAPHRAG_GLINER_THRESHOLD` | SEM EFEITO desde a v1.0.79 (GLiNER removido) — aceita por compatibilidade, ignorada | — | — |
+| `SQLITE_GRAPHRAG_GLINER_MODEL` | SEM EFEITO desde a v1.0.79 (GLiNER removido) — aceita por compatibilidade, ignorada | — | — |
 | `SQLITE_GRAPHRAG_EXTRACTION_MAX_TOKENS` | Budget de tokens para extração de entidades/relações por memória; valores fora de [512, 100.000] utilizam o padrão | `5000` | `8000` |
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão. Nota: o pipeline de extração limita internamente os candidatos a 30 antes da deduplicação, portanto o cap de persistência (padrão 50) funciona como teto de segurança e só é atingido se o extrator for estendido ou substituído. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
 | `SQLITE_GRAPHRAG_LOW_MEMORY` | Força ingest single-threaded para reduzir RSS. Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (multi-thread) | `1` |
 | `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Caminho explícito para o binário Claude Code para `ingest --mode claude-code` | busca no PATH | `/usr/local/bin/claude` |
 | `SQLITE_GRAPHRAG_CODEX_BINARY` | Caminho explícito para o binário Codex CLI para `ingest --mode codex` | busca no PATH | `/usr/local/bin/codex` |
-| `ORT_DYLIB_PATH` | Caminho explícito para `libonnxruntime.so` no carregamento dinâmico de ARM64 GNU | autodiscovery | `/opt/sqlite-graphrag/libonnxruntime.so` |
+| `ORT_DYLIB_PATH` | HISTÓRICA (≤ v1.0.75) — nenhum build carrega ONNX desde a v1.0.76; a variável é ignorada | — | — |
 
 
 ## Padrões de Integração
@@ -563,33 +568,32 @@ RUN cargo install --path .
 
 ## Desempenho
 ### Medido em banco com 1000 memórias
-- A latência em processo com modelo já aquecido continua muito menor que a latência da CLI stateless
-- Invocações stateless da CLI tipicamente gastam cerca de um segundo recarregando o modelo em cada comando pesado
-- Recall aquecido em processo pode ficar bem abaixo da latência da CLI stateless quando o modelo já está residente
-- Primeiro `init` baixa o modelo quantizado uma vez e armazena em cache local
-- **Build padrão (v1.0.78):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM
-- **Build legado:** modelo de embedding usa aproximadamente 1100 MB de RAM por processo com `--features embedding-legacy`
+- A latência de embedding é dominada pelo round-trip do LLM headless (~1-3 s por chamada em lote); leituras puras (`read`, `list`, `graph`) ficam em poucos milissegundos
+- Desde a v1.0.79 as chamadas LLM são EM LOTE (bases de calibração de 8 chunks / 25 nomes de entidade em dim 64, adaptativas à dim — G44) e PARALELAS (`--llm-parallelism`, `Semaphore` + `JoinSet` limitados), então uma memória de 39 itens embeda em 4-5 chamadas em vez de 39 spawns serializados
+- `--embedding-dim 64` (o padrão) corta o output do LLM por vetor ~6x em relação ao payload antigo de 384 dimensões
+- `init` não baixa modelo algum — apenas cria o banco e valida que uma CLI `claude`/`codex` está alcançável
+- **Build (v1.0.79):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM (a carga de 1100 MB do modelo ONNX não existe mais em nenhum build)
 
 
 ## Requisitos de Memória
 ### Dimensionando RAM para cargas de ingest e recall
-- Mínimo de 3 GB de RAM recomendado (4 GB+ para corpora grandes). O piso fica em torno de 2 GB apenas para carregar ONNX runtime + GLiNER NER + fastembed multilingual-e5-small.
-- Paralelismo padrão (`--ingest-parallelism = min(4, cpus/2)`) aumenta o RSS de forma quase linear por worker. Com 4 workers, o ingest de 30 arquivos pico em torno de 4,4 GB.
-- Modo de baixa memória: passe `--low-memory` (ou defina `SQLITE_GRAPHRAG_LOW_MEMORY=1`) para forçar ingest single-threaded. Equivale a `--ingest-parallelism 1` e sobrescreve qualquer valor explícito. Reduz o pico de RSS para cerca de 2,6 GB ao custo de 3-4x mais tempo de relógio.
-- Usuários de container/cgroup: limite abaixo de 3 GB causa OOM-kill durante o load do modelo. Use cgroup `MemoryMax=4G` ou superior em produção.
-- Acompanhamento upstream: veja https://github.com/microsoft/onnxruntime/issues/22271 sobre crescimento de memória da CPU no ONNX após muitas execuções.
+- A CLI em si é leve (binário de ~6 MB); a RAM é dominada pelos subprocessos LLM com aproximadamente 350 MB de RSS por worker (`LLM_WORKER_RSS_MB`)
+- Orçamento de workers: o paralelismo efetivo é `min(--llm-parallelism, cpus, ram_livre × 0.5 / 350 MB, 32)` — o portão de concorrência se adapta automaticamente à memória disponível
+- O paralelismo padrão aumenta o RSS de forma quase linear por worker (`--llm-parallelism 4` ≈ 4 × 350 MB de RSS de subprocessos além da CLI)
+- Modo de baixa memória: passe `--low-memory` (ou defina `SQLITE_GRAPHRAG_LOW_MEMORY=1`) para forçar ingest single-threaded. Equivale a `--ingest-parallelism 1` e sobrescreve qualquer valor explícito, ao custo de 3-4x mais tempo de relógio.
+- Usuários de container/cgroup: orce `MemoryMax` para a CLI mais N × 350 MB de workers LLM (o antigo piso de 3 GB do ONNX não existe mais)
 
 
 ## Espaço em Disco
 ### Tamanho esperado do banco em relação ao conteúdo ingerido
 > **Overhead esperado: aproximadamente 8× o tamanho total dos corpos ingeridos** (ex.: 7,6 MB de texto → ~62,9 MB de banco).
-> O overhead vem dos embeddings float de 384 dimensões, do índice FTS5 e do grafo de entidades/relacionamentos.
+> O overhead vem dos embeddings float (padrão de 64 dimensões desde a v1.0.79; bancos pré-existentes mantêm a dimensionalidade gravada, ex.: 384), do índice FTS5 e do grafo de entidades/relacionamentos.
 > Execute `sqlite-graphrag vacuum --json` após ciclos de `forget`+`purge` em massa para recuperar espaço.
 
 
 ## Invocação Paralela Segura
 ### Semáforo de contagem com até quatro slots simultâneos
-- Cada invocação carrega `multilingual-e5-small` consumindo aproximadamente 1100 MB de RAM após a medição da v1.0.18
+- Cada worker LLM de embedding (subprocesso `claude -p`/`codex exec`) consome aproximadamente 350 MB de RSS — a unidade de orçamento do portão de concorrência desde a v1.0.79
 - `MAX_CONCURRENT_CLI_INSTANCES` continua sendo o teto rígido de 4 subprocessos cooperantes
 - Comandos pesados `init`, `remember`, `recall` e `hybrid-search` podem ser reduzidos dinamicamente para baixo desse teto quando a RAM disponível não sustenta o paralelismo com segurança
 - Arquivos de lock em `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` usando `flock`
@@ -609,9 +613,9 @@ RUN cargo install --path .
 ### Problemas comuns e correções
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 - Banco travado após crash exige `sqlite-graphrag vacuum` para fazer checkpoint do WAL
-- Primeiro `init` leva cerca de um minuto enquanto `fastembed` baixa o modelo quantizado
-- Em `aarch64-unknown-linux-gnu`, comandos pesados de embedding resolvem `libonnxruntime.so` a partir de `ORT_DYLIB_PATH`, do diretório do executável, de `./lib/` e depois do diretório de cache de modelos
-- Se comandos de embedding falharem no ARM64 GNU, aponte `ORT_DYLIB_PATH` para a `libonnxruntime.so` exata distribuída junto da binária
+- `init` é quase instantâneo desde a v1.0.76 — não há download de modelo; se falhar, verifique se uma CLI `claude` ou `codex` está alcançável no `PATH`
+- Chamadas de embedding falhando com exit 11 normalmente indicam CLI LLM ausente, sem autenticação (OAuth obrigatório) ou timeout — aumente `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (padrão 300) em links lentos
+- A orientação sobre `ORT_DYLIB_PATH`/`libonnxruntime.so` é HISTÓRICA (≤ v1.0.75) — nenhum build carrega ONNX desde a v1.0.76
 - Permissão negada no Linux indica falta de escrita no diretório de cache do usuário
 - Detecção de namespace cai para `global` quando não há override explícito
 - Invocações paralelas que excedem o limite seguro efetivo recebem saída 75 e DEVEM tentar com backoff; durante auditorias inicie comandos pesados com `--max-concurrency 1`
@@ -800,8 +804,7 @@ let out = Command::new("sqlite-graphrag")
 
 ## Agradecimentos
 ### Construído sobre excelente código aberto
-- `fastembed` fornece modelos de embedding locais quantizados sem complicação de ONNX
-- `sqlite-vec` adiciona índices vetoriais dentro do SQLite como extensão nativa
+- `fastembed` e `sqlite-vec` sustentaram o pipeline de embedding local até a v1.0.75 (removidos desde então — os embeddings agora vêm de subprocessos `claude`/`codex`)
 - `refinery` executa migrações de schema com garantias transacionais
 - `clap` potencializa o parsing de argumentos da CLI com macros derive
 - `rusqlite` encapsula o SQLite com bindings Rust seguros e build embutido

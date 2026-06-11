@@ -38,10 +38,10 @@ fn compute_chunks_persisted(chunks_created: usize) -> usize {
     # Create with curated graph via --graph-stdin\n  \
     echo '{\"body\":\"...\",\"entities\":[],\"relationships\":[]}' | \\\n    \
     sqlite-graphrag remember --name my-mem --type note --description \"desc\" --graph-stdin\n\n  \
-    # Enable GLiNER NER extraction with --graph-stdin\n  \
-    echo '{\"body\":\"Alice from Microsoft...\",\"entities\":[],\"relationships\":[]}' | \\\n    \
-    sqlite-graphrag remember --name ner-test --type note --description \"test\" \\\n    \
-    --graph-stdin --enable-ner --gliner-variant int8\n\n  \
+    # Enable automatic URL extraction with --graph-stdin (URL-regex only since v1.0.79)\n  \
+    echo '{\"body\":\"See https://docs.rs ...\",\"entities\":[],\"relationships\":[]}' | \\\n    \
+    sqlite-graphrag remember --name url-test --type note --description \"test\" \\\n    \
+    --graph-stdin --enable-ner\n\n  \
     # Idempotent upsert with --force-merge\n  \
     sqlite-graphrag remember --name my-mem --type note --description \"updated\" \\\n    \
     --body \"new content\" --force-merge\n\n\
@@ -143,14 +143,14 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
         num_args = 0..=1,
         default_missing_value = "true",
         default_value = "false",
-        help = "Enable automatic GLiNER NER entity/relationship extraction from body"
+        help = "Enable automatic URL-regex extraction from body (the GLiNER NER pipeline was removed in v1.0.79)"
     )]
     pub enable_ner: bool,
     #[arg(
         long,
         env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
         default_value = "fp32",
-        help = "GLiNER model variant: fp32 (1.1GB, best quality), fp16 (580MB), int8 (349MB, fastest but may miss entities on short texts), q4, q4f16"
+        help = "DEPRECATED: no effect since v1.0.79 (the GLiNER pipeline was removed); accepted for compatibility only"
     )]
     pub gliner_variant: String,
     #[arg(long, hide = true)]
@@ -188,6 +188,13 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     /// exceed this value after the upsert. Default 50. Set 0 to disable the check.
     #[arg(long, default_value_t = 50, value_name = "N")]
     pub max_entity_degree: u32,
+    /// G42/S3 (v1.0.79): maximum simultaneous LLM embedding subprocesses.
+    /// The effective value is further bounded by CPU count and available
+    /// RAM (permits = min(N, cpus, ram_livre*0.5/350MB), clamp [1, 32]).
+    #[arg(long, default_value_t = 4, value_name = "N",
+          value_parser = clap::value_parser!(u64).range(1..=32),
+          help = "Maximum simultaneous LLM embedding subprocesses (default: 4, clamp [1,32])")]
+    pub llm_parallelism: u64,
 }
 
 #[derive(Deserialize, Default)]
@@ -423,6 +430,14 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             "--skip-extraction is deprecated since v1.0.45 and has no effect (NER is disabled by default); remove this flag to silence the warning"
         );
     }
+    // v1.0.79: --gliner-variant is a no-op kept for compatibility; a
+    // non-default value signals the caller still expects the removed
+    // GLiNER pipeline, so warn explicitly.
+    if args.gliner_variant != "fp32" {
+        tracing::warn!(
+            "--gliner-variant is deprecated and has no effect since v1.0.79 (the GLiNER pipeline was removed); --enable-ner performs URL-regex extraction only"
+        );
+    }
     let gliner_variant: crate::extraction::GlinerVariant = match args.gliner_variant.as_str() {
         "int8" => crate::extraction::GlinerVariant::Int8,
         _ => crate::extraction::GlinerVariant::Fp32,
@@ -626,46 +641,46 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let embedding = if chunks_info.len() == 1 {
         crate::embedder::embed_passage_local(&paths.models, &raw_body)?
     } else {
-        let chunk_texts: Vec<&str> = chunks_info
+        let chunk_texts: Vec<String> = chunks_info
             .iter()
-            .map(|c| chunking::chunk_text(&raw_body, c))
+            .map(|c| chunking::chunk_text(&raw_body, c).to_string())
             .collect();
+        // G42/S2+S3 (v1.0.79): chunks are embedded in dim-adaptive
+        // batches per LLM call (G44: clamp(base*64/dim, 1, base)), with up to
+        // --llm-parallelism bounded subprocesses in flight. The old
+        // serial loop spent SUM(items) wall time; the fan-out spends
+        // roughly MAX(batch).
         output::emit_progress_i18n(
             &format!(
-                "Embedding {} chunks serially to keep memory bounded...",
-                chunks_info.len()
+                "Embedding {} chunks in parallel batches (parallelism {})...",
+                chunks_info.len(),
+                args.llm_parallelism
             ),
             &format!(
-                "Embedding {} chunks serially to keep memory bounded...",
-                chunks_info.len()
+                "Embedding {} chunks em lotes paralelos (paralelismo {})...",
+                chunks_info.len(),
+                args.llm_parallelism
             ),
         );
-        let embed_cap = chunk_texts.len();
-        let mut chunk_embeddings = Vec::new();
-        chunk_embeddings.try_reserve(embed_cap).map_err(|_| {
-            AppError::LimitExceeded(format!(
-                "allocation of {embed_cap} chunk embeddings would exceed available memory"
-            ))
-        })?;
-        for chunk_text in &chunk_texts {
-            if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
-                if rss > args.max_rss_mb {
-                    tracing::error!(target: "remember",
-                        rss_mb = rss,
-                        max_rss_mb = args.max_rss_mb,
-                        "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
-                    );
-                    return Err(AppError::LowMemory {
-                        available_mb: crate::memory_guard::available_memory_mb(),
-                        required_mb: args.max_rss_mb,
-                    });
-                }
+        if let Some(rss) = crate::memory_guard::current_process_memory_mb() {
+            if rss > args.max_rss_mb {
+                tracing::error!(target: "remember",
+                    rss_mb = rss,
+                    max_rss_mb = args.max_rss_mb,
+                    "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
+                );
+                return Err(AppError::LowMemory {
+                    available_mb: crate::memory_guard::available_memory_mb(),
+                    required_mb: args.max_rss_mb,
+                });
             }
-            chunk_embeddings.push(crate::embedder::embed_passage_local(
-                &paths.models,
-                chunk_text,
-            )?);
         }
+        let chunk_embeddings = crate::embedder::embed_passages_parallel_local(
+            &paths.models,
+            &chunk_texts,
+            args.llm_parallelism as usize,
+            crate::embedder::chunk_embed_batch_size(),
+        )?;
         output::emit_progress_i18n(
             &format!(
                 "Remember stage: chunk embeddings complete; process RSS {} MB",
@@ -699,17 +714,24 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut entities_persisted = 0usize;
     let mut relationships_persisted = 0usize;
 
-    let graph_entity_embeddings = graph
+    // G42/S2+A4 (v1.0.79): entity names are SHORT texts — they get their
+    // own batch profile (25 per LLM call) instead of one subprocess per
+    // 3-15 byte name (21 names used to cost ~12 minutes, 46% of the
+    // measured remember total).
+    let entity_texts: Vec<String> = graph
         .entities
         .iter()
-        .map(|entity| {
-            let entity_text = match &entity.description {
-                Some(desc) => format!("{} {}", entity.name, desc),
-                None => entity.name.clone(),
-            };
-            crate::embedder::embed_passage_local(&paths.models, &entity_text)
+        .map(|entity| match &entity.description {
+            Some(desc) => format!("{} {}", entity.name, desc),
+            None => entity.name.clone(),
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
+    let graph_entity_embeddings = crate::embedder::embed_passages_parallel_local(
+        &paths.models,
+        &entity_texts,
+        args.llm_parallelism as usize,
+        crate::embedder::entity_embed_batch_size(),
+    )?;
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 

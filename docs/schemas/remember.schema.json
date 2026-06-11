@@ -24,7 +24,7 @@
     "merged_into_memory_id":    { "type": ["integer", "null"], "description": "Present when action=merged; the target memory_id." },
     "relationships_truncated":  { "type": "boolean", "description": "True when relationships were capped at the per-memory limit." },
     "urls_persisted":           { "type": "integer", "minimum": 0, "description": "Number of URLs extracted and persisted." },
-    "extraction_method":        { "type": ["string", "null"], "description": "NER extraction method used: gliner-<variant>+regex, regex-only, or none:extraction-failed. Null when NER was not requested or entities were provided externally." },
+    "extraction_method":        { "type": ["string", "null"], "description": "Automatic extraction method used: url-regex or none:extraction-failed (since v1.0.79; the values gliner-<variant>+regex and regex-only are historical, <= v1.0.75). Null when extraction was not requested or entities were provided externally." },
     "name_was_normalized":      { "type": "boolean", "description": "True when the provided name was auto-normalized to kebab-case." },
     "original_name":            { "type": ["string", "null"], "description": "Original name before kebab-case normalization. Present only when name_was_normalized is true." },
     "warnings":                 { "type": "array", "items": { "type": "string" } },

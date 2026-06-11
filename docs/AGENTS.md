@@ -1,20 +1,27 @@
-# sqlite-graphrag for AI Agents (v1.0.76)
+# sqlite-graphrag for AI Agents (v1.0.79)
 
 > Persistent memory for 27 AI agents in a single 6 MB Rust binary.
-> v1.0.76 is **LLM-only and one-shot**: every `remember` / `ingest`
+> v1.0.79 is **LLM-only and one-shot**: every `remember` / `ingest`
 > spawns a headless claude code or codex CLI subprocess (OAuth, no
 > MCP, no hooks). There is no daemon, no ONNX runtime, no local
 > embedding model.
 
-## v1.0.76 Architecture (LLM-Only)
+## v1.0.79 Architecture (LLM-Only)
 
 The CLI is a thin orchestrator. Every embedding call spawns a
-claude code or codex subprocess that returns a 384-dim f32
-vector in JSON. Every entity extraction call does the same
-with a different output schema. The CLI never holds an
-embedding model in memory; the LLM subprocess is the model.
+claude code or codex subprocess that returns an f32 vector of
+the ACTIVE dimensionality in JSON — default 64 since v1.0.79
+(G42/S1), configurable via `SQLITE_GRAPHRAG_EMBEDDING_DIM`
+(range [8, 4096]); pre-existing databases keep their recorded
+`schema_meta.dim` (e.g. 384). Since v1.0.79 calls are BATCHED
+(`{items:[{i,v}]}`, chunks at 8, entity names at 25 at dim 64, dim-adaptive — G44) and run
+under a bounded `Semaphore` fan-out (`--llm-parallelism`).
+Every entity extraction call does the same with a different
+output schema. The CLI never holds an embedding model in
+memory; the LLM subprocess is the model.
 
-The daemon infrastructure was fully removed in v1.0.76.
+The daemon infrastructure was removed in v1.0.76 and the last
+remaining daemon code was deleted in v1.0.79.
 The CLI is 100% one-shot: each embedding call spawns and
 discards the LLM subprocess. There is no persistent process,
 no socket, no model cache to manage.
@@ -99,10 +106,30 @@ Agents that try to set them will see a clear validation error.
 - `memory-entities --name <memory> --json` — lists all entity nodes linked to a given memory; returns the same schema as `graph entities` items
 - `prune-ner --entity <name> --json` — removes all NER-derived bindings for a given entity name without deleting the entity node itself; useful for cleaning up low-quality auto-extracted entities
 
+## New in v1.0.79
+### REQUIRED — G42: Fast, Parallel, Batched LLM Embedding Pipeline
+- The default embedding dimensionality dropped from 384 to 64 (MRL, arXiv 2205.13147). Precedence: `SQLITE_GRAPHRAG_EMBEDDING_DIM` env (range [8, 4096]) > `schema_meta.dim` of the opened database > 64. Pre-existing databases keep their recorded dimensionality unchanged — ZERO schema change.
+- Embedding calls are BATCHED (G42/S2): N numbered texts per LLM call with the `{items:[{i,v}]}` schema; chunks batch at 8, entity names at 25 (calibration bases at dim 64; since G44 the batch adapts as clamp(base×64/dim, 1, base) — 384-dim databases use 1/4) — 39 subprocess spawns collapse into 4-5.
+- Real bounded parallelism (G42/S3): `Arc<Semaphore>` + `JoinSet` fan-out; new `--llm-parallelism <N>` flag on `remember` (default 4), `ingest` (default 2) and `edit` (default 4), clamp [1, 32]; permits = min(flag, cpus, free RAM × 0.5 / 350 MB per worker, 32).
+- `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` selects the claude embedding model (G42/S5, symmetric to the codex var); `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300) bounds each LLM call, with `kill_on_drop(true)` on every subprocess.
+- The embedding path uses an EMPTY `CLAUDE_CONFIG_DIR` by default (G42/S6): honours `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, else a managed `~/.local/state/sqlite-graphrag/claude-empty-config`; the MCP-isolation flags are silently ignored upstream (anthropics/claude-code#10787) and a populated `~/.claude` cost ~223k cache tokens per call (~40-50s → ~10-15s).
+- `enrich --operation re-embed --limit N --resume` is the canonical one-shot re-embed path; `edit --force-reembed` regenerates one embedding without changing the body (G42/S9).
+- No silent dimension normalisation (G42/C5): divergent vectors fail with an explicit error instead of being truncated or zero-padded.
+- Panic-free signal handler (G42/S8): second signal exits 130 with ZERO I/O — eliminates the SIGABRT on orphaned processes.
+### REQUIRED — G43: Dimensionality Adoption on Every Connection
+- `open_rw` AND `open_ro` adopt `schema_meta.dim` on every database open, so `remember` / `edit` / `recall` / `hybrid-search` operate at the database dimensionality (pre-G43 they silently used the compiled default against pre-v1.0.79 384-dim databases, writing mixed-dim embeddings invisible to cosine).
+- `init` no longer stamps `dim=384`; `rename-entity` records the real vector length via the canonical `upsert_entity_vec` writer.
+### REQUIRED — Removals and Deprecations (v1.0.79)
+- The `embedding-legacy` and `ner-legacy` features were REMOVED (ahead of the v1.1.0 schedule); every build is LLM-only.
+- The remaining `daemon` code was DELETED; the CLI is 100% one-shot.
+- GLiNER-era flags are formal no-ops with explicit `tracing::warn!`: `--gliner-variant` (on `remember` and `ingest`) and `ingest --mode gliner`; `--enable-ner` performs URL-regex extraction only.
+- The CI matrix runs 2 features since v1.0.79: `default` and `llm-only`.
+
+
 ## New in v1.0.76
 ### REQUIRED — LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
 - The default build of v1.0.76 is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 6 MB.
-- The `embedding-legacy` feature restores the v1.0.74 fastembed + ort + tokenizers pipeline for the v1.0.76 → v1.1.0 transition window. The feature is REMOVED in v1.1.0.
+- The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The v1.0.74 fastembed + ort + tokenizers pipeline no longer exists in any build.
 - See ADR-0019 (LLM-Only One-Shot), ADR-0020 (Pure-Rust Cosine), ADR-0021 (Daemon Deprecation), ADR-0022 (BLOB-Backed Embeddings), ADR-0023 (Tokenizer Removal), ADR-0024 (FTS5 Coarse Filter + Cosine Refinement), ADR-0025 (OAuth-Only LLM Credential Flow), ADR-0026 (V002 `vec_tables` Migration Drift).
 ### REQUIRED — `migrate` Subcommand Family
 - USE `migrate --rehash --json` to rewrite recorded migration checksums via `SipHasher13(name|version|sql)`. The algorithm matches `refinery-core 0.9.1` (same SipHasher13 crate, same hashing order). Required for v1.0.74 → v1.0.76 upgrades where V002 was intentionally emptied to a no-op.
@@ -111,11 +138,11 @@ Agents that try to set them will see a clear validation error.
 ### REQUIRED — Schema Version and BLOB-Backed Embeddings
 - The current schema version is 13. Migration V013 drops the `vec_memories`, `vec_entities`, `vec_chunks` virtual tables and replaces them with regular BLOB-backed `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` tables. Cosine similarity is computed in pure Rust on demand in `src/similarity.rs`.
 - Hybrid-search uses FTS5 for coarse filtering and refines the candidate set with pure-Rust cosine over the BLOB embeddings. FTS5 stays healthy because the rebuild is gated by `optimize --fts-skip-when-functional` (G36 from v1.0.69).
-- The `daemon` subcommand is DEPRECATED and kept for source compatibility through v1.0.76 → v1.1.0. It will be REMOVED in v1.1.0.
+- The `daemon` subcommand was fully removed (infrastructure in v1.0.76; remaining `daemon.rs` code deleted in v1.0.79, ahead of the v1.1.0 schedule).
 ### REQUIRED — OAuth-Only Reaffirmed
 - The OAuth-only mandate from v1.0.69 is REAFFIRMED. The spawn ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. Both variables are excluded from the env-clear whitelist as defence in depth.
-- New global flag `--extraction-backend llm|embedding|none|both` (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `embedding` is the legacy fastembed pipeline (requires `embedding-legacy` feature); `none` is a no-op; `both` runs them in parallel and merges.
-- The `ExtractionBackend` trait lives in `src/extract/` with four concrete implementations: `LlmBackend` (default), `EmbeddingBackend` (legacy fastembed pipeline, stub when LLM-only), `NoneBackend` (no-op), and `CompositeBackend` (merges multiple backends in parallel).
+- New global flag `--extraction-backend llm|embedding|none|both` (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `embedding` is a permanent stub since v1.0.79 (legacy pipeline removed) that returns a migration error; `none` is a no-op; `both` runs them in parallel and merges.
+- The `ExtractionBackend` trait lives in `src/extract/` with four concrete implementations: `LlmBackend` (default), `EmbeddingBackend` (permanent stub since v1.0.79; legacy pipeline removed), `NoneBackend` (no-op), and `CompositeBackend` (merges multiple backends in parallel).
 - The `VersionAdapter` trait lives in `src/spawn/` and abstracts executor spawn invocations. `CodexAdapter` detects `codex 0.130.0` through `0.138+` and adapts flags — `codex 0.137.0` removed `--ask-for-approval` in favour of `-a never`. `ClaudeAdapter` covers claude code 2.1.0+. `OpencodeAdapter` covers opencode headless.
 ## New in v1.0.77
 ### REQUIRED — G40 Fix: `applied_on = NULL` Blocks All Migrations
@@ -137,7 +164,7 @@ Agents that try to set them will see a clear validation error.
 
 ### FORBIDDEN — v1.0.76 Anti-patterns
 - NEVER install v1.0.76 with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn aborts.
-- NEVER depend on the daemon in new code; the daemon will be REMOVED in v1.1.0.
+- NEVER depend on the daemon in new code; the daemon was fully removed (code deleted in v1.0.79).
 - NEVER mix `vec_memories` / `vec_entities` / `vec_chunks` queries (removed in v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` instead.
 - NEVER use `migrate --to-llm-only` without `--drop-vec-tables`; the safety guard refuses the operation otherwise.
 
@@ -688,9 +715,9 @@ let output = Command::new("sqlite-graphrag")
 - PASS `--force-merge` in idempotent loops; also restores soft-deleted memories and updates them in one step (since v1.0.51); `--type` and `--description` are optional with `--force-merge` — existing values are inherited when omitted
 - USE `--dry-run` to validate the payload (body size, entity/relationship schema, name uniqueness) without persisting anything; exits 0 on success, non-zero on validation failure
 - USE `--clear-body` with `--force-merge` to explicitly set the body to empty string instead of inheriting the existing body
-- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate GLiNER extraction
-- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
-- Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
+- NER is disabled by default; pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate automatic extraction — URL-regex ONLY since v1.0.79 (the GLiNER pipeline was removed)
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; `--gliner-variant` is a no-op since v1.0.79 and emits a `tracing::warn!` when set to a non-default value
+- Response field `extraction_method` reports the method used: `url-regex` (URL extraction ran) or `none:extraction-failed`; the `gliner-<variant>+regex` and `regex-only` values are HISTORICAL (≤ v1.0.75)
 - RESPECT the limit of 512000 bytes and 512 chunks per body
 - USE `--max-rss-mb <MiB>` to cap process RSS during embedding (default: 8192 MiB); aborts with exit 77 if exceeded
 ### REQUIRED — Attaching Graph in remember
@@ -706,7 +733,7 @@ let output = Command::new("sqlite-graphrag")
 - NEVER use `strength` outside the range `[0.0, 1.0]`
 - NEVER duplicate a name without explicit `--force-merge`
 - NEVER mix `--body`, `--body-file`, `--body-stdin`, `--graph-stdin`
-- NEVER rely on GLiNER auto-extraction in RAM-sensitive CI
+- NEVER rely on `--enable-ner` for semantic entity extraction; it is URL-regex only since v1.0.79 — use `--graph-stdin` with LLM-curated entities or `ingest --mode claude-code|codex`
 - NEVER exceed the relations cap per memory without adjusting env
 - NEVER use `remember` in a loop when `ingest` covers the case
 ### Correct Pattern — remember Examples
@@ -767,14 +794,11 @@ let output = Command::new("sqlite-graphrag")
 - DISTINGUISH the two axes clearly before adjusting
 - WIDEN `--wait-lock <SECONDS>` to wait for a slot before exit 75
 ### REQUIRED — Performance and Extraction
-- NER is disabled by default; pass `--enable-ner` to activate GLiNER extraction
-- `--skip-extraction` is deprecated since v1.0.45 and has no effect; NER is off by default, use `--enable-ner` to activate
-- Response field `extraction_method` reports the method used: `gliner-<variant>+regex` (GLiNER succeeded), `regex-only` (GLiNER unavailable or disabled), or `none:extraction-failed` (GLiNER attempted but errored)
-- GLiNER NER adds approximately 100-200 ms per file with model loaded on modern hardware
-- GLiNER NER adds 2 to 30 seconds per file in `--low-memory` or on first load
-- GLiNER NER downloads the ONNX model on first run (fp32: 1.1 GB, int8: 349 MB via `--gliner-variant`)
-- USE `--enable-ner` only when automated entity enrichment is valuable
-- PREFER `--graph-stdin` with LLM-curated entities for best quality (NER is off by default)
+- NER is disabled by default; pass `--enable-ner` to activate automatic extraction — URL-regex ONLY since v1.0.79 (the GLiNER ONNX pipeline, its 1.1 GB model download and `--gliner-variant` selection were removed)
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect; `--gliner-variant` is a no-op since v1.0.79 and emits a `tracing::warn!` when set
+- Response field `extraction_method` reports `url-regex` or `none:extraction-failed`; `gliner-<variant>+regex` and `regex-only` are HISTORICAL values (≤ v1.0.75)
+- USE `--enable-ner` only when URL entity extraction is valuable
+- PREFER `--mode claude-code` / `--mode codex` or `--graph-stdin` with LLM-curated entities for semantic extraction quality
 ### FORBIDDEN — ingest Anti-patterns
 - NEVER use `fd | xargs sqlite-graphrag remember` when `ingest` exists
 - NEVER omit `--recursive` expecting automatic descent
@@ -802,7 +826,7 @@ let output = Command::new("sqlite-graphrag")
 - NER extraction events go to stderr, NOT stdout
 ### REQUIRED — Ingest Modes (v1.0.62)
 - USE `--mode none` (default) for body-only ingestion without extraction
-- USE `--mode gliner` for local GLiNER NER extraction (requires `--enable-ner`)
+- `--mode gliner` is DEPRECATED since v1.0.79 (URL-regex only; emits a `tracing::warn!`); use `--mode claude-code` or `--mode codex` for semantic extraction
 - USE `--mode claude-code` for LLM-curated extraction via locally installed Claude Code CLI
 - Claude Code mode requires `claude` binary >= 2.1.0 in PATH with active Pro/Max subscription
 - USE `--resume` to continue a previously interrupted claude-code ingest from the queue DB

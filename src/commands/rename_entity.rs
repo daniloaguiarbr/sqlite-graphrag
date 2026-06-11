@@ -99,19 +99,18 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
         "UPDATE entities SET name = ?1, updated_at = unixepoch() WHERE id = ?2",
         params![new_name, entity_id],
     )?;
-    // v1.0.76: BLOB-backed entity_embeddings table (PK = entity_id),
-    // supporting UPDATE OR REPLACE directly. Re-embed with the new name.
-    let embedding_bytes = crate::embedder::f32_to_bytes(&embedding);
-    tx.execute(
-        "INSERT OR REPLACE INTO entity_embeddings(entity_id, namespace, embedding, source, model, dim)
-         VALUES (?1, ?2, ?3, 'llm-claude', 'multilingual-e5-small', 384)",
-        rusqlite::params![
-            entity_id,
-            namespace,
-            embedding_bytes,
-        ],
+    // v1.0.76: BLOB-backed entity_embeddings table (PK = entity_id).
+    // G43: reuse the canonical writer instead of a duplicated INSERT that
+    // hardcoded dim=384 and a removed local model name; `upsert_entity_vec`
+    // records the real vector length and the CLI version as `model`.
+    entities::upsert_entity_vec(
+        &tx,
+        entity_id,
+        &namespace,
+        entity_type,
+        &embedding,
+        &new_name,
     )?;
-    let _ = entity_type; // embedding row no longer carries entity_type
     tx.commit()?;
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

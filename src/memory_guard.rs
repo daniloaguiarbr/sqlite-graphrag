@@ -1,9 +1,9 @@
-//! Memory guard: checks RAM availability before loading the ONNX model.
+//! Memory guard: checks RAM availability before heavy embedding workloads.
 //!
-//! Loading the model via `fastembed` consumes approximately
-//! [`crate::constants::EMBEDDING_LOAD_EXPECTED_RSS_MB`] MiB of resident memory.
-//! Without this guard, multiple parallel invocations can exhaust RAM and trigger
-//! OOM (Out-Of-Memory), stalling the system.
+//! Each LLM embedding worker spawns a `claude -p` / `codex exec` subprocess
+//! costing roughly [`crate::constants::LLM_WORKER_RSS_MB`] MiB of resident
+//! memory. Without this guard, multiple parallel invocations can exhaust RAM
+//! and trigger OOM (Out-Of-Memory), stalling the system.
 //!
 //! This guard queries the OS via `sysinfo` before any heavy initialisation,
 //! aborting with [`crate::errors::AppError::LowMemory`] (exit 77) when the

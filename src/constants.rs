@@ -10,15 +10,65 @@
 //! using the formula:
 //!
 //! ```text
-//! permits = min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5
+//! permits = min(cpus, available_memory_mb / LLM_WORKER_RSS_MB) * 0.5
 //! ```
 //!
 //! where `available_memory_mb` is obtained via `sysinfo::System::available_memory()`
 //! converted to MiB. The result is capped at `MAX_CONCURRENT_CLI_INSTANCES`
 //! and floored at 1.
 
-/// Embedding vector dimensionality produced by `multilingual-e5-small`.
-pub const EMBEDDING_DIM: usize = 384;
+/// Default embedding vector dimensionality (v1.0.79, G42/S1).
+///
+/// Lowered from 384 to 64: with the LLM-only backend (v1.0.76+) each float
+/// costs ~8 autoregressive output tokens, so 384 dims ≈ 3072 tokens per
+/// vector at 50-100 tokens/s (30-60s per vector). 64 dims retain 90%+
+/// retrieval quality for corpora under 100k memories (Matryoshka
+/// Representation Learning, arXiv 2205.13147) while cutting generation
+/// time ~6x. The historical 384 value matched `multilingual-e5-small`.
+pub const DEFAULT_EMBEDDING_DIM: usize = 64;
+
+/// Active embedding dimensionality for this process. `0` means unresolved.
+static ACTIVE_EMBEDDING_DIM: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Resolves the active embedding dimensionality (single source of truth).
+///
+/// Precedence:
+/// 1. `SQLITE_GRAPHRAG_EMBEDDING_DIM` env var (also set by the global
+///    `--embedding-dim` flag before dispatch);
+/// 2. the value recorded via [`set_active_embedding_dim`] — populated from
+///    the `dim` key of `schema_meta` when the database is opened, so
+///    existing 384-dim databases keep working unchanged;
+/// 3. [`DEFAULT_EMBEDDING_DIM`].
+pub fn embedding_dim() -> usize {
+    if let Some(env_dim) = embedding_dim_from_env() {
+        return env_dim;
+    }
+    let active = ACTIVE_EMBEDDING_DIM.load(std::sync::atomic::Ordering::Acquire);
+    if active != 0 {
+        return active;
+    }
+    DEFAULT_EMBEDDING_DIM
+}
+
+/// Reads and validates the env-var override. Values outside [8, 4096]
+/// are rejected (returns `None`) so a typo cannot produce degenerate
+/// vectors or multi-MB embedding rows.
+pub fn embedding_dim_from_env() -> Option<usize> {
+    std::env::var("SQLITE_GRAPHRAG_EMBEDDING_DIM")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (8..=4096).contains(&n))
+}
+
+/// Records the dimensionality found in the opened database
+/// (`schema_meta.dim`). Out-of-range values are ignored. The env var,
+/// when set, always wins over this value (see [`embedding_dim`]).
+pub fn set_active_embedding_dim(dim: usize) {
+    if (8..=4096).contains(&dim) {
+        ACTIVE_EMBEDDING_DIM.store(dim, std::sync::atomic::Ordering::Release);
+    }
+}
 
 /// Default `fastembed` model identifier used by `remember` and `recall`.
 pub const FASTEMBED_MODEL_DEFAULT: &str = "multilingual-e5-small";
@@ -346,15 +396,6 @@ pub const DEFAULT_MAX_RSS_MB: u64 = 8_192;
 /// the invocation returns [`crate::errors::AppError::AllSlotsFull`] with exit code
 /// [`CLI_LOCK_EXIT_CODE`] (75).
 pub const CLI_LOCK_DEFAULT_WAIT_SECS: u64 = 300;
-
-/// Expected RSS in MiB for a single instance with the ONNX model loaded via fastembed.
-///
-/// v1.0.75 (G18 solution): preserved for `embedding-legacy` builds. LLM-only
-/// builds use a much lower `LLM_WORKER_RSS_MB` constant. The formula
-/// `min(cpus, available_memory_mb / EMBEDDING_LOAD_EXPECTED_RSS_MB) * 0.5`
-/// was also reworked to drop the halving factor (the 0.5 margin was the
-/// root cause of G18). See [`crate::lock::calculate_safe_concurrency`].
-pub const EMBEDDING_LOAD_EXPECTED_RSS_MB: u64 = 1_100;
 
 /// v1.0.75 (G18 + G23): expected RSS in MiB for an LLM-only worker that
 /// spawns a `claude -p` or `codex exec` subprocess. Much lower than the

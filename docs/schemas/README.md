@@ -77,9 +77,9 @@
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Commands Without JSON Schemas
 - `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies
-- `daemon` was fully removed in v1.0.76 — no JSON schema applies (historical)
+- `daemon` was removed in v1.0.76 (remaining code deleted in v1.0.79) — no JSON schema applies (historical)
 ### Ingest Mode Schema Selection
-- `--mode none` and `--mode gliner` use `ingest-file-event.schema.json` and `ingest-summary.schema.json`
+- `--mode none` and `--mode gliner` (DEPRECATED since v1.0.79: URL-regex only, emits a deprecation warning) use `ingest-file-event.schema.json` and `ingest-summary.schema.json`
 - `--mode claude-code` uses `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json`, and `ingest-claude-summary.schema.json`
 - Claude-code mode emits additional phase events (validate, scan) before per-file events
 - Per-file events in claude-code mode include `entities`, `rels`, and `cost_usd` fields not present in normal ingest
@@ -123,9 +123,9 @@
 - Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
 ### Comandos Sem JSON Schema
 - `completions` emite scripts de completion de shell (Bash, Zsh, Fish, PowerShell, Elvish) como texto puro — nenhum JSON schema se aplica
-- `daemon` foi totalmente removido na v1.0.76 — nenhum JSON schema se aplica (histórico)
+- `daemon` foi removido na v1.0.76 (código restante deletado na v1.0.79) — nenhum JSON schema se aplica (histórico)
 ### Seleção de Schema por Modo de Ingestão
-- `--mode none` e `--mode gliner` usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
+- `--mode none` e `--mode gliner` (DEPRECIADO desde a v1.0.79: somente URL-regex, emite aviso de depreciação) usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
 - `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`
 - Modo claude-code emite eventos de fase adicionais (validate, scan) antes dos eventos por arquivo
 - Eventos por arquivo no modo claude-code incluem campos `entities`, `rels` e `cost_usd` não presentes na ingestão normal

@@ -84,11 +84,15 @@ claude --version  # precisa reportar 2.1.0 ou superior
 codex --version   # precisa reportar 0.130.0 ou superior
 ```
 
-## Passo 1 — Instalar o Binário v1.0.76
+## Passo 1 — Instalar o Binário Atual (v1.0.79)
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.76 --force
+cargo install sqlite-graphrag --version 1.0.79 --force
 ```
+
+Instale a v1.0.79 (não a 1.0.76): ela carrega os reparos de
+migração G40/G41 e os fixes de embedding G42/G43 dos quais o
+caminho de upgrade depende.
 
 Isso instala o build padrão LLM-only (binário de ~6 MB, sem runtime ONNX, sem download de modelo). Se você quer o pipeline legado fastembed para a janela de transição:
 
@@ -96,7 +100,8 @@ Isso instala o build padrão LLM-only (binário de ~6 MB, sem runtime ONNX, sem 
 cargo install sqlite-graphrag --version 1.0.76 --features embedding-legacy --force
 ```
 
-A feature `embedding-legacy` é REMOVIDA na v1.1.0.
+A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o
+cronograma da v1.1.0); o comando acima só funciona fixando 1.0.76-1.0.78.
 
 ## Passo 2 — Migrar o Banco Existente
 
@@ -126,15 +131,21 @@ O `--drop-vec-tables` é uma guarda de segurança explícita: a CLI exige confir
 
 ## Passo 3 — Re-Embed (Opcional)
 
-Se você tem um corpus grande e quer evitar o pico de re-embedding na primeira chamada, pode fazer pre-warm dos embeddings:
+Se você tem um corpus grande, re-embede com o loop one-shot canônico (G42/S9, v1.0.79). Cada invocação processa um lote PEQUENO e ENCERRA, então o job sobrevive a qualquer janela de supervisor externo:
 
 ```bash
-# Listar todos os nomes de memória no namespace
-sqlite-graphrag list --namespace meuprojeto --json | jaq -r '.items[].name' | \
-  xargs -I {} sqlite-graphrag edit --name {} --description "rewarm embedding"
+# Re-embedar memórias sem linha vetorial, 5 por invocação.
+# Repita (loop externo) até o resumo reportar 0 itens completados.
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
 ```
 
-Isso re-embute cada memória via LLM. O comando `edit` dispara re-embedding mesmo quando só a descrição muda; veja a flag `--description` para o caminho idempotente.
+Para forçar UMA memória a re-embedar sem tocar no body, use `edit --force-reembed` (v1.0.79):
+
+```bash
+sqlite-graphrag edit --name minha-memoria --force-reembed
+```
+
+ATENÇÃO — a receita pré-v1.0.79 (`edit --description "rewarm embedding"`) estava ERRADA: edições somente de descrição pulam o re-embedding por design (v1.0.63) e deixam `memory_embeddings` intocada.
 
 ## Passo 4 — Verificar o Caminho LLM
 
@@ -159,6 +170,7 @@ A primeira chamada leva 1-3 segundos (spawn de subprocesso LLM). Chamadas subseq
 | `vec_memories`, `vec_entities`, `vec_chunks` são virtual tables sqlite-vec | `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` são tabelas BLOB-backed regulares |
 | Modelo fastembed: `multilingual-e5-small` (local, determinístico) | Modelo LLM: `claude-sonnet-4-6` (claude) ou `gpt-5.4` (codex) (round-trip de rede) |
 | Primeiro `init` baixa 1.1 GB de pesos ONNX | Primeiro `init` faz um round-trip LLM de 1-3 s |
+| Dimensionalidade de embedding fixa em 384 | Default 64 desde a v1.0.79, configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos migrados mantêm a 384 registrada em todo comando (G43) e continuam pesquisáveis; `enrich --operation re-embed` re-embeda na dim ativa |
 
 ## Rollback
 

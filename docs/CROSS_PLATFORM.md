@@ -9,8 +9,8 @@
 
 ## v1.0.76 Architectural Note
 - The default build is LLM-only and one-shot. There is no ONNX runtime to ship, no `libonnxruntime.so` to bundle, and no `multilingual-e5-small` model to download. Embedding generation delegates to a headless `claude code` or `codex` subprocess (OAuth) spawned per call.
-- The `embedding-legacy` feature restores the v1.0.74 fastembed + ort + tokenizers pipeline for the v1.0.76 → v1.1.0 transition window. It will be REMOVED in v1.1.0; do not depend on it in new code.
-- The cross-platform table below describes the default LLM-only build. Operators using `--features embedding-legacy` will see a larger binary and the ARM64 GNU ONNX contract from the v1.0.75 era.
+- The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). Every build is LLM-only; the fastembed + ort + tokenizers pipeline and the ARM64 GNU ONNX contract no longer apply.
+- The cross-platform table below describes the LLM-only build, which is now the only build.
 
 
 ## The Pain You Already Know
@@ -51,7 +51,7 @@ cargo install --locked sqlite-graphrag
 - SHA256SUMS manifest ships alongside every binary for integrity verification
 - Debug symbols ship as separate `.dSYM` or `.pdb` artifacts on request
 - Cross-compilation uses `cross` on Linux hosts for the `aarch64-unknown-linux-gnu` matrix cell
-- Sizes are for the default LLM-only build; `--features embedding-legacy` adds the fastembed + ort + tokenizers graph and the binary grows back toward the v1.0.74 ~25 MB
+- Sizes are for the LLM-only build (the only build since v1.0.79)
 
 ### Unsupported Release Targets — Why They Are Excluded
 - `x86_64-apple-darwin` is excluded because the v1.0.76 build no longer requires a prebuilt ONNX Runtime path (and Intel macOS has been a long-deprecated macOS target since 2024)
@@ -61,7 +61,7 @@ cargo install --locked sqlite-graphrag
 ### ARM64 GNU — No More Shared ONNX Runtime Contract
 - v1.0.76 has NO ONNX runtime dependency in the default build. The previous `aarch64-unknown-linux-gnu` ONNX contract (`libonnxruntime.so` next to the binary, `ORT_DYLIB_PATH` env var) is REMOVED.
 - The dynamic loader contract was an artifact of the v1.0.74 fastembed pipeline. With the LLM subprocess as the model, the binary needs zero C shared libraries beyond libc.
-- Operators using `--features embedding-legacy` must continue to ship `libonnxruntime.so` on `aarch64-unknown-linux-gnu`. This is the only configuration that still needs the contract.
+- Historical note: builds with the removed `embedding-legacy` feature (v1.0.76-v1.0.78) shipped `libonnxruntime.so` on `aarch64-unknown-linux-gnu`. Since v1.0.79 no configuration needs the contract.
 
 
 ## Linux Notes

@@ -17,7 +17,7 @@ use sqlite_graphrag::{
     cli::Cli,
     commands,
     constants::{
-        CLI_LOCK_DEFAULT_WAIT_SECS, EMBEDDING_LOAD_EXPECTED_RSS_MB, MAX_CONCURRENT_CLI_INSTANCES,
+        CLI_LOCK_DEFAULT_WAIT_SECS, LLM_WORKER_RSS_MB, MAX_CONCURRENT_CLI_INSTANCES,
         MIN_AVAILABLE_MEMORY_MB,
     },
     lock::acquire_cli_slot,
@@ -162,6 +162,17 @@ fn main() -> std::process::ExitCode {
     // This call is a no-op if the pre-parse above already initialized the OnceLock.
     sqlite_graphrag::i18n::init(cli.lang);
 
+    // G42/S1 (v1.0.79): the global --embedding-dim flag materialises as the
+    // env var so every downstream resolution point (constants::embedding_dim,
+    // schema_meta sync) sees a single, consistent override channel.
+    if let Some(dim) = cli.embedding_dim {
+        // SAFETY: set before any tokio runtime or worker thread spawns;
+        // single-threaded context guaranteed by program startup order.
+        unsafe {
+            std::env::set_var("SQLITE_GRAPHRAG_EMBEDDING_DIM", dim.to_string());
+        }
+    }
+
     // Initialize display timezone (flag --tz > env SQLITE_GRAPHRAG_DISPLAY_TZ > UTC).
     if let Err(e) = sqlite_graphrag::tz::init(cli.tz) {
         sqlite_graphrag::output::emit_error(&e.localized_message());
@@ -220,10 +231,12 @@ fn main() -> std::process::ExitCode {
                 return std::process::ExitCode::from(20);
             }
         };
+        // v1.0.79: every build is LLM-only; the per-worker budget is the
+        // claude/codex subprocess RSS, not the old 1100 MB ONNX model load.
         let safe_concurrency = calculate_safe_concurrency(
             available_mb,
             cpu_count,
-            EMBEDDING_LOAD_EXPECTED_RSS_MB,
+            LLM_WORKER_RSS_MB,
             MAX_CONCURRENT_CLI_INSTANCES,
         );
         let effective_concurrency = requested_concurrency.min(safe_concurrency);

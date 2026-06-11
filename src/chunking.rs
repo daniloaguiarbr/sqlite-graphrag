@@ -6,7 +6,7 @@
 // src/chunking.rs
 // Token-based chunking for E5 model (512 token limit)
 
-use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS, EMBEDDING_DIM};
+use crate::constants::{CHUNK_OVERLAP_TOKENS, CHUNK_SIZE_TOKENS};
 use text_splitter::{ChunkConfig, MarkdownSplitter};
 
 // Conservative heuristic to reduce the risk of underestimating the real token count
@@ -231,11 +231,12 @@ fn next_char_boundary(body: &str, mut idx: usize) -> usize {
 
 /// Computes the mean of `chunk_embeddings` and L2-normalizes the result.
 ///
-/// Returns a zero-vector of length `EMBEDDING_DIM` when the input is empty.
-/// When a single embedding is provided it is returned as-is (no copy).
+/// Returns a zero-vector of the active embedding dimensionality when the
+/// input is empty. When a single embedding is provided it is returned
+/// as-is (no copy).
 pub fn aggregate_embeddings(chunk_embeddings: &[Vec<f32>]) -> Vec<f32> {
     if chunk_embeddings.is_empty() {
-        return vec![0.0f32; EMBEDDING_DIM];
+        return vec![0.0f32; crate::constants::embedding_dim()];
     }
     if chunk_embeddings.len() == 1 {
         return chunk_embeddings[0].clone();

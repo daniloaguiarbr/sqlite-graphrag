@@ -1,6 +1,7 @@
 # ADR-0023: Removal of `tokenizers` Crate (v1.0.76)
 
 - Status: Accepted (2026-06-07)
+- Update (v1.0.79): the `embedding-legacy` escape hatch mentioned below was removed ahead of the v1.1.0 schedule; the transition window is closed
 - Deciders: Danilo Aguiar
 - Scope: src/tokenizer.rs, src/chunking.rs, src/commands/ingest.rs, src/commands/remember.rs, src/commands/enrich.rs, src/commands/ingest_claude.rs, Cargo.toml
 

@@ -293,7 +293,7 @@ pub fn upsert_vec(
                 &embedding_bytes,
                 "llm-headless",
                 crate::constants::SQLITE_GRAPHRAG_VERSION,
-                crate::constants::EMBEDDING_DIM as i64,
+                crate::constants::embedding_dim() as i64,
             ],
         )?;
         Ok(())
@@ -473,7 +473,7 @@ pub fn list(
 ///
 /// # Arguments
 ///
-/// - `embedding` — query vector of length [`crate::constants::EMBEDDING_DIM`].
+/// - `embedding` — query vector of length [`crate::constants::embedding_dim()`].
 /// - `namespaces` — namespaces to search. Empty slice means "all namespaces".
 /// - `memory_type` — optional filter on the `type` column.
 /// - `k` — maximum number of hits to return.
@@ -492,11 +492,11 @@ pub fn knn_search(
     memory_type: Option<&str>,
     k: usize,
 ) -> Result<Vec<(i64, f32)>, AppError> {
-    if embedding.len() != crate::constants::EMBEDDING_DIM {
+    if embedding.len() != crate::constants::embedding_dim() {
         return Err(AppError::Embedding(format!(
             "knn_search embedding has {} dims, expected {}",
             embedding.len(),
-            crate::constants::EMBEDDING_DIM
+            crate::constants::embedding_dim()
         )));
     }
     // v1.0.76: full table scan + in-process cosine similarity. The
@@ -1072,7 +1072,7 @@ mod tests {
         let m = new_memory("mem-vec");
         let id = insert(&conn, &m)?;
 
-        let embedding: Vec<f32> = vec![0.1; 384];
+        let embedding: Vec<f32> = vec![0.1; crate::constants::embedding_dim()];
         upsert_vec(
             &conn, id, "global", "user", &embedding, "mem-vec", "snippet",
         )?;
@@ -1101,10 +1101,10 @@ mod tests {
         let m = new_memory("mem-vec-upsert");
         let id = insert(&conn, &m)?;
 
-        let emb1: Vec<f32> = vec![0.1; 384];
+        let emb1: Vec<f32> = vec![0.1; crate::constants::embedding_dim()];
         upsert_vec(&conn, id, "global", "user", &emb1, "mem-vec-upsert", "s1")?;
 
-        let emb2: Vec<f32> = vec![0.9; 384];
+        let emb2: Vec<f32> = vec![0.9; crate::constants::embedding_dim()];
         upsert_vec(&conn, id, "global", "user", &emb2, "mem-vec-upsert", "s2")?;
 
         let count: i64 = conn.query_row(
@@ -1120,19 +1120,19 @@ mod tests {
     fn knn_search_returns_results_by_distance() -> TestResult {
         let conn = setup_conn()?;
 
-        // emb_a: predominantemente positivo — cosseno alto com query [1.0; 384]
+        // emb_a: predominantemente positivo — cosseno alto com a query toda-uns
         let ma = new_memory("mem-knn-a");
         let id_a = insert(&conn, &ma)?;
-        let emb_a: Vec<f32> = vec![1.0; 384];
+        let emb_a: Vec<f32> = vec![1.0; crate::constants::embedding_dim()];
         upsert_vec(&conn, id_a, "global", "user", &emb_a, "mem-knn-a", "s")?;
 
-        // emb_b: predominantemente negativo — cosseno baixo com query [1.0; 384]
+        // emb_b: predominantemente negativo — cosseno baixo com a query toda-uns
         let mb = new_memory("mem-knn-b");
         let id_b = insert(&conn, &mb)?;
-        let emb_b: Vec<f32> = vec![-1.0; 384];
+        let emb_b: Vec<f32> = vec![-1.0; crate::constants::embedding_dim()];
         upsert_vec(&conn, id_b, "global", "user", &emb_b, "mem-knn-b", "s")?;
 
-        let query: Vec<f32> = vec![1.0; 384];
+        let query: Vec<f32> = vec![1.0; crate::constants::embedding_dim()];
         let results = knn_search(&conn, &query, &["global".to_string()], None, 2)?;
         assert!(!results.is_empty());
         assert_eq!(results[0].0, id_a);
@@ -1145,7 +1145,7 @@ mod tests {
 
         let ma = new_memory("mem-knn-tipo-user");
         let id_a = insert(&conn, &ma)?;
-        let emb: Vec<f32> = vec![1.0; 384];
+        let emb: Vec<f32> = vec![1.0; crate::constants::embedding_dim()];
         upsert_vec(
             &conn,
             id_a,
@@ -1169,7 +1169,7 @@ mod tests {
             "s",
         )?;
 
-        let query: Vec<f32> = vec![1.0; 384];
+        let query: Vec<f32> = vec![1.0; crate::constants::embedding_dim()];
         let results_user = knn_search(&conn, &query, &["global".to_string()], Some("user"), 5)?;
         assert!(results_user.iter().all(|(id, _)| *id == id_a));
 

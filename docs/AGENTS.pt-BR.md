@@ -1,14 +1,14 @@
-# sqlite-graphrag para Agentes de IA (v1.0.76)
+# sqlite-graphrag para Agentes de IA (v1.0.79)
 
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 6 MB.
-> A v1.0.76 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code ou do codex CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
+> A v1.0.79 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code ou do codex CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
 
-## Arquitetura v1.0.76 (Apenas LLM)
+## Arquitetura v1.0.79 (Apenas LLM)
 
-A CLI é um orquestrador fino. Cada chamada de embedding spawna um subprocesso do claude code ou do codex que devolve um vetor `f32` de 384 dimensões em JSON. Cada chamada de extração de entidades faz o mesmo com um schema de saída diferente. A CLI nunca mantém um modelo de embedding em memória; o subprocesso LLM é o modelo.
+A CLI é um orquestrador fino. Cada chamada de embedding spawna um subprocesso do claude code ou do codex que devolve um vetor `f32` da dimensionalidade ATIVA em JSON — default 64 desde a v1.0.79 (G42/S1), configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos pré-existentes mantêm a `schema_meta.dim` registrada (ex.: 384). Desde a v1.0.79 as chamadas são EM LOTE (`{items:[{i,v}]}`, chunks em 8, nomes de entidade em 25 em dim 64, adaptativos à dim — G44) e rodam sob fan-out bounded com `Semaphore` (`--llm-parallelism`). Cada chamada de extração de entidades faz o mesmo com um schema de saída diferente. A CLI nunca mantém um modelo de embedding em memória; o subprocesso LLM é o modelo.
 
-A infraestrutura do daemon foi totalmente removida na v1.0.76.
+A infraestrutura do daemon foi removida na v1.0.76 e o código restante do daemon foi deletado na v1.0.79.
 A CLI é 100% one-shot: cada chamada de embedding spawna e
 descarta o subprocesso LLM. Não há processo persistente,
 não há socket, não há cache de modelo a gerenciar.
@@ -86,10 +86,30 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 - `memory-entities --name <memory> --json` — lista todos os nós de entidade vinculados a uma dada memória; retorna o mesmo schema dos itens de `graph entities`
 - `prune-ner --entity <name> --json` — remove todos os bindings derivados de NER para um dado nome de entidade sem deletar o nó da entidade; útil para limpar entidades extraídas automaticamente com baixa qualidade
 
+## Novidades na v1.0.79
+### OBRIGATÓRIO — G42: Pipeline de Embedding LLM Rápido, Paralelo e em Lote
+- A dimensionalidade default de embedding caiu de 384 para 64 (MRL, arXiv 2205.13147). Precedência: env `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]) > `schema_meta.dim` do banco aberto > 64. Bancos pré-existentes mantêm a dimensionalidade registrada sem mudança — ZERO alteração de schema.
+- Chamadas de embedding são EM LOTE (G42/S2): N textos numerados por chamada LLM com o schema `{items:[{i,v}]}`; chunks em lotes de 8, nomes de entidade em 25 (bases de calibração em dim 64; desde o G44 o lote se adapta por clamp(base×64/dim, 1, base) — bancos 384 usam 1/4) — 39 spawns de subprocesso colapsam em 4-5.
+- Paralelismo real bounded (G42/S3): fan-out com `Arc<Semaphore>` + `JoinSet`; nova flag `--llm-parallelism <N>` em `remember` (default 4), `ingest` (default 2) e `edit` (default 4), clamp [1, 32]; permits = min(flag, cpus, RAM livre × 0.5 / 350 MB por worker, 32).
+- `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` seleciona o modelo de embedding do claude (G42/S5, simétrico à var do codex); `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300) limita cada chamada LLM, com `kill_on_drop(true)` em todo subprocesso.
+- O caminho de embedding usa `CLAUDE_CONFIG_DIR` VAZIO por padrão (G42/S6): honra `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, senão um diretório gerenciado `~/.local/state/sqlite-graphrag/claude-empty-config`; as flags de isolamento MCP são silenciosamente ignoradas pelo upstream (anthropics/claude-code#10787) e um `~/.claude` populado custava ~223k tokens de cache por chamada (~40-50s → ~10-15s).
+- `enrich --operation re-embed --limit N --resume` é o caminho one-shot canônico de re-embedding; `edit --force-reembed` regenera um embedding sem mudar o body (G42/S9).
+- Sem normalização silenciosa de dimensão (G42/C5): vetores divergentes falham com erro explícito em vez de truncamento ou preenchimento com zeros.
+- Handler de sinais sem panic (G42/S8): o segundo sinal sai com 130 e ZERO I/O — elimina o SIGABRT em processos órfãos.
+### OBRIGATÓRIO — G43: Adoção da Dimensionalidade em Toda Conexão
+- `open_rw` E `open_ro` adotam `schema_meta.dim` em toda abertura de banco, então `remember` / `edit` / `recall` / `hybrid-search` operam na dimensionalidade do banco (antes do G43 usavam silenciosamente o default compilado contra bancos 384 pré-v1.0.79, gravando embeddings de dimensões misturadas invisíveis ao cosseno).
+- `init` não carimba mais `dim=384`; `rename-entity` registra o tamanho real do vetor via o writer canônico `upsert_entity_vec`.
+### OBRIGATÓRIO — Remoções e Depreciações (v1.0.79)
+- As features `embedding-legacy` e `ner-legacy` foram REMOVIDAS (antecipando o cronograma da v1.1.0); todo build é LLM-only.
+- O código restante do `daemon` foi DELETADO; a CLI é 100% one-shot.
+- Flags da era GLiNER são no-ops formais com `tracing::warn!` explícito: `--gliner-variant` (em `remember` e `ingest`) e `ingest --mode gliner`; `--enable-ner` executa somente extração URL-regex.
+- A matriz de CI roda 2 features desde a v1.0.79: `default` e `llm-only`.
+
+
 ## Novidades na v1.0.76
 ### OBRIGATÓRIO — Arquitetura LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
 - O build padrão da v1.0.76 é LLM-Only e one-shot. Sem daemon, sem runtime ONNX, sem download do modelo `multilingual-e5-small`. A geração de embeddings e a NER delegam para um subprocesso headless `claude code` ou `codex` (OAuth, sem MCP, sem hooks). O binário de release tem aproximadamente 6 MB.
-- A feature `embedding-legacy` restaura o pipeline v1.0.74 de fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0. A feature é REMOVIDA na v1.1.0.
+- A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o cronograma da v1.1.0). O pipeline v1.0.74 de fastembed + ort + tokenizers não existe mais em nenhum build.
 - Veja ADR-0019 (LLM-Only One-Shot), ADR-0020 (Cosseno em Rust Puro), ADR-0021 (Depreciação do Daemon), ADR-0022 (Embeddings com Backing BLOB), ADR-0023 (Remoção do Tokenizer), ADR-0024 (Filtro Grosso FTS5 + Refinamento por Cosseno), ADR-0025 (Fluxo de Credencial LLM Apenas OAuth), ADR-0026 (Drift da Migração V002 `vec_tables`).
 ### OBRIGATÓRIO — Família do Subcomando `migrate`
 - USAR `migrate --rehash --json` para reescrever os checksums registrados de migração via `SipHasher13(name|version|sql)`. O algoritmo casa com `refinery-core 0.9.1` (mesma crate SipHasher13, mesma ordem de hashing). Obrigatório para upgrades v1.0.74 → v1.0.76 onde V002 foi intencionalmente esvaziada para um no-op.
@@ -98,11 +118,11 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 ### OBRIGATÓRIO — Versão de Schema e Embeddings com Backing BLOB
 - A versão atual de schema é 13. A migração V013 descarta as virtual tables `vec_memories`, `vec_entities` e `vec_chunks` e as substitui pelas tabelas regulares com backing BLOB `memory_embeddings`, `entity_embeddings` e `chunk_embeddings`. A similaridade por cosseno é computada em Rust puro sob demanda em `src/similarity.rs`.
 - A `hybrid-search` usa FTS5 como filtro grosso e refina o conjunto de candidatos com cosseno em Rust puro sobre os embeddings BLOB. O FTS5 permanece saudável porque a reconstrução é bloqueada por `optimize --fts-skip-when-functional` (G36 da v1.0.69).
-- O subcomando `daemon` está DEPRECIADO e mantido para compatibilidade de fonte pela transição v1.0.76 → v1.1.0. Será REMOVIDO na v1.1.0.
+- O subcomando `daemon` foi totalmente removido (infraestrutura na v1.0.76; código restante de `daemon.rs` deletado na v1.0.79, antecipando o cronograma da v1.1.0).
 ### OBRIGATÓRIO — Apenas OAuth Reafirmado
 - O mandato OAuth-only da v1.0.69 é REAFIRMADO. O spawn ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiverem definidas no ambiente. Ambas as variáveis são excluídas da whitelist de env-clear como defesa em profundidade.
-- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração. `llm` é o caminho LLM; `embedding` é o pipeline fastembed legado (requer feature `embedding-legacy`); `none` é um no-op; `both` roda os dois em paralelo e funde.
-- O trait `ExtractionBackend` vive em `src/extract/` com quatro implementações concretas: `LlmBackend` (padrão), `EmbeddingBackend` (pipeline fastembed legado, stub quando LLM-only), `NoneBackend` (no-op) e `CompositeBackend` (funde múltiplos backends em paralelo).
+- Nova flag global `--extraction-backend llm|embedding|none|both` (padrão `llm`) seleciona o backend de extração. `llm` é o caminho LLM; `embedding` é um stub permanente desde a v1.0.79 (pipeline legado removido) que retorna erro de migração; `none` é um no-op; `both` roda os dois em paralelo e funde.
+- O trait `ExtractionBackend` vive em `src/extract/` com quatro implementações concretas: `LlmBackend` (padrão), `EmbeddingBackend` (stub permanente desde a v1.0.79; pipeline legado removido), `NoneBackend` (no-op) e `CompositeBackend` (funde múltiplos backends em paralelo).
 - O trait `VersionAdapter` vive em `src/spawn/` e abstrai invocações de spawn de executores. `CodexAdapter` detecta `codex 0.130.0` até `0.138+` e adapta flags — `codex 0.137.0` removeu `--ask-for-approval` em favor de `-a never`. `ClaudeAdapter` cobre claude code 2.1.0+. `OpencodeAdapter` cobre opencode headless.
 ## Novidades na v1.0.77
 ### OBRIGATÓRIO — Correção do G40: `applied_on = NULL` Bloqueia Todas as Migrações
@@ -116,7 +136,7 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 
 ### PROIBIDO — Antipadrões da v1.0.76
 - NUNCA instale a v1.0.76 com `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn aborta
-- NUNCA dependa do daemon em código novo; o daemon será REMOVIDO na v1.1.0
+- NUNCA dependa do daemon em código novo; o daemon foi totalmente removido (código deletado na v1.0.79)
 - NUNCA misture queries em `vec_memories` / `vec_entities` / `vec_chunks` (removidas na v1.0.76); use `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` no lugar
 - NUNCA use `migrate --to-llm-only` sem `--drop-vec-tables`; a rede de segurança recusa a operação caso contrário
 
@@ -677,9 +697,9 @@ let output = Command::new("sqlite-graphrag")
 - PASSAR `--force-merge` em loops idempotentes; também restaura memórias soft-deleted e atualiza em um passo (desde v1.0.51); `--type` e `--description` são opcionais com `--force-merge` — valores existentes são herdados quando omitidos
 - USAR `--dry-run` para validar o payload (tamanho do body, schema de entidades/relacionamentos, unicidade do nome) sem persistir nada; retorna 0 em sucesso, não-zero em falha de validação
 - USAR `--clear-body` com `--force-merge` para definir explicitamente o body como string vazia em vez de herdar o body existente
-- NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração GLiNER
-- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
-- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
+- NER desabilitado por padrão; passar `--enable-ner` ou definir `SQLITE_GRAPHRAG_ENABLE_NER=1` para ativar extração automática — SOMENTE URL-regex desde a v1.0.79 (o pipeline GLiNER foi removido)
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; `--gliner-variant` é no-op desde a v1.0.79 e emite `tracing::warn!` quando definido com valor não-default
+- Campo de resposta `extraction_method` informa o método utilizado: `url-regex` (extração de URLs executada) ou `none:extraction-failed`; os valores `gliner-<variant>+regex` e `regex-only` são HISTÓRICOS (≤ v1.0.75)
 - RESPEITAR limite de 512000 bytes e 512 chunks por body
 - USAR `--max-rss-mb <MiB>` para limitar o RSS do processo durante embedding (padrão: 8192 MiB); aborta com exit 77 se excedido
 ### OBRIGATÓRIO — Anexar Grafo no remember
@@ -695,7 +715,7 @@ let output = Command::new("sqlite-graphrag")
 - NUNCA usar `strength` fora do intervalo `[0.0, 1.0]`
 - NUNCA duplicar nome sem `--force-merge` explícito
 - NUNCA misturar `--body`, `--body-file`, `--body-stdin`, `--graph-stdin`
-- NUNCA depender de auto-extração GLiNER em CI sensível a RAM
+- NUNCA depender de `--enable-ner` para extração semântica de entidades; é somente URL-regex desde a v1.0.79 — use `--graph-stdin` com entidades curadas por LLM ou `ingest --mode claude-code|codex`
 - NUNCA exceder o cap de relações por memória sem ajustar env
 - NUNCA usar `remember` em loop quando `ingest` cobre o caso
 ### Padrão Correto — Exemplos de remember
@@ -756,14 +776,11 @@ let output = Command::new("sqlite-graphrag")
 - DISTINGUIR claramente os dois eixos antes de ajustar
 - AMPLIAR `--wait-lock <SECONDS>` para esperar slot antes de exit 75
 ### OBRIGATÓRIO — Performance e Extração
-- NER desabilitado por padrão; passar `--enable-ner` para ativar extração GLiNER
-- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; NER está desabilitado por padrão, use `--enable-ner` para ativar
-- Campo de resposta `extraction_method` informa o método utilizado: `gliner-<variant>+regex` (GLiNER bem-sucedido), `regex-only` (GLiNER indisponível ou desabilitado), ou `none:extraction-failed` (GLiNER tentado mas com erro)
-- GLiNER NER adiciona aproximadamente 100-200 ms por arquivo com modelo carregado em hardware moderno
-- GLiNER NER adiciona 2 a 30 segundos por arquivo em `--low-memory` ou no primeiro carregamento
-- GLiNER NER baixa o modelo ONNX no primeiro run (fp32: 1,1 GB, int8: 349 MB via `--gliner-variant`)
-- USAR `--enable-ner` apenas quando enriquecimento automático de entidades for valioso
-- PREFERIR `--graph-stdin` com entidades curadas por LLM para melhor qualidade (NER desabilitado por padrão)
+- NER desabilitado por padrão; passar `--enable-ner` para ativar extração automática — SOMENTE URL-regex desde a v1.0.79 (o pipeline GLiNER em ONNX, o download de modelo de 1,1 GB e a seleção via `--gliner-variant` foram removidos)
+- `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito; `--gliner-variant` é no-op desde a v1.0.79 e emite `tracing::warn!` quando definido
+- Campo de resposta `extraction_method` informa `url-regex` ou `none:extraction-failed`; `gliner-<variant>+regex` e `regex-only` são valores HISTÓRICOS (≤ v1.0.75)
+- USAR `--enable-ner` apenas quando a extração de URLs como entidades for valiosa
+- PREFERIR `--mode claude-code` / `--mode codex` ou `--graph-stdin` com entidades curadas por LLM para qualidade de extração semântica
 ### PROIBIDO — Anti-padrões de ingest
 - NUNCA usar `fd | xargs sqlite-graphrag remember` quando `ingest` existe
 - NUNCA omitir `--recursive` esperando descida automática
@@ -791,7 +808,7 @@ let output = Command::new("sqlite-graphrag")
 - Eventos de extração NER vão para stderr, NÃO stdout
 ### OBRIGATÓRIO — Modos de Ingestão (v1.0.62)
 - USAR `--mode none` (padrão) para ingestão body-only sem extração
-- USAR `--mode gliner` para extração NER local com GLiNER (requer `--enable-ner`)
+- `--mode gliner` está DEPRECIADO desde a v1.0.79 (somente URL-regex; emite `tracing::warn!`); usar `--mode claude-code` ou `--mode codex` para extração semântica
 - USAR `--mode claude-code` para extração curada por LLM via Claude Code CLI instalado localmente
 - Modo Claude Code requer binário `claude` >= 2.1.0 no PATH com assinatura Pro/Max ativa
 - USAR `--resume` para continuar ingestão claude-code interrompida a partir do queue DB

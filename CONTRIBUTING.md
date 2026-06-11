@@ -89,9 +89,9 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Test assertions involving timestamps MUST be timezone-agnostic — parse ISO via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` instead of hardcoded `1970-01-01T00:00:00` strings; this rule was added after a `SQLITE_GRAPHRAG_DISPLAY_TZ` leak in v1.0.66/v1.0.67 made three pre-existing tests flaky
 
 ### v1.0.76 Test Matrix (3 features)
-- The CI matrix runs `clippy` and `test` jobs across `default`, `llm-only`, and `embedding-legacy` features
+- The CI matrix runs `clippy` and `test` jobs across `default` and `llm-only` features (the `embedding-legacy` leg was removed in v1.0.79 together with the feature)
 - The `default` and `llm-only` jobs install a stub `mock-llm` CLI on `PATH` so embedding round-trip tests can run without real OAuth credentials
-- The `embedding-legacy` job uses the v1.0.74 fastembed ONNX model cache path
+
 - New code that touches `src/extract/llm_embedding.rs` MUST be exercised via the mock LLM contract in `tests/fixtures/mock-llm/`
 - New code that depends on the daemon MUST NOT depend on daemon autostart; the daemon is deprecated and will be removed in v1.1.0
 - New code that introduces a new migration version MUST round-trip through `migrate --rehash` and `migrate --to-llm-only` integration tests to validate the SipHasher13 checksum rewrite path
@@ -135,7 +135,7 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - **Removed features**: `daemon` (as a performance optimization, kept for source compatibility until v1.1.0), `--enable-ner` GLiNER ONNX path (moved to `ner-legacy` feature)
 - **Added**: `ExtractionBackend` trait with `LlmBackend` / `EmbeddingBackend` / `NoneBackend` / `CompositeBackend`; `VersionAdapter` trait with `CodexAdapter` / `ClaudeAdapter` / `OpencodeAdapter`; `migrate --rehash` and `migrate --to-llm-only --drop-vec-tables`; BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables; pure-Rust cosine in `src/similarity.rs`; OAuth-only LLM credential flow with `AppError::Validation` abort on `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in env
 - **Migration V013** drops the `vec_memories` / `vec_entities` / `vec_chunks` virtual tables; old embeddings are recomputed lazily on next write
-- **CI matrix 3 features**: `default`, `llm-only`, `embedding-legacy`; mock LLM CLI wired into 26 test files; 107/115 previously-slow tests fixed
+- **CI matrix**: `default` and `llm-only` since v1.0.79 (`embedding-legacy` removed); mock LLM CLI wired into 26 test files; 107/115 previously-slow tests fixed
 - **7 new ADRs**: `adr-0019-llm-only-one-shot`, `adr-0020-pure-rust-cosine`, `adr-0021-deprecate-daemon`, `adr-0022-blob-embeddings`, `adr-0023-remove-tokenizers`, `adr-0024-fts5-coarse-cosine-refine`, `adr-0025-oauth-only-embedding`; all with PT-BR translations
 - **2 new JSON schemas**: `migrate-rehash.schema.json`, `migrate-to-llm-only.schema.json`
 - **3 new docs**: `docs/HOW_TO_USE.md`, `docs/MIGRATION.md`, `docs/AGENTS.md` (and PT-BR) for the v1.0.76 LLM-Only architecture

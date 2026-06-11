@@ -1,8 +1,8 @@
 //! Entity and URL extraction pipeline (v1.0.76).
 //!
-//! v1.0.76: the default build is **LLM-only**. The legacy GLiNER NER
-//! pipeline moved to `extraction_gliner.rs` and is gated behind the
-//! `ner-legacy` feature. The default build extracts:
+//! v1.0.76: the default build is **LLM-only**. v1.0.79: the legacy GLiNER
+//! NER pipeline (`extraction_gliner.rs`, `ner-legacy` feature) was REMOVED
+//! entirely. The build extracts:
 //!
 //! - **URLs** via regex (always available, no model needed).
 //! - **Entities** via the `ExtractionBackend` trait (LLM headless).
@@ -11,9 +11,8 @@
 //!
 //! The `extract_graph_auto` function below is the entry point used by
 //! `remember`, `ingest`, and `enrich`. With the default feature set, it
-//! runs the LLM extraction backend and returns whatever entities the LLM
-//! found. Operators who want the legacy GLiNER NER can build with
-//! `--features ner-legacy` (transition window only; removed in v1.1.0).
+//! runs the regex URL pass; entity extraction happens through the LLM
+//! extraction backend selected at the command layer.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,9 +46,9 @@ pub struct ExtractionResult {
     pub elapsed_ms: u64,
 }
 
-/// GLiNER model variant enum. Only meaningful with the `ner-legacy`
-/// feature. In the default build, the variant is ignored and extraction
-/// is delegated to the LLM.
+/// GLiNER model variant enum. Vestigial since v1.0.79: the `ner-legacy`
+/// feature was removed, so the variant is parsed for CLI compatibility
+/// and then ignored (extraction is URL-regex or LLM-delegated).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlinerVariant {
     Fp32,
@@ -138,46 +137,8 @@ pub fn extract_urls(body: &str) -> Vec<ExtractedUrl> {
 }
 
 /// Top-level extraction entry point used by `remember`, `ingest`, and
-/// `enrich`. Runs the regex URL pass first (always available). In the
-/// default build this remains URL-only; with `ner-legacy` enabled it
-/// delegates to the legacy GLiNER pipeline and adapts its output.
-#[cfg(feature = "ner-legacy")]
-pub fn extract_graph_auto(
-    body: &str,
-    paths: &crate::paths::AppPaths,
-    gliner_variant: GlinerVariant,
-) -> Result<ExtractionResult, crate::errors::AppError> {
-    let legacy_variant = match gliner_variant {
-        GlinerVariant::Fp32 => crate::extraction_gliner::GlinerVariant::Fp32,
-        GlinerVariant::Int8 => crate::extraction_gliner::GlinerVariant::Int8,
-    };
-    let extracted = crate::extraction_gliner::extract_graph_auto(body, paths, legacy_variant)
-        .map_err(crate::errors::AppError::from)?;
-    Ok(ExtractionResult {
-        entities: extracted
-            .entities
-            .into_iter()
-            .map(|entity| ExtractedEntity {
-                name: entity.name,
-                entity_type: entity.entity_type.to_string(),
-                start: 0,
-                end: 0,
-            })
-            .collect(),
-        urls: extracted
-            .urls
-            .into_iter()
-            .map(|url| ExtractedUrl {
-                end: url.offset + url.url.len(),
-                url: url.url,
-                start: url.offset,
-            })
-            .collect(),
-        elapsed_ms: 0,
-    })
-}
-
-#[cfg(not(feature = "ner-legacy"))]
+/// `enrich`. Runs the regex URL pass (always available); the legacy GLiNER
+/// delegation was removed in v1.0.79 together with the `ner-legacy` feature.
 pub fn extract_graph_auto(
     body: &str,
     _paths: &crate::paths::AppPaths,

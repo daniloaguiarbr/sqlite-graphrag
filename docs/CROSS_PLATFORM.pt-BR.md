@@ -8,8 +8,8 @@
 
 ## Nota Arquitetural da v1.0.76
 - O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth) spawnado por chamada.
-- A feature `embedding-legacy` restaura o pipeline v1.0.74 de fastembed + ort + tokenizers para a janela de transição v1.0.76 → v1.1.0. Será REMOVIDA na v1.1.0; não dependa dela em código novo.
-- A tabela cross-platform abaixo descreve o build padrão LLM-only. Operadores usando `--features embedding-legacy` verão um binário maior e o contrato ONNX ARM64 GNU da era v1.0.75.
+- A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o cronograma da v1.1.0). Todo build é LLM-only; o pipeline fastembed + ort + tokenizers e o contrato ONNX ARM64 GNU não se aplicam mais.
+- A tabela cross-platform abaixo descreve o build LLM-only, que agora é o único build.
 
 
 
@@ -59,8 +59,8 @@ cargo install --path .
 
 ### ARM64 GNU — Sem Mais Contrato de ONNX Runtime Compartilhado
 - A v1.0.76 NÃO tem dependência de ONNX runtime no build padrão. O contrato anterior do `aarch64-unknown-linux-gnu` (`libonnxruntime.so` ao lado da binária, env var `ORT_DYLIB_PATH`) está REMOVIDO.
-- Operadores que usam `--features embedding-legacy` precisam continuar distribuindo `libonnxruntime.so` no `aarch64-unknown-linux-gnu`. Esta é a única configuração que ainda precisa do contrato. Use carregamento dinâmico do ONNX Runtime em vez de bundling por linkedição, distribua `libonnxruntime.so` ao lado da binária, em `./lib/`, ou configure `ORT_DYLIB_PATH` explicitamente.
-- Isso evita falhas de link específicas do target ao usar arquivos pré-compilados do ONNX Runtime durante a cross-compilação
+- Nota histórica: builds com a feature removida `embedding-legacy` (v1.0.76-v1.0.78) distribuíam `libonnxruntime.so` no `aarch64-unknown-linux-gnu`. Desde a v1.0.79 nenhuma configuração precisa do contrato.
+- O contrato de dynamic loader era um artefato do pipeline fastembed da v1.0.74. Com o subprocesso LLM como modelo, a binária precisa de zero bibliotecas C compartilhadas além da libc
 
 
 ## Notas Para Linux
@@ -68,8 +68,7 @@ cargo install --path .
 - Binário glibc roda em Ubuntu 20.04, Debian 11, Fedora 36 e distros mainstream
 - `x86_64-unknown-linux-gnu` e `aarch64-unknown-linux-gnu` são os únicos assets Linux publicados agora
 - `x86_64-unknown-linux-musl` não faz parte da matriz oficial de release desde `v1.0.16`
-- Reintroduzir musl agora exige build custom do ONNX Runtime ou outra estratégia de backend
-- Prefira glibc para workstations, runners de CI e imagens de container até esse gap fechar
+- Com o build LLM-only, nenhuma restrição de versão de glibc existe além do que a binária do subprocesso LLM precisa
 
 
 ## Notas Para macOS
@@ -83,8 +82,8 @@ cargo install --path .
 ### Apple Silicon — Performance Nativa em M1 M2 M3 M4
 - Binário aarch64 nativo roda trinta por cento mais rápido que x86_64 via Rosetta
 - macOS Intel está atualmente fora da matriz oficial de release nesta configuração do projeto
-- O carregamento de modelo segue a mesma stack `fastembed` mais `ort` usada nos outros targets publicados
-- Geração de embeddings atinge 2000 tokens por segundo no M3 Pro contra 800 via Rosetta
+- O subprocesso LLM (`claude` ou `codex`) é o modelo; a binária Rust em si não carrega nenhum modelo
+- A única latência do lado LLM é o spawn de 1-3 s do subprocesso (claude / codex) por `remember` / `recall`
 - Cold start mede vinte e oito milissegundos no M2 graças ao preditor de branches melhorado
 
 

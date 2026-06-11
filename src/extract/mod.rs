@@ -138,5 +138,5 @@ pub mod none_backend;
 pub use composite_backend::{backend_from_kind, default_backend, CompositeBackend};
 pub use embedding_backend::EmbeddingBackend;
 pub use llm_backend::{LlmBackend, LlmExtractorConfig};
-pub use llm_embedding::{EmbeddingFlavour, LlmEmbedding, EMBEDDING_DIM as LLM_EMBEDDING_DIM};
+pub use llm_embedding::{EmbeddingFlavour, LlmEmbedding};
 pub use none_backend::NoneBackend;

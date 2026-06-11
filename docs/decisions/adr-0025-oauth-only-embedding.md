@@ -1,6 +1,7 @@
 # ADR-0025: OAuth-Only LLM Credential Flow (v1.0.76 — inherited from v1.0.69)
 
 - Status: Accepted (reaffirmed 2026-06-07)
+- Update (v1.0.79): the `embedding-legacy` escape hatch mentioned below was removed ahead of the v1.1.0 schedule; the transition window is closed
 - Deciders: Danilo Aguiar
 - Scope: src/extract/llm_embedding.rs, src/commands/claude_runner.rs, src/commands/codex_spawn.rs
 

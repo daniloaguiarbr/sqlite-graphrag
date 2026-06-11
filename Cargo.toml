@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.78"
+version = "1.0.79"
 edition = "2021"
 rust-version = "1.88"
 description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 6 MB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
@@ -163,26 +163,15 @@ text-splitter = { version = "0.30.1", default-features = false, features = ["mar
 # v1.0.76: fastembed, ort, ndarray, tokenizers, hf-hub removed from the
 # default build. Embedding generation is now LLM headless only (claude
 # code / codex CLI OAuth). The default build is a small, fast Rust
-# binary that delegates generation to external processes. Enable the
-# `embedding-legacy` feature ONLY for the transition window; the
-# feature is removed in v1.1.0.
+# binary that delegates generation to external processes.
+# v1.0.79: the optional legacy dependencies and the `embedding-legacy`,
+# `ner-legacy` and `full` features were removed entirely (originally
+# scheduled for v1.1.0). The CLI is LLM-only with no local-model path.
 unicode-normalization = "0.1.25"
 tempfile = "3"
 sys-locale = "0.3"
 wait-timeout = "0.2"
 which = "7"
-
-# v1.0.76: legacy fastembed / ort / tokenizers are pulled in ONLY when
-# the corresponding feature is enabled. The default build has none of
-# these crates in the dependency graph.
-fastembed = { version = "5.13.4", default-features = false, optional = true, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
-ort = { version = "=2.0.0-rc.12", default-features = false, optional = true, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs"] }
-ndarray = { version = "0.16", optional = true }
-tokenizers = { version = "0.22", default-features = false, optional = true, features = ["onig"] }
-huggingface-hub = { package = "hf-hub", version = "0.4", default-features = false, optional = true, features = ["ureq"] }
-# Cargo's `dep:` syntax uses the manifest name, not the package rename.
-# We document the rename in a comment so the feature wiring stays
-# unambiguous: the `huggingface-hub` line above IS the `hf-hub` crate.
 
 [target.'cfg(windows)'.dependencies]
 # G29 (v1.0.68): pinned exact to 0.59.0 because HANDLE type changed
@@ -238,19 +227,10 @@ deadlock-detection = ["parking_lot/deadlock_detection"]
 # generation delegated to claude code / codex CLI headless (OAuth, no MCP,
 # no hooks). The CLI is one-shot; there is no daemon.
 llm-only = []
-# v1.0.76 — Legacy fastembed pipeline
-# Opt-in for the transition window. Enables fastembed + ort + ndarray +
-# tokenizers + hf-hub. Will be REMOVED in v1.1.0; do not depend on this in
-# new code. Users on this feature should migrate to LLM-only by running
-# `sqlite-graphrag migrate --to-llm-only` and rebuilding with --no-default-features.
-embedding-legacy = ["dep:fastembed", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:huggingface-hub"]
-# v1.0.76 — Legacy GLiNER NER
-# Opt-in for the transition window. Enables the ONNX GLiNER model loader
-# for automatic NER. Will be REMOVED in v1.1.0; users should rely on the
-# LLM extraction backend (claude / codex) via ExtractionBackend::Llm.
-ner-legacy = ["dep:ort", "dep:ndarray"]
-# Full binary with everything (default in v1.0.74, removed in v1.1.0).
-full = ["embedding-legacy", "ner-legacy"]
+# v1.0.79 (G42 follow-up): the legacy features `embedding-legacy`,
+# `ner-legacy` and `full` were REMOVED (originally scheduled for v1.1.0)
+# together with the optional fastembed / ort / ndarray / tokenizers /
+# hf-hub dependencies. There is no local-model build path any more.
 
 [profile.dev]
 opt-level = 1
@@ -259,4 +239,4 @@ opt-level = 1
 opt-level = 2
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)', 'cfg(sqlite_graphrag_miri)', 'cfg(feature, values("embedding-legacy"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqlite_graphrag_loom)', 'cfg(sqlite_graphrag_miri)'] }

@@ -32,7 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2025]
-        features: [default, llm-only, embedding-legacy]
+        # v1.0.79: embedding-legacy removed from the matrix together with
+        # the feature itself; every build is LLM-only.
+        features: [default, llm-only]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -55,7 +57,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2025]
-        features: [default, llm-only, embedding-legacy]
+        # v1.0.79: embedding-legacy removed from the matrix together with
+        # the feature itself; every build is LLM-only.
+        features: [default, llm-only]
         include:
           # llm-only is the v1.0.76 default build; it is the canonical
           # feature set for the release artifact.
@@ -63,30 +67,12 @@ jobs:
             llm-cli: claude
           - features: llm-only
             llm-cli: claude
-          - features: embedding-legacy
-            llm-cli: none
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
-      - name: Cache embedding ONNX models
-        if: matrix.features == 'embedding-legacy'
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/sqlite-graphrag/models
-            ~/Library/Caches/sqlite-graphrag/models
-            ~\AppData\Local\sqlite-graphrag\cache\models
-          key: embedding-model-multilingual-e5-small-${{ runner.os }}-v3
-      - name: Pre-download embedding model (embedding-legacy only)
-        if: matrix.features == 'embedding-legacy'
-        shell: bash
-        run: |
-          timeout 120 cargo run --features embedding-legacy -- init --json 2>/dev/null && echo "Model ready" || echo "Model download skipped or failed (tests will skip gracefully)"
-        env:
-          SQLITE_GRAPHRAG_HOME: ${{ runner.temp }}/sgr-model-init
       - name: Install LLM CLI mock (default + llm-only only)
         if: matrix.llm-cli == 'claude'
         shell: bash

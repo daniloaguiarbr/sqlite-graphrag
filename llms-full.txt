@@ -1,9 +1,9 @@
-# sqlite-graphrag (v1.0.76 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.79 LLM-Only One-Shot)
 
 
 > Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 6 MB binary. Zero model download. v1.0.76 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 6 MB binary. Zero model download. v1.0.79 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 - Compact summary in [llms.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.txt); Portuguese variant in [llms.pt-BR.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.pt-BR.txt)
@@ -25,8 +25,9 @@ cargo install --locked sqlite-graphrag
 
 ## v1.0.76 Architecture
 - The default build is LLM-only and one-shot. See [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) for the full architectural rationale.
-- Daemon: deprecated in v1.0.76, removed in v1.1.0. Still works for source compatibility but the daemon no longer offers a speedup because the LLM subprocess is the new "model loader".
-- `embedding-legacy` feature: opt-in to keep the v1.0.74 fastembed + ort + tokenizers + sqlite-vec pipeline. REMOVED in v1.1.0. Use `cargo install sqlite-graphrag --features embedding-legacy --locked`.
+- Daemon: deprecated in v1.0.76 and FULLY REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The CLI is 100% one-shot with zero IPC; the LLM subprocess is the "model loader".
+- `embedding-legacy`, `ner-legacy` and `full` features: REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The v1.0.74 fastembed + ort + tokenizers + sqlite-vec pipeline no longer exists; every build is LLM-only.
+- Embedding pipeline (G42, v1.0.79): default dimensionality 64 (`--embedding-dim`, `SQLITE_GRAPHRAG_EMBEDDING_DIM`, range [8, 4096]; precedence flag > env > `schema_meta.dim` > 64; existing 384-dim databases keep working unchanged); batched LLM calls (calibration bases of 8 chunks / 25 entity names at dim 64, adapted as clamp(base×64/dim, 1, base) — G44); bounded parallelism via `--llm-parallelism` on `remember` (default 4), `ingest` (default 2) and `edit`; `kill_on_drop` plus `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300s) on every subprocess; canonical re-embed via `enrich --operation re-embed` and `edit --force-reembed`; `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` model override.
 - Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite with V013 vec-table drop.
 - OAuth enforcement: the spawn of `claude -p` or `codex exec` ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. See [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md).
 - Cosine similarity is now pure Rust: see [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) for the algorithm. BLOB-backed embeddings replace vec0: see [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md).
@@ -46,7 +47,7 @@ cargo install --locked sqlite-graphrag
 ## Economy That Converts
 ### Numbers That Sell The Switch
 - Graph traversal can reduce repeated prompt stuffing in agent loops
-- Daemon reuse reduces repeated model startup cost on heavy commands
+- Batched, parallel LLM embedding calls (v1.0.79) collapse dozens of subprocess spawns into a handful per memory
 - Single-file storage lowers the operational surface compared to a remote RAG stack
 - Your proprietary data NEVER leaves the developer workstation or the CI runner
 - Your compliance surface shrinks to one SQLite file under your own encryption
@@ -68,7 +69,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
-- Every invocation can stay stateless, while heavy embedding commands may also auto-start and reuse `sqlite-graphrag daemon` when needed
+- Every invocation is stateless and one-shot — there is no daemon to manage (removed in v1.0.79)
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one `{body?, entities, relationships}` object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
 - `remember` accepts body payloads up to `512000` bytes and up to `512` chunks
@@ -156,21 +157,21 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - `link` and `unlink` flags use dashed labels such as `applies-to`, `depends-on`, and `tracked-in`
 - `--graph-stdin` accepts a single object with optional `body` plus the same `entities` and `relationships` arrays
 
-### NER Extraction
-#### GLiNER zero-shot entity extraction
+### Automatic Extraction
+#### URL-regex extraction (GLiNER removed in v1.0.79)
 - Pass `--enable-ner` or set `SQLITE_GRAPHRAG_ENABLE_NER=1` to activate on `remember` and `ingest`
-- Works with `--graph-stdin`: pass `"entities": []` in JSON and GLiNER extracts entities automatically
-- Model variants via `--gliner-variant`: `fp32` (1.1 GB, best quality), `fp16` (580 MB), `int8` (349 MB, fastest), `q4` (894 MB), `q4f16` (472 MB)
-- Override model with `SQLITE_GRAPHRAG_GLINER_MODEL`; tune threshold with `SQLITE_GRAPHRAG_GLINER_THRESHOLD` (default `0.5`)
-- Response field `extraction_method` reports: `gliner-<variant>+regex`, `regex-only`, or `none:extraction-failed`
-- `--skip-extraction` is deprecated since v1.0.45; NER is off by default, use `--enable-ner` to activate
+- Since v1.0.79 this runs URL-regex extraction ONLY — the GLiNER zero-shot pipeline was removed with the `ner-legacy` feature
+- `--gliner-variant`, `SQLITE_GRAPHRAG_GLINER_MODEL` and `SQLITE_GRAPHRAG_GLINER_THRESHOLD` are accepted for compatibility but have NO effect
+- Response field `extraction_method` reports: `url-regex`, `regex-only`, or `none:extraction-failed`
+- For LLM-curated extraction use `ingest --mode claude-code`/`--mode codex`; for exact control use `--graph-stdin`
+- `--skip-extraction` is deprecated since v1.0.45 and has no effect
 - `--max-rss-mb <MiB>` on `remember` and `ingest` aborts embedding when process RSS exceeds the threshold (default 8192 MiB)
 - Ingest NDJSON per-file status values: `indexed` (created), `skipped` (duplicate), `failed` (error)
 - Duplicate memories on re-ingest emit `status: "skipped"` with `action: "duplicate"` and do not count as failures
 
 ### Ingest Modes (v1.0.62)
 - `--mode none` (default): body-only ingestion, no entity/relationship extraction
-- `--mode gliner`: GLiNER NER extraction (requires `--enable-ner`, uses local ONNX model)
+- `--mode gliner`: accepted for compatibility, but performs URL-regex extraction only since v1.0.79 (the local GLiNER/ONNX pipeline was removed)
 - `--mode claude-code`: LLM-curated extraction via locally installed Claude Code CLI (`claude -p` headless)
 - Claude Code flags: `--claude-binary <PATH>`, `--claude-model <MODEL>`, `--resume`, `--retry-failed`, `--max-cost-usd <N>`, `--rate-limit-wait <S>`, `--keep-queue`, `--queue-db <PATH>`, `--claude-timeout <S>` (default 300s per file)
 - Requires Claude Code >= 2.1.0 with active Pro/Max subscription — uses the user's existing billing
@@ -234,7 +235,10 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Vali
 | Variable | Description | Default | Example |
 | --- | --- | --- | --- |
 | `SQLITE_GRAPHRAG_DB_PATH` | Path override for the SQLite database file | `./graphrag.sqlite` in the invocation directory | `/data/graphrag.sqlite` |
-| `SQLITE_GRAPHRAG_CACHE_DIR` | Directory for embedding model cache | XDG cache dir | `~/.cache/sqlite-graphrag` |
+| `SQLITE_GRAPHRAG_CACHE_DIR` | Directory for cache and lock files (model cache only on builds ≤ v1.0.75) | XDG cache dir | `~/.cache/sqlite-graphrag` |
+| `SQLITE_GRAPHRAG_EMBEDDING_DIM` | Embedding dimensionality override (v1.0.79); precedence: `--embedding-dim` flag > this env > `schema_meta.dim` > 64; range [8, 4096] | `64` (new databases) | `384` |
+| `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` | Model override for `claude -p` embedding calls (v1.0.79) | CLI default model | `claude-haiku-4-5-20251001` |
+| `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` | Timeout per LLM embedding subprocess call (v1.0.79) | `300` | `600` |
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |
 | `SQLITE_GRAPHRAG_LOG_LEVEL` | Tracing filter level for stderr output | `info` | `debug` |
 | `SQLITE_GRAPHRAG_NAMESPACE` | Namespace override respected by all commands (fixed v1.0.51) | none | `project-foo` |
@@ -284,7 +288,7 @@ RUN cargo install --locked sqlite-graphrag
 | `6` | Payload exceeded allowed limits | Split body into smaller chunks |
 | `10` | SQLite database error | Run `health` to inspect integrity |
 | `11` | Embedding generation failed | Check model files and retry |
-| `12` | `sqlite-vec` extension failed (only relevant for `embedding-legacy` feature) | Reinstall with `--features embedding-legacy` or drop the legacy feature |
+| `12` | `sqlite-vec` extension failed (historical; legacy feature removed in v1.0.79) | Upgrade to v1.0.79+; no build returns exit 12 any more |
 | `13` | Batch partial failure | Honor backoff and retry later |
 | `14` | Filesystem I/O error: cache directory not writable, nonexistent ingest target directory | Check permissions and disk space |
 | `15` | Database busy after retries | Wait and retry the operation |
@@ -329,11 +333,10 @@ RUN cargo install --locked sqlite-graphrag
 
 ## Performance
 ### Measured on a 1000-memory database
-- Cold and warm timings depend on hardware, model residency, and database size
-- `recall` and `hybrid-search` become much cheaper when the daemon already holds the model
-- Since v1.0.50, the CLI auto-restarts a stale daemon on version mismatch before the first embedding request; manual `daemon --stop` after upgrades is no longer required
-- First `init` downloads the quantized model once and caches it locally
-- Embedding model uses roughly 1.1 GB of RAM per heavy process after the current calibration
+- Embedding latency is dominated by the headless LLM round-trip (~1-3 s per batched call); pure reads stay in the low milliseconds
+- Since v1.0.79 LLM calls are batched (calibration bases of 8 chunks / 25 entity names at dim 64, dim-adaptive — G44) and parallel (`--llm-parallelism`), so a 39-item memory embeds in 4-5 calls instead of 39 serialized spawns
+- `init` performs no model download — it only creates the database and validates that a `claude`/`codex` CLI is reachable
+- Each LLM embedding worker consumes roughly 350 MB of RSS — the concurrency-gate budget unit since v1.0.79
 
 
 ## Safe Parallel Invocation
@@ -381,7 +384,7 @@ RUN cargo install --locked sqlite-graphrag
 - Namespace detection falls back to `global` when no explicit override is present
 - Parallel invocations beyond four slots receive exit 75 and SHOULD retry with backoff
 - Exit 10 signals database error: run `sqlite-graphrag health --json` to inspect integrity
-- Exit 12 is reserved for the `embedding-legacy` feature path; the default LLM-only build never returns exit 12
+- Exit 12 is historical (legacy feature removed in v1.0.79); no current build returns exit 12
 - Exit 77 signals low RAM: free at least 1 GB before invoking the embedding model
 
 
@@ -401,7 +404,7 @@ sqlite-graphrag init
 sqlite-graphrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
 ```
 - First line downloads, builds and installs the binary into `~/.cargo/bin`
-- Second line creates the SQLite database and downloads the embedding model
+- Second line creates the SQLite database and validates that a `claude`/`codex` CLI is reachable (no model download)
 - Third line persists your first memory and indexes it for hybrid retrieval
 - Your next `recall` call returns the note you just saved in milliseconds
 
@@ -612,7 +615,7 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 ## What Changed in v1.0.76
 ### LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
 - The default build is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 6 MB.
-- `cargo install sqlite-graphrag --features embedding-legacy --locked` restores the legacy fastembed + ort + tokenizers pipeline for the v1.0.76 → v1.1.0 transition window. The feature is REMOVED in v1.1.0.
+- The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The legacy fastembed + ort + tokenizers pipeline no longer exists.
 - See ADR-0019 (LLM-Only One-Shot), ADR-0020 (Pure-Rust Cosine), ADR-0021 (Daemon Deprecation), ADR-0022 (BLOB-Backed Embeddings), ADR-0023 (Tokenizer Removal), ADR-0024 (FTS5 Coarse Filter + Cosine Refinement), ADR-0025 (OAuth-Only LLM Credential Flow), ADR-0026 (V002 `vec_tables` Migration Drift).
 ### `migrate` Subcommand Family
 - `migrate --rehash --json` rewrites recorded migration checksums via `SipHasher13(name|version|sql)`. The algorithm matches `refinery-core 0.9.1` (same SipHasher13 crate, same hashing order). Required for v1.0.74 → v1.0.76 upgrades where V002 was intentionally emptied to a no-op. Response schema: `migrate-rehash.schema.json`.
@@ -622,24 +625,24 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 ### Hybrid Search Refinement (G24)
 - `hybrid-search` uses FTS5 for coarse filtering and refines the candidate set with a pure-Rust cosine over the BLOB embeddings. FTS5 stays healthy because the rebuild is gated by `optimize --fts-skip-when-functional` (G36 from v1.0.69).
 ### Extraction Backend Selector
-- New `--extraction-backend llm|embedding|none|both` global flag (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `embedding` is the legacy fastembed pipeline (requires `embedding-legacy` feature); `none` is a no-op; `both` runs them in parallel and merges the results.
+- New `--extraction-backend llm|embedding|none|both` global flag (default `llm`) selects the extraction backend. `llm` is the LLM-backed path; `embedding` is a permanent stub since v1.0.79 (legacy pipeline removed) that returns a migration error; `none` is a no-op; `both` runs them in parallel and merges the results.
 - `src/extract/` exposes the `ExtractionBackend` trait with the four implementations. `src/spawn/` exposes the `VersionAdapter` trait with `CodexAdapter` (detects `codex 0.130.0` through `0.138+` and adapts flags), `ClaudeAdapter` (claude code 2.1.0+), and `OpencodeAdapter` (opencode headless).
 ### Daemon Deprecation (ADR-0021)
-- The `daemon` subcommand is DEPRECATED and kept for source compatibility through v1.0.76 → v1.1.0. The daemon no longer offers a speedup because the LLM subprocess is the new "model loader". REMOVED in v1.1.0.
+- The `daemon` subcommand was DEPRECATED in v1.0.76 and FULLY REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The LLM subprocess is the "model loader"; the CLI is 100% one-shot with zero IPC.
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.68 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.79 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
 - Embedding generation: delegated to a headless `claude code` or `codex` subprocess (OAuth) per call. The Rust binary holds no model.
-- Storage layer `rusqlite` bundled SQLite plus `sqlite-vec` extension plus FTS5 module
+- Storage layer `rusqlite` bundled SQLite plus FTS5 module plus BLOB-backed embedding tables (pure-Rust cosine since v1.0.76)
 
 
 ## Acknowledgments
 ### Built on top of excellent open source
-- `fastembed` provides local quantized embedding models without ONNX hassle
-- `sqlite-vec` adds vector indexes directly inside SQLite as an extension
+- `fastembed` powered the local quantized embedding models until the LLM-only switch (dependency removed in v1.0.76-v1.0.79)
+- `sqlite-vec` provided in-SQLite vector indexes until v1.0.76 (replaced by BLOB-backed tables with pure-Rust cosine)
 - `refinery` runs schema migrations with transactional safety guarantees
 - `clap` powers the CLI argument parsing with derive macros
 - `rusqlite` wraps SQLite with safe Rust bindings and bundled build

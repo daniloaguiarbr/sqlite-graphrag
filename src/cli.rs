@@ -74,10 +74,21 @@ pub struct Cli {
     /// v1.0.75 (G21 solution): extraction backend selector. Accepts
     /// `llm` (default), `embedding` (legacy), `none`, or `both` (composite).
     /// The `llm` backend invokes claude code / codex CLI headless to extract
-    /// entities and relationships; `embedding` uses the legacy fastembed
-    /// pipeline (requires the `embedding-legacy` feature at compile time).
+    /// entities and relationships; `embedding` is a permanent stub since
+    /// v1.0.79 (legacy fastembed pipeline removed) that returns a clear
+    /// migration error.
     #[arg(long, global = true, value_name = "KIND", default_value = "llm")]
     pub extraction_backend: Option<String>,
+
+    /// v1.0.79 (G42/S1): embedding dimensionality override (default 64).
+    ///
+    /// Precedence: this flag > `SQLITE_GRAPHRAG_EMBEDDING_DIM` env var >
+    /// the `dim` recorded in the database `schema_meta` > 64. Existing
+    /// databases keep their recorded dimensionality automatically; use
+    /// this flag only to migrate a corpus to a new dimensionality
+    /// (followed by `enrich --operation re-embed`). Range: [8, 4096].
+    #[arg(long, global = true, value_name = "N", value_parser = clap::value_parser!(u64).range(8..=4096))]
+    pub embedding_dim: Option<u64>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -272,7 +283,7 @@ pub enum Commands {
         sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-file ./README.md\n\n  \
         # Body from stdin (pipe)\n  \
         cat README.md | sqlite-graphrag remember --name doc1 --type document --description \"...\" --body-stdin\n\n  \
-        # Enable GLiNER entity extraction (disabled by default)\n  \
+        # Enable automatic URL extraction (URL-regex only since v1.0.79; GLiNER removed)\n  \
         sqlite-graphrag remember --name rich --type note --description \"...\" --body \"...\" --enable-ner")]
     Remember(remember::RememberArgs),
     /// Batch-create memories from NDJSON stdin (one invocation, one slot)

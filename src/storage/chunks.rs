@@ -79,7 +79,7 @@ pub fn upsert_chunk_vec(
             chunk_idx,
             f32_to_bytes(embedding),
             crate::constants::SQLITE_GRAPHRAG_VERSION,
-            crate::constants::EMBEDDING_DIM as i64,
+            crate::constants::embedding_dim() as i64,
         ],
     )?;
     Ok(())
@@ -98,11 +98,11 @@ pub fn knn_search_chunks(
     embedding: &[f32],
     k: usize,
 ) -> Result<Vec<(i64, i32, f32)>, AppError> {
-    if embedding.len() != crate::constants::EMBEDDING_DIM {
+    if embedding.len() != crate::constants::embedding_dim() {
         return Err(AppError::Embedding(format!(
             "knn_search_chunks embedding has {} dims, expected {}",
             embedding.len(),
-            crate::constants::EMBEDDING_DIM
+            crate::constants::embedding_dim()
         )));
     }
     // v1.0.76: full table scan + in-process cosine similarity. The
@@ -156,7 +156,7 @@ pub fn get_chunks_by_memory(conn: &Connection, memory_id: i64) -> Result<Vec<Chu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::EMBEDDING_DIM;
+    use crate::constants::embedding_dim;
     use crate::storage::connection::register_vec_extension;
     use rusqlite::Connection;
     use tempfile::TempDir;
@@ -324,7 +324,7 @@ mod tests {
         };
         insert_chunks(&conn, &[chunk]).unwrap();
 
-        let mut embedding = vec![0.0f32; EMBEDDING_DIM];
+        let mut embedding = vec![0.0f32; embedding_dim()];
         embedding[0] = 1.0;
 
         let chunk_id: i64 = conn
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn test_knn_search_chunks_without_data_returns_empty() {
         let (_tmp, conn) = setup_db();
-        let embedding = vec![0.0f32; EMBEDDING_DIM];
+        let embedding = vec![0.0f32; embedding_dim()];
         let resultado = knn_search_chunks(&conn, &embedding, 5).unwrap();
         assert!(resultado.is_empty());
     }

@@ -6,9 +6,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.79] - 2026-06-11
+
 ### Removed
 
 - **Daemon infrastructure fully removed**: `src/daemon.rs` (1120 lines), `src/commands/daemon.rs` (79 lines), `tests/daemon_integration.rs` (316 lines) deleted. `DaemonOpts` struct and `--autostart-daemon` flag removed from all command args. All `crate::daemon::embed_*_or_local` calls replaced with direct `crate::embedder::embed_*_local` wrappers. CLI is now 100% one-shot with zero IPC. 8 daemon constants removed from `src/constants.rs`. Net removal: ~764 lines.
+- **Legacy local-model features fully removed (ahead of the v1.1.0 schedule)**: the `embedding-legacy`, `ner-legacy` and `full` Cargo features are gone, together with the optional `fastembed`, `ort`, `ndarray`, `tokenizers` and `hf-hub` dependencies and `src/extraction_gliner.rs`. `EmbeddingBackend` is now a permanent stub returning a clear migration error; `extract_graph_auto` lost its GLiNER delegation path; `calculate_safe_concurrency` budgets heavy commands with `LLM_WORKER_RSS_MB` (350) instead of the obsolete 1100 MB ONNX constant (`EMBEDDING_LOAD_EXPECTED_RSS_MB` deleted). The CI matrix shrinks to `default` + `llm-only`. Every build is LLM-only; there is no local-model path.
+
+### Deprecated
+
+- **GLiNER-era flags are formal no-ops with explicit warnings**: `--gliner-variant` (on `remember` and `ingest`) and `ingest --mode gliner` now emit a `tracing::warn!` deprecation notice when used; `--enable-ner` performs URL-regex extraction only. All help strings rewritten to stop promising the removed GLiNER pipeline (model variants, sizes, thresholds); `SQLITE_GRAPHRAG_GLINER_VARIANT`/`_MODEL`/`_THRESHOLD` remain accepted for compatibility but have no effect.
+
+### Fixed — G42: slow, serialized, fragile LLM embedding pipeline
+
+- **S1 — configurable embedding dimensionality (default 64)**: single source of truth in `constants.rs` (`DEFAULT_EMBEDDING_DIM` + `embedding_dim()`); precedence `--embedding-dim` flag > `SQLITE_GRAPHRAG_EMBEDDING_DIM` env > `schema_meta.dim` of the opened database > 64. Existing 384-dim databases keep working unchanged. ZERO schema change (the `dim` key and columns already existed). Basis: MRL, arXiv 2205.13147 — output per vector drops from ~3072 to ~512 tokens (~6x)
+- **S2 — batched LLM calls**: `embed_batch_async` embeds N numbered texts per call with the `{items:[{i,v}]}` schema; chunks batch at 8, entity names at 25 (calibration bases at dim 64; dim-adaptive since G44) — 39 subprocess spawns collapse into 4-5
+- **S3 — real parallelism**: `Arc<Semaphore>` + `acquire_owned` + `JoinSet` + `join_next`/`is_panic` bounded fan-out in `embedder.rs`; the global Mutex now guards ONLY the config clone (the old `flush_group` held it across 30-60s of network I/O, forcing effective parallelism 1); results stream through a BOUNDED mpsc channel (backpressure + incremental delivery); permits = min(`--llm-parallelism`, cpus, ram*0.5/350MB, 32); new `--llm-parallelism` flag on `remember` (default 4), `ingest` (default 2, multiplies with `--ingest-parallelism`) and `edit`
+- **S4 — schema tempfile RAII**: codex `--output-schema` files are `NamedTempFile`s with randomised names created once per process (no per-call write+delete, no PID-path races); the orphan reaper now also removes stale `codex-home-{pid}` dirs whose PID is gone
+- **S5 — claude model env override**: `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` (symmetric to the codex var); zero hardcoded models without override
+- **S6 — empty `CLAUDE_CONFIG_DIR` by default** on the embedding path: honours `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`, else uses a managed `~/.local/state/sqlite-graphrag/claude-empty-config` (mode 0700, copies `.credentials.json` when present); the MCP-isolation flags are silently ignored upstream (anthropics/claude-code#10787) and a full `~/.claude` cost ~223k tokens per call (~40-50s → ~10-15s)
+- **S7 — actionable codex headless error**: `request_user_input` failures now explain the cause and remediation instead of an opaque exit 11
+- **S8 — panic-free signal handler**: first signal uses best-effort `writeln!` (BrokenPipe ignored); second signal exits 130 with ZERO I/O — eliminates the SIGABRT on orphaned processes (`panic = "abort"` + closed stderr pipe)
+- **S9 — canonical one-shot re-embed**: `enrich --operation re-embed --limit N --resume` documented as the official path; new `edit --force-reembed` regenerates an embedding without changing the body; removed the BROKEN pre-warm recipe (`edit --description "<same>"` never re-embedded) from MIGRATION/HOW_TO_USE docs
+- **C5 — no silent dimension normalisation**: `normalise_dim` (truncate/zero-pad) replaced by `validate_dim`, which errors on divergent vectors; the batch parser validates index coverage and per-item dimensionality
+- Every LLM subprocess now uses `kill_on_drop(true)` plus an explicit `tokio::time::timeout` (`SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`, default 300s); a process-wide multi-thread runtime replaces the per-call current-thread runtime
+- New concurrency tests: peak never exceeds permits (AtomicUsize), panicking task returns its permit via RAII and surfaces `is_panic`, cancellation terminates the fan-out quickly, divergent dim fails the fan-out
+
+### Fixed — G43: dimensionality adoption did not cover the main commands
+
+- **Dim adoption on every connection open**: the G42/S1 sync (`schema_meta.dim` → active dim) only ran inside `ensure_db_ready`, which `remember` / `edit` / `recall` / `hybrid-search` never call — those commands silently used the compiled default (64) against pre-v1.0.79 384-dim databases, writing mixed-dim embeddings that cosine-score 0.0 against each other (vector recall went blind to the old corpus). `open_rw` AND `open_ro` now adopt the recorded database dim (best-effort, env override still wins); 4 regression tests cover rw/ro adoption, env precedence and virgin databases
+- **`init` no longer stamps `dim=384`**: the hardcoded `INSERT OR REPLACE ... ('dim', '384')` stamped NEW databases with a dim that contradicts the active default; replaced by `INSERT OR IGNORE` with the active dim (preserves the recorded dim on re-init of an existing database)
+- **`rename-entity` no longer records `dim=384` and a removed model name**: the duplicated INSERT (hardcoded `384` + `multilingual-e5-small`) was replaced by the canonical `upsert_entity_vec` writer (real vector length, CLI version as `model`)
+- **Test mocks speak both embedding shapes**: `tests/mock-llm/{claude,codex}` returned a fixed 384-dim single-shape vector, so the ENTIRE `slow-tests` integration suite failed since G42/S1+S2 (the gate never runs on CI, hiding it); the mocks now return 64-dim vectors and answer the `{items:[{i,v}]}` batch schema; the 2 obsolete daemon tests became regression guards for the daemon removal; `.config/nextest.toml` no longer filters on the deleted `daemon_integration` binary — `--features slow-tests` integration suite back to green (69/69 on the `integration` binary)
+
+### Fixed — G44: embedding batch size did not scale with the dimensionality
+
+- **Dim-adaptive batch size**: the G42/S2 batches were FIXED (8 chunks / 25 entity names per LLM call), calibrated for the dim-64 default (~512 / ~1600 floats per response); on legacy 384-dim databases the same chunk batch asked for ~3072 floats — measured in production: claude returned 3 of 8 items (caught by the G42/C5 coverage check) and codex timed out at 300s, failing `remember` twice. The batch size now adapts as `clamp(base×64/dim, 1, base)` (`embedder.rs::adaptive_batch_for_dim`): dim 64 keeps 8/25, dim 384 uses 1/4 — constant float budget per call, no `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` workaround needed; 6 regression tests cover the formula and the env-dim wrappers
 
 ## [1.0.78] - 2026-06-09
 

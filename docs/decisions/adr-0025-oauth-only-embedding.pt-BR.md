@@ -1,6 +1,7 @@
 # ADR-0025: Fluxo de Credencial LLM Apenas OAuth (v1.0.76 — herdado da v1.0.69)
 
 - Status: Aceito (reafirmado em 2026-06-07)
+- Atualização (v1.0.79): a válvula de escape `embedding-legacy` mencionada abaixo foi removida antecipando o cronograma da v1.1.0; a janela de transição está fechada
 - Decisores: Danilo Aguiar
 - Escopo: src/extract/llm_embedding.rs, src/commands/claude_runner.rs, src/commands/codex_spawn.rs
 

@@ -11,7 +11,7 @@ use tempfile::TempDir;
 ///
 /// v1.0.76 spawns `claude` or `codex` on every `remember` / `ingest` /
 /// `edit`. The bundled mocks under `tests/mock-llm/` return a fixed
-/// 384-dim zero vector so the binary finishes without a real OAuth
+/// 64-dim zero vector so the binary finishes without a real OAuth
 /// login. The mock directory is leaked (no TempDir cleanup) so the
 /// spawned subprocess always finds the mocks.
 fn sgr_cmd() -> Command {
@@ -179,7 +179,7 @@ fn ingest_event_emits_truncated_when_filename_exceeds_60_chars() {
 
 #[test]
 #[serial]
-fn recall_with_autostart_daemon_false_does_not_spawn_daemon() {
+fn recall_rejects_removed_autostart_daemon_flag() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -198,31 +198,22 @@ fn recall_with_autostart_daemon_false_does_not_spawn_daemon() {
         .assert()
         .success();
 
-    // Run recall with --autostart-daemon=false; the daemon should NOT be spawned.
-    // We verify absence of the daemon spawn lock file in the control dir.
+    // v1.0.79: the daemon was fully removed; the old --autostart-daemon
+    // flag must be rejected by clap (exit 2), never accepted silently.
     cmd(&tmp)
         .args([
             "recall",
             "daemon autostart test",
             "--autostart-daemon=false",
         ])
-        .env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1")
         .assert()
-        .success();
-
-    // Daemon spawn lock file must not exist when autostart was disabled.
-    let cache_dir = tmp.path().join("cache");
-    let spawn_lock = cache_dir.join("daemon-spawn.lock");
-    assert!(
-        !spawn_lock.exists(),
-        "daemon-spawn.lock must NOT exist when --autostart-daemon=false; found at: {}",
-        spawn_lock.display()
-    );
+        .failure()
+        .code(2);
 }
 
 #[test]
 #[serial]
-fn recall_default_autostart_daemon_true_remains_compatible() {
+fn recall_works_one_shot_without_daemon() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
@@ -241,11 +232,10 @@ fn recall_default_autostart_daemon_true_remains_compatible() {
         .assert()
         .success();
 
-    // Default flag value (true) must not break the recall command.
-    // Env var disables actual daemon spawn so the test stays fast and isolated.
+    // v1.0.79: the CLI is 100% one-shot — recall must succeed with no
+    // daemon infrastructure and no daemon-related env vars.
     cmd(&tmp)
         .args(["recall", "regression guard"])
-        .env("SQLITE_GRAPHRAG_DAEMON_DISABLE_AUTOSTART", "1")
         .assert()
         .success();
 }

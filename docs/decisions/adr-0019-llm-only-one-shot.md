@@ -1,6 +1,7 @@
 # ADR-0019: LLM-Only One-Shot Architecture (v1.0.76)
 
 - Status: Accepted (2026-06-07)
+- Update (v1.0.79): the `embedding-legacy` escape hatch mentioned below was removed ahead of the v1.1.0 schedule; the transition window is closed
 - Deciders: Danilo Aguiar
 - Scope: src/embedder.rs, src/extraction.rs, src/similarity.rs, src/storage/connection.rs, src/storage/memories.rs, src/storage/entities.rs, src/storage/chunks.rs, migrations/V002, migrations/V013, Cargo.toml
 

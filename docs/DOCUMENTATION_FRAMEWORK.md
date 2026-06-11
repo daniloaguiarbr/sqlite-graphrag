@@ -236,7 +236,7 @@
 - DEVE conter TODA a referência de CRUD (Create, Read, Update, Delete)
 - DEVE conter TODA a referência de pesquisa (recall, hybrid-search, related, graph traverse, deep-research)
 - DEVE conter referência de grafo (link, unlink, entities, stats, traverse)
-- DEVE conter referência de cache e manutenção (daemon removido na v1.0.76)
+- DEVE conter referência de manutenção (comandos `cache` e `daemon` removidos na v1.0.76; código restante do daemon deletado na v1.0.79)
 - DEVE conter contrato JSON completo com campos por comando
 - DEVE conter exit codes com estratégia de retry
 - DEVE conter seção de concorrência e recursos
@@ -260,7 +260,7 @@
 - OBJETIVO: documentar suporte e particularidades de cada plataforma
 - DEVE conter tabela de targets suportados com status
 - DEVE conter instruções de instalação por plataforma
-- DEVE conter particularidades de runtime por OS (ONNX, musl, ARM64)
+- DEVE conter particularidades de runtime por OS (subprocesso LLM, musl, ARM64)
 - DEVE conter seção de CI/CD com matrix de targets
 - ENTREGA: um desenvolvedor CONFIGURA build e CI para qualquer target lendo este arquivo
 
@@ -288,7 +288,7 @@
 - DEVE conter comandos exatos para executar cada categoria
 - DEVE conter política de cobertura mínima
 - DEVE conter instruções para adicionar novos testes
-- DEVE conter seção "v1.0.76 Test Matrix" com a matriz CI de 3 features (`default`, `llm-only`, `embedding-legacy`)
+- DEVE conter seção "Test Matrix" com a matriz CI de features vigente (`default` e `llm-only` desde a v1.0.79; `embedding-legacy` removida)
 - DEVE conter o contrato da Mock LLM CLI para rodar testes sem credenciais OAuth reais
 - ENTREGA: um contribuidor ESCREVE e EXECUTA testes seguindo este guia
 
