@@ -19,7 +19,7 @@
 - See [CHANGELOG.md](CHANGELOG.md) for the full release history
 - Release-grade validation includes the `slow-tests` contract suites documented in `docs/TESTING.md`
 - Build directly from the local checkout with `cargo install --path .`
-- **Upgrading from v1.0.74 / v1.0.75?** See [docs/MIGRATION.md](docs/MIGRATION.md) for the v1.0.76 / v1.0.77 / v1.0.78 migration procedure
+- **Upgrading from v1.0.74 / v1.0.75?** See [docs/MIGRATION.md](docs/MIGRATION.md) for the v1.0.76 / v1.0.77 / v1.0.78 / v1.0.79 migration procedure
 
 ```bash
 cargo install sqlite-graphrag --locked --force
