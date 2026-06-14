@@ -37,7 +37,7 @@ pub struct ReclassifyArgs {
     #[arg(long, conflicts_with_all = ["from_type", "batch"])]
     pub name: Option<String>,
     /// New entity type for single mode.
-    #[arg(long, value_enum, value_name = "TYPE")]
+    #[arg(long, value_enum, value_name = "TYPE", visible_alias = "entity-type")]
     pub new_type: Option<EntityType>,
     /// New description for the entity (single mode only). Ignored in batch mode.
     #[arg(long, value_name = "TEXT")]
@@ -182,6 +182,22 @@ pub fn run(args: ReclassifyArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ReclassifyArgs,
+    }
+
+    #[test]
+    fn entity_type_flag_is_a_visible_alias_of_new_type() {
+        // G47: llms-full.txt and external docs promise `--entity-type`; the
+        // flag was only reachable as --new-type, breaking the documented CLI.
+        use clap::Parser;
+        let cli = TestCli::try_parse_from(["reclassify", "--name", "e", "--entity-type", "tool"])
+            .expect("--entity-type must parse as an alias of --new-type");
+        assert!(cli.args.new_type.is_some());
+    }
 
     #[test]
     fn reclassify_response_serializes_all_fields() {

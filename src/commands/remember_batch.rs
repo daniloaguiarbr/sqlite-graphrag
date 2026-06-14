@@ -280,7 +280,14 @@ fn process_line(
             Some(desc) => format!("{} {}", entity.name, desc),
             None => entity.name.clone(),
         };
-        let entity_embedding = crate::embedder::embed_passage_local(&paths.models, &entity_text)?;
+        // G56 (v1.0.80): batch the per-item `embed_passage_local` through
+        // the in-process cache so repeated entity names across the
+        // remember-batch loop only spawn one LLM call per unique text.
+        let (entity_embedding_vec, _stats) =
+            crate::embedder::embed_entity_texts_cached(&paths.models, std::slice::from_ref(&entity_text), 1)?;
+        let entity_embedding = entity_embedding_vec.into_iter().next().ok_or_else(|| {
+            crate::errors::AppError::Embedding("empty entity embed result".into())
+        })?;
         entities::upsert_entity_vec(
             tx,
             entity_id,

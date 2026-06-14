@@ -1,11 +1,29 @@
-# HOW TO USE sqlite-graphrag (v1.0.79 — LLM-Only)
+# HOW TO USE sqlite-graphrag (v1.0.80 — LLM-Only)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
 
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
+X
 
+
+## What v1.0.80 Changed (G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034)
+
+v1.0.80 is a **patch** bump with NO database migration. The schema
+is still v13, the G43 dim-adoption already runs in every
+`open_rw` and `open_ro`, and the changes are all additive at
+the binary and database level. Library consumers must pin to
+`=1.0.80` because the lib API is unstable within v1.x.y
+(ADR-0032).
+
+- **G45 cross-process embedding singleton**: `acquire_embedding_singleton(namespace, db_path, wait_seconds, force)` serialises LLM embedding calls per `(namespace, db)` pair across concurrent CLI invocations. A second CLI trying to embed against the same database receives `AppError::EmbeddingSingletonLocked { namespace }` (exit 75, retryable). Pass `--wait-embed-singleton <SECONDS>` to poll until the lock drops; distinct databases or namespaces acquire independent locks. Operationally prevents the "two remember invocations, two LLM subprocesses, two parallel batches" pathology that v1.0.79's in-process cache could not address.
+- **G53 stability policy and `semver-checks` CI gate**: the public contract is the CLI; the library API is unstable in v1.x.y. New CI job `semver-checks` runs `cargo semver-checks check-baseline --baseline-version 1.0.79` in informational mode (becomes blocking in v1.0.81 once the 9 outstanding MAJOR violations are resolved). README and CHANGELOG carry the `Stability Policy` section. Pin to `=1.0.80` for lib consumers; use `^1.0` to stay on the CLI-stable track.
+- **G55 S2 structural `MemoryNotFound`**: the legacy `NotFound(String)` path that masked which lookup target failed is replaced by `AppError::MemoryNotFound { name, namespace }` and `AppError::MemoryNotFoundById { id }` inside `read` and `hybrid-search`. The identifier is now part of the variant, eliminating the `not found: unknown` class of bugs. pt-BR messages carry the name and namespace explicitly.
+- **G56 entity-embed in-process cache**: `embed_entity_texts_cached` sits in front of `embed_passages_parallel_local` for entity-name batches. Cache key is `blake3(model || "\0" || text)`. High hit rate in `ingest` (canonical entities re-embedded across many memories), modest in `remember` and `remember-batch`. `remember.rs`, `ingest.rs` and `remember_batch.rs` all route entity embeds through the cache; chunk embeds continue through the raw path. Stats are emitted via `tracing::debug!` (hit / miss / request counts).
+- **G58 FTS5 fallback for `recall` and `hybrid-search`**: `recall --fallback-fts-only` and `hybrid-search --fallback-fts-only` route the query through FTS5 BM25 when the LLM subprocess fails (rate limit, OAuth contention, divergent dim). New envelope fields `vec_degraded` (bool), `vec_error` (string) and `warning` (string) are populated symmetrically across both commands. The `recall` and `hybrid-search` tests gained coverage for the FTS5-only path; 1 test is `#[ignore]` because the G58 S1 stub requires `PATH` without `codex` or `claude` to exercise `EmbeddingFailed`.
+- **G53-WINDOWS-INFRA (ADR-0033)**: the `clippy` and `test` jobs of the windows-2025 matrix gained 2 new steps each (gated `if: matrix.os == 'windows-2025'`, no-op on ubuntu/macos): a pre-warm that downloads the rustup toolchain into the runner cache before the build, and a verify step that re-checks `rustup show active-toolchain` after install. The 2 historical infra failure modes (rustup download with transient network errors and `E0463 can't find crate for core` when the target stdlib is missing) are now recoverable on the first re-run instead of accumulating as red CI. Local cross-compile validation: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduces and `E0463` is fixed by `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`; the build then reaches the `cc-rs: failed to find tool "lib.exe"` frontier, which is the expected host-Linux cross-compile limit.
+- **SHUTDOWN resilience (ADR-0034)**: `src/signals.rs` is wrapped in a panic-catching boundary; even when the parent's stderr is a closed pipe (the orphaned-process scenario that the G42/C2 audit identified), the handler returns cleanly instead of `SIGABRT`-ing on `BrokenPipe`. The third consecutive Ctrl-C exits with code 130 and ZERO I/O, matching the contract documented in ADR-0034 and the recipe in `docs/HEADLESS_INVOCATION.md`. The 3-layer SHUTDOWN bypass recipe (`nohup` then `setsid` then `disown`) is the canonical reference for the agent harness when running long embedding jobs in background.
 
 ## What v1.0.79 Changed (G42 + G43)
 
@@ -96,7 +114,7 @@ This installs the LLM-only default build. Verify:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.79
+# sqlite-graphrag 1.0.80
 ```
 
 For the legacy fastembed pipeline (REMOVED in v1.0.79):

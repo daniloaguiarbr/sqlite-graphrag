@@ -804,6 +804,7 @@ mod tests {
     // ------------------------------------------------------------------ //
 
     #[test]
+    #[serial_test::serial(env)]
     fn test_upsert_entity_vec_first_time_without_conflict() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let e = new_entity_helper("vec-nova");
@@ -830,6 +831,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn test_upsert_entity_vec_second_time_replaces_without_error() -> TestResult {
         // Covers the branch where DELETE removes the existing row before INSERT.
         let (_tmp, conn) = setup_db()?;
@@ -870,6 +872,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn test_upsert_entity_vec_multiple_independent_entities() -> TestResult {
         let (_tmp, conn) = setup_db()?;
         let emb = embedding_zero();

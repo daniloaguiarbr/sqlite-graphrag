@@ -124,6 +124,43 @@ Agents that try to set them will see a clear validation error.
 - The remaining `daemon` code was DELETED; the CLI is 100% one-shot.
 - GLiNER-era flags are formal no-ops with explicit `tracing::warn!`: `--gliner-variant` (on `remember` and `ingest`) and `ingest --mode gliner`; `--enable-ner` performs URL-regex extraction only.
 - The CI matrix runs 2 features since v1.0.79: `default` and `llm-only`.
+- The CI matrix runs 2 features since v1.0.79: `default` and `llm-only`.
+
+## New in v1.0.80
+### REQUIRED — Library API Stability (ADR-0032, G53, v1.0.80)
+- The **CLI is the stable public contract**. The `--json` envelopes documented in `docs/schemas/*.schema.json` and the environment variables listed in `llms.txt` and `llms-full.txt` are stable across all v1.x.y releases
+- The **library API is unstable** within v1.x.y. Re-exports, public struct fields and function signatures may change in any v1.x.y release without a major version bump
+- Patch bumps (1.0.79 -> 1.0.80) are strictly additive at the lib surface: 6 new symbols are exposed in 1.0.80 and NONE were removed, renamed, or had their signature changed (see CHANGELOG.md "Library API Changes" section)
+- Library consumers (cargo crate users) must pin to the EXACT version: `sqlite-graphrag = "=1.0.80"`. The `^1.0` shorthand keeps consumers on the CLI-stability track. The `^1.0.80` shorthand permits 1.0.80..<1.1.0 and can include a future 1.0.81 with lib-breaking changes
+- For agent use, this split is invisible: the agent calls the CLI and parses `--json` envelopes, which are not affected by lib instability
+### REQUIRED — G45 Cross-Process Embedding Singleton (v1.0.80)
+- `acquire_embedding_singleton(namespace, db_path, wait_seconds, force)` serialises LLM embedding calls per `(namespace, db)` pair across concurrent CLI invocations
+- A second CLI trying to embed against the same database receives `AppError::EmbeddingSingletonLocked { namespace }` (exit 75, retryable)
+- Pass `--wait-embed-singleton <SECONDS>` to poll until the lock drops; distinct databases or namespaces acquire independent locks
+- Operationally prevents the "two remember invocations, two LLM subprocesses, two parallel batches" pathology from the G45 incident
+### REQUIRED — G55 S2: Structural `MemoryNotFound` (v1.0.80)
+- The legacy `NotFound(String)` path that masked which lookup target failed is replaced by `AppError::MemoryNotFound { name, namespace }` and `AppError::MemoryNotFoundById { id }` inside `read` and `hybrid-search`
+- The identifier is now part of the variant, eliminating the "not found: unknown" class of bugs
+- pt-BR messages carry the name and namespace explicitly
+### REQUIRED — G56: Entity-Embed In-Process Cache (v1.0.80)
+- `embed_entity_texts_cached` routes entity-name batches through a `blake3(model || \0 || text)`-keyed cache
+- High hit rate in `ingest` (canonical entities re-embedded across many memories), modest in `remember` and `remember-batch`
+- `remember.rs`, `ingest.rs` and `remember_batch.rs` all use the cache; chunk embeds continue through the raw path
+### REQUIRED — G58: FTS5 Fallback for `recall` and `hybrid-search` (v1.0.80)
+- `recall --fallback-fts-only` and `hybrid-search --fallback-fts-only` route the query through FTS5 BM25 when the LLM subprocess fails (rate limit, OAuth contention, divergent dim)
+- New envelope fields `vec_degraded` (bool), `vec_error` (string) and `warning` (string) are populated symmetrically across both commands
+- The `recall` and `hybrid-search` tests gained coverage for the FTS5-only path
+### REQUIRED — G53-WINDOWS-INFRA (ADR-0033, v1.0.80)
+- The windows-2025 matrix jobs gained 2 new steps each, gated on `if: matrix.os == 'windows-2025'`: a pre-warm that downloads rustup into the runner cache, and a verify step that re-checks `rustup show active-toolchain`
+- The 2 historical infra failure modes (rustup download with transient network errors and `E0463 can't find crate for core` when the target stdlib is missing) are now recoverable on the first re-run instead of accumulating as red CI
+- The explicit `windows-2025` runner label (replacing `windows-latest` since v1.0.73) remains the right call until the VS2026 redirect cutover (2026-06-15)
+### REQUIRED — SHUTDOWN Resilience (ADR-0034, v1.0.80)
+- `src/signals.rs` is wrapped in a panic-catching boundary; even when the parent's stderr is a closed pipe (orphaned-process scenario), the handler returns cleanly instead of `SIGABRT`-ing on `BrokenPipe`
+- The third consecutive Ctrl-C exits with code 130 and ZERO I/O
+- The 3-layer SHUTDOWN bypass recipe (`nohup` → `setsid` → `disown`) is the canonical reference for the agent harness when running long embedding jobs in background
+- Documented in `docs/HEADLESS_INVOCATION.md` and `docs/COOKBOOK.md`
+
+
 
 
 ## New in v1.0.76

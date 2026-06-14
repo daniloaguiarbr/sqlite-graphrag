@@ -17,7 +17,7 @@ pub struct EmbeddingBackend {
 impl EmbeddingBackend {
     pub fn new() -> Self {
         Self {
-            model_name: "multilingual-e5-small".to_string(),
+            model_name: crate::constants::SQLITE_GRAPHRAG_VERSION.to_string(),
         }
     }
 

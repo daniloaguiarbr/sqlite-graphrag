@@ -136,7 +136,44 @@ struct VecStatsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     vec_chunks_rows: Option<i64>,
     fts_memories_rows: i64,
+    /// G52: per-dimensionality row counts across the three embedding tables.
+    /// Surfaces mixed-dim contamination (G43) without manual SQL.
+    dims: Vec<DimBreakdown>,
     elapsed_ms: u64,
+}
+
+#[derive(Serialize)]
+struct DimBreakdown {
+    table: String,
+    dim: i64,
+    rows: i64,
+}
+
+/// G52: aggregates `SELECT dim, COUNT(*) ... GROUP BY dim` over each
+/// embedding table that exists. Mixed dimensionalities in the same table
+/// indicate G43-style contamination that blinds cosine similarity.
+fn dim_breakdown(conn: &rusqlite::Connection) -> Vec<DimBreakdown> {
+    let mut out = Vec::new();
+    for table in ["memory_embeddings", "entity_embeddings", "chunk_embeddings"] {
+        if !vec_table_exists(conn, table) {
+            continue;
+        }
+        let sql = format!("SELECT dim, COUNT(*) FROM {table} GROUP BY dim ORDER BY dim");
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            continue;
+        };
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)));
+        if let Ok(rows) = rows {
+            for (dim, count) in rows.flatten() {
+                out.push(DimBreakdown {
+                    table: table.to_string(),
+                    dim,
+                    rows: count,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Dispatch entry point called from `main`.
@@ -403,6 +440,7 @@ fn run_stats(args: VecStatsArgs) -> Result<(), AppError> {
         vec_entities_rows,
         vec_chunks_rows,
         fts_memories_rows,
+        dims: dim_breakdown(&conn),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
     Ok(())
@@ -508,12 +546,36 @@ mod tests {
             vec_entities_rows: Some(50),
             vec_chunks_rows: None,
             fts_memories_rows: 100,
+            dims: vec![],
             elapsed_ms: 10,
         };
         let v = serde_json::to_value(&resp).unwrap();
         assert_eq!(v["coverage_percent"], 75.0);
         assert_eq!(v["vec_entities_rows"], 50i64);
         assert!(v.get("vec_chunks_rows").is_none());
+        assert!(v["dims"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dim_breakdown_groups_rows_per_dim_and_table() {
+        // G52: mixed dims in the same table must surface as separate rows.
+        let conn = open_vec_test_db();
+        conn.execute_batch(
+            "INSERT INTO memories (id, deleted_at) VALUES (1, NULL), (2, NULL), (3, NULL);
+             INSERT INTO memory_embeddings (memory_id, namespace, embedding, source, model, dim)
+             VALUES (1, 'g', x'00', 'test', 'test', 64),
+                    (2, 'g', x'00', 'test', 'test', 64),
+                    (3, 'g', x'00', 'test', 'test', 384);",
+        )
+        .unwrap();
+        let dims = dim_breakdown(&conn);
+        let mem: Vec<_> = dims
+            .iter()
+            .filter(|d| d.table == "memory_embeddings")
+            .collect();
+        assert_eq!(mem.len(), 2, "expected one row per distinct dim");
+        assert_eq!((mem[0].dim, mem[0].rows), (64, 2));
+        assert_eq!((mem[1].dim, mem[1].rows), (384, 1));
     }
 
     #[test]

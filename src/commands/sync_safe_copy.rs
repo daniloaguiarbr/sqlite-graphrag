@@ -146,7 +146,8 @@ mod tests {
             .clone()
             .or_else(|| args.dest.clone())
             .expect("test must pass dest");
-        let result = if resolved_dest == std::path::PathBuf::from(args.db.as_deref().unwrap_or(""))
+        let default_db = args.db.as_deref().unwrap_or("");
+        let result = if resolved_dest.as_path() == std::path::Path::new(default_db)
         {
             Err(AppError::Validation(
                 "destination path must differ from the source database path".to_string(),

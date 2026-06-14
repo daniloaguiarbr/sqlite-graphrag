@@ -318,8 +318,9 @@ fn extract_with_codex(
         ))
     })?;
 
-    // Build stdin: prompt + document content
-    let file_utf8 = String::from_utf8_lossy(file_content);
+    // Build stdin: prompt + document content (strict UTF-8 to surface encoding bugs early)
+    let file_utf8 = String::from_utf8(file_content.to_vec())
+        .map_err(|e| AppError::Validation(format!("file is not valid UTF-8: {e}")))?;
     let stdin_payload = format!("{EXTRACTION_PROMPT}\n\n---\n\nDocument content:\n\n{file_utf8}");
     let stdin_bytes = stdin_payload.into_bytes();
 
@@ -953,7 +954,8 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 })
                 .collect();
 
-            let body_str = String::from_utf8_lossy(&file_content);
+            let body_str = String::from_utf8(file_content.clone())
+                .map_err(|e| AppError::Validation(format!("file is not valid UTF-8: {e}")))?;
             let body_hash = blake3::hash(body_str.as_bytes()).to_hex().to_string();
             let new_memory = NewMemory {
                 name: name.clone(),

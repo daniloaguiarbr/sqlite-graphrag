@@ -1,38 +1,57 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/docs/schemas/vec-stats.schema.json",
-  "title": "vec stats response (v1.0.69)",
-  "description": "Response shape of `sqlite-graphrag vec stats --json`. Added in v1.0.69 as part of G39 to expose row counts and orphan counts across the three vec tables.",
+  "title": "vec stats response (v1.0.69, updated v1.0.80/G52)",
+  "description": "Response shape of `sqlite-graphrag vec stats --json`. Rewritten during the G52 audit: the previous schema (namespace/vec_memories/...) never matched the binary output. `dims` (G52) exposes per-dimensionality row counts to surface G43-style mixed-dim contamination.",
   "type": "object",
   "properties": {
-    "namespace": {
-      "type": "string"
-    },
-    "vec_memories": {
+    "total_rows": {
       "type": "integer",
       "minimum": 0,
-      "description": "Total rows in vec_memories"
+      "description": "Total rows in the live memory embedding table (memory_embeddings, or legacy vec_memories)"
     },
-    "vec_memories_orphaned": {
+    "orphaned": {
       "type": "integer",
       "minimum": 0,
-      "description": "Rows in vec_memories whose parent memory is soft-deleted or missing"
+      "description": "Embedding rows whose parent memory is soft-deleted or missing"
     },
-    "vec_entities": {
-      "type": "integer",
-      "minimum": 0
+    "coverage_percent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage of embedding rows with a live parent memory"
     },
-    "vec_entities_orphaned": {
+    "vec_entities_rows": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Rows in entity_embeddings (or legacy vec_entities); omitted when neither table exists"
     },
-    "vec_chunks": {
+    "vec_chunks_rows": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Rows in chunk_embeddings (or legacy vec_chunks); omitted when neither table exists"
     },
-    "vec_chunks_orphaned": {
+    "fts_memories_rows": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Rows in the fts_memories FTS5 index"
+    },
+    "dims": {
+      "type": "array",
+      "description": "G52: per-dimensionality row counts across the three embedding tables; more than one dim per table indicates mixed-dim contamination",
+      "items": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string",
+            "enum": ["memory_embeddings", "entity_embeddings", "chunk_embeddings"]
+          },
+          "dim": { "type": "integer", "minimum": 0 },
+          "rows": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["table", "dim", "rows"],
+        "additionalProperties": false
+      }
     },
     "elapsed_ms": {
       "type": "integer",
@@ -40,13 +59,11 @@
     }
   },
   "required": [
-    "namespace",
-    "vec_memories",
-    "vec_memories_orphaned",
-    "vec_entities",
-    "vec_entities_orphaned",
-    "vec_chunks",
-    "vec_chunks_orphaned",
+    "total_rows",
+    "orphaned",
+    "coverage_percent",
+    "fts_memories_rows",
+    "dims",
     "elapsed_ms"
   ],
   "additionalProperties": false

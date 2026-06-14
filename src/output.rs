@@ -344,6 +344,21 @@ pub struct RecallResponse {
     pub results: Vec<RecallItem>,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
+    /// G58 (v1.0.80): `true` when the live query embedding failed and the
+    /// handler fell back to FTS5 BM25 + LIKE prefix. Symmetric to
+    /// `fts_degraded` in `hybrid-search`. Absent on the wire when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub vec_degraded: bool,
+    /// G58 (v1.0.80): human-readable description of the embedding failure
+    /// that triggered the fallback. Absent on the wire when `vec_degraded`
+    /// is false or the failure had no message.
+    #[serde(skip_serializing_if = "std::option::Option::is_none")]
+    pub vec_error: Option<String>,
+    /// G58 (v1.0.80): advisory warning echoed for callers that branch on
+    /// top-level status. Distinguishes a FTS5-only fallback from a clean
+    /// hybrid response so downstream pipelines can lower their confidence.
+    #[serde(skip_serializing_if = "std::option::Option::is_none")]
+    pub warning: Option<String>,
 }
 
 #[cfg(test)]
@@ -468,6 +483,9 @@ mod tests {
             graph_matches: vec![],
             results: vec![],
             elapsed_ms: 42,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("direct_matches"));
@@ -475,6 +493,29 @@ mod tests {
         assert!(json.contains("\"k\":"));
         assert!(json.contains("\"results\""));
         assert!(json.contains("\"elapsed_ms\""));
+        // G58: clean response must NOT carry the degradation fields.
+        assert!(!json.contains("vec_degraded"));
+        assert!(!json.contains("vec_error"));
+        assert!(!json.contains("warning"));
+    }
+
+    #[test]
+    fn recall_response_serializes_vec_degraded_when_fallback_fired() {
+        let resp = RecallResponse {
+            query: "busca".to_string(),
+            k: 10,
+            direct_matches: vec![],
+            graph_matches: vec![],
+            results: vec![],
+            elapsed_ms: 42,
+            vec_degraded: true,
+            vec_error: Some("embedding cancelled by external signal".to_string()),
+            warning: Some("live query embedding unavailable; results are FTS5 BM25 only (semantic relevance reduced)".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"vec_degraded\":true"));
+        assert!(json.contains("\"vec_error\":\"embedding cancelled by external signal\""));
+        assert!(json.contains("\"warning\":\"live query embedding unavailable"));
     }
 
     #[test]

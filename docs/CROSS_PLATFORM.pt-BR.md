@@ -117,6 +117,12 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - Workaround manual para v1.0.66/v1.0.67 (apenas se você precisa ficar nessas versões): edite `~/.cargo/registry/src/index.crates.io-*/sqlite-graphrag-*/src/terminal.rs`, substitua a linha 29 por `if !handle.is_null() && handle != INVALID_HANDLE_VALUE`, e adicione `INVALID_HANDLE_VALUE` ao `use windows_sys::Win32::Foundation::{...}`.  Depois rode `cargo install --path .` a partir do source corrigido.
 - Referência: `https://docs.rs/windows-sys/0.59.0/windows_sys/Win32/Foundation/type.HANDLE.html` (atual) e `https://docs.rs/windows-sys/0.52.0/windows_sys/Win32/Foundation/type.HANDLE.html` (legado)
 
+### Resiliência de Infra Windows no CI (G53-WINDOWS-INFRA, ADR-0033, v1.0.80)
+- Os jobs da matrix windows-2025 (`clippy` e `test`) ganharam 2 steps novos cada, gateados em `if: matrix.os == 'windows-2025'` (no-op em ubuntu e macos): um step de pre-warm que baixa o toolchain rustup no cache do runner antes do build, e um step de verify que re-checa `rustup show active-toolchain` após install
+- Os 2 modos históricos de falha de infra agora são recuperáveis na primeira re-run em vez de acumularem como CI vermelho: (a) download do rustup com erros transitórios de rede, (b) `E0463 can't find crate for core` quando a stdlib do target está ausente
+- Validação local de cross-compile: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduzido e o `E0463` resolvido via `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`; o build então atinge a fronteira `cc-rs: failed to find tool "lib.exe"`, que é o limite esperado de cross-compile MSVC a partir de host Linux
+- A label explícita `windows-2025` do runner (substituindo `windows-latest` desde a v1.0.73) continua sendo a escolha certa até a data de corte do redirect do VS2026 (2026-06-15); veja ADR-0033 para a justificativa completa e as condições de fronteira
+
 
 ## Containers
 ### Imagens glibc — Caminho Oficial Hoje

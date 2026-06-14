@@ -93,6 +93,14 @@ pub struct RecallArgs {
     /// every namespace and results include a `namespace` field to identify origin.
     #[arg(long, conflicts_with = "namespace")]
     pub all_namespaces: bool,
+    /// G58 (v1.0.80): skip the live query embedding and use FTS5 BM25 +
+    /// LIKE prefix exclusively. Useful in CI/CD with tight OAuth quota and
+    /// in deterministic regression tests that need stable ranking.
+    #[arg(
+        long,
+        help = "Skip live query embedding; use FTS5 BM25 + LIKE prefix only"
+    )]
+    pub fallback_fts_only: bool,
 }
 
 #[tracing::instrument(skip_all, level = "debug", name = "recall")]
@@ -141,67 +149,121 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         "Computing query embedding...",
         "Calculando embedding da consulta...",
     );
-    let embedding = crate::embedder::embed_query_local(&paths.models, &args.query)?;
-
     let conn = open_ro(&paths.db)?;
+    // G58 (v1.0.80): when the live embedding fails (timeout, OAuth contention,
+    // rate limit, missing CLI), fall back to FTS5 BM25 + LIKE prefix and
+    // surface the degradation through `vec_degraded` + `vec_error` + `warning`
+    // on the response envelope. The `--fallback-fts-only` flag forces the
+    // skip without even attempting the embedding subprocess.
+    let (embedding, vec_degraded, vec_error) = if args.fallback_fts_only {
+        (None, true, Some("fallback_fts_only requested".to_string()))
+    } else {
+        match crate::embedder::try_embed_query_with_fallback(&paths.models, &args.query) {
+            Ok(v) => (Some(v), false, None),
+            Err(reason) => {
+                let msg = reason.to_string();
+                tracing::warn!(target: "recall", fallback_reason = %msg, "live embedding failed; falling back to FTS5");
+                (None, true, Some(msg))
+            }
+        }
+    };
 
     let memory_type_str = args.r#type.map(|t| t.as_str());
     // When --precise is set, lift the -k cap so every match is returned; the
     // max_distance filter below will trim irrelevant results instead.
     let effective_k = if args.precise { 100_000 } else { args.k };
-    let knn_results =
-        memories::knn_search(&conn, &embedding, &namespaces, memory_type_str, effective_k)?;
 
-    let mut direct_matches = Vec::with_capacity(effective_k);
-    let mut memory_ids: Vec<i64> = Vec::with_capacity(effective_k);
-    for (memory_id, distance) in knn_results {
-        let row = {
-            let mut stmt = conn.prepare_cached(
-                "SELECT id, namespace, name, type, description, body, body_hash,
-                        session_id, source, metadata, created_at, updated_at
-                 FROM memories WHERE id=?1 AND deleted_at IS NULL",
+    // G58: if the embedding is unavailable, route the entire direct path
+    // through FTS5 BM25 + LIKE prefix. Graph traversal is suppressed because
+    // it depends on the KNN results to seed the expansion; without the
+    // embedding, no seed exists.
+    let (direct_matches, memory_ids): (Vec<RecallItem>, Vec<i64>) =
+        if let Some(emb) = embedding.as_ref() {
+            let knn_results =
+                memories::knn_search(&conn, emb, &namespaces, memory_type_str, effective_k)?;
+            let mut items: Vec<RecallItem> = Vec::with_capacity(knn_results.len());
+            let mut memory_ids: Vec<i64> = Vec::with_capacity(knn_results.len());
+            for (memory_id, distance) in knn_results {
+                let row = {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT id, namespace, name, type, description, body, body_hash,
+                            session_id, source, metadata, created_at, updated_at
+                     FROM memories WHERE id=?1 AND deleted_at IS NULL",
+                    )?;
+                    stmt.query_row(rusqlite::params![memory_id], |r| {
+                        Ok(memories::MemoryRow {
+                            id: r.get(0)?,
+                            namespace: r.get(1)?,
+                            name: r.get(2)?,
+                            memory_type: r.get(3)?,
+                            description: r.get(4)?,
+                            body: r.get(5)?,
+                            body_hash: r.get(6)?,
+                            session_id: r.get(7)?,
+                            source: r.get(8)?,
+                            metadata: r.get(9)?,
+                            created_at: r.get(10)?,
+                            updated_at: r.get(11)?,
+                            deleted_at: None,
+                        })
+                    })
+                    .ok()
+                };
+                if let Some(row) = row {
+                    let snippet: String = row.body.chars().take(300).collect();
+                    items.push(RecallItem {
+                        memory_id: row.id,
+                        name: row.name,
+                        namespace: row.namespace,
+                        memory_type: row.memory_type,
+                        description: row.description,
+                        snippet,
+                        distance,
+                        score: RecallItem::score_from_distance(distance),
+                        source: "direct".to_string(),
+                        graph_depth: None,
+                    });
+                    memory_ids.push(memory_id);
+                }
+            }
+            (items, memory_ids)
+        } else {
+            // FTS5 BM25 + LIKE prefix fallback path. The same `fts_search` helper
+            // is used as in `hybrid-search`; distance is approximated by
+            // 1.0 / (rank + 1) so the score is in (0, 1] and comparable to the
+            // vector path's `1.0 - distance`. Note: only the FIRST effective_k
+            // results are kept to preserve the top-N contract.
+            let fts_rows = memories::fts_search(
+                &conn,
+                &args.query,
+                &namespace_for_graph,
+                memory_type_str,
+                effective_k,
             )?;
-            stmt.query_row(rusqlite::params![memory_id], |r| {
-                Ok(memories::MemoryRow {
-                    id: r.get(0)?,
-                    namespace: r.get(1)?,
-                    name: r.get(2)?,
-                    memory_type: r.get(3)?,
-                    description: r.get(4)?,
-                    body: r.get(5)?,
-                    body_hash: r.get(6)?,
-                    session_id: r.get(7)?,
-                    source: r.get(8)?,
-                    metadata: r.get(9)?,
-                    created_at: r.get(10)?,
-                    updated_at: r.get(11)?,
-                    deleted_at: None,
-                })
-            })
-            .ok()
+            let mut items: Vec<RecallItem> = Vec::with_capacity(fts_rows.len());
+            for (rank, row) in fts_rows.into_iter().enumerate() {
+                let dist = 1.0 - 1.0 / (rank as f32 + 1.0);
+                let snippet: String = row.body.chars().take(300).collect();
+                items.push(RecallItem {
+                    memory_id: row.id,
+                    name: row.name,
+                    namespace: row.namespace,
+                    memory_type: row.memory_type,
+                    description: row.description,
+                    snippet,
+                    distance: dist,
+                    score: RecallItem::score_from_distance(dist),
+                    source: "fts_fallback".to_string(),
+                    graph_depth: None,
+                });
+            }
+            (items, Vec::new())
         };
-        if let Some(row) = row {
-            let snippet: String = row.body.chars().take(300).collect();
-            direct_matches.push(RecallItem {
-                memory_id: row.id,
-                name: row.name,
-                namespace: row.namespace,
-                memory_type: row.memory_type,
-                description: row.description,
-                snippet,
-                distance,
-                score: RecallItem::score_from_distance(distance),
-                source: "direct".to_string(),
-                // Direct vector matches do not have a graph depth; rely on `distance`.
-                graph_depth: None,
-            });
-            memory_ids.push(memory_id);
-        }
-    }
 
     let mut graph_matches = Vec::with_capacity(8);
-    if !args.no_graph {
-        let entity_knn = entities::knn_search(&conn, &embedding, &namespace_for_graph, 5)?;
+    if let Some(emb) = (!args.no_graph).then_some(()).and(embedding.as_ref()) {
+        let entity_knn =
+            entities::knn_search(&conn, emb, &namespace_for_graph, 5)?;
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
         let all_seed_ids: Vec<i64> = memory_ids
@@ -254,11 +316,6 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
                 };
                 if let Some(row) = row {
                     let snippet: String = row.body.chars().take(300).collect();
-                    // Compute approximate distance from graph hop count.
-                    // WARNING: graph_distance is a hop-count proxy, NOT real cosine distance.
-                    // For confident ranking, prefer the `graph_depth` field (set to Some(hop)
-                    // below). Real cosine distance for graph matches would require
-                    // re-embedding (200-500ms latency) and is reserved for v1.0.28.
                     let graph_distance = 1.0 - 1.0 / (hop as f32 + 1.0);
                     graph_matches.push(RecallItem {
                         memory_id: row.id,
@@ -278,7 +335,7 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
     }
 
     // Filtrar por max_distance se < 1.0 (ativado). Se nenhum hit dentro do threshold, exit 4.
-    if args.max_distance < 1.0 {
+    if args.max_distance < 1.0 && !vec_degraded {
         let has_relevant = direct_matches
             .iter()
             .any(|item| item.distance <= args.max_distance);
@@ -297,6 +354,15 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         .chain(graph_matches.iter().cloned())
         .collect();
 
+    let warning = if vec_degraded {
+        Some(
+            "live query embedding unavailable; results are FTS5 BM25 only (semantic relevance reduced)"
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
     output::emit_json(&RecallResponse {
         query: args.query,
         k: args.k,
@@ -304,6 +370,9 @@ pub fn run(args: RecallArgs) -> Result<(), AppError> {
         graph_matches,
         results,
         elapsed_ms: start.elapsed().as_millis() as u64,
+        vec_degraded,
+        vec_error,
+        warning,
     })?;
 
     Ok(())
@@ -361,6 +430,9 @@ mod tests {
             graph_matches: vec![],
             results: vec![make_item("mem-a", 0.12, "direct")],
             elapsed_ms: 42,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -395,6 +467,9 @@ mod tests {
             graph_matches: vec![graph.clone()],
             results: vec![direct, graph],
             elapsed_ms: 10,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -414,6 +489,9 @@ mod tests {
             graph_matches: vec![],
             results: vec![],
             elapsed_ms: 1,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");

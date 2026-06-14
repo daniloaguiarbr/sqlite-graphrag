@@ -25,12 +25,31 @@ import json, os, re, sys
 text = os.environ['ARGS']
 if not sys.stdin.isatty():
     text += ' ' + sys.stdin.read()
+# G51: honour the requested dimensionality instead of hardcoding 64.
+# Batch prompts carry it inline; the single path only carries it in the
+# --output-schema JSON file (minItems), so read that file when present.
+dim = 64
+dm = re.search(r'(\d+)-dimensional', text)
+if dm:
+    dim = int(dm.group(1))
+else:
+    argv = text.split()
+    for flag in ('--output-schema', '--json-schema'):
+        if flag in argv:
+            try:
+                schema = open(argv[argv.index(flag) + 1]).read()
+                sm = re.search(r'\"minItems\"\s*:\s*(\d+)', schema)
+                if sm:
+                    dim = int(sm.group(1))
+            except (IndexError, OSError):
+                pass
+            break
 m = re.search(r'EXACTLY (\d+) items', text)
 if m:
     n = int(m.group(1))
-    payload = {'items': [{'i': i + 1, 'v': [0.0] * 64} for i in range(n)]}
+    payload = {'items': [{'i': i + 1, 'v': [0.0] * dim} for i in range(n)]}
 else:
-    payload = {'embedding': [0.0] * 64}
+    payload = {'embedding': [0.0] * dim}
 
 events = [
     {'type': 'thread.started', 'thread_id': 'mock-thread-0'},

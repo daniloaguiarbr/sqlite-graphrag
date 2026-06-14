@@ -38,9 +38,41 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      # G53-WINDOWS-INFRA (v1.0.80): pre-warm rustup toolchain on
+      # windows-2025 to absorb transient rustup CDN flakes before the
+      # dtolnay action tries to install the same toolchain. Step is gated
+      # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
+      - name: Pre-warm rustup toolchain (windows-2025 resilience)
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Pre-warm attempt $attempt ==="
+            rustup toolchain install stable --profile minimal --no-self-update
+            rc=$?
+            if ($rc -eq 0) { break }
+            if ($attempt -eq 3) { exit $rc }
+            Start-Sleep -Seconds 15
+          done
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # G53-WINDOWS-INFRA (v1.0.80): verify rustc/cargo reachable after
+      # dtolnay install on windows-2025. Retries up to 3x with 10s sleep
+      # to recover from PATH propagation delays on Windows runners.
+      - name: Verify rustc + cargo (windows-2025 resilience)
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Verify attempt $attempt ==="
+            rustc --version
+            cargo --version
+            rc=$?
+            if ($rc -eq 0) { break }
+            if ($attempt -eq 3) { exit $rc }
+            Start-Sleep -Seconds 10
+          done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Clippy with feature matrix
@@ -70,32 +102,52 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      # G53-WINDOWS-INFRA (v1.0.80): pre-warm rustup toolchain on
+      # windows-2025 to absorb transient rustup CDN flakes before the
+      # dtolnay action tries to install the same toolchain. Step is gated
+      # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
+      - name: Pre-warm rustup toolchain (windows-2025 resilience)
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Pre-warm attempt $attempt ==="
+            rustup toolchain install stable --profile minimal --no-self-update
+            rc=$?
+            if ($rc -eq 0) { break }
+            if ($attempt -eq 3) { exit $rc }
+            Start-Sleep -Seconds 15
+          done
       - uses: dtolnay/rust-toolchain@stable
+      # G53-WINDOWS-INFRA (v1.0.80): verify rustc/cargo reachable after
+      # dtolnay install on windows-2025. Retries up to 3x with 10s sleep
+      # to recover from PATH propagation delays on Windows runners.
+      - name: Verify rustc + cargo (windows-2025 resilience)
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Verify attempt $attempt ==="
+            rustc --version
+            cargo --version
+            rc=$?
+            if ($rc -eq 0) { break }
+            if ($attempt -eq 3) { exit $rc }
+            Start-Sleep -Seconds 10
+          done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Install LLM CLI mock (default + llm-only only)
         if: matrix.llm-cli == 'claude'
         shell: bash
         run: |
-          # Install a stub `claude` that returns a fixed 384-dim
-          # embedding for any prompt. The unit tests in
-          # `src/extract/llm_embedding.rs` use this stub.
+          # G50: reuse the canonical mocks from tests/mock-llm (64-dim,
+          # single AND batch response shapes since G42/S2 + G43). The old
+          # inline stub here returned 384-dim single-shape responses and
+          # silently diverged from the dimensionality shipped in v1.0.79.
           mkdir -p /tmp/sgr-llm-mock/bin
-          cat > /tmp/sgr-llm-mock/bin/claude <<'MOCK'
-          #!/bin/bash
-          # Trivial mock that returns a fixed JSON for the
-          # embedding schema. Used by the CI test job for the
-          # default and llm-only feature configurations.
-          if [[ "$*" == *"--output-schema"* ]]; then
-            # Generate 384 zeros.
-            zeros=$(python3 -c 'import json; print(json.dumps({"embedding":[0.0]*384}))')
-            echo "$zeros"
-            exit 0
-          fi
-          echo '{"text":"mock"}'
-          exit 0
-          MOCK
-          chmod +x /tmp/sgr-llm-mock/bin/claude
+          cp tests/mock-llm/claude tests/mock-llm/codex /tmp/sgr-llm-mock/bin/
+          chmod +x /tmp/sgr-llm-mock/bin/claude /tmp/sgr-llm-mock/bin/codex
           echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --version 0.9.114 --locked
@@ -219,6 +271,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
       - run: cargo install cargo-deny --locked
       - run: cargo deny check advisories licenses bans sources
+
+  # G53 (v1.0.80): semantic-version compatibility check for the published
+  # lib API. Gate is INFORMATIONAL in v1.0.80 (continues on error) so
+  # existing PRs are not blocked before the 9 current MAJOR violations
+  # are resolved; promoted to BLOCKING in v1.0.81 once the policy from
+  # adr-0032 is enforced.
+  semver-checks:
+    name: SemVer Compatibility (G53)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/install-mold-linker
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked
+      - name: Run semver-checks against the previous release
+        # v1.0.79 is the last published release; bump on each release.
+        # Use --major-version to scope to a single major track; without it
+        # the tool defaults to the highest published version which may not
+        # be the one this branch is targeting.
+        run: |
+          cargo semver-checks check-baseline \
+            --manifest-path Cargo.toml \
+            --baseline-version 1.0.79 \
+            --verbose
+          # The previous command exit code is non-zero when ANY breaking
+          # change is detected. We currently run with continue-on-error at
+          # the job level so the gate is INFORMATIONAL until G53/adr-0032
+          # declares an explicit policy.
+          echo "::notice::semver-checks is informational in v1.0.80; see adr-0032"
 
   geiger:
     name: Unsafe Audit
@@ -421,6 +505,16 @@ jobs:
           name: bench-baseline
           path: target/criterion
         continue-on-error: true
+      - name: Install LLM CLI mock (bench needs init + remember)
+        shell: bash
+        run: |
+          # G50: the benchmark spawns the real CLI (init/remember), which
+          # requires an LLM CLI on PATH since v1.0.76. Without the mock the
+          # bench dies with exit 11 (embedding failure).
+          mkdir -p /tmp/sgr-llm-mock/bin
+          cp tests/mock-llm/claude tests/mock-llm/codex /tmp/sgr-llm-mock/bin/
+          chmod +x /tmp/sgr-llm-mock/bin/claude /tmp/sgr-llm-mock/bin/codex
+          echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - name: Run benchmarks
         env:
           RUST_TEST_THREADS: "2"

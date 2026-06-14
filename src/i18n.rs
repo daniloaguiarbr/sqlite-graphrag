@@ -437,16 +437,38 @@ pub mod validation {
         }
 
         pub fn not_found(msg: &str) -> String {
+            // G55 T3: add replacements for the read.rs format produced by the
+            // T1 fix: `memory not found: name='X' in namespace 'Y'`.
+            // The existing chain did not catch ` in namespace '` when broken
+            // by the name label, leaving a bilingual hybrid. New patterns
+            // must run BEFORE the catch-all `memory` → `memória` to avoid
+            // being shadowed.
             let translated = msg
+                .replace("memory not found:", "memória não encontrada:")
                 .replace("not found in namespace", "não encontrada no namespace")
                 .replace("not found for memory", "não encontrada para memória")
                 .replace("does not exist in namespace", "não existe no namespace")
                 .replace("memory or entity", "memória ou entidade")
+                .replace("name='", "nome='")
                 .replace("memory", "memória")
                 .replace("entity", "entidade")
+                .replace(" in namespace '", " no namespace '")
                 .replace("version", "versão")
                 .replace("soft-deleted", "excluída temporariamente");
             format!("não encontrado: {translated}")
+        }
+
+        // G55 S2 (v1.0.80): structured variant helpers. They synthesize the
+        // canonical English message and feed it through the `not_found`
+        // replace-chain so the pt-BR translation stays in one place.
+        pub fn memory_not_found(name: &str, namespace: &str) -> String {
+            not_found(&format!(
+                "memory not found: name='{name}' in namespace '{namespace}'"
+            ))
+        }
+
+        pub fn memory_not_found_by_id(id: i64) -> String {
+            not_found(&format!("memory not found: id={id}"))
         }
 
         pub fn namespace_error(msg: &str) -> String {
@@ -512,6 +534,13 @@ pub mod validation {
             format!(
                 "job {job_type} para o namespace '{namespace}' já está em execução (exit 75); \
                  aguarde a conclusão ou passe --wait-job-singleton <SEGUNDOS>"
+            )
+        }
+
+        pub fn embedding_singleton_locked(namespace: &str) -> String {
+            format!(
+                "singleton de embedding para o namespace '{namespace}' já está retido (exit 75); \
+                 outra CLI está chamando o LLM neste banco; passe --wait-embed-singleton <SEGUNDOS> para aguardar"
             )
         }
 

@@ -129,11 +129,11 @@ pub fn run(args: BackupArgs) -> Result<(), AppError> {
                             } else {
                                 100.0
                             };
-                            eprintln!(
-                                "{{\"progress\":{{\"pages_copied\":{copied},\"total_pages\":{pc},\"percent\":{pct:.2}}}}}",
+                            output::emit_progress(&format!(
+                                "backup progress: pages_copied={copied} total_pages={pc} percent={pct:.2}",
                                 pc = p.pagecount,
                                 pct = percent
-                            );
+                            ));
                         }
                     }
                     if !sleep.is_zero() {

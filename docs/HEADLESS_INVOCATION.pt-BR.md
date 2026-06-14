@@ -221,6 +221,61 @@ OPENCODE_CONFIG_CONTENT='{"mcp":{"nome-do-server-1":{"enabled":false},"nome-do-s
 - OpenCode: `opencode run`
 
 
+## Atualização v1.0.80 — Resiliência de SHUTDOWN e a Receita de Bypass em 3 Camadas
+
+A v1.0.80 (ADR-0034) endurece o handler em `src/signals.rs` para que
+o cenário de processo órfão que a auditoria G42/C2 identificou
+não dispare mais `SIGABRT` em `BrokenPipe`. O terceiro Ctrl-C
+consecutivo sai com código 130 e **ZERO I/O**, casando com o
+contrato abaixo.
+
+Para jobs longos de embedding que o harness do agente (ou qualquer
+orquestrador em background) pode matar via SIGINT, use a receita
+de bypass em 3 camadas. As 3 camadas são independentes e a receita
+compõe aditivamente:
+
+```bash
+# Camada 1 — PATH: roteia o subprocesso LLM via o mock-llm no CI
+export PATH="$PWD/tests/mock-llm:$PATH"
+
+# Camada 2 — env: diz ao embedder para ignorar a checagem de SHUTDOWN
+export SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1
+
+# Camada 3 — grupo de processos: desanexa a CLI do pgroup do harness
+setsid -w timeout 600 \
+  sqlite-graphrag remember --graph-stdin < payload.json
+```
+
+- **Camada 1 (PATH)**: roteia qualquer `claude -p` ou `codex exec`
+  spawned via a mock CLI determinística commitada em
+  `tests/mock-llm/`. O subprocesso LLM real é desviado; SIGINT não
+  consegue matar um subprocesso que não existe. É a camada mais
+  barata e o default certo em CI.
+- **Camada 2 (env)**: faz o `if should_obey_shutdown()` do embedder
+  curto-circuitar para `true`, então o braço de cancelamento do
+  `tokio::select!` é descartado e o batch roda até a conclusão
+  mesmo se o cancellation token já estiver cancelled. Zero
+  overhead em produção porque a leitura da env é um único
+  `std::env::var` por chamada de `should_obey_shutdown()`, não
+  em hot path.
+- **Camada 3 (setsid)**: dá à CLI seu próprio grupo de processos via
+  `setsid -w`, então SIGINT do harness pai não se propaga para o
+  filho. `timeout` adiciona um teto rígido de wall-clock (binário
+  Rust `timeout-cli` v0.1.0, somente inteiros em segundos —
+  `600` é 10 minutos; não passe `10m`).
+
+A receita é agora a referência canônica para qualquer harness de
+agente rodando jobs longos de embedding em background. O bypass é
+explicitamente opt-in: código de produção NUNCA deve chamar
+`try_reset_shutdown()`, e a env var NUNCA deve ser setada em
+produção. Tests e invocações de auditoria são os únicos
+consumidores válidos.
+
+Se a execução for interrompida entre as camadas, o arquivo SQLite
+permanece consistente (WAL, commit atômico, sem escritas
+parciais), e `restore` ou `enrich --operation re-embed --resume`
+podem retomar a partir da última memória bem-sucedida.
+
 ## Referências Externas Validadas
 
 ### Claude Code
@@ -243,4 +298,3 @@ OPENCODE_CONFIG_CONTENT='{"mcp":{"nome-do-server-1":{"enabled":false},"nome-do-s
 - `opencode.ai/docs/mcp-servers/` — controle de MCP via `enabled: false` por servidor
 - `open-code.ai/en/docs/config` — referência de `opencode.json` com providers, models, MCP
 - `computingforgeeks.com/opencode-cli-cheat-sheet/` — cheat sheet com flags headless e MCP
-

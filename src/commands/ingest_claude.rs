@@ -950,7 +950,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                 })
                 .collect();
 
-            let body_str = String::from_utf8_lossy(&file_content);
+            let body_str = String::from_utf8(file_content.clone())
+                .map_err(|e| AppError::Validation(format!("file is not valid UTF-8: {e}")))?;
             let body_hash = blake3::hash(body_str.as_bytes()).to_hex().to_string();
             let new_memory = NewMemory {
                 name: name.clone(),
@@ -1051,7 +1052,8 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             }
 
             // G01: embedding pipeline — enables recall to find memories created via --mode claude-code
-            let body_text = String::from_utf8_lossy(&file_content).into_owned();
+            let body_text = String::from_utf8(file_content.clone())
+                .map_err(|e| AppError::Validation(format!("file is not valid UTF-8: {e}")))?;
             let snippet: String = body_text.chars().take(200).collect();
             let chunks_info = crate::chunking::split_into_chunks_hierarchical(&body_text);
 

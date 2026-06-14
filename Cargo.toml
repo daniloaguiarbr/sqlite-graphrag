@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.79"
+version = "1.0.80"
 edition = "2021"
 rust-version = "1.88"
 description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 6 MB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
@@ -99,6 +99,14 @@ harness = false
 
 [[bench]]
 name = "regression_baseline"
+harness = false
+
+# G54 (v1.0.80): retrieval-quality micro-benchmark for `recall` and
+# `hybrid-search`. Opt-in only — runs only when
+# `SQLITE_GRAPHRAG_BENCH_OPT_IN=1` is set; the regular CI gate that runs
+# `cargo bench --bench regression_baseline` does NOT touch this bench.
+[[bench]]
+name = "retrieval_bench"
 harness = false
 
 [[test]]

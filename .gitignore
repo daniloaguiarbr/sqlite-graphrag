@@ -56,6 +56,8 @@ graphrag.sqlite-wal
 # Temporary files
 *.tmp
 *.bak
+*.bak.*
+**/*.bak.*
 
 # Internal analysis
 gaps.md
@@ -65,3 +67,7 @@ fuzz/corpus/
 fuzz/artifacts/
 scripts/legacy/
 graphrag.sqlite.v1075-bak
+
+# atomwrite sidecar WAL files
+*.atomwrite.journal.*.json
+.atomwrite.journal.*.json

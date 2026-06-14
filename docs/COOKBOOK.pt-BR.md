@@ -1991,6 +1991,202 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --json
 - `enrich` (e `ingest --mode claude-code|codex`) adquirem um singleton por namespace em v1.0.68.  A segunda invocação concorrente recebe `AppError::JobSingletonLocked` (exit 75) em vez de empilhar.
 - Um `tracing::warn!` é emitido quando `--llm-parallelism > 4` recomendando a combinação com o override de env var para manter o host responsivo.
 
+## Como Sobreviver a Sinais de SHUTDOWN Durante Jobs Longos de Embedding (v1.0.80, ADR-0034)
+
+### Problema
+
+O harness do agente (e qualquer orquestrador em background)
+envia SIGINT para a CLI quando seu orçamento de wall-clock de
+80 minutos expira. A auditoria G42 identificou que o handler
+anterior em `src/signals.rs` disparava `SIGABRT` em
+`BrokenPipe` quando o stderr do pai era um pipe fechado — o
+cenário de processo órfão. A v1.0.80 corrige o abort mas NÃO
+torna os jobs de embedding mais rápidos; para jobs mais longos
+que o orçamento do harness você ainda precisa de um bypass.
+
+### Solução
+
+A receita de bypass SHUTDOWN em 3 camadas é a resposta canônica.
+As 3 camadas são independentes e a receita compõe aditivamente:
+
+```bash
+# Camada 1 — PATH: roteia o subprocesso LLM via o mock-llm
+export PATH="$PWD/tests/mock-llm:$PATH"
+
+# Camada 2 — env: diz ao embedder para ignorar a checagem de SHUTDOWN
+export SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1
+
+# Camada 3 — grupo de processos: desanexa a CLI do pgroup do harness
+setsid -w timeout 600 \
+  sqlite-graphrag remember --graph-stdin < payload.json
+```
+
+### Explicação
+
+- **Camada 1 (PATH)** roteia qualquer `claude -p` ou `codex exec`
+  spawned via a mock CLI determinística commitada em
+  `tests/mock-llm/`. O subprocesso LLM real é desviado; SIGINT
+  não consegue matar um subprocesso que não existe. É a camada
+  mais barata e o default certo em CI.
+- **Camada 2 (env)** faz o `if should_obey_shutdown()` do
+  embedder curto-circuitar para `true`, então o braço de
+  cancelamento do `tokio::select!` é descartado e o batch roda
+  até a conclusão mesmo se o cancellation token já estiver
+  cancelled. Zero overhead em produção porque a leitura da env
+  é um único `std::env::var` por chamada de `should_obey_shutdown()`,
+  não em hot path.
+- **Camada 3 (setsid)** dá à CLI seu próprio grupo de processos
+  via `setsid -w`, então SIGINT do harness pai não se propaga
+  para o filho. `timeout` adiciona um teto rígido de wall-clock
+  (binário Rust `timeout-cli` v0.1.0, somente inteiros em segundos
+  — `600` é 10 minutos; não passe `10m`).
+
+### Variantes
+
+- Para runners de CI: pule a Camada 3 e confie nas Camadas 1+2;
+  o mock-llm torna o caminho do subprocesso zero-custo, então
+  `setsid` é desnecessário.
+- Para daemons de produção: NÃO use esta receita. O bypass é
+  opt-in; código de produção NUNCA deve chamar
+  `try_reset_shutdown()`, e `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN`
+  NUNCA deve ser setada em produção. A receita é para tests e
+  invocações de auditoria apenas.
+- Para jobs interrompidos entre as camadas: o arquivo SQLite
+  permanece consistente (WAL, commit atômico, sem escritas
+  parciais), e `restore` ou `enrich --operation re-embed
+  --resume` podem retomar a partir da última memória
+  bem-sucedida.
+
+### Veja Também
+
+- `docs/HEADLESS_INVOCATION.pt-BR.md` → "Atualização v1.0.80 —
+  Resiliência de SHUTDOWN e a Receita de Bypass em 3 Camadas"
+- `docs/decisions/adr-0034-shutdown-resilience.pt-BR.md`
+- `src/signals.rs` para a barreira de captura de panic na v1.0.80
+- `src/embedder.rs:537` para o braço de cancelamento desviado
+
+## Como Coordenar Invocações Concorrentes de `remember` (v1.0.80, G45)
+
+### Problema
+
+Dois teammates do agente chamando `remember` no mesmo banco ao
+mesmo tempo costumavam spawnar 2 subprocessos LLM, 2 batches
+paralelos e 2 requisições OAuth queimando quota. O cache em
+processo da v1.0.79 não conseguia endereçar isso porque o cache
+vive dentro do processo e os subprocessos vivem entre processos.
+
+### Solução
+
+A v1.0.80 introduz um singleton de embedding cross-process
+(`acquire_embedding_singleton`) que serializa chamadas de
+embedding LLM por par `(namespace, db)`:
+
+```bash
+# Comportamento default: a segunda CLI recebe
+# AppError::EmbeddingSingletonLocked (exit 75, retentável)
+# quando outra invocação já está embedando contra o mesmo
+# par (namespace, db)
+
+# Opt-in: faz poll até a soltura do lock
+sqlite-graphrag remember --wait-embed-singleton 30 --graph-stdin < payload.json
+```
+
+### Explicação
+
+- O singleton usa `fs4` flock, a mesma primitiva do
+  `acquire_job_singleton` do G30. O arquivo de lock vive em
+  `~/.local/share/sqlite-graphrag/embed-slots/` e é chaveado
+  por `(namespace, db_hash)` para que bancos distintos e
+  namespaces distintos adquiram locks independentes.
+- A segunda CLI concorrente no mesmo par `(namespace, db)`
+  recebe `AppError::EmbeddingSingletonLocked { namespace }`
+  com exit code 75 e `is_retryable() == true`. A mensagem
+  localizada em pt-BR nomeia o namespace explicitamente.
+- `--wait-embed-singleton <SEGUNDOS>` faz poll do lock com o
+  mesmo contrato de `--wait-job-singleton` (G30).
+- Bancos ou namespaces distintos prosseguem em paralelo sem
+  contenção; o singleton G45 só serializa trabalho de embedding
+  para o MESMO par `(namespace, db)`.
+
+### Variantes
+
+- Para CI: pule o singleton usando o mock-llm no PATH (Camada 1
+  da receita de bypass SHUTDOWN). O mock torna o embedding
+  instantâneo, então o singleton só adiciona latência de poll
+  sem benefício.
+- Para pipelines de ingest de alto throughput: NÃO aumente
+  `--llm-parallelism` acima de 4 no modo Claude sem definir
+  `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` (G28-A). O
+  singleton cross-process NÃO substitui a orientação de
+  isolamento MCP do G28-A; ambos se aplicam.
+
+### Veja Também
+
+- `docs/AGENTS.pt-BR.md` → "OBRIGATÓRIO — G45 Singleton de
+  Embedding Cross-Process"
+- `docs/MIGRATION.pt-BR.md` → "G45 singleton de embedding
+  cross-process"
+- `src/lock.rs` para `acquire_embedding_singleton`
+- `src/errors.rs` para `AppError::EmbeddingSingletonLocked`
+
+## Como Buscar Uma Memória Por ID Sem a Máscara `unknown` do NotFound (v1.0.80, G55 S2)
+
+### Problema
+
+Na v1.0.79, `read --name <nome>` contra uma memória ausente
+emitia `memory not found: unknown in namespace 'global'` — o
+nome solicitado era descartado e substituído pelo literal
+`unknown`. Com `--lang pt`, a mensagem virava um híbrido
+meio-traduzido. Scripts que filtram stderr ou o campo `message`
+do envelope JSON pelo nome solicitado NUNCA casavam.
+
+### Solução
+
+Na v1.0.80, o caminho legado `NotFound(String)` é substituído
+por `AppError::MemoryNotFound { name, namespace }` e
+`AppError::MemoryNotFoundById { id }`. O identificador é parte
+da variante, então a mensagem sempre carrega o nome e o
+namespace solicitados:
+
+```bash
+sqlite-graphrag read --name memoria-fantasma --json
+# {"error":true,"code":4,"message":"memory 'memoria-fantasma' not found in namespace 'global'", ...}
+
+sqlite-graphrag read --id 99999 --json
+# {"error":true,"code":4,"message":"id=99999 not found in namespace 'global'", ...}
+
+sqlite-graphrag --lang pt read --name memoria-fantasma --json
+# {"error":true,"code":4,"message":"memória 'memoria-fantasma' não encontrada no namespace 'global'", ...}
+```
+
+### Explicação
+
+- O compilador agora EXIGE o identificador ao construir a
+  variante de erro, eliminando a classe inteira de bugs
+  "esqueci de incluir o nome".
+- A mensagem localizada em pt-BR carrega nome e namespace
+  explicitamente. Zero fragmentos em inglês.
+- O exit code permanece 4, então a lógica de retry existente
+  e o roteamento por exit code continuam funcionando.
+
+### Variantes
+
+- Para scripts de auditoria que grep em stderr: a mensagem
+  agora contém o nome solicitado verbatim, então `rg "<nome>"`
+  no filtro de stderr funciona.
+- Para o padrão `read` pós-`remember` que o harness do
+  agente usa para verificar persistência: a mensagem agora
+  confirma TANTO o nome consultado QUANTO o namespace,
+  encerrando o loop de diagnóstico em uma única invocação.
+
+### Veja Também
+
+- `docs/AGENTS.pt-BR.md` → "OBRIGATÓRIO — G55 S2: `MemoryNotFound`
+  Estrutural"
+- `src/errors.rs` para `AppError::MemoryNotFound` e
+  `AppError::MemoryNotFoundById`
+- `src/commands/read.rs` para a nova construção do label
+
 ### Variantes
 - Para containers com pouca RAM (≤ 4 GB): adicione `SQLITE_GRAPHRAG_LOW_MEMORY=1` e `--llm-parallelism 1`.
 - Para runners de CI: defina a env var via YAML do workflow e passe `--max-rss-mb 2048` para `ingest --mode claude-code` para abortar cedo em pressão de memória.

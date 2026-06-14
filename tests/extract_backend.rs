@@ -63,7 +63,8 @@ async fn embedding_backend_health_includes_model_name() {
     let backend = EmbeddingBackend::new();
     let health = backend.health().await.expect("health");
     assert_eq!(health.kind, BackendKind::Embedding);
-    assert_eq!(health.model_name, "multilingual-e5-small");
+    // G46: the embedding stub reports the CLI version as its model id.
+    assert_eq!(health.model_name, env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]

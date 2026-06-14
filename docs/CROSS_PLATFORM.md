@@ -116,6 +116,12 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - Manual workaround for v1.0.66/v1.0.67 (only needed if you must stay on those versions): edit `~/.cargo/registry/src/index.crates.io-*/sqlite-graphrag-*/src/terminal.rs`, replace line 29 with `if !handle.is_null() && handle != INVALID_HANDLE_VALUE`, and add `INVALID_HANDLE_VALUE` to the `use windows_sys::Win32::Foundation::{...}` import.  Then `cargo install --path .` from the patched source.
 - Reference: `https://docs.rs/windows-sys/0.59.0/windows_sys/Win32/Foundation/type.HANDLE.html` (current) and `https://docs.rs/windows-sys/0.52.0/windows_sys/Win32/Foundation/type.HANDLE.html` (legacy)
 
+### CI Windows Infra Resilience (G53-WINDOWS-INFRA, ADR-0033, v1.0.80)
+- The windows-2025 matrix jobs (`clippy` and `test`) gained 2 new steps each, gated on `if: matrix.os == 'windows-2025'` (no-op on ubuntu and macos): a pre-warm step that downloads the rustup toolchain into the runner cache before the build, and a verify step that re-checks `rustup show active-toolchain` after install
+- The 2 historical infra failure modes are now recoverable on the first re-run instead of accumulating as red CI: (a) rustup download with transient network errors, (b) `E0463 can't find crate for core` when the target stdlib is missing
+- Local cross-compile validation: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduces and the `E0463` is fixed by `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`; the build then reaches the `cc-rs: failed to find tool "lib.exe"` frontier, which is the expected host-Linux cross-compile limit
+- The explicit `windows-2025` runner label (replacing `windows-latest` since v1.0.73) remains the right call until the VS2026 redirect cutover (2026-06-15); see ADR-0033 for the full rationale and boundary conditions
+
 
 ## Containers
 ### glibc Images — Official Path Today

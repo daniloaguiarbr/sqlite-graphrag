@@ -19,11 +19,15 @@
 //! ```
 //! use sqlite_graphrag::preservation::{jaccard_similarity, PreservationVerdict};
 //!
-//! let score = jaccard_similarity("the quick brown fox", "the quick red fox");
-//! assert!(score > 0.5);
+//! let score = jaccard_similarity("the quick brown fox", "the quick brown fox!");
+//! assert!(score > 0.8);
+//!
+//! let verdict =
+//!     PreservationVerdict::evaluate("the quick brown fox", "the quick brown fox!", 0.7);
+//! assert!(matches!(verdict, PreservationVerdict::Preserved { .. }));
 //!
 //! let verdict = PreservationVerdict::evaluate("orig body", "rewritten body", 0.7);
-//! assert!(matches!(verdict, PreservationVerdict::Preserved { .. }));
+//! assert!(matches!(verdict, PreservationVerdict::Rejected { .. }));
 //! ```
 
 use serde::{Deserialize, Serialize};

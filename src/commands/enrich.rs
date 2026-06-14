@@ -1958,7 +1958,9 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
             failed += r.failed;
             skipped += r.skipped;
             cost_total += r.cost;
-            oauth_detected |= r.oauth;
+            if r.oauth && !oauth_detected {
+                oauth_detected = true;
+            }
         }
     } else {
         // Serial path (parallelism == 1) — original loop

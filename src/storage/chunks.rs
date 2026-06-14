@@ -310,6 +310,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn test_upsert_chunk_vec_and_knn_search() {
         let (_tmp, conn) = setup_db();
         let memory_id = insert_memory(&conn);
@@ -344,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn test_knn_search_chunks_without_data_returns_empty() {
         let (_tmp, conn) = setup_db();
         let embedding = vec![0.0f32; embedding_dim()];

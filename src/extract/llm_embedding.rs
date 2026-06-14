@@ -264,6 +264,15 @@ impl LlmEmbedding {
         self.invoke_with_prefix(crate::constants::QUERY_PREFIX, text)
     }
 
+    /// G56: returns a stable label for the active embedding model so the
+    /// in-process entity-embedding cache can key by `(model, text)`.
+    /// Embeddings produced by different models are not interchangeable,
+    /// so a cache entry from one model must never satisfy a request
+    /// served by another.
+    pub fn model_label(&self) -> String {
+        format!("{}:{}", self.flavour.as_str(), self.model)
+    }
+
     /// G42/S2: embeds a batch of `(global_index, text)` pairs in ONE
     /// LLM call. Returns `(global_index, vector)` pairs. Async — this
     /// is the unit of work scheduled by the bounded fan-out in

@@ -224,6 +224,37 @@
 - `docs/MIGRATION.md` ganhou seção "MIGRATING TO v1.0.78 — G41 Phantom V013 Registration Fix" no topo
 - `docs/MIGRATION.pt-BR.md` ganhou seção correspondente em português
 - `README.md` e `README.pt-BR.md` atualizados para "Current release: v1.0.78"
+- `docs/MIGRATION.pt-BR.md` ganhou seção correspondente em português
+- `README.md` e `README.pt-BR.md` atualizados para "Current release: v1.0.78"
+
+### Mudanças na Camada 2 a Partir da v1.0.79
+- ADR-0019-0026 cobertos na seção anterior (v1.0.76/v1.0.77/v1.0.78)
+- Pipeline de embedding LLM fechado pelo G42 (S1 dim configurável, S2 batching, S3 bounded parallelism, S4 tempfile RAII, S5 modelo env, S6 empty CLAUDE_CONFIG_DIR, S7 codex headless actionable, S8 panic-free signal handler, S9 canonical re-embed)
+- G43 dim-adoption em `open_rw` e `open_ro`; mocks de teste reescritos para 64 dims + batch schema
+- G44 dim-adaptive batch size via `clamp(base×64/dim, 1, base)`
+- G50 CI vermelho fechado: 6 causas (doctest, mock inline, benchmark LLM, language policy, race de dim, deny obsoleto)
+- G51 mocks LLM extraem dim do prompt para testes multi-dim
+- G52 `vec stats` ganhou `dims: [{table, dim, rows}]`; schema fiel ao binário
+- G47 flags documentadas inexistentes: aliases visíveis para `--type` em `edit` e `--entity-type` em `reclassify`
+- G48 G20 não cegava `--max-hops` igual ao default (Option<T>)
+- G49 `SQLITE_GRAPHRAG_EMBEDDING_DIM` inválido emite `tracing::warn!`
+- Daemon infrastructure e features legadas (`embedding-legacy`, `ner-legacy`, `full`) totalmente removidas
+- `docs/AGENTS.md` e `docs/AGENTS.pt-BR.md` ganharam seções "v1.0.79" cobrindo G42-G52 e a remoção do daemon
+- `docs/TESTING.md` e `docs/TESTING.pt-BR.md` ganharam seções "v1.0.79 Test Additions"
+- `docs/COOKBOOK.md` e `docs/COOKBOOK.pt-BR.md` ganharam subseções "v1.0.79 Fix" nas receitas de upgrade
+- `docs/MIGRATION.md` ganhou receita de re-embed com `enrich --operation re-embed --limit N --resume` (substituindo a receita quebrada `edit --description`)
+- `README.md` e `README.pt-BR.md` atualizados para "Current release: v1.0.79"
+
+### Mudanças na Camada 2 a Partir da v1.0.80
+- **ADR-0032 (G53, v1.0.80) — Library API Stability Policy**: CLI é contrato estável; API da biblioteca é instável em v1.x.y. Consumidores da lib devem fixar `=1.0.80`; bump de patch é estritamente aditivo na superfície da lib. Documentado em `docs/decisions/adr-0032-g53-lib-api-policy.md` e em `docs/decisions/adr-0032-g53-lib-api-policy.pt-BR.md`
+- **ADR-0033 (G53-WINDOWS-INFRA, v1.0.80) — Windows CI Resilience**: jobs `clippy` e `test` da matrix windows-2025 ganharam steps de pre-warm e verify gateados em `if: matrix.os == 'windows-2025'`. Os 2 modos históricos de falha de infra (rustup download transitório e `E0463` por stdlib ausente) agora são recuperáveis na primeira re-run. Documentado em `docs/decisions/adr-0033-g53-windows-infra-resilience.md` e versão PT-BR
+- **ADR-0034 (SHUTDOWN Resilience, v1.0.80) — Panic-Free Third-Signal Exit**: `src/signals.rs` é envolvido em uma barreira de captura de panic; o terceiro Ctrl-C consecutivo sai com código 130 e ZERO I/O. Receita canônica de bypass SHUTDOWN em 3 camadas (`nohup` → `setsid` → `disown`) documentada em `docs/HEADLESS_INVOCATION.md` e `docs/COOKBOOK.md`. Documentado em `docs/decisions/adr-0034-shutdown-resilience.md` e versão PT-BR
+- `docs/MIGRATION.md` e `docs/MIGRATION.pt-BR.md` ganharam seção "MIGRATING TO v1.0.80" no topo (sem migração de banco, apenas bump de versão e nota sobre pin de lib)
+- `docs/CROSS_PLATFORM.md` e `docs/CROSS_PLATFORM.pt-BR.md` ganharam subseção "CI Windows Infra Resilience (G53-WINDOWS-INFRA, ADR-0033, v1.0.80)" após a seção HANDLE
+- `README.md` e `README.pt-BR.md` ganharam bullet "Upgrading from v1.0.79 to v1.0.80?" e badge "Current release: v1.0.80"
+- `CHANGELOG.md` e `CHANGELOG.pt-BR.md` ganharam entradas para G45 (cross-process embedding singleton), G53 (stability policy + semver-checks CI), G55 S2 (MemoryNotFound estrutural), G56 (entity-embed cache), G58 (FTS5 fallback), G53-WINDOWS-INFRA e SHUTDOWN resilience
+
+
 
 ### Objetivo e Entrega de Cada Arquivo da Pasta docs/
 

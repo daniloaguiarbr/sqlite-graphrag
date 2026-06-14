@@ -101,6 +101,67 @@ pub fn shutdown_signal() -> u8 {
     SIGNAL_NUMBER.load(Ordering::Acquire)
 }
 
+/// Resets the global shutdown flag to `false` and zeroes the signal counters.
+///
+/// Returns `true` if the flag was previously set, `false` if it was already
+/// cleared. Intended for tests and audit invocations where the SHUTDOWN flag
+/// was contaminated by an earlier signal handler in the same process tree.
+/// Production code must NOT call this — the only legitimate callers are
+/// integration tests, audit scripts, and the `--ignore-shutdown` CLI flag.
+///
+/// Note: this only resets the `SHUTDOWN` flag. The global [`CancellationToken`]
+/// remains in its previous cancelled state because `tokio_util::sync::CancellationToken`
+/// is one-shot. Callers that need a resettable token must use a per-invocation
+/// token (see [`should_obey_shutdown`]) instead of relying on the global one.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::Ordering;
+/// use sqlite_graphrag::{SHUTDOWN, try_reset_shutdown};
+///
+/// SHUTDOWN.store(true, Ordering::Release);
+/// assert!(try_reset_shutdown());
+/// assert!(!SHUTDOWN.load(Ordering::Acquire));
+/// ```
+pub fn try_reset_shutdown() -> bool {
+    // AcqRel pairs with the Release store in the signal handler and Acquire
+    // loads in [`shutdown_requested`]. The swap is intentional: we want to
+    // observe-and-reset atomically so a concurrent signal does not slip
+    // between the load and the store.
+    SHUTDOWN.swap(false, Ordering::AcqRel) | {
+        SIGNAL_COUNT.store(0, Ordering::Release);
+        SIGNAL_NUMBER.store(0, Ordering::Release);
+        // Suppress "unused" warning on the chained block; the `|` is just a
+        // sequence point and the final expression is the swap result.
+        false
+    }
+}
+
+/// Returns `true` when audit/test mode is active and long-running subcommands
+/// should ignore the cancellation token. The flag is honoured by the embedder
+/// loop in [`crate::embedder`] and by every call site that consults
+/// [`shutdown_requested`]. Production invocations always return `true` here.
+///
+/// The flag is read from the `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN` environment
+/// variable. Accepted values: `1`, `true`, `yes`, `on` (case-insensitive).
+/// Anything else (including unset) means obey the cancellation token.
+pub fn should_obey_shutdown() -> bool {
+    !is_ignore_shutdown_set()
+}
+
+fn is_ignore_shutdown_set() -> bool {
+    // PROC: read once per call; this is not on a hot path. Tests set the env
+    // var in a `serial(env)` block so concurrent invocations cannot race.
+    std::env::var("SQLITE_GRAPHRAG_IGNORE_SHUTDOWN")
+        .ok()
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 /// Token-aware chunking utilities for bodies that exceed the embedding window.
 pub mod chunking;
 

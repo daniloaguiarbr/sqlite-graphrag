@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
-> **Current release: v1.0.79 — LLM-Only and one-shot.** Every build embeds through `claude -p` or `codex exec` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~6 MB binary. The `embedding-legacy` feature was REMOVED in v1.0.79; there is no local-model build path.
+> **Current release: v1.0.80 — LLM-Only and one-shot, with stability policy.** Every build embeds through `claude -p` or `codex exec` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~6 MB binary. The `embedding-legacy` feature was REMOVED in v1.0.79; there is no local-model build path. v1.0.80 adds the CLI-stable / lib-unstable split per ADR-0032 and the `semver-checks` CI gate (informational).
 
 - Read this document in [Portuguese (pt-BR)](README.pt-BR.md).
 
@@ -20,6 +20,7 @@
 - Release-grade validation includes the `slow-tests` contract suites documented in `docs/TESTING.md`
 - Build directly from the local checkout with `cargo install --path .`
 - **Upgrading from v1.0.74 / v1.0.75?** See [docs/MIGRATION.md](docs/MIGRATION.md) for the v1.0.76 / v1.0.77 / v1.0.78 / v1.0.79 migration procedure
+- **Upgrading from v1.0.79 to v1.0.80?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.80 adds the CI `semver-checks` job (informational), the Windows pre-warm steps (ADR-0033), and the panic-free third-signal exit (ADR-0034). Library consumers must pin to `=1.0.80`; see the `Stability Policy` below.
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -47,6 +48,14 @@ sqlite-graphrag --version
 - Deterministic JSON output unlocks clean orchestration by LLM agents in pipelines
 - Native cross-platform binary ships without Python, Node or Docker dependencies (default build needs only `claude` or `codex` CLI)
 
+
+## Stability Policy (G53, v1.0.80)
+
+- The **public contract is the CLI**. The `--json` envelopes documented in `docs/schemas/*.schema.json` and the environment variables listed in `llms.txt` and `llms-full.txt` are stable across all v1.x.y releases. Consumers who depend on the CLI alone are not affected by minor or patch bumps.
+- The **library API is unstable** in v1.x.y. Re-exports, public struct fields and function signatures may change in any v1.x.y release without a major version bump.
+- Breaking changes to the library API ship as a **minor** bump, never patch (e.g. 1.0.79 -> 1.1.0 for a removed re-export). Patch bumps (1.0.79 -> 1.0.80) are limited to additive, non-breaking changes.
+- Consumers who depend on the library API must pin to an exact version (`sqlite-graphrag = "=1.0.80"`) and review CHANGELOG.md before bumping.
+- This stance is recorded in `docs/decisions/adr-0032-g53-lib-api-policy.md`.
 
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration

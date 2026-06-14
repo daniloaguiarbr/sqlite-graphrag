@@ -1067,6 +1067,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn upsert_vec_and_delete_vec_work() -> TestResult {
         let conn = setup_conn()?;
         let m = new_memory("mem-vec");
@@ -1096,6 +1097,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn upsert_vec_replaces_existing_vector() -> TestResult {
         let conn = setup_conn()?;
         let m = new_memory("mem-vec-upsert");
@@ -1117,6 +1119,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn knn_search_returns_results_by_distance() -> TestResult {
         let conn = setup_conn()?;
 
@@ -1140,6 +1143,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(env)]
     fn knn_search_with_type_filter_restricts_result() -> TestResult {
         let conn = setup_conn()?;
 

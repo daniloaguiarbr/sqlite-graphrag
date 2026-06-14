@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar memória persistente, GraphRAG ou contexto de longo prazo ao Claude Code, Codex, Cursor, Windsurf ou qualquer agente de código. DEVE acionar para queries mencionando lembrar disso, salvar conversa, recuperar contexto anterior, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, dimensionalidade de embedding, embedding-dim, llm-parallelism, embedding em lote, lote adaptativo, re-embed, force-reembed, ou remediação de gaps G28-G44. Auto-invoca sem menção explícita quando o usuário descreve agente perdendo contexto entre sessões ou quer memória local offline-first em Rust. DEVE também acionar em enforcement OAuth-only, aborto de ANTHROPIC_API_KEY ou OPENAI_API_KEY, flags de endurecimento para Claude e Codex, Mock LLM CLI em CI, ou remoção do daemon. Keywords memória RAG GraphRAG SQLite OAuth grafo entidade v1.0.79.
+description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar memória persistente, GraphRAG ou contexto de longo prazo ao Claude Code, Codex, Cursor, Windsurf ou qualquer agente de código. DEVE acionar para queries mencionando lembrar disso, salvar conversa, recuperar contexto anterior, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, dimensionalidade de embedding, embedding-dim, llm-parallelism, embedding em lote, lote adaptativo, re-embed, force-reembed, ou remediação de gaps G28-G58. Auto-invoca sem menção explícita quando o usuário descreve agente perdendo contexto entre sessões ou quer memória local offline-first em Rust. DEVE também acionar em enforcement OAuth-only, aborto de ANTHROPIC_API_KEY ou OPENAI_API_KEY, flags de endurecimento para Claude e Codex, Mock LLM CLI em CI, ou remoção do daemon. DEVE também acionar em correções da auditoria A1 (panic hook estruturado, main thread sync, cobertura de completions, política de flush, watchdog de deadlock), auditoria A2 de observabilidade, ADR-0032 estabilidade da API da lib, ADR-0033 resiliência de infra CI Windows, ADR-0034 resiliência de SHUTDOWN, receita de bypass SHUTDOWN em 3 camadas, ou remediação do cluster G45/G53/G55 S2/G56/G58. Keywords memória RAG GraphRAG SQLite OAuth grafo entidade v1.0.80.
 ---
 
 
@@ -310,6 +310,51 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - NUNCA passar `--llm-parallelism > 4` para modo Claude sem combinar com `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`
 - NUNCA chamar `optimize` sem verificar `fts stats` antes se você só quer verificar saúde (use `fts check` no lugar)
 
+
+## Novidades na v1.0.80
+### OBRIGATÓRIO — Correções da Auditoria A1 (G1–G8)
+- SABER que a thread main é intencionalmente 100 por cento síncrona desde a arquitetura LLM-only da v1.0.76 (A1/G1) — std::process::Command gerencia todo subprocesso; não há loop main async
+- SABER que o panic hook em src/telemetry.rs:47–72 emite um único evento estruturado tracing::error! e DELIBERADAMENTE não chama o hook anterior (A1/G2) — o panic hook default do Rust é substituído pela vida do processo
+- SABER que 7 testes end-to-end em tests/completions.rs cobrem bash, zsh, fish, powershell, elvish, rejeição de shell inválido e output não-vazio (A1/G8)
+- SABER que o código base tem ZERO println! restante no caminho CLI principal (A1/G3 — substituído por output::emit_json_compact) e ZERO setter de env var ONNX restante (A1/G4 — true positive; v1.0.79 removeu ONNX do build)
+- SABER que o bloco unsafe de RAYON_NUM_THREADS retém seu comentário SAFETY com invariantes completas (A1/G5)
+- SABER que a política de flush antes de std::process::ExitCode é documentada como não-redundante (A1/G6 — Rust BufWriter não é auto-flushado pelo C runtime no exit do processo)
+- SABER que a thread de detecção de deadlock é process-scoped (A1/G7) — cada spawn de subprocesso tem seu próprio watchdog
+### OBRIGATÓRIO — Auditoria A2 de Observabilidade
+- SABER que commands/backup.rs:171 (warning de set_permissions Unix mode 0o600) e :181 (debug de DACL Windows) emitem via subscriber estruturado tracing, NÃO chamadas diretas de eprintln!
+- SABER que commands/health.rs:209 (PRAGMA integrity_check), :370 (checagens de vec-table), :385 (checagens de FTS5) e :423 (disponibilidade da CLI LLM) usam tracing::info! com campos estruturados (integrity_ok, vec_memories_ok, vec_entities_ok, fts_ok, fts_query_ok, model_ok)
+- SABER que as chaves target: "<command>" permitem filtros de log destacar diagnósticos de um comando específico sem fazer grep no texto da mensagem
+### OBRIGATÓRIO — ADR-0032 — Política de Estabilidade da API da Lib (G53)
+- SABER que a CLI é o contrato estável (apenas mudanças aditivas, depreciações com aviso)
+- SABER que a lib é INSTÁVEL em versões MINOR; cargo semver-checks roda no CI (informational em v1.0.80, promovido a gate bloqueante em v1.0.81)
+- SABER que 9 violações MAJOR do cargo semver-checks foram corrigidas em v1.0.80 (ex.: trait público extraction_gliner::Extractor removido)
+### OBRIGATÓRIO — ADR-0033 — Resiliência de Infra CI Windows (G53-WINDOWS-INFRA)
+- SABER que passos de pre-warm e verify gateiam os jobs clippy e test da matrix windows-2025
+- SABER que isto é no-op em ubuntu e macos; o gate é condicional via if: matrix.os == 'windows-2025'
+- SABER que a validação local de cross-compile target x86_64-pc-windows-msvc no toolchain MSRV 1.88
+- SABER que o gate de cross-compile pode atingir a fronteira cc-rs/lib.exe em runners Linux — esse é o limite esperado do host, não uma regressão
+### OBRIGATÓRIO — ADR-0034 — Resiliência de SHUTDOWN
+- SABER que try_reset_shutdown() e should_obey_shutdown() em src/lib.rs:91–160 permitem ao loop batch do embedder bypassar o sinal de cancelamento quando o trabalho já está commitado em disco
+- SABER que o bypass se aplica APENAS a subprocessos em voo que já spawnaram mas ainda não retornaram — ele NÃO impede NOVOS sinais de shutdown de cancelarem trabalho novo
+- SABER que src/embedder.rs:537 curto-circuita a checagem de cancel após o subprocesso LLM retornar com sucesso mas antes do embedding ser escrito na tabela BLOB
+- USAR SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 APENAS para harnesses de teste CI que envolvem invocações de sqlite-graphrag dentro de um wrapper de timeout
+### OBRIGATÓRIO — Receita de Bypass SHUTDOWN em 3 Camadas
+- USAR o bypass de 3 camadas ao rodar sqlite-graphrag em harness CI/agente onde sinais de shutdown vazam do timeout pai
+- Camada 1 — override PATH: prefixar tests/mock-llm ao PATH para que o stub mock-llm responda claude -p e codex exec sem spawnar subprocessos reais
+- Camada 2 — env var: definir SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 para ativar o bypass em try_reset_shutdown()
+- Camada 3 — detach de sessão: envolver com setsid -w timeout 120 sqlite-graphrag <comando> para que o processo wrapper absorva SIGTERM em vez de encaminhar para o binário
+- Receita completa: PATH=tests/mock-llm:$PATH SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 setsid -w timeout 120 ./target/debug/sqlite-graphrag remember --graph-stdin < payload.json
+- SABER que esta receita é a mitigação canônica para a contaminação de SHUTDOWN que surge em harnesses de agente que envolvem o binário dentro de seu próprio timeout (a contaminação é reportada como tracing::info! de src/telemetry.rs mesmo quando nenhum shutdown de fato ocorreu)
+### OBRIGATÓRIO — Status do Cluster de Gaps (G45 / G53 / G55 S2 / G56 / G58)
+- SABER que G45 (coordenação de remember entre processos) está documentado com três soluções: S1 (file lock cross-process via fs2/fcntl — VIÁVEL per checagem context7 2026-06-13), S2 (write-behind com checkpoint — REVISADO para preservar imutabilidade de schema), S3 (fan-out bounded de subprocessos com Semaphore). Todos os três permanecem ABERTOS em v1.0.80 — nenhuma mudança de código foi entregue; apenas documentação e validação
+- SABER que G53 (SemVer da lib quebrado em patch + infra Windows) está RESOLVIDO em v1.0.80 via ADR-0032 + job CI semver-checks + ADR-0033 + passos pre-warm/verify do Windows
+- SABER que G55 S2 (mensagem de read NotFound perde o identificador solicitado) está RESOLVIDO em v1.0.80 — o caminho de erro de read --name <nome> agora retorna o nome real consultado em vez do placeholder literal unknown
+- SABER que G56 (custo de embedding 384-dim) e G58 (sem fallback determinístico sob fadiga OAuth) permanecem ABERTOS em v1.0.80; o dim-adaptive batch sizing de G44 mitiga parcialmente a latência mas não fecha o gap
+### PROIBIDO — Anti-padrões v1.0.80
+- NUNCA passar SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 em invocações de produção — a env var é APENAS para harness CI/teste
+- NUNCA depender do daemon — o código restante foi DELETADO na v1.0.79; a CLI é 100 por cento one-shot
+- NUNCA depender do default 384-dim da v1.0.79 — v1.0.80 usa default dim 64 (MRL) e adota o schema_meta.dim registrado do banco em toda conexão
+- NUNCA esperar que as correções da auditoria A1 sejam back-portadas para v1.0.79 — elas têm escopo v1.0.80
 
 ## Novidades na v1.0.79
 ### OBRIGATÓRIO — G42: Pipeline de Embedding LLM Rápido, Paralelo e em Lote

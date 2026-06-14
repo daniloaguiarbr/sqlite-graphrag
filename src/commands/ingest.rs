@@ -614,12 +614,19 @@ fn stage_file(
             None => entity.name.clone(),
         })
         .collect();
-    let entity_embeddings = crate::embedder::embed_passages_parallel_local(
-        &paths.models,
-        &entity_texts,
-        llm_parallelism,
-        crate::embedder::entity_embed_batch_size(),
-    )?;
+    // G56 (v1.0.80): ingest reuses canonical entity names across many
+    // memories (e.g. `sqlite-graphrag`, `claude-code`); the in-process
+    // cache collapses the repeated LLM calls into one per unique text.
+    let (entity_embeddings, embed_cache_stats) =
+        crate::embedder::embed_entity_texts_cached(&paths.models, &entity_texts, llm_parallelism)?;
+    if embed_cache_stats.hits > 0 {
+        tracing::debug!(
+            hits = embed_cache_stats.hits,
+            misses = embed_cache_stats.misses,
+            requested = embed_cache_stats.requested,
+            "G56: entity embed cache hit (ingest)"
+        );
+    }
 
     Ok(StagedFile {
         body: raw_body,

@@ -3,8 +3,10 @@
 #
 # The real `claude` binary requires OAuth login and a network round-trip to
 # Anthropic. Tests must run hermetically on CI runners, so we substitute a
-# shell script that returns deterministic 64-dim zero vectors (the active
-# default dimensionality since v1.0.79, G42/S1).
+# shell script that returns deterministic zero vectors in the requested
+# dimensionality (default 64 since v1.0.79, G42/S1; G51: the dim is parsed
+# from the prompt or from the --output-schema file, enabling end-to-end
+# tests against non-64 databases such as legacy 384-dim ones).
 #
 # Two response shapes are supported, mirroring
 # src/extract/llm_embedding.rs:
@@ -27,12 +29,31 @@ import json, os, re, sys
 text = os.environ['ARGS']
 if not sys.stdin.isatty():
     text += ' ' + sys.stdin.read()
+# G51: honour the requested dimensionality instead of hardcoding 64.
+# Batch prompts carry it inline; the single path only carries it in the
+# --output-schema JSON file (minItems), so read that file when present.
+dim = 64
+dm = re.search(r'(\d+)-dimensional', text)
+if dm:
+    dim = int(dm.group(1))
+else:
+    argv = text.split()
+    for flag in ('--output-schema', '--json-schema'):
+        if flag in argv:
+            try:
+                schema = open(argv[argv.index(flag) + 1]).read()
+                sm = re.search(r'\"minItems\"\s*:\s*(\d+)', schema)
+                if sm:
+                    dim = int(sm.group(1))
+            except (IndexError, OSError):
+                pass
+            break
 m = re.search(r'EXACTLY (\d+) items', text)
 if m:
     n = int(m.group(1))
-    payload = {'items': [{'i': i + 1, 'v': [0.0] * 64} for i in range(n)]}
+    payload = {'items': [{'i': i + 1, 'v': [0.0] * dim} for i in range(n)]}
 else:
-    payload = {'embedding': [0.0] * 64}
+    payload = {'embedding': [0.0] * dim}
 sys.stdout.write(json.dumps(payload) + '\n')
 "
 

@@ -323,7 +323,9 @@ fn test_init_returns_json_with_status_ok() {
 
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["model"], "multilingual-e5-small");
+    // G46: schema_meta.model records the CLI version since the LLM-only
+    // build has no local embedding model to name.
+    assert_eq!(json["model"], env!("CARGO_PKG_VERSION"));
     assert!(json["dim"].as_u64().unwrap() > 0);
 }
 

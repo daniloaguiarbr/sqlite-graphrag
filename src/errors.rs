@@ -56,6 +56,21 @@ pub enum AppError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// Memory lookup by `(namespace, name)` returned no row. Maps to exit code `4`.
+    ///
+    /// G55 S2 (v1.0.80): structural variant that carries the requested identifier
+    /// and namespace, eliminating the "not found: unknown in namespace 'X'" class
+    /// of bugs that masked which lookup target failed. The display format matches
+    /// the legacy string-based `NotFound` so the i18n replace-chain and external
+    /// scripts that pattern-match on `memory not found: name='N' in namespace 'NS'`
+    /// keep working.
+    #[error("memory not found: name='{name}' in namespace '{namespace}'")]
+    MemoryNotFound { name: String, namespace: String },
+
+    /// Memory lookup by integer `id` returned no row. Maps to exit code `4`.
+    #[error("memory not found: id={id}")]
+    MemoryNotFoundById { id: i64 },
+
     /// Namespace could not be resolved from flag, environment or markers. Maps to exit code `5`.
     #[error("namespace not resolved: {0}")]
     NamespaceError(String),
@@ -129,6 +144,16 @@ pub enum AppError {
     )]
     JobSingletonLocked { job_type: String, namespace: String },
 
+    /// G45: an LLM embedding operation is already running against the
+    /// same `(namespace, db)` pair in another process. Exit code 75
+    /// (retryable). The caller can pass `--wait-embed-singleton
+    /// <SECONDS>` to poll until the lock drops.
+    #[error(
+        "embedding singleton for namespace '{namespace}' is already held (exit 75); \
+         another CLI is calling the LLM on this database; pass --wait-embed-singleton <SECONDS> to wait"
+    )]
+    EmbeddingSingletonLocked { namespace: String },
+
     /// Available memory is below the minimum required to load the model. Maps to exit code `77`.
     ///
     /// Returned when `sysinfo` reports available memory below
@@ -178,6 +203,8 @@ impl AppError {
             Self::Duplicate(_) => crate::constants::DUPLICATE_EXIT_CODE,
             Self::Conflict(_) => 3,
             Self::NotFound(_) => 4,
+            Self::MemoryNotFound { .. } => 4,
+            Self::MemoryNotFoundById { .. } => 4,
             Self::NamespaceError(_) => 5,
             Self::LimitExceeded(_) => 6,
             Self::Database(_) => 10,
@@ -191,6 +218,7 @@ impl AppError {
             Self::LockBusy(_) => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::AllSlotsFull { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::JobSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
+            Self::EmbeddingSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
         }
     }
@@ -217,6 +245,7 @@ impl AppError {
                 | Self::LockBusy(_)
                 | Self::AllSlotsFull { .. }
                 | Self::JobSingletonLocked { .. }
+                | Self::EmbeddingSingletonLocked { .. }
                 | Self::LowMemory { .. }
                 | Self::RateLimited { .. }
                 | Self::Timeout { .. }
@@ -246,6 +275,8 @@ impl AppError {
                 | Self::BinaryNotFound { .. }
                 | Self::Duplicate(_)
                 | Self::NotFound(_)
+                | Self::MemoryNotFound { .. }
+                | Self::MemoryNotFoundById { .. }
                 | Self::NamespaceError(_)
                 | Self::LimitExceeded(_)
                 | Self::VecExtension(_)
@@ -297,6 +328,8 @@ impl AppError {
             Self::Duplicate(msg) => pt::duplicate(msg),
             Self::Conflict(msg) => pt::conflict(msg),
             Self::NotFound(msg) => pt::not_found(msg),
+            Self::MemoryNotFound { name, namespace } => pt::memory_not_found(name, namespace),
+            Self::MemoryNotFoundById { id } => pt::memory_not_found_by_id(*id),
             Self::NamespaceError(msg) => pt::namespace_error(msg),
             Self::LimitExceeded(msg) => pt::limit_exceeded(msg),
             Self::Database(e) => pt::database(&e.to_string()),
@@ -315,6 +348,9 @@ impl AppError {
                 job_type,
                 namespace,
             } => pt::job_singleton_locked(job_type, namespace),
+            Self::EmbeddingSingletonLocked { namespace } => {
+                pt::embedding_singleton_locked(namespace)
+            }
             Self::LowMemory {
                 available_mb,
                 required_mb,

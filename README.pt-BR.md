@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.79 — LLM-Only e one-shot.** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A feature `embedding-legacy` foi REMOVIDA na v1.0.79; não existe mais build com modelo local.
+> **Release atual: v1.0.80 — LLM-Only e one-shot, com política de estabilidade.** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A feature `embedding-legacy` foi REMOVIDA na v1.0.79; não existe mais build com modelo local. A v1.0.80 adiciona a divisão CLI-estável/lib-instável per ADR-0032 e o gate de CI `semver-checks` (informativo).
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -19,7 +19,8 @@
 - Veja o histórico completo de releases em [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md)
 - A validação de release inclui as suítes de contrato `slow-tests` documentadas em `docs/TESTING.pt-BR.md`
 - Faça o build direto do checkout local com `cargo install --path .`
-- **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76 / v1.0.77 / v1.0.78 / v1.0.79
+- **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76
+- **Atualizando de v1.0.79 para v1.0.80?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.80 adiciona o job de CI `semver-checks` (informativo), os steps de pre-warm do Windows (ADR-0033) e a saída sem panic no terceiro sinal (ADR-0034). Consumidores da biblioteca devem fixar em `=1.0.80`; veja a `Política de Estabilidade` abaixo. / v1.0.77 / v1.0.78 / v1.0.79
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -47,6 +48,14 @@ sqlite-graphrag --version
 - Saída JSON determinística habilita orquestração limpa por agentes de IA em pipelines
 - Binário cross-platform nativo dispensa dependências Python, Node ou Docker (o build padrão precisa apenas de `claude` ou `codex` CLI)
 
+
+## Política de Estabilidade (G53, v1.0.80)
+
+- O **contrato público é a CLI**. Os envelopes `--json` documentados em `docs/schemas/*.schema.json` e as variáveis de ambiente listadas em `llms.txt` e `llms-full.txt` permanecem estáveis em todas as versões v1.x.y. Consumidores que dependem apenas da CLI não são afetados por bumps minor ou patch.
+- A **API da biblioteca é instável** em v1.x.y. Re-exports, campos públicos de struct e assinaturas de função podem mudar em qualquer release v1.x.y sem bump de major.
+- Mudanças quebrantes na API da biblioteca saem como bump **minor**, nunca patch (ex.: 1.0.79 -> 1.1.0 para re-export removido). Bumps de patch (1.0.79 -> 1.0.80) são limitados a mudanças aditivas sem quebra.
+- Consumidores que dependem da API da biblioteca devem fixar versão exata (`sqlite-graphrag = "=1.0.80"`) e revisar CHANGELOG.md antes de bumpar.
+- Esta postura está registrada em `docs/decisions/adr-0032-g53-lib-api-policy.md`.
 
 ## Superpoderes para Agentes de IA
 ### Contrato de CLI de primeira classe para orquestração

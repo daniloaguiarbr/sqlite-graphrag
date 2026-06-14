@@ -124,14 +124,23 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
                 )));
             }
         }
+        if r.is_none() {
+            // G55 S2: surface the requested id structurally so the message
+            // never drops it for the legacy `unknown` literal.
+            return Err(AppError::MemoryNotFoundById { id });
+        }
         r
     } else {
-        let name = args.name_positional.or(args.name).ok_or_else(|| {
-            AppError::Validation(
+        let name = args
+            .name_positional
+            .clone()
+            .or(args.name.clone())
+            .ok_or_else(|| {
+                AppError::Validation(
                 "name or --id required: pass name as positional argument, via --name, or use --id"
                     .to_string(),
             )
-        })?;
+            })?;
         memories::read_by_name(&conn, &namespace, &name)?
     };
 
@@ -227,14 +236,30 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
             output::emit_json(&response)?;
         }
         None => {
-            let label = if let Some(id) = args.id {
-                format!("id={id}")
-            } else {
-                "unknown".to_string()
-            };
-            return Err(AppError::NotFound(format!(
-                "memory not found: {label} in namespace '{namespace}'"
-            )));
+            // G55 S2: when the lookup target is a name, use the structural
+            // `MemoryNotFound { name, namespace }` variant so the message is
+            // guaranteed to carry the requested identifier. The legacy
+            // `NotFound(String)` path is only reached via the `--id` branch
+            // (which now emits `MemoryNotFoundById` structurally a few lines
+            // above) or when a future caller needs ad-hoc messages.
+            if let Some(name) = args.name_positional.as_deref().or(args.name.as_deref()) {
+                return Err(AppError::MemoryNotFound {
+                    name: name.to_string(),
+                    namespace: namespace.clone(),
+                });
+            }
+            // Fallback: id lookup that did not match (defensive — the
+            // MemoryNotFoundById branch above already returned in the
+            // normal id-miss path).
+            if let Some(id) = args.id {
+                return Err(AppError::MemoryNotFoundById { id });
+            }
+            // Unreachable: the `else` branch above already validated that
+            // one of name/id is set. Keep a defensive message for future
+            // refactors that may restructure the lookup arms.
+            return Err(AppError::Validation(
+                "internal: read reached NotFound without name or id".to_string(),
+            ));
         }
     }
 
@@ -433,5 +458,49 @@ mod tests {
         let parsed =
             serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::Value::Null);
         assert!(parsed.is_null());
+    }
+
+    // G55 S2 (v1.0.80): the structural `MemoryNotFound` variant must include
+    // the requested name and namespace in the message — never the legacy
+    // `unknown` literal that masked which lookup target failed.
+    #[test]
+    fn memory_not_found_structural_includes_name_and_namespace() {
+        let err = AppError::MemoryNotFound {
+            name: "atomwrite-projeto-contexto".to_string(),
+            namespace: "global".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("atomwrite-projeto-contexto"), "got: {msg}");
+        assert!(msg.contains("global"), "got: {msg}");
+        assert!(
+            !msg.contains("unknown"),
+            "must not contain 'unknown': {msg}"
+        );
+        assert_eq!(err.exit_code(), 4);
+        assert!(err.is_permanent());
+    }
+
+    #[test]
+    fn memory_not_found_by_id_structural_includes_id() {
+        let err = AppError::MemoryNotFoundById { id: 42 };
+        let msg = err.to_string();
+        assert!(msg.contains("42"), "got: {msg}");
+        assert!(msg.contains("id=42"), "got: {msg}");
+        assert_eq!(err.exit_code(), 4);
+    }
+
+    #[test]
+    fn memory_not_found_pt_br_drops_english_fragments() {
+        // The pt-BR translation must not contain leftover English fragments
+        // like "not found" — that was the original G55 bug.
+        use crate::i18n::Language;
+        let err = AppError::MemoryNotFound {
+            name: "mem-fantasma".to_string(),
+            namespace: "global".to_string(),
+        };
+        let pt = err.localized_message_for(Language::Portuguese);
+        assert!(!pt.contains("not found"), "pt-BR fragment leaked: {pt}");
+        assert!(pt.contains("mem-fantasma"), "name missing in pt: {pt}");
+        assert!(pt.contains("global"), "namespace missing in pt: {pt}");
     }
 }

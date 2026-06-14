@@ -726,12 +726,26 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
             None => entity.name.clone(),
         })
         .collect();
-    let graph_entity_embeddings = crate::embedder::embed_passages_parallel_local(
+    // G56 (v1.0.80): route entity-name embedding through the in-process
+    // cache. Repeated `remember` invocations within one CLI process — and
+    // re-embedded entities inside a single batch — skip the LLM call
+    // entirely when the (model, text) pair was already produced. The
+    // chunk body embedding below still uses `embed_passages_parallel_local`
+    // because chunks are unique per memory and the cache hit rate is
+    // effectively zero.
+    let (graph_entity_embeddings, embed_cache_stats) = crate::embedder::embed_entity_texts_cached(
         &paths.models,
         &entity_texts,
         args.llm_parallelism as usize,
-        crate::embedder::entity_embed_batch_size(),
     )?;
+    if embed_cache_stats.hits > 0 {
+        tracing::debug!(
+            hits = embed_cache_stats.hits,
+            misses = embed_cache_stats.misses,
+            requested = embed_cache_stats.requested,
+            "G56: entity embed cache hit (remember)"
+        );
+    }
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 

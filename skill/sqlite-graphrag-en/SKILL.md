@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use this skill WHENEVER the user asks about adding persistent memory, GraphRAG or long-term context to Claude Code, Codex, Cursor, Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding dimensionality, embedding-dim, llm-parallelism, batched embedding, adaptive batch, re-embed, force-reembed, or any G28-G44 gap remediation. Auto-invokes even without explicit mention when the user describes an agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, hardening flags for Claude and Codex, Mock LLM CLI in CI, or daemon removal. Keywords memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.79.
+description: Use this skill WHENEVER the user asks about adding persistent memory, GraphRAG or long-term context to Claude Code, Codex, Cursor, Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding dimensionality, embedding-dim, llm-parallelism, batched embedding, adaptive batch, re-embed, force-reembed, or any G28-G58 gap remediation. Auto-invokes even without explicit mention when the user describes an agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, hardening flags for Claude and Codex, Mock LLM CLI in CI, or daemon removal. MUST also trigger on A1 audit fixes (structured panic hook, main thread sync, completions coverage, flush policy, deadlock watchdog), A2 observability audit, ADR-0032 lib API stability, ADR-0033 windows CI infra resilience, ADR-0034 SHUTDOWN resilience, 3-layer SHUTDOWN bypass recipe, or any G45/G53/G55 S2/G56/G58 cluster remediation. Keywords memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.80.
 ---
 
 
@@ -310,6 +310,51 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER pass `--llm-parallelism > 4` for Claude mode without combining with `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR`
 - NEVER call `optimize` without checking `fts stats` first if you only want to verify health (use `fts check` instead)
 
+
+## New in v1.0.80
+### REQUIRED — A1 Audit Fixes (G1–G8)
+- KNOW that main thread is intentionally 100% synchronous since v1.0.76 LLM-only architecture (A1/G1) — std::process::Command handles all subprocess management; no async main loop
+- KNOW that the panic hook in src/telemetry.rs:47–72 emits a single structured `tracing::error!` event and DELIBERATELY does not call the previous hook (A1/G2) — Rust's default panic hook is replaced for the process lifetime
+- KNOW that 7 end-to-end tests in `tests/completions.rs` cover bash, zsh, fish, powershell, elvish, invalid shell rejection, and non-empty output (A1/G8)
+- KNOW that the codebase has ZERO remaining println! in the main CLI path (A1/G3 — replaced with output::emit_json_compact) and ZERO remaining ONNX env var setters (A1/G4 — true positive; v1.0.79 removed ONNX from build)
+- KNOW that the RAYON_NUM_THREADS unsafe block retains its SAFETY comment with full invariants (A1/G5)
+- KNOW that the flush policy before std::process::ExitCode is documented as non-redundant (A1/G6 — Rust BufWriter is not auto-flushed by the C runtime on process exit)
+- KNOW that the deadlock-detection thread is process-scoped (A1/G7) — each subprocess spawn has its own watchdog
+### REQUIRED — A2 Observability Audit
+- KNOW that commands/backup.rs:171 (Unix mode 0o600 set_permissions warn) and :181 (Windows DACL debug) emit through the structured tracing subscriber, NOT direct eprintln! calls
+- KNOW that commands/health.rs:209 (PRAGMA integrity_check), :370 (vec-table checks), :385 (FTS5 checks), and :423 (LLM CLI availability) all use tracing::info! with structured fields (integrity_ok, vec_memories_ok, vec_entities_ok, fts_ok, fts_query_ok, model_ok)
+- KNOW that the target: "<command>" keys allow log filters to surface diagnostics from a specific command without grepping the message text
+### REQUIRED — ADR-0032 — Lib API Stability Policy (G53)
+- KNOW that the CLI is the stable contract (additive changes only, deprecations with notice)
+- KNOW that the lib is UNSTABLE in MINOR versions; cargo semver-checks runs in CI (informational in v1.0.80, promoted to a blocking gate in v1.0.81)
+- KNOW that 9 cargo semver-checks MAJOR violations were fixed in v1.0.80 (e.g., removed extraction_gliner::Extractor public trait)
+### REQUIRED — ADR-0033 — Windows CI Infrastructure Resilience (G53-WINDOWS-INFRA)
+- KNOW that pre-warm and verify steps gate the clippy and test jobs of the windows-2025 matrix
+- KNOW that this is a no-op on ubuntu and macos; the gate is conditional via if: matrix.os == 'windows-2025'
+- KNOW that local cross-compile validation targets x86_64-pc-windows-msvc on the MSRV 1.88 toolchain
+- KNOW that the cross-compile gate may hit the cc-rs/lib.exe boundary on Linux runners — that is the expected host limit, not a regression
+### REQUIRED — ADR-0034 — SHUTDOWN Resilience
+- KNOW that try_reset_shutdown() and should_obey_shutdown() in src/lib.rs:91–160 allow the embedder batch loop to bypass the cancellation signal when work is already committed to disk
+- KNOW that the bypass ONLY applies to in-flight subprocesses that have already spawned but have not yet returned — it does NOT prevent NEW shutdown signals from cancelling new work
+- KNOW that src/embedder.rs:537 short-circuits the cancel check after the LLM subprocess has returned successfully but before the embedding has been written to the BLOB table
+- USE SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 ONLY for CI test harnesses that wrap sqlite-graphrag invocations inside a timeout wrapper
+### REQUIRED — 3-Layer SHUTDOWN Bypass Recipe
+- USE the 3-layer bypass when running sqlite-graphrag in a CI/agent harness where shutdown signals leak from the parent timeout
+- Layer 1 — PATH override: prepend tests/mock-llm to PATH so the mock-llm stub answers claude -p and codex exec without spawning real subprocesses
+- Layer 2 — env var: set SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 to enable the bypass in try_reset_shutdown()
+- Layer 3 — session detachment: wrap with setsid -w timeout 120 sqlite-graphrag <command> so the wrapper process absorbs SIGTERM instead of forwarding to the binary
+- Full recipe: PATH=tests/mock-llm:$PATH SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 setsid -w timeout 120 ./target/debug/sqlite-graphrag remember --graph-stdin < payload.json
+- KNOW that this recipe is the canonical workaround for the SHUTDOWN contamination that surfaces in agent harnesses that wrap the binary inside their own timeout (the contamination is reported as tracing::info! from src/telemetry.rs even when no shutdown actually occurred)
+### REQUIRED — Gap Cluster Status (G45 / G53 / G55 S2 / G56 / G58)
+- KNOW that G45 (remember coordination between processes) is documented with three solutions: S1 (file lock cross-process via fs2/fcntl — VIABLE per context7 check 2026-06-13), S2 (write-behind with checkpoint — REVISED to preserve schema immutability), S3 (bounded subprocess fan-out with Semaphore). All three remain OPEN in v1.0.80 — no code change shipped; only documentation and validation
+- KNOW that G53 (SemVer lib quebrado em patch + Windows infra) is RESOLVED in v1.0.80 via ADR-0032 + semver-checks CI job + ADR-0033 + Windows pre-warm/verify steps
+- KNOW that G55 S2 (read NotFound message loses requested identifier) is RESOLVED in v1.0.80 — the read --name <name> error path now returns the actual name queried instead of the literal unknown placeholder
+- KNOW that G56 (384-dim embedding cost) and G58 (no deterministic fallback under OAuth fatigue) remain OPEN in v1.0.80; the dim-adaptive batch sizing from G44 partially mitigates the latency but does not close the gap
+### FORBIDDEN — v1.0.80 Anti-patterns
+- NEVER pass SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1 in production operator invocations — the env var is CI/test-harness ONLY
+- NEVER rely on the daemon — the remaining code was DELETED in v1.0.79; the CLI is 100% one-shot
+- NEVER depend on the v1.0.79 384-dim default — v1.0.80 defaults to dim 64 (MRL) and adopts the database's recorded schema_meta.dim on every connection
+- NEVER expect the A1 audit fixes to be back-ported to v1.0.79 — they are scoped to v1.0.80
 
 ## New in v1.0.79
 ### REQUIRED — G42: Fast, Parallel, Batched LLM Embedding Pipeline

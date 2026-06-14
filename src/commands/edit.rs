@@ -42,7 +42,7 @@ pub struct EditArgs {
     #[arg(long)]
     pub description: Option<String>,
     /// Change the memory type (e.g. note, skill, decision).
-    #[arg(long, value_enum, help = "Change memory type")]
+    #[arg(long, value_enum, visible_alias = "type", help = "Change memory type")]
     pub memory_type: Option<crate::cli::MemoryType>,
     #[arg(
         long,
@@ -256,6 +256,25 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: EditArgs,
+    }
+
+    #[test]
+    fn type_flag_is_a_visible_alias_of_memory_type() {
+        // G47: COOKBOOK, README and llms.txt promise `edit --type`; the flag
+        // was only reachable as --memory-type, breaking the documented CLI.
+        use clap::Parser;
+        let cli = TestCli::try_parse_from(["edit", "--name", "m", "--type", "decision"])
+            .expect("--type must parse as an alias of --memory-type");
+        assert!(cli.args.memory_type.is_some());
+        let cli = TestCli::try_parse_from(["edit", "--name", "m", "--memory-type", "decision"])
+            .expect("--memory-type must keep working");
+        assert!(cli.args.memory_type.is_some());
+    }
 
     #[test]
     fn edit_response_serializes_all_fields() {

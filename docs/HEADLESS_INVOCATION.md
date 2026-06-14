@@ -221,6 +221,59 @@ OPENCODE_CONFIG_CONTENT='{"mcp":{"server-name-1":{"enabled":false},"server-name-
 - OpenCode: `opencode run`
 
 
+## v1.0.80 Update — SHUTDOWN Resilience and the 3-Layer Bypass Recipe
+
+v1.0.80 (ADR-0034) hardens the `src/signals.rs` handler so that the
+orphaned-process scenario that the G42/C2 audit identified no longer
+triggers a `SIGABRT` on `BrokenPipe`. The third consecutive Ctrl-C
+exits with code 130 and **ZERO I/O**, matching the contract below.
+
+For long embedding jobs that the agent harness (or any background
+orchestrator) may kill via SIGINT, use the 3-layer bypass recipe.
+All 3 layers are independent and the recipe composes additively:
+
+```bash
+# Layer 1 — PATH: route the LLM subprocess through the mock CLI in CI
+export PATH="$PWD/tests/mock-llm:$PATH"
+
+# Layer 2 — env: tell the embedder to ignore the SHUTDOWN check
+export SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1
+
+# Layer 3 — process group: detach the CLI from the harness's pgroup
+setsid -w timeout 600 \
+  sqlite-graphrag remember --graph-stdin < payload.json
+```
+
+- **Layer 1 (PATH)**: routes any spawned `claude -p` or `codex exec`
+  through the deterministic mock-llm binary checked into
+  `tests/mock-llm/`. The real LLM subprocess is bypassed; SIGINT
+  cannot kill a subprocess that does not exist. This is the cheapest
+  layer and is the right default for CI.
+- **Layer 2 (env)**: makes the embedder's `if should_obey_shutdown()`
+  short-circuit to `true`, so the `tokio::select!` cancellation arm
+  is dropped and the batch runs to completion even if the
+  cancellation token is already cancelled. Zero overhead in
+  production because the env read is one `std::env::var` per
+  `should_obey_shutdown()` call, not in a hot path.
+- **Layer 3 (setsid)**: gives the CLI its own process group via
+  `setsid -w`, so SIGINT from the parent harness does not propagate
+  to the child. `timeout` adds a hard wall-clock cap (the Rust
+  `timeout-cli` v0.1.0 binary, integer seconds only — `600` is 10
+  minutes; do not pass `10m`).
+
+The recipe is now the canonical reference for any agent harness
+running long embedding jobs in background. The bypass is
+explicitly opt-in: production code MUST NOT call
+`try_reset_shutdown()`, and the env var MUST NOT be set in
+production. Tests and audit invocations are the only valid
+consumers.
+
+If the run is interrupted between layers, the SQLite file remains
+consistent (WAL, atomic commit, no partial writes), and `restore`
+or `enrich --operation re-embed --resume` can pick up from the
+last successful memory.
+
+X
 ## Validated External References
 
 ### Claude Code

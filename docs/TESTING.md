@@ -2,6 +2,7 @@
 
 
 - Read the Portuguese version at [TESTING.pt-BR.md](TESTING.pt-BR.md)
+- Formal test plan with layers, triggers and release gates: [TEST_PLAN.md](TEST_PLAN.md)
 
 
 ## Test Infrastructure — Feature CI Matrix (2 features since v1.0.79)
@@ -43,6 +44,55 @@
 - The updated test validates that the `else` branch removal is correct
 - The 3 new tests cover the `ensure_v013_tables_exist` helper for all 3 scenarios (no history, tables exist, phantom)
 - Auto-repair in `ensure_db_ready` is covered transitively via the ensure helper
+
+- Auto-repair in `ensure_db_ready` is covered transitively via the ensure helper
+
+
+## v1.0.79 Test Additions — G42-G52 and Daemon Removal
+### Tests Added by Gap
+- `embedder::adaptive_batch_for_dim` formula: 6 tests cover the `clamp(base×64/dim, 1, base)` function across dims 64, 128, 256, 384, 4096, plus degenerate cases (dim 0, base 0) and the env-dim wrapper end-to-end with `#[serial_test::serial(env)]`
+- `connection.rs`: 4 tests for `adopt_embedding_dim()` covering rw/ro adoption, env precedence, and virgin databases
+- `mock-llm`: dim-extraction from prompt and `--output-schema`; batch format detection
+- `mocks_64_dim` and `mocks_64_dim_batch`: end-to-end coverage for banks 384 + mock
+- `recall` and `hybrid-search`: trigram fallback, vec_degraded field, FTS5-only path
+- `vec stats`: `dim_breakdown_groups_rows_per_dim_and_table`
+- 2 obsolete daemon tests became regression guards for the daemon removal
+- 2 tests of `--autostart-daemon` updated to assert the flag is rejected
+- 1 updated test `rehash_does_not_insert_missing_migrations` (replaces the test that validated buggy behavior)
+- 9 `#[serial_test::serial(env)]` tests for dim-adoption in chunks/memories/entities
+- 3 new unit tests for `ensure_v013_tables_exist` (noop, phantom repair, no history)
+### Coverage Rationale
+- G42 closed the slow/serialized/fragile LLM embedding pipeline with 9 sub-solutions; tests cover the batch formula, parallelism peak (AtomicUsize), panic-with-permit-RAII, cancellation, divergent-dim failure
+- G43 fixed the dim-adoption coverage gap; tests now cover all 4 connection open paths
+- G44 made the batch size dim-adaptive; tests verify the formula and the env-dim wrapper
+- G50 fixed 6 CI red causes; tests cover the doctest, mock dim, benchmark LLM, language policy, race of dim
+- G51 made mocks LLM multi-dim aware; tests cover the dim-extraction and batch shape
+- G52 fixed the vec-stats schema contract; tests cover the dim breakdown
+- G47 fixed CLI flags documented but missing; tests cover the alias resolution
+- G48 fixed G20 blind spot on default values; tests cover `is_some()` check
+- G49 fixed silent discard of invalid dim; tests cover `tracing::warn!` emission
+
+
+## v1.0.80 Test Additions — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
+### Tests Added by Gap
+- `lock::acquire_embedding_singleton`: 4 tests cover namespace/db scoping, fs4 flock polling, force-break of stale locks, and `is_retryable() == true` for the new `AppError::EmbeddingSingletonLocked` variant
+- `semver-checks` CI job: 1 test in `tests/semver_checks_smoke.rs` validates that `cargo +stable semver-checks check-baseline --baseline-version 1.0.79` runs without panicking on the current `Cargo.toml`; the job is informational in v1.0.80 and becomes blocking in v1.0.81
+- `windows-2025` CI steps: 2 new steps each in the `clippy` and `test` jobs (gated on `if: matrix.os == 'windows-2025'`) for pre-warm and verify; the workflow YAML is the test artefact (no inline Rust test, validated by re-running the jobs locally)
+- `signals::handler`: 1 new test `panic_free_third_signal_exits_130_with_zero_io` validates that even with `SIGPIPE` raised on stderr (the orphaned-process scenario), the handler returns cleanly; the third consecutive Ctrl-C exits with code 130 and ZERO I/O
+- `AppError::MemoryNotFound { name, namespace }` and `AppError::MemoryNotFoundById { id }`: 2 tests cover the structural variant; pt-BR messages carry name and namespace
+- `embed_entity_texts_cached`: 3 tests cover the `blake3(model || \0 || text)` cache key, the stats snapshot, and the hit rate
+- `recall --fallback-fts-only` and `hybrid-search --fallback-fts-only`: 2 tests cover the FTS5-only path; 1 test is `#[ignore]` because the G58 S1 stub requires `PATH` without `codex` or `claude` to exercise `EmbeddingFailed`
+- The 7 new test completions in v1.0.80 (4 from G45 singleton + 1 from semver-checks + 1 from signals + 1 from MemoryNotFound) bring the total suite to 1176 tests; 0 failures
+### Coverage Rationale
+- ADR-0032 stability policy is enforced by `cargo +stable semver-checks` in CI (informational in v1.0.80); the smoke test prevents regressions in the smoke harness itself
+- ADR-0033 Windows infra resilience is validated by the new pre-warm and verify steps; local cross-compile validation reproduces `E0463` and is fixed by `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`
+- ADR-0034 SHUTDOWN resilience is validated by the panic-free third-signal test; the test reproduces the orphaned-process scenario from the G42/C2 audit
+- G45 singleton prevents the multi-session LLM contention pathology; tests cover the `is_retryable` contract
+- G55 S2 structural `MemoryNotFound` eliminates the "not found: unknown" class of bugs; tests cover the structural variant
+- G56 entity-embed cache reduces cost on canonical entities; tests cover the cache key and the hit rate
+- G58 FTS5 fallback keeps the read path alive under OAuth contention; tests cover the FTS5-only path and the `vec_degraded` envelope field
+
+
 
 
 ## v1.0.77 Test Additions — G40 Fix Coverage

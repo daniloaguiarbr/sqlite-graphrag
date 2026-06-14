@@ -415,10 +415,12 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     // Database file size in bytes
     let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
 
-    // Checks whether the ONNX model is present in the cache
-    let model_dir = paths.models.join("models--intfloat--multilingual-e5-small");
-    let model_ok = model_dir.exists();
-    tracing::info!(target: "health", model_ok = %model_ok, "embedding model check complete");
+    // G46: the ONNX model cache no longer exists in the LLM-only build
+    // (v1.0.76+). model_ok now reports whether an LLM CLI (claude or codex)
+    // is reachable on PATH — the real prerequisite for embedding generation.
+    let model_ok = crate::commands::ingest_claude::find_claude_binary(None).is_ok()
+        || crate::commands::ingest_codex::find_codex_binary(None).is_ok();
+    tracing::info!(target: "health", model_ok = %model_ok, "LLM CLI availability check complete");
 
     // Builds the checks array for detailed diagnostics
     let mut checks: Vec<HealthCheck> = Vec::with_capacity(8);
@@ -491,15 +493,16 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     });
 
     checks.push(HealthCheck {
-        name: "model_onnx".to_string(),
+        name: "llm_cli".to_string(),
         ok: model_ok,
         detail: if model_ok {
             None
         } else {
-            Some(format!(
-                "model missing at {}; run 'sqlite-graphrag models download'",
-                model_dir.display()
-            ))
+            Some(
+                "no LLM CLI found on PATH; install 'claude' (Claude Code) or 'codex' \
+                 (Codex CLI) — required for embedding generation since v1.0.76"
+                    .to_string(),
+            )
         },
     });
 

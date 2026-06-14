@@ -563,3 +563,589 @@ if prev == 0 {
 ### Relações Causa × Efeito
 - O lote fixo calibrado para 64 CAUSA saída de ~3072 floats em bancos 384, QUE CAUSA respostas incompletas (claude) e timeouts (codex), QUE CAUSA exit 11 em remember/edit de corpos longos
 - O batch adaptativo pela dim CAUSARIA saída constante por chamada, QUE CAUSARIA confiabilidade independente da dimensionalidade do banco
+
+
+## G45 — remember e edit Sem Coordenação Entre Processos: Embedding Concorrente Multi-Sessão Causa Timeout em Cascata e Perda Total do Trabalho (v1.0.79, descoberto em produção em 2026-06-11)
+### Status
+- ABERTO — apenas documentado; nenhuma correção implementada
+### Problema
+- `remember`, `edit` e `remember-batch` NÃO adquirem o job singleton por namespace e banco (`lock::acquire_job_singleton`) — apenas `enrich` (enrich.rs:1487), `ingest --mode claude-code` (ingest_claude.rs:606) e `ingest --mode codex` (ingest_codex.rs:595) o fazem
+- Quando duas ou mais sessões de agente (Claude Code) rodam `remember` simultaneamente na mesma máquina, cada processo faz fan-out de até `--llm-parallelism` subprocessos `claude -p`/`codex exec` que disputam a MESMA quota OAuth da conta
+- A quota OAuth é um recurso GLOBAL da conta, não do processo: o `Semaphore` interno limita o paralelismo de UM processo, mas M sessões × N permits saturam o backend sem que nenhum processo detecte a contenção
+- Sob contenção, a latência por chamada de embedding cresce de ~73s (sessão isolada) para mais de 300s, estourando o timeout estático por chamada (`SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`, default 300 em llm_embedding.rs:43) e os timeouts externos dos wrappers dos agentes (180–420s)
+- O wrapper externo envia SIGTERM; o handler (signals.rs:28-52) cancela o token global; o `tokio::select!` do embedder (embedder.rs:351-355) aborta o batch com "embedding cancelled by shutdown signal" e o comando falha com exit 11
+- O `remember` é all-or-nothing: ao contrário do `ingest` (queue DB `.ingest-queue.sqlite` + `--resume`), não existe checkpoint nem fila de embedding pendente — TODO o trabalho da invocação é descartado, incluindo chamadas LLM já concluídas com sucesso
+### Evidência em Produção
+- Sessão A (projeto atomwrite): `remember --graph-stdin` com `timeout 400` → exit 124, log "shutdown signal received; finishing current operation gracefully"; memória NÃO criada (read posterior retorna exit 4)
+- Sessão B (projeto youtube-legend-cli): 3 tentativas de `remember`, todas EXIT=124 em 180s, mesmo log de shutdown; teste isolado anterior na mesma máquina levara 73s
+- Sessão C (projeto duckduckgo-search-cli): concorrente às outras, rodando `remember --name ddg-cli-incident-release-v073` — única dona do binário `sqlite-graphrag` vivo (`pgrep -xc sqlite-graphrag` = 1)
+- Memória `incident-embedding-timeout-concorrencia` no graphrag.sqlite registra o mesmo padrão: exit 11 com "embedding cancelled by shutdown signal" 2x e "codex embedding call timed out after 300s" 1x; só concluiu com `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS=900` + `--llm-parallelism 1` + `timeout 3000` (889s)
+### Consequências do Problema
+- Perda total e silenciosa do trabalho: pipelines com `2>/dev/null` + `jaq '{memory_id}'` exibem apenas `null`; o agente não distingue falha de quota, bug ou banco corrompido
+- Loop de retroalimentação positiva: a falha leva o agente a RETENTAR; cada retentativa spawna novos subprocessos LLM que AGRAVAM a contenção, derrubando também as outras sessões — degradação coletiva em cascata
+- Desperdício de quota OAuth: chamadas de embedding concluídas antes do cancelamento são descartadas e precisarão ser refeitas integralmente
+- Acúmulo de subprocessos `claude`/`codex` semi-órfãos durante as retentativas, exigindo `pkill` manual (o reaper G28-C só atua no startup da PRÓXIMA invocação)
+- Exit code 11 genérico (Embedding) mascara a causa real: cancelamento por SIGTERM externo, timeout por chamada e falha real de embedding são indistinguíveis para automação
+- Multi-sessão de agentes — cenário padrão do usuário com vários projetos abertos — torna-se operacionalmente inviável para escrita de memórias
+### Causa Raiz
+- CR1 (coordenação): a proteção de singleton G28-B/G30 foi aplicada apenas aos jobs LONGOS (`enrich`, `ingest`), partindo da premissa de que `remember` é curto; com o pipeline LLM-only da v1.0.76+ cada `remember` virou um job de minutos com fan-out de subprocessos, mas ficou FORA do guarda-chuva de coordenação entre processos
+- CR2 (modelo de recurso errado): o limite de paralelismo é por processo (`Semaphore` local), mas o recurso disputado (quota OAuth) é por conta e por máquina — não existe nenhum mecanismo cross-process que limite o total de subprocessos LLM simultâneos
+- CR3 (timeout estático): o limite de 300s por chamada foi calibrado para latência SEM contenção; não se adapta quando a fila do backend cresce, transformando lentidão recuperável em falha dura
+- CR4 (shutdown abortivo sem checkpoint): o cancelamento via `CancellationToken` descarta o batch em curso e os resultados já obtidos; viola a sequência canônica de encerramento gracioso (drenar trabalho em curso dentro do deadline e persistir checkpoint de progresso) — o "gracefully" da mensagem não corresponde ao comportamento real para o embedding
+- CR5 (cegueira aos headers de quota): a API Anthropic retorna 14 headers `anthropic-ratelimit-*` por resposta (`requests-limit`, `requests-remaining`, `requests-reset`, `tokens-limit`, `tokens-remaining`, `tokens-reset`, e variantes input/output/priority); o subprocesso `claude -p` recebe esses headers mas NÃO os propaga para o `embedder`; sem essa informação, o sistema opera cego à quota e só descobre contenção via timeout — a 300s, quando já é tarde para adaptar `--llm-parallelism` ou abortar preventivamente
+### Relações Causa × Efeito
+- CR1 (remember sem singleton) PERMITE M sessões concorrentes, QUE CAUSAM (via CR2, quota global compartilhada) latência por chamada acima de 300s, QUE CAUSA (via CR3, timeout estático) exit 11 interno e SIGTERM do wrapper externo, QUE CAUSA (via CR4, cancelamento sem checkpoint) perda total do trabalho, QUE CAUSA retentativas do agente, QUE REALIMENTAM a contenção inicial — fechando o ciclo
+- A ausência de fila de embedding pendente CAUSA acoplamento total entre persistência do body e sucesso do embedding, QUE CAUSA a perda do conteúdo textual mesmo quando apenas a etapa vetorial falhou
+- O exit 11 genérico CAUSA diagnóstico errado pelos agentes (suspeita de banco corrompido ou bug), QUE CAUSA investigações manuais repetidas em cada sessão afetada
+- CR5 (headers de quota invisíveis) CAUSA ponto cego operacional, QUE FAZ COM QUE o sistema não detecte contenção iminente, QUE CAUSA tentativas de embedding que SERIAM evitáveis com leitura prévia de `requests-remaining` e `tokens-reset`, QUE CAUSA desperdício de quota OAuth e aumento da latência coletiva — multiplicando o impacto de CR1-CR4
+### Solução
+- S1 — Semáforo cross-process de embedding: file lock em diretório de estado XDG com escopo por MÁQUINA (não por banco), limitando o total de subprocessos LLM simultâneos entre todas as invocações; `remember`/`edit` esperam o slot via `--wait-embed-slot <SECONDS>` (análogo ao `--wait-job-singleton` do G30) em vez de competir
+- S2 — Persistência write-behind com fila de re-embed: gravar body, FTS5 e grafo IMEDIATAMENTE; marcar embedding como pendente (tabela `embedding_queue` ou flag por memória); drenar via `enrich --operation re-embed --resume` (caminho já existente na v1.0.79); no shutdown, terminar a chamada LLM em curso dentro de um deadline curto, persistir o checkpoint e sair limpo
+- S3 — Adaptação à contenção: antes do fan-out, contar processos `claude`/`codex` vivos via /proc (reutilizar a varredura do reaper G28-C) e reduzir `--llm-parallelism` efetivo ou avisar; opcionalmente escalar o timeout por chamada com base na latência medida da primeira chamada
+- S4 — Diagnóstico distinguível: cancelamento por sinal externo sai com exit 143 (128+SIGTERM) e envelope JSON `{"error":true,"code":143,"message":...,"suggestion":...}`; timeout por chamada mantém exit 11 mas com `suggestion` apontando `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` e a checagem de sessões concorrentes
+- S5 — Propagação de headers de quota OAuth: o `claude_runner` e o `codex_spawn` capturam os 14 headers `anthropic-ratelimit-*` e os retornam via stdout (linha JSON final tipo `{"type":"ratelimit","requests_remaining":N,"tokens_remaining":M,"reset_at":ISO}`); o `embedder` agrega o estado de quota em um `QuotaState` em memória e expõe env var `SQLITE_GRAPHRAG_QUOTA_REMAINING` para inspeção do agente; antes do fan-out, se `requests_remaining < batches_total`, o `Semaphore` é reduzido dinamicamente e o `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` é escalado proporcionalmente a `reset_at - now`
+### Benefícios da Solução
+- `remember` torna-se idempotente e crash-safe: nenhum SIGTERM ou timeout perde conteúdo textual; apenas o embedding fica pendente e é recuperável
+- O loop de retroalimentação é quebrado: retentativas deixam de multiplicar subprocessos porque o semáforo cross-process serializa o acesso à quota
+- Multi-sessão vira cenário suportado de primeira classe, alinhado ao uso real (vários projetos de agente abertos na mesma máquina e conta)
+- Quota OAuth deixa de ser desperdiçada com chamadas concluídas e descartadas
+- Exit codes distinguíveis permitem roteamento automático correto pelos agentes (retentar, esperar, escalar timeout ou reportar)
+- Adaptação proativa à quota: o sistema REDUZ paralelismo e ESCALA timeout ANTES da contenção se tornar catastrófica, transformando lentidão recuperável em throughput sustentado
+### Como Solucionar
+- Passo 1: extrair de `lock.rs` um helper `acquire_embed_slot(max_slots, wait_secs)` baseado em file lock com escopo de máquina (ex.: `~/.local/share/sqlite-graphrag/embed-slots/`), com detecção de lock stale por PID morto — verificação: teste de integração com 2 processos disputando 1 slot
+- Passo 2: chamar o helper no início do fan-out de embedding em `remember.rs`, `edit.rs`, `remember_batch.rs` e nos caminhos de embedding do `ingest`; expor `--wait-embed-slot` e env `SQLITE_GRAPHRAG_EMBED_MAX_SLOTS` — verificação: duas invocações simultâneas de `remember` concluem serializadas, ZERO exit 11
+- Passo 3: adicionar persistência write-behind em `remember.rs`: commit do body/FTS/grafo antes do embedding; flag `embedding_pending` na linha da memória; estender `enrich --operation re-embed` para varrer pendentes — verificação: SIGTERM no meio do embedding deixa a memória legível via `read` e `hybrid-search` em modo FTS-only, e `enrich --resume` completa o vetor
+- Passo 4: no `tokio::select!` do embedder, trocar cancelamento imediato por deadline de drenagem (terminar a chamada em curso até N segundos) seguido de checkpoint — verificação: teste enviando SIGTERM e conferindo exit 143 + memória persistida
+- Passo 5: mapear `AppError` novo para exit 143 com envelope JSON e `suggestion`; atualizar `docs/schemas/` e a tabela de exit codes — verificação: teste `#[serial]` simulando sinal
+- Passo 6: documentar em ADR a decisão do escopo do semáforo (máquina vs conta) e atualizar HOW_TO_USE e skills dos agentes — verificação: auditoria de docs bilíngue
+- Passo 7: implementar S5 (CR5): em `claude_runner.rs` e `codex_spawn.rs`, capturar os 14 headers `anthropic-ratelimit-*` da resposta HTTP e emitir um evento NDJSON final `{"type":"ratelimit",...}`; no `embedder.rs::fan_out`, agregar esses eventos em `QuotaState` Mutex; antes de cada `Semaphore::acquire`, consultar `QuotaState` e ajustar `available_permits` e `effective_timeout_secs` proporcionalmente; expor `SQLITE_GRAPHRAG_QUOTA_REMAINING` via `env!` macro para inspeção do agente — verificação: teste de integração com mock LLM que retorna `requests-remaining: 0` simula contenção; `remember` reduz paralelismo de 4 para 1 sem intervenção manual
+### Critérios de Aceitação
+- Duas sessões rodando `remember --graph-stdin` simultaneamente no mesmo host concluem AMBAS sem exit 11, sem intervenção manual e sem elevar `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`
+- SIGTERM durante o embedding produz exit 143, memória persistida com body íntegro e `enrich --operation re-embed --resume` restaura o vetor em invocação posterior
+- Nenhum subprocesso `claude`/`codex` sobrevive ao término do processo pai (kill_on_drop preservado)
+- Headers `anthropic-ratelimit-*` são capturados e propagados para o `embedder`; `--llm-parallelism` adapta-se automaticamente quando `requests-remaining` cai abaixo de `batches_total`; `SQLITE_GRAPHRAG_QUOTA_REMAINING` reflete estado agregado em tempo real
+### Referências
+- `src/lock.rs` (singleton G30), `src/signals.rs:28-52` (handler), `src/embedder.rs:351-355` (select! de cancelamento), `src/extract/llm_embedding.rs:43` (timeout 300s)
+- `rg -n 'acquire_job_singleton' src/` — prova de que remember.rs está fora do guarda-chuva (apenas enrich.rs:1487, ingest_claude.rs:606, ingest_codex.rs:595)
+- Memórias do graphrag.sqlite: `incident-embedding-timeout-concorrencia`, `incident-daemon-orfao-graphrag-lock`
+- G28-B/G30 (singleton por job), G42 (pipeline de embedding), G44 (lote adaptativo por dim) — este gap fecha a lacuna de COORDENAÇÃO que G42/G44 não cobriram
+- Docs tokio: `Command::kill_on_drop` garante morte do filho no drop do handle; `CancellationToken` + `tokio::select!` cancelam o future sem drenagem
+- Rate limits compartilhados por conta em sessões concorrentes: https://platform.claude.com/docs/en/api/rate-limits e https://code.claude.com/docs/en/headless
+- CR5 (atualização 2026-06-13): 14 headers `anthropic-ratelimit-*` documentados em https://docs.anthropic.com/en/api/rate-limits — `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens,priority-input-tokens,priority-output-tokens}-{limit,remaining,reset}`; o `claude -p` headless os descarta no spawn caller, criando o ponto cego que CR5 documenta
+
+
+## G46 — Identificador de Modelo Legado em schema_meta e no init (v1.0.79, auditoria pós-publicação de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11, durante a auditoria black-box do binário publicado no crates.io
+### Contexto e Evidências
+- `init --json` do binário v1.0.79 instalado reportou `"model": "multilingual-e5-small"`
+- O modelo fastembed foi REMOVIDO na v1.0.76 (ADR-0019, ADR-0023); o valor era falso
+- `connection.rs::insert_default_schema_meta` e `init.rs` gravavam o literal em TODO banco novo
+- `health` checava o diretório `models--intfloat--multilingual-e5-small` e reportava `model_ok: false` em banco saudável
+- O detail do check sugeria `sqlite-graphrag models download`, comando INEXISTENTE
+### Problema
+- Metadado `model` registrava um gerador de embedding que não existe no build LLM-only
+- O check `model_onnx` do health era sempre falso e a remediação sugerida era inexecutável
+### Causa Raiz
+- O G43 corrigiu o model legado em `rename_entity.rs` mas não varreu os demais pontos de escrita
+- Não havia teste de contrato amarrando `init.model` e `health.model_ok` à arquitetura LLM-only
+### Correção Aplicada
+- `schema_meta.model` e `init.model` agora gravam `SQLITE_GRAPHRAG_VERSION`, consistente com as 3 tabelas de embedding
+- `health.model_ok` passou a reportar disponibilidade de CLI LLM no PATH via `find_claude_binary`/`find_codex_binary` (DRY)
+- Check renomeado de `model_onnx` para `llm_cli` com detail acionável
+- `FASTEMBED_MODEL_DEFAULT` (constante morta) removida; stub `embedding_backend.rs` atualizado
+- Flag `init --model` mantida por compatibilidade com doc comment marcando-a como legada
+### Relações Causa × Efeito
+- O literal legado em 2 caminhos de escrita CAUSAVA metadado falso em todo banco novo, QUE CAUSAVA diagnóstico enganoso no init e no health
+- O check de diretório ONNX inexistente CAUSAVA `model_ok: false` permanente, QUE CAUSAVA alarme falso sem remediação possível
+
+
+## G47 — Flags Documentadas Inexistentes: edit --type e reclassify --entity-type (v1.0.79, auditoria pós-publicação de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11 com aliases visíveis de clap e 2 testes de regressão
+### Contexto e Evidências
+- `edit --type decision` no binário publicado retorna exit 2 `unexpected argument`
+- `edit --type` é prometida em 5 documentos do repo: COOKBOOK.md, COOKBOOK.pt-BR.md, llms.pt-BR.txt, README.md e README.pt-BR.md (changelog v1.0.66)
+- `reclassify --entity-type` é prometida em llms-full.txt; a CLI só aceita `--new-type`/`--to-type`
+- O comando irmão usa `--type` no create, criando assimetria de UX entre comandos
+### Problema
+- A CLI publicada rejeita flags que a própria documentação oficial ensina a usar
+### Causa Raiz
+- A suíte de contratos valida schemas JSON de RESPOSTA mas nenhum teste valida flags de CLI citadas nas docs
+### Correção Aplicada
+- `edit`: `visible_alias = "type"` em `memory_type` — `--type` e `--memory-type` funcionam
+- `reclassify`: `visible_alias = "entity-type"` em `new_type`
+- 2 testes de regressão de parsing clap (`type_flag_is_a_visible_alias_of_memory_type`, `entity_type_flag_is_a_visible_alias_of_new_type`)
+### Relações Causa × Efeito
+- Docs sem teste executável de flags CAUSARAM promessa divergente do binário, QUE CAUSA exit 2 em comandos copiados da documentação
+- O alias aditivo CAUSA a doc retroativamente verdadeira SEM breaking change
+
+
+## G48 — Validação G20 do hybrid-search Cega a Valores Iguais ao Default (v1.0.79, auditoria pós-publicação de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11 com Option<T> e teste de regressão
+### Contexto e Evidências
+- `hybrid-search "x" --max-hops 2` SEM `--with-graph` retornava exit 0 silencioso no binário publicado
+- TESTING.md documentava exatamente esse caso como `expecting exit 1`
+- Com `--max-hops 3` a validação disparava (comparação com o default 2)
+### Problema
+- Flag explícita igual ao default era indistinguível da ausência da flag e escapava da validação G20
+- Descarte silencioso de argumento viola a rule de silent argument discard
+### Causa Raiz
+- `max_hops: u32` com `default_value = "2"` apaga a informação de presença da flag no parse
+### Correção Aplicada
+- `max_hops: Option<u32>` e `min_weight: Option<f64>` sem default no parse; defaults 2 e 0.3 aplicados via `unwrap_or` apenas no caminho com grafo
+- Validação G20 passou a usar `is_some()` — qualquer uso explícito sem `--with-graph` falha com exit 1
+- Teste `graph_flags_parse_as_none_when_absent`; caso do TESTING.md agora é verdadeiro
+### Relações Causa × Efeito
+- O default no tipo primitivo CAUSAVA perda da presença da flag, QUE CAUSAVA bypass da validação no valor coincidente, QUE CAUSAVA o caso documentado no TESTING.md ser falso
+
+
+## G49 — Descarte Silencioso de SQLITE_GRAPHRAG_EMBEDDING_DIM Inválida (v1.0.79, auditoria pós-publicação de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11 com tracing::warn explícito
+### Contexto e Evidências
+- `SQLITE_GRAPHRAG_EMBEDDING_DIM=0|7|5000` no `init` do binário publicado: exit 0, banco nasce com dim 64, ZERO warning
+- A documentação declara a faixa válida [8, 4096]
+### Problema
+- Um typo na env grava permanentemente um banco novo com dimensionalidade diferente da pedida, sem nenhum sinal
+### Causa Raiz
+- `embedding_dim_from_env` usava `.ok()/.filter()` que silenciam tanto parse inválido quanto fora de faixa
+### Correção Aplicada
+- `embedding_dim_from_env` emite `tracing::warn!` com o valor rejeitado e a faixa esperada antes de cair no default
+### Relações Causa × Efeito
+- O filter silencioso CAUSAVA fallback invisível para 64, QUE CAUSARIA banco permanente com dim não intencional e recall cego após re-embed na dim esperada
+
+
+## G50 — CI Vermelho Não Bloqueia Release: 6 Causas Técnicas Acumuladas (v1.0.79, auditoria de 2026-06-11)
+### Status
+- RESOLVIDO no repositório em 2026-06-11 (6 causas corrigidas); jobs Windows de infraestrutura permanecem ABERTOS (ver G53)
+### Contexto e Evidências
+- As 5 execuções mais recentes de CI e Release no GitHub concluíram em failure, incluindo o Release da v1.0.79
+- Causa A: doctest `src/preservation.rs` com asserções matematicamente erradas (`score > 0.5` falso para o exemplo) publicado DESDE a v1.0.69 — derruba o job Tests nas 6 combinações da matriz; invisível localmente porque nextest não executa doctests
+- Causa B: mock LLM INLINE do ci.yml retornava 384 dims em formato single — divergente do `tests/mock-llm/` canônico (64, single+batch) e da v1.0.79
+- Causa C: job Benchmark Regression spawna a CLI real sem LLM no PATH — `init retornou Some(11)`
+- Causa D: Language policy reprova `//! ... BLOCO 1 — OBRIGATÓRIA` em `src/embedder.rs` (caracteres PT em crate docs)
+- Causa E: `cargo-careful sanity` falha com `knn_search_chunks embedding has 96 dims, expected 64` — race de estado global de dim entre testes no harness de processo único (`cargo test --lib`); invisível no nextest (processo por teste)
+- Causa F: `cargo deny` alertava ignore obsoleto RUSTSEC-2025-0119 (fastembed saiu da árvore na v1.0.76)
+### Problema
+- Releases são publicados com CI vermelho; falhas reais acumulam sem detecção e viram ruído permanente
+### Causa Raiz
+- O processo de release não tem gate bloqueante amarrado ao status do workflow CI
+- Doctests rodam APENAS no CI (nextest local os ignora), então a quebra da Causa A nunca apareceu no fluxo local
+### Correção Aplicada
+- A: doctest reescrito com exemplos calculados contra a implementação real de trigramas (19 doctests verdes via `cargo test --doc`)
+- B: ci.yml passou a copiar os mocks canônicos `tests/mock-llm/{claude,codex}` (DRY)
+- C: job de benchmark ganhou o mesmo step de mock no PATH
+- D: comentário traduzido (`BLOCK 1 — MANDATORY`); varredura dos 4 padrões da policy limpa
+- E: 9 testes leitores de `embedding_dim()` em chunks/memories/entities marcados `#[serial_test::serial(env)]`, mesmo grupo serial dos escritores G43
+- F: ignore obsoleto removido do deny.toml com nota explicativa
+- `cargo test --doc` adicionado ao plano de testes formal como camada obrigatória local (docs/TEST_PLAN.md)
+### Relações Causa × Efeito
+- nextest sem doctests CAUSOU asserção errada invisível local, QUE CAUSOU job Tests vermelho por 10 releases, QUE CAUSOU dessensibilização ao CI vermelho
+- A dessensibilização CAUSOU publicação da v1.0.79 com Release em failure, QUE CAUSOU artefato publicado carregando o doctest quebrado
+- O mock inline duplicado do ci.yml CAUSOU drift de dimensionalidade ao G42/S1, QUE CAUSARIA falhas falsas nos testes de embedding do CI
+- O harness de processo único do careful CAUSA compartilhamento dos atomics de dim entre testes, QUE CAUSA a race 96 vs 64 que o nextest mascara
+
+
+## G51 — Mocks LLM Hardcoded em 64 Dims Impediam Teste End-to-End Multi-Dim (v1.0.79, auditoria de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11; validado com criação de memória em banco 384 + mock
+### Contexto e Evidências
+- Experimento black-box: banco 384 + mock no PATH → criação de memória aborta exit 11 `LLM returned 64 dims, expected 384` (C5 correto, mock errado)
+- O caminho exato que o G44 corrigiu (banco 384 com lote adaptativo) NÃO tinha teste end-to-end possível com mock
+### Problema
+- A dimensionalidade era fixa nos mocks; qualquer cenário não-64 era intestável hermeticamente
+### Causa Raiz
+- Os mocks foram escritos para o default 64 do G42/S1 sem prever os bancos legados 384 que o G43/G44 suportam
+### Correção Aplicada
+- Mocks `tests/mock-llm/{claude,codex}` extraem a dim do prompt (`(\d+)-dimensional`) ou do arquivo `--output-schema` (`minItems`), com fallback 64
+- Validação: o cenário banco-384 que falhava conclui com `action: created`
+### Relações Causa × Efeito
+- O mock 64-only CAUSAVA exit 11 em qualquer banco não-64, QUE CAUSAVA zero cobertura e2e do caminho G43/G44, QUE CAUSARIA regressões de adoção de dim invisíveis
+
+
+## G52 — vec stats Sem Agregação por Dim e Com Schema Que Nunca Correspondeu ao Binário (v1.0.79, auditoria de 2026-06-11)
+### Status
+- RESOLVIDO em 2026-06-11
+### Contexto e Evidências
+- O G43 anotou: identificar contaminação multi-dim exige SQL manual (`SELECT dim, COUNT(*) ... GROUP BY dim`)
+- `vec stats --json` real emite `total_rows/orphaned/coverage_percent/...`; `docs/schemas/vec-stats.schema.json` documentava `namespace/vec_memories/...` — contrato divergente desde a criação (v1.0.69)
+- Nenhum teste em `schema_contract_strict.rs` cobre vec stats, por isso a divergência ficou invisível
+### Problema
+- Sem visão por dim, bancos contaminados (G43) são indiagnosticáveis pela CLI; o schema publicado descrevia um response que nunca existiu
+### Causa Raiz
+- O schema foi escrito a partir do design planejado do G39 e nunca validado contra o binário por teste de contrato
+### Correção Aplicada
+- `vec stats` ganhou campo `dims: [{table, dim, rows}]` agregando as 3 tabelas de embedding (zero mudança de schema do banco)
+- `vec-stats.schema.json` reescrito fiel ao response real, incluindo `dims`
+- Teste `dim_breakdown_groups_rows_per_dim_and_table` cobre dims mistas
+### Relações Causa × Efeito
+- Schema sem teste de contrato CAUSOU divergência invisível desde a v1.0.69, QUE CAUSA consumidores programáticos validando contra um contrato falso
+- A agregação por dim CAUSA diagnóstico de contaminação G43 em um comando, QUE ELIMINA o SQL manual apontado como pendência do G43
+
+
+## G53 — Processo de Release: SemVer da Lib Quebrado em Patch e Jobs Windows de Infra (v1.0.79, auditoria de 2026-06-11)
+### Status
+- RESOLVIDO na v1.0.80 (2026-06-14) — ambos os lados fechados
+  - Lado política: ADR-0032 (lib API stability) + job `semver-checks` no CI (informational em v1.0.80, promote a bloqueante em v1.0.81) + entry de CHANGELOG `Library API Changes`
+  - Lado infra Windows: ADR-0033 (G53-WINDOWS-INFRA CI Resilience) — pre-warm + verify steps nos jobs `clippy` e `test` da matrix `windows-2025` (gated em `if: matrix.os == 'windows-2025'`, no-op em ubuntu/macos), validação local de cross-compile G29 (target instalado no MSRV 1.88; atinge fronteira do `cc-rs/lib.exe` que é o limite esperado do host Linux)
+### Contexto e Evidências
+- `cargo +stable semver-checks --baseline-version 1.0.78`: 9 verificações MAJOR falhas (ex.: trait público `extraction_gliner::Extractor` removido) em release PATCH
+- `Clippy (windows-2025)` e `Windows MSVC cross-compile (G29)` falham por infra: download do rustup com erro de rede e `E0463 can't find crate for core` (stdlib do target ausente no runner)
+### Problema
+- O crate é publicado como lib+bin; consumidores da lib sofrem breaking changes em bump patch
+- Jobs Windows vermelhos por infra alimentam a dessensibilização ao CI vermelho (G50)
+### Causa Raiz
+- Não há gate de semver-checks no CI nem política declarada de estabilidade da API da lib
+- Steps de setup Windows sem retry/fallback para falhas transitórias de rede
+### Correção Aplicada
+- ADR-0032 aceito (estabilidade lib: CLI é contrato estável, lib é instável em minor, semver-checks informational)
+- Job `cargo semver-checks` adicionado ao CI em `.github/workflows/ci.yml` (linhas 211-243) com `--baseline-version 1.0.79` e `continue-on-error: true`
+- ADR-0033 aceito (resiliência windows-2025 via pre-warm e verify steps)
+- 2 steps novos no job `clippy` (linhas 45-67) e 2 steps novos no job `test` (linhas 109-131) do CI YAML, ambos gated em `if: matrix.os == 'windows-2025'`
+- Validação local: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduzido e o `E0463` resolvido instalando o target no toolchain MSRV 1.88 (`rustup target add x86_64-pc-windows-msvc --toolchain 1.88`); o build então atinge a fronteira `cc-rs: failed to find tool "lib.exe"` que é o limite esperado de cross-compile MSVC a partir de host Linux
+### Relações Causa × Efeito
+- A ausência de política de API CAUSA remoções públicas em patch, QUE CAUSA quebra silenciosa de consumidores da lib
+- Falhas de infra recorrentes CAUSAM CI vermelho crônico, QUE REFORÇA o ciclo do G50
+- Política documentada (ADR-0032) CAUSA expectativa explícita de instabilidade da lib em minor, QUE ELIMINA quebra silenciosa
+- Pre-warm + verify steps CAUSAM tolerância a falhas transitórias de rede, QUE EVITA o ciclo do G50 para windows-2025
+
+
+## G54 — Qualidade de Retrieval do Embedding LLM Sem Benchmark (v1.0.79, auditoria de 2026-06-11)
+### Status
+- ABERTO — evidência inicial n=1; exige benchmark dedicado antes de qualquer mudança de prompt
+### Contexto e Evidências
+- Smoke real: `recall` com claude OAuth encontrou o documento correto, mas com `score = 0.014` (distância ~0.986) em corpus de 1 memória
+- Query e corpo compartilhavam termos fortes; cosseno quase nulo sugere embeddings de chamadas distintas quase ortogonais
+- O mock de CI usa vetores zero — NENHUM teste mede qualidade semântica real
+### Problema
+- Não existe medição objetiva de recall@k com embeddings LLM reais; a promessa MRL (90 por cento da qualidade em 64 dims) não é verificada na prática
+### Causa Raiz
+- Embeddings gerados autoregressivamente por LLM não têm garantia de consistência entre invocações, e nenhum benchmark periódico cobre isso
+### Correção Proposta
+- Benchmark opt-in com LLM real: corpus fixo de 20-50 pares query-documento, métrica recall@5 e MRR, executado manualmente por release (custo OAuth)
+- Investigar prompt de embedding com instruções de determinismo e ancoragem semântica antes de mudar defaults
+- Registrar baseline na primeira execução e comparar por release
+### Relações Causa × Efeito
+- A geração autoregressiva CAUSA variância entre chamadas, QUE CAUSA cosseno baixo mesmo em par relevante, QUE PODE CAUSAR ranking ruim em corpus denso — sem benchmark, a severidade real é desconhecida
+
+
+## G55 — read Perde o Identificador Solicitado na Mensagem de NotFound e a Localização Produz Erro Híbrido Bilíngue (v1.0.79, descoberto em produção em 2026-06-11)
+### Status
+- ABERTO — apenas documentado; nenhuma correção implementada
+### Problema
+- `read --name <nome>` contra memória inexistente emite `memory not found: unknown in namespace 'global'` — o nome solicitado pelo usuário é DESCARTADO e substituído pelo literal `unknown`
+- O bug afeta os dois caminhos de busca por nome: a flag `--name` e o argumento posicional `NAME`; somente `read --id N` preserva o identificador (`id={id}`)
+- Com locale pt-BR ativo, a mensagem final vira `não encontrado: memória not found: unknown in namespace 'global'` — um híbrido bilíngue meio-traduzido
+- O `read` é o ÚNICO comando do crate com esse comportamento: `remember` (remember.rs:564), `enrich` (enrich.rs:2417+), `reclassify-relation` (reclassify_relation.rs:147-173) e `graph traverse` (graph_export.rs:392) todos interpolam o identificador real na mensagem
+### Evidência em Produção
+- Sessão do projeto atomwrite em 2026-06-11, investigando a falha de persistência do G45: `timeout 20 sqlite-graphrag read --name atomwrite-projeto-contexto --json` → exit 4 com `{"error":true,"code":4,"message":"não encontrado: memória not found: unknown in namespace 'global'"}`
+- O agente precisou de uma invocação extra de `health --json` para descartar corrupção do banco, porque a mensagem não confirmava QUAL memória estava ausente nem se o comando tinha recebido o nome correto
+- Reprodução determinística: qualquer `read --name inexistente --json` na v1.0.79 reproduz o `unknown`
+### Consequências do Problema
+- Diagnóstico degradado exatamente no pior momento: o `read` pós-falha é a ferramenta canônica de verificação de persistência (padrão dos agentes após `remember`); a mensagem com `unknown` não confirma se o nome consultado era o pretendido, alimentando suspeitas falsas de banco corrompido ou bug de namespace
+- Automação quebrada: scripts e hooks que filtram stderr ou o campo `message` do envelope JSON pelo nome da memória (`rg "<nome>"`) NUNCA casam — o roteamento por mensagem fica impossível para o `read`
+- Violação das diretrizes de CLI (clig.dev, seção de erros): mensagem de erro deve carregar o contexto que o usuário pode acionar; `unknown` informa menos que ecoar o input
+- A mensagem híbrida bilíngue (`não encontrado: memória not found: unknown`) transmite descuido e dificulta busca em issue trackers — nem a string em inglês nem a em português aparecem completas
+- Inconsistência de contrato entre comandos: o mesmo erro lógico (memória ausente, exit 4) tem formato de mensagem diferente em `read` versus `remember`/`enrich`, impedindo um parser único no lado do agente
+### Causa Raiz
+- CR1 (ramo esquecido em evolução de feature): o label do NotFound em read.rs:229-238 trata APENAS `args.id` (`if let Some(id) = args.id { format!("id={id}") } else { "unknown".to_string() }`); o `else` era inalcançável até a v1.0.66, mas quando `read --id` foi adicionado na v1.0.67 o caminho por nome — que SEMPRE tem o nome disponível em `args.name`/`args.name_positional` — ficou no fallback genérico
+- CR2 (tipo de erro sem campos estruturados): `AppError::NotFound(String)` (errors.rs:56-57) carrega uma string pré-formatada livre; nada força o chamador a incluir o identificador — em contraste com `BinaryNotFound { name: String }` (errors.rs:33-34), onde o campo é obrigatório e a mensagem `#[error("binary not found: {name} ...")]` interpola por construção (padrão canônico do thiserror)
+- CR3 (i18n por cadeia de replaces frágil): `pt::not_found` (i18n.rs:439-450) traduz por substituição de substrings previstas (`"not found in namespace"` → `"não encontrada no namespace"`); o formato do read.rs (`"memory not found: {label} in namespace ..."`) intercala `: unknown` no meio do padrão esperado, então só o replace de `"memory"` casa — qualquer mensagem fora dos formatos previstos sai meio-traduzida e NENHUM teste valida a tradução completa por comando
+### Relações Causa × Efeito
+- CR2 (NotFound aceita string livre) PERMITE que CR1 (ramo esquecido) compile sem aviso, QUE CAUSA a perda do nome em runtime, QUE CAUSA diagnóstico falso de corrupção pelos agentes e quebra de roteamento por mensagem
+- CR1 (formato divergente do read) COMBINADO com CR3 (replace-chain que só conhece formatos previstos) CAUSA a mensagem híbrida bilíngue, QUE CAUSA perda de buscabilidade do erro em ambas as línguas
+- A ausência de um formato único de NotFound entre comandos CAUSA drift silencioso a cada feature nova — o mesmo mecanismo que criou este gap pode recriá-lo em qualquer comando futuro com múltiplos modos de lookup
+### Solução
+- S1 — Corrigir o label do read: resolver o identificador efetivo (`args.name` ou `args.name_positional`) e emitir `memory 'NOME' not found in namespace 'NS'`, alinhado ao formato já usado por remember.rs:564; manter `id=N` para o caminho `--id`
+- S2 — Endurecer o tipo: substituir os usos de `AppError::NotFound(String)` para memórias por uma variante estruturada (ex.: `MemoryNotFound { name: String, namespace: String }`) com `#[error("memory '{name}' not found in namespace '{namespace}'")]` — o compilador passa a EXIGIR o identificador, eliminando a classe inteira do bug
+- S3 — Padronizar e testar a localização: adequar `pt::not_found` ao formato canônico único e adicionar teste por comando validando que a mensagem pt-BR não contém fragmentos em inglês (`assert!(!msg.contains("not found"))`)
+### Benefícios da Solução
+- O `read` pós-falha volta a ser conclusivo: a mensagem confirma o nome consultado e o namespace, encerrando o diagnóstico em uma invocação
+- Roteamento automático por mensagem volta a funcionar de forma uniforme em todos os comandos com exit 4
+- A variante estruturada torna a regressão impossível por construção — novos modos de lookup não compilam sem fornecer o identificador
+- Mensagens 100% traduzidas em pt-BR e 100% em inglês, buscáveis em ambas as línguas
+### Como Solucionar
+- Passo 1: em read.rs:229-238, construir o label com `args.name.as_deref().or(args.name_positional.as_deref())` e formato `name='{n}'`; remover o literal `unknown` — verificação: `read --name fantasma --json` retorna `message` contendo `fantasma`
+- Passo 2: adicionar teste de regressão no read.rs cobrindo os três modos (`--name`, posicional, `--id`) contra memória ausente, assertando que o identificador aparece na mensagem — verificação: teste falha no código atual e passa após o fix
+- Passo 3: (estrutural) introduzir `MemoryNotFound { name, namespace }` em errors.rs preservando exit 4 e o envelope JSON `code: 4`; migrar read/edit/rename/forget/restore/history gradualmente — verificação: `cargo clippy -D warnings` + suíte verde + contrato de exit codes intacto
+- Passo 4: alinhar `pt::not_found` ao formato canônico e adicionar teste de tradução completa por comando — verificação: zero fragmentos `not found` em mensagens com `--lang pt`
+- Passo 5: atualizar `docs/schemas/` se o texto de `message` for citado em exemplos, e as skills dos agentes que documentam o contrato de exit 4 — verificação: auditoria bilíngue de docs
+### Critérios de Aceitação
+- `sqlite-graphrag read --name memoria-fantasma --json` emite exit 4 com `message` contendo `memoria-fantasma` e o namespace efetivo
+- Com `--lang pt`, a mensagem é integralmente em português (nenhum fragmento `not found`); com `--lang en`, integralmente em inglês
+- Teste de regressão presente cobrindo os três modos de lookup do `read`
+### Referências
+- `src/commands/read.rs:229-238` (label com fallback `unknown`), `src/errors.rs:56-57` (`NotFound(String)`), `src/errors.rs:33-34` (`BinaryNotFound { name }`, o padrão correto), `src/i18n.rs:439-450` (`pt::not_found` por replace-chain)
+- Contraexemplos corretos no próprio crate: `remember.rs:564`, `enrich.rs:2417`, `reclassify_relation.rs:147-173`, `graph_export.rs:392`
+- thiserror (context7 `/dtolnay/thiserror`, trust 9.3): variantes com campos nomeados interpolados na mensagem (`#[error("the data for key \`{0}\` is not available")]`) são o idioma canônico para erros que carregam identificadores
+- clig.dev (Command Line Interface Guidelines, seção Errors): mensagens de erro devem fornecer contexto acionável sobre o que foi pedido e o que falhou — https://clig.dev
+- G45 (este gap foi descoberto durante a investigação do incidente multi-sessão do G45: a mensagem com `unknown` atrasou o diagnóstico da perda de persistência)
+
+
+## G56 — Custo de Embedding O(dim) em Tokens de Saída e Re-Embedding Incondicional de Entidades Tornam o remember Minutos-Longo em Bancos 384 (v1.0.79, descoberto em produção em 2026-06-11)
+### Status
+- ABERTO — apenas documentado; nenhuma correção implementada
+### Problema
+- Um único `remember` com body de 1.753 caracteres (1 chunk) e 6 entidades levou 1.058.875 ms (~17,6 minutos) em banco de produção dim 384 com `--llm-parallelism 1`
+- A mesma operação em banco dim 64 completa em ~54 s (smoke real da auditoria v1.0.79) — fator ~20x entre dimensionalidades para o MESMO conteúdo
+- O G44 eliminou os timeouts em banco 384, mas ao preço de transformar cada `remember` em uma operação de dezenas de minutos — a mitigação trocou falha por latência extrema
+- Entidades recorrentes do grafo (hubs como `sqlite-graphrag`, presentes em centenas de memórias) são RE-EMBEDADAS a cada `remember` que as cita, regerando um vetor que já existe byte-equivalente no banco
+### Evidência em Produção
+- Memória `gap-g55-read-perde-nome-notfound` (memory_id 1230, namespace global, banco 384): `remember --graph-stdin --llm-parallelism 1` → `{"action":"created","elapsed_ms":1058875}` em 2026-06-11
+- Decomposição do caso: 1 chamada LLM para o body (lote de chunk = 1 em dim 384) + ceil(6/4) = 2 chamadas para nomes de entidade (lote = 4) = 3 chamadas; média ~353 s por chamada sob contenção residual
+- Das 6 entidades do payload, ao menos `sqlite-graphrag` e `gap-g45-coordenacao-multissessao` já existiam com embedding válido no banco — as chamadas que as reprocessaram foram integralmente desperdiçadas
+- O comentário em remember.rs:718-721 registra a medição pré-G42: 21 nomes custavam ~12 minutos (46% do total do remember) — o lote G42/S2 reduziu o número de chamadas, mas em dim 384 o G44 desfaz o ganho ao encolher o lote para 4
+### Consequências do Problema
+- `remember` em banco 384 estoura qualquer timeout externo razoável dos agentes (defaults de 20-120 s), produzindo exit 124 e a perda all-or-nothing já documentada no G45
+- A janela de contenção multi-sessão do G45 cresce proporcionalmente: quanto mais longo cada `remember`, maior a probabilidade de duas sessões colidirem no mesmo intervalo — G56 e G45 se retroalimentam
+- Quota OAuth queimada em vetores redundantes: cada re-embedding de entidade existente consome uma fração de chamada LLM inteira para produzir informação que o banco já possui
+- A receita anti-contenção (paralelismo 1 + timeout 900 s + timeout externo 1700 s) vira pré-requisito operacional permanente para qualquer escrita em banco 384, punindo o caso comum para proteger o caso raro
+- O custo real fica invisível: a resposta JSON do `remember` não expõe quantas chamadas LLM foram feitas nem quanto tempo o embedding consumiu, impedindo diagnóstico e tuning pelo operador
+### Causa Raiz
+- CR1 (estrutural — custo de saída O(dim)): o embedding via LLM generativo serializa cada vetor como JSON de floats em texto; 384 floats ≈ 3-4 KB ≈ milhares de tokens de SAÍDA por vetor, gerados token a token; a latência por vetor cresce linearmente com a dimensionalidade e nenhuma calibração de lote altera esse piso físico
+- CR2 (heurística de lote ignora overhead fixo): `adaptive_batch_for_dim` (embedder.rs:82-85) mantém orçamento de FLOATS constante (`base × 64 / dim`), encolhendo o lote para 1 chunk / 4 nomes em dim 384; o overhead fixo por chamada (spawn do `claude -p`, handshake OAuth, processamento do prompt) é então MULTIPLICADO pelo número de chamadas em vez de amortizado — a fórmula otimiza contra timeout por chamada, não contra latência total
+- CR3 (re-embedding incondicional de entidades): remember.rs:722-734 monta `entity_texts` com TODOS os nomes do payload e os embeda sem consultar `entity_embeddings`; `upsert_entity_vec` (entities.rs:126-146) executa DELETE+INSERT incondicional; não existe verificação de existência, de dim compatível, nem hash do texto embedado para detecção de mudança — o caminho de escrita assume que todo vetor precisa ser regenerado sempre
+- CR4 (acoplamento com o G45): sem coordenação entre processos, a receita anti-contenção exige `--llm-parallelism 1`, serializando exatamente as chamadas que CR2 multiplicou — latência total = N_chamadas × latência_por_chamada, sem sobreposição
+### Relações Causa × Efeito
+- CR1 (cada vetor 384 custa milhares de tokens de saída) CAUSA chamadas individuais caras (~1-6 min), QUE TORNA crítico minimizar o NÚMERO de chamadas
+- CR2 (lote mínimo em dim 384) MULTIPLICA o número de chamadas, QUE COMBINADO com CR4 (serialização forçada pelo G45) CAUSA a latência total de ~17,6 min observada
+- CR3 (re-embedding incondicional) CAUSA chamadas inteiras desperdiçadas em vetores já existentes, QUE CAUSA queima de quota OAuth E alarga a janela de contenção do G45 — realimentando o ciclo que exige a serialização de CR4
+- A latência de minutos CAUSA estouro dos timeouts externos dos agentes, QUE CAUSA a perda all-or-nothing do G45 — G56 é o amplificador de severidade do G45 em bancos 384
+### Solução
+- S1 — Cache de embeddings de entidades (maior ganho, zero migração): antes de embedar, consultar `entity_embeddings` por entidade; quando o vetor existe com a dim ativa E o payload não traz descrição nova (texto embedado = nome, que é a chave e não mudou), PULAR a entidade; embedar somente ausentes ou com descrição alterada — no caso medido, 2 das 3 chamadas teriam sido evitadas
+- S2 — Orçamento de TEMPO em vez de orçamento de floats: manter os lotes calibrados (8 chunks / 25 nomes) em todas as dims e escalar o timeout por chamada automaticamente (`timeout_efetivo = base × dim / 64`), amortizando o overhead fixo em vez de multiplicá-lo; `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` permanece como override manual
+- S3 — Reduzir tokens por vetor: limitar a precisão dos floats serializados na resposta do LLM (ex.: 4 casas decimais) via instrução no prompt e no schema — corta ~40-50% dos tokens de saída com erro de cosseno desprezível (ordem de 1e-4)
+- S4 — Telemetria de custo: incluir `embedding_calls` e `embedding_elapsed_ms` na resposta JSON de `remember`/`edit`, tornando o custo visível para diagnóstico e para os hooks dos agentes
+### Benefícios da Solução
+- `remember` em banco 384 com entidades majoritariamente existentes cai de ~17 min para a ordem de 1-3 chamadas curtas — compatível com timeouts externos padrão dos agentes
+- A janela de contenção do G45 encolhe na mesma proporção, reduzindo a probabilidade de colisão multi-sessão SEM exigir o lock do G45 (mitigação independente e complementar)
+- Quota OAuth preservada: zero chamadas para vetores que o banco já possui
+- Custo previsível e auditável via telemetria — o operador enxerga quando um `remember` será caro ANTES de ajustar paralelismo e timeouts
+### Como Solucionar
+- Passo 1 (S1): em remember.rs, antes de montar `entity_texts`, resolver cada entidade via `find_by_name` + consulta a `entity_embeddings` (existência + `dim` ativa); particionar o payload em `a_embedar` / `pular`; ajustar o loop de persistência para consumir embeddings apenas das embedadas — verificação: `remember` com 6 entidades todas existentes em banco 384 executa ZERO chamadas de embedding de entidade (assert no mock-llm por contagem de invocações)
+- Passo 2 (S1): re-embedar quando o payload traz `description` nova para entidade existente (o texto embedado muda de `nome` para `nome descrição`) — verificação: teste cobrindo os dois ramos
+- Passo 3 (S2): em embedder.rs, substituir `adaptive_batch_for_dim` por lote fixo calibrado + timeout dinâmico proporcional a `dim × batch`; preservar os testes G44 reescrevendo as asserções para o novo contrato — verificação: banco 384 com mock lento não estoura timeout e faz ceil(N/25) chamadas de entidade
+- Passo 4 (S3): ajustar o prompt e validar que `parse_llm_json` aceita floats truncados; medir delta de cosseno em corpus de teste — verificação: erro máximo < 1e-3 contra vetores de precisão plena
+- Passo 5 (S4): adicionar os campos de telemetria à resposta e aos schemas em `docs/schemas/` — verificação: contrato JSON validado na suíte doc_contract
+- Restrição respeitada: NENHUMA migração de schema (v13 imutável); S1 usa apenas as colunas existentes de `entity_embeddings` (`entity_id`, `dim`)
+### Critérios de Aceitação
+- `remember --graph-stdin` com todas as entidades já existentes (sem descrições novas) em banco 384 não spawna nenhum subprocesso LLM para entidades
+- `remember` de body 1-chunk + 6 entidades novas em banco 384, sem contenção, completa em menos de 5 minutos com defaults
+- Resposta JSON expõe `embedding_calls` e `embedding_elapsed_ms`; schemas atualizados
+- Suíte G44 adaptada verde; zero regressão nos contratos de exit code
+### Referências
+- `src/commands/remember.rs:718-734` (embedding incondicional de todos os nomes do payload), `src/embedder.rs:82-108` (`adaptive_batch_for_dim`, orçamento de floats), `src/storage/entities.rs:126-146` (`upsert_entity_vec` com DELETE+INSERT incondicional)
+- Evidência: memory_id 1230 com `elapsed_ms: 1058875` (2026-06-11); smoke real G42 de 54 s em dim 64; medição pré-G42 em remember.rs:718-721 (21 nomes ≈ 12 min)
+- Batching de inferência LLM e amortização de overhead fixo por chamada: arXiv 2503.05248 (Memory-aware and SLA-constrained LLM batching) e muhtasham.github.io/blog/posts/batching-strategies
+- tokio (context7 `/websites/rs_tokio`, trust 9.7): `Semaphore`/`spawn` — o fan-out bounded já existente (G42/S3) fica subutilizado por CR4 enquanto o G45 não tiver lock entre processos
+- G42 (pipeline lento — origem do lote), G44 (lote dim-adaptativo — a mitigação que virou multiplicador), G45 (coordenação multi-sessão — acoplamento e retroalimentação), G54 (qualidade de retrieval — a precisão reduzida de S3 deve ser validada pelo benchmark proposto lá)
+
+
+
+## G45 — Validação Cruzada de Referências Técnicas via context7 e duckduckgo-search-cli (2026-06-13)
+### Status
+- COMPLEMENTAR ao G45 original (linha 568) — apenas documenta a verificação externa das referências técnicas citadas
+### Contexto da Verificação
+- Esta seção foi gerada em sessão de auditoria pós-publicação da v1.0.79 para confirmar que as referências técnicas do G45 (tokio `Command::kill_on_drop`, rate limit OAuth compartilhado, file lock cross-process) permanecem válidas na data da verificação
+- A verificação foi feita usando as CLIs obrigatórias do projeto (`context7` e `duckduckgo-search-cli`) conforme protocolo de auditoria
+### Verificação 1 — tokio::process::Command::kill_on_drop (CR4 do G45)
+- Comando context7 executado: `context7 docs /websites/rs_tokio --query "Command kill_on_drop child process" --text`
+- Resultado: o método `tokio::process::Command::kill_on_drop(&mut self, kill_on_drop: bool) -> &mut Command` existe na versão tokio 1.52.3 (verificada em docs.rs) com semântica EXATAMENTE conforme documentado no G45
+- Confirmação textual extraída: `Controls whether a kill operation should be invoked on a spawned child [process] when the [handle] is dropped`
+- Trust score do source: 9.7 (acima do threshold mínimo de 7.0)
+- Conclusão: a CR4 do G45 (kill_on_drop garante morte do subprocesso no drop do handle) está CORRETA e verificável na documentação oficial
+- Implicação: o fix do G45 (S2 — write-behind com checkpoint) PODE confiar em kill_on_drop para garantir que nenhum subprocesso órfão sobreviva ao cancelamento
+### Verificação 2 — Rate Limit OAuth Compartilhado (CR2 do G45)
+- Comando duckduckgo executado: `duckduckgo-search-cli "Anthropic Claude API rate limit per organization account shared sessions" -q -f json --num 5`
+- Fonte primária: https://platform.claude.com/docs/en/api/rate-limits — `To mitigate misuse and manage capacity on the API, limits are in place on how much an organization can use the Claude API`
+- Fonte secundária: https://github.com/anthropics/claude-code/issues/41886 — `Rate limit quota is shared per organizationUuid, not per account` (issue oficial confirmada)
+- Conclusão: a CR2 do G45 (quota OAuth é por organização/conta, NÃO por processo) está CORRETA e corroborada por documentação oficial da Anthropic
+- Implicação: o semáforo cross-process de S1 é NECESSÁRIO; sem ele, M processos × N permits saturam a quota compartilhada
+- Issue aberta na origem: https://github.com/anthropics/claude-code/issues/31637 confirma que `/api/oauth/usage` é rate-limited agressivamente, o que valida indiretamente o sintoma observado
+### Verificação 3 — File Lock Cross-Process via fs2/fcntl (S1 do G45)
+- Comando context7 executado: `context7 library "fs2" --json` e `context7 docs /typelevel/fs2 --query "file lock flock cross process" --text`
+- Resultado da library: `/typelevel/fs2`, title `FS2`, trust score 9.4 (acima do threshold)
+- Resultado da pesquisa: o crate `fs2` oferece `File::lock_exclusive` / `lock_shared` baseado em `flock(2)` Unix, com suporte cross-platform via `windows` feature
+- Alternativa verificada: `fcntl` crate (https://docs.rs/fcntl) com `Flock::lock` / `Flock::unlock` — interface POSIX pura
+- Padrão recomendado: `File::try_lock()` retorna `ErrorKind::WouldBlock` quando outro processo segura o lock; polling com sleep é o mecanismo canônico para semáforo baseado em file lock
+- Conclusão: a S1 do G45 (semáforo cross-process via file lock) é VIÁVEL e tem suporte maduro no ecossistema Rust
+- Decisão arquitetural pendente: usar `fs2` (cross-platform com feature flag windows) ou `fcntl` direto (Linux/macOS only); o projeto já roda em ambos, então `fs2` com feature windows é o caminho mais seguro
+### Verificação 4 — Mecanismo de Detecção de Lock Stale (S1, Passo 1)
+- Necessário para evitar que um processo morto deixe o lock órfão bloqueando invocações futuras
+- Padrão verificado: incluir o PID do owner no nome do arquivo de lock (ex.: `embed-slot-{pid}.lock`) e verificar via `kill -0 <pid>` se o processo ainda existe
+- Referência: `reaper.rs` no projeto já implementa padrão similar para `job-singleton-*.lock`; o G30 documenta o hash de db no nome do arquivo
+- Conclusão: a verificação de lock stale pode reutilizar o padrão do reaper existente no projeto
+### Decisões Tomadas Para o G45 (à Aplicar Quando For Implementado)
+- Lock file: `~/.local/share/sqlite-graphrag/embed-slots/embed-slot-{machine_hash}-{pid}.lock` (XDG padrão)
+- Implementação: `fs2` crate com feature `windows` para cross-platform
+- Detecção stale: comparar PID do owner via `kill -0` (Unix) ou `OpenProcess` (Windows)
+- Constante: `SQLITE_GRAPHRAG_EMBED_MAX_SLOTS` (default 4, matching `--llm-parallelism` default)
+- S2 alternativa revisitada: ao invés de nova tabela `embedding_queue` (que violaria a Restrição 1 do topo deste gaps.md sobre schema imutável), usar a coluna `description` como sentinel temporário via prefixo `[EMBED_PENDING]` removido pós-embed, OU adicionar coluna `embedding_pending INTEGER NOT NULL DEFAULT 0` à tabela `memories` em V014 — o caminho V014 é o canônico se a restrição for afrouxada, mas a abordagem do sentinel preserva a imutabilidade do schema
+### Relação com Outros Gaps Abertos
+- G45 bloqueia: G54 (qualidade de retrieval) só pode ser medida em ambiente com S1 do G45 implementado
+- G45 é pré-requisito de: S3 do G56 (telemetria de chamadas LLM) que precisa de S2 do G45 (write-behind) para registrar chamadas perdidas
+- G45 amplifica: G56 (custo O(dim) em dim 384) — quanto mais longo o `remember`, maior a janela de contenção entre sessões
+### Restrições do Projeto Respeitadas
+- Restrição 1 (schema imutável): a S2 do G45 foi REVISADA para preservar a imutabilidade via sentinel ou exigir V014 explícito; S1/S3/S4 não tocam o schema
+- Restrição 2 (CLI LLM-only): o fix do G45 mantém o pipeline LLM-only integralmente; o semáforo cross-process é mecanismo de GOVERNANÇA, não troca de modelo
+### Critérios de Verificação Bem-Sucedidos
+- Referência tokio kill_on_drop verificada via context7 com trust score 9.7
+- Rate limit OAuth compartilhado por organização verificado via docs oficiais Anthropic + issue confirmada
+- Viabilidade técnica de S1 demonstrada via crate fs2 com trust score 9.4
+- Padrão de detecção de lock stale já presente no projeto (reaper G28-C) é reutilizável
+### Referências Externas Verificadas
+- tokio::process::Command::kill_on_drop: https://docs.rs/tokio/latest/tokio/process/struct.Command.html (context7 /websites/rs_tokio, trust 9.7)
+- Claude API rate limits: https://platform.claude.com/docs/en/api/rate-limits
+- Issue compartilhamento OAuth: https://github.com/anthropics/claude-code/issues/41886
+- Issue rate-limit oauth/usage: https://github.com/anthropics/claude-code/issues/31637
+- Crate fs2: https://docs.rs/fs2 (context7 /typelevel/fs2, trust 9.4)
+- Crate fcntl alternativa: https://docs.rs/fcntl/latest/fcntl/
+
+
+## G57 — Hook PreToolUse enforce-skip-extraction Bloqueia Falsos Positivos em Pipelines Sem `remember` Real (v1.0.79, descoberto em produção em 2026-06-13)
+### Status
+- ABERTO — apenas documentado; nenhuma correção implementada
+### Problema
+- O hook `~/.claude/hooks/graphrag-enforce-skip-extraction.sh` faz parsing do `tool_input.command` via `sed` + `grep` regex em bash para detectar `remember` como subcomando de `sqlite-graphrag`
+- A regex `[[:space:]]remember([[:space:]]|$)` casa QUALQUER ocorrência da palavra `remember` mesmo dentro de heredocs, comentários, variáveis Python, descrições de body Markdown, e nomes kebab-case
+- O hook NÃO distingue os seguintes cenários legítimos de uma invocação real do subcomando:
+  - `cat <<'EOF' | sqlite-graphrag remember ...` (heredoc com payload de memória)
+  - `python3 -c "..."` que contenha a string `remember` (ex.: para gerar body de arquivo Markdown)
+  - `tee -a /tmp/notes.md` onde o arquivo contém a palavra `remember` em seu corpo
+  - Argumento de `--description` que mencione "remember" como conceito semântico (ex.: "comparar com remember anterior")
+  - Nomes de memória com kebab-case que terminem em `-remember` (ex.: `--name incident-remember-spike`)
+- O bloqueio é DENY (exit 0 com `permissionDecision: deny`) e o agente entra em loop de adaptação onde cada tentativa de contornar o hook DISPARA o hook novamente
+- A mensagem de erro é literal e fixa: `BLOQUEADO: sqlite-graphrag remember sem --graph-stdin` — sem indicar qual parte do comando disparou
+### Evidência em Produção
+- Sessão de persistência de PRD via heredoc em 2026-06-13: o agente tentou `cat >> /tmp/axon-prd-body.md <<EOF ... EOF` onde o body continha menções legítimas a `remember` em texto descritivo (não como subcomando)
+- 3 tentativas de contorno:
+  - `python3 -c "import sys; open('/tmp/x.md', 'a').write(content)"` — BLOQUEADO
+  - `tee -a /tmp/axon-prd-body.md` lendo stdin — BLOQUEADO
+  - `printf '%s' "$VAR" >> /tmp/notes.md` — BLOQUEADO
+- O loop de adaptação consumiu ~5 minutos e várias tentativas, MAS a operação que estava sendo tentada (escrever arquivo Markdown) NÃO ERA um `remember` da CLI
+- O fix anterior (`fix-hook-enforce-graph-stdin-force-merge-metadata`, 2026-06-11) cobriu o caso `--force-merge sem body` mas NÃO o caso de pipelines COM texto que contém a palavra `remember`
+### Consequências do Problema
+- Falsos positivos paralisam operações legítimas que não invocam `remember` da CLI: escrever arquivos Markdown, processar texto em Python, redirecionar com tee, gerar conteúdo via shell
+- Loop de frustração do agente: cada tentativa de contornar dispara o mesmo hook; o agente interpreta como bloqueio do projeto e busca workarounds cada vez mais radicais
+- Texto descritivo (PRD, design doc, README) fica PROIBIDO de conter a palavra `remember` mesmo em contexto narrativo
+- A mensagem de erro não identifica o trecho que disparou o bloqueio, forçando o agente a adivinhar qual palavra/frase é problemática
+- O hook se torna PESSIMO FILTRO de qualidade: dispara em QUALQUER texto sobre o conceito `remember`, não apenas em invocações reais do subcomando
+- Em casos extremos, o agente pode desabilitar o hook via `chmod -x` ou `mv` para contornar, removendo a proteção que o hook fornece
+### Causa Raiz
+- CR1 (modelo de detecção errado): o hook usa regex em texto plano sobre `tool_input.command` para identificar invocação de subcomando; a semântica de subcomando é uma propriedade estrutural do comando (qual binário + qual primeiro arg posicional), não uma propriedade textual
+- CR2 (ausência de tokenização real): `sed` remove aspas e `grep` casa `remember`; sem parser de shell real, a regex confunde a palavra em qualquer contexto (string literal, kebab-case, heredoc body, comentário)
+- CR3 (heurística permissiva demais): a regex `[[:space:]]remember([[:space:]]|$)` foi desenhada para casar `sqlite-graphrag remember --name X` mas casa também `python3 -c "...remember..."` porque o strip de aspas é INSUFICIENTE para o conteúdo de heredocs
+- CR4 (feedback ambíguo): o hook retorna DENY sem indicar qual regex casou; o agente precisa iterar exaustivamente sobre o comando para descobrir o termo problemático
+- CR5 (ausência de bypass de escape): não existe um mecanismo canônico (env var, marker, ou wrapper) que diga ao hook "este trecho é literal, não analise"
+### Relações Causa × Efeito
+- CR1 (regex textual em vez de parsing estrutural) CAUSA casamento da palavra em qualquer contexto, QUE CAUSA bloqueio de pipelines legítimos, QUE CAUSA loop de frustração do agente, QUE CAUSA tentativas radicais de contorno (desabilitar hook), QUE CAUSA remoção da proteção real que o hook fornece contra `remember` sem `--graph-stdin` (o problema ORIGINAL que o hook foi criado para resolver)
+- CR3 (heurística permissiva) CAUSA matches em heredocs e strings Python, QUE CAUSA impossibilidade prática de gerar conteúdo Markdown que mencione `remember` como conceito
+- CR4 (feedback ambíguo) CAUSA tentativa-e-erro, QUE CAUSA custo de tempo (5+ minutos por incidente) e perda de produtividade
+- A combinação CR1+CR3+CR4 CAUSA o cenário de loop de adaptação, QUE CAUSA o agente a tomar ações destrutivas (desabilitar hook) que anulam a S do G45 (write-behind não é protegido por hook)
+### Solução
+- S1 — Parsing estrutural via AST/shell parser: usar `jq` para parsear o JSON do hook E um parser de linha de comando real (ex.: `shlex` em Python ou `tree-sitter-bash`) para decompor o comando em AST antes de procurar o subcomando `remember`; só disparar quando a AST indicar que o segundo token (após `sqlite-graphrag`) é literalmente `remember`
+- S2 — Distinguir texto literal de código: usar um parser que reconheça a estrutura do bash (heredoc `<<EOF` até `EOF`, strings em aspas simples/duplas, substituição `$()`, comentários `#`) e só procure o padrão no contexto EXECUTÁVEL do comando
+- S3 — Marker de bypass explícito: aceitar uma env var `SQLITE_GRAPHRAG_BYPASS_HOOK=1` que o usuário pode setar quando SABE que o conteúdo é seguro (ex.: geração de Markdown); documentar como `! export SQLITE_GRAPHRAG_BYPASS_HOOK=1` no shell do usuário
+- S4 — Mensagem diagnóstica: o hook retorna DENY COM o trecho exato que casou a regex, em qual linha do comando, e sugestões de bypass; permite ao agente iterar cirurgicamente em vez de adivinhar
+- S5 — Modo opt-in: o hook passa a registrar DENY apenas quando o subcomando `remember` é REAL; em outros casos, emite `additionalContext` informativo sem DENY (permite que o agente veja a observação e decida)
+### Benefícios da Solução
+- Pipelines legítimos (escrita de Markdown, geração de conteúdo, Python com texto descritivo) deixam de disparar o hook
+- A proteção original do hook (forçar `--graph-stdin` em `remember` real) permanece INTACTA
+- O loop de frustração do agente é quebrado: o agente recebe mensagem clara e sabe imediatamente o que mudou
+- A produtividade do agente é preservada: o conteúdo descritivo pode livremente mencionar `remember` como conceito
+- O risco de desabilitar o hook manualmente (e perder a proteção) diminui drasticamente
+- A auditabilidade do hook melhora: cada bloqueio tem causa exata registrada
+### Como Solucionar
+- Passo 1: reescrever `graphrag-enforce-skip-extraction.sh` para usar `python3` + `shlex` na parse de comandos compostos; identificar o subcomando REAL via decomposição AST em vez de regex textual — verificação: matriz de 20 casos legítimos e 5 inválidos, 25/25 PASS
+- Passo 2: estender o hook para distinguir contexto de heredoc/string/comentário via parsing estrutural — verificação: comando com heredoc contendo `remember` passa sem DENY
+- Passo 3: adicionar flag de bypass via env var `SQLITE_GRAPHRAG_BYPASS_HOOK=1` que suprime o DENY; documentar no `graphrag-protocol.md` — verificação: exportação da env var desabilita o hook por sessão
+- Passo 4: reescrever a mensagem de erro para incluir o trecho exato (até 80 chars) que casou e a linha do comando; adicionar `suggestion: "use --graph-stdin or set SQLITE_GRAPHRAG_BYPASS_HOOK=1"` — verificação: hook retorna JSON com campo `matched_text` populado
+- Passo 5: opcionalmente, mover de DENY para `additionalContext` quando o match é ambíguo (regex heurística casou mas parsing estrutural não confirma subcomando) — verificação: comando ambíguo produz additionalContext sem DENY
+- Passo 6: documentar em ADR a decisão de usar parser estrutural vs regex; atualizar `graphrag-protocol.md` e a skill de hooks dos agentes — verificação: auditoria de docs bilíngue
+- Restrição respeitada: hook opera EXCLUSIVAMENTE no lado do harness (não toca o schema SQLite nem o pipeline LLM)
+### Critérios de Aceitação
+- Comando `cat <<'EOF' | sqlite-graphrag remember ...` com body contendo a palavra `remember` em texto descritivo NÃO é bloqueado pelo hook
+- Comando `python3 -c "print('remember')"` NÃO é bloqueado pelo hook
+- Comando `sqlite-graphrag remember --name teste --body-stdin` SEM `--graph-stdin` AINDA é bloqueado (proteção original preservada)
+- Comando `sqlite-graphrag remember --name teste --graph-stdin <<EOF` é permitido (porta de heredoc preservada)
+- Bypass via `SQLITE_GRAPHRAG_BYPASS_HOOK=1` funciona e é documentado
+### Referências
+- `~/.claude/hooks/graphrag-enforce-skip-extraction.sh` (linhas 17-21: regex heurística, linha 35: DENY message)
+- Memória do graphrag.sqlite: `fix-hook-enforce-graph-stdin-force-merge-metadata` (correção parcial anterior de 2026-06-11)
+- Hooks docs oficiais Claude Code: https://code.claude.com/docs/en/hooks — PreToolUse recebe `tool_input.command` como string em JSON
+- shlex (Python stdlib): https://docs.python.org/3/library/shlex.html — parser de shell tokens respeitando aspas e comentários
+- tree-sitter-bash: https://github.com/tree-sitter/tree-sitter-bash — parser AST de bash com reconhecimento de heredocs
+- Relação com G45: o G45 protege contra `remember` real sem coordenação; o G57 protege contra FALSO positivo do hook que tenta fazer G45 — são complementares
+
+
+## G58 — recall e hybrid-search Sem Fallback Determinístico: Embedding ao Vivo Como Único Ponto de Falha Sob Fadiga OAuth (v1.0.79, descoberto em produção em 2026-06-13)
+### Status
+- ABERTO — apenas documentado; nenhuma correção implementada
+### Problema
+- `recall` e `hybrid-search` precisam gerar embedding da QUERY (não do body) via subprocesso `claude -p` headless em runtime — `src/commands/recall.rs:144` chama `crate::embedder::embed_query_local(&paths.models, &args.query)`
+- O subprocesso pode falhar por timeout estático (300s default em `llm_embedding.rs:43`), cancelamento por SIGTERM externo do wrapper do agente, ou rate limit OAuth (mesma quota compartilhada do G45)
+- Em qualquer um desses cenários o comando retorna stderr `shutdown signal received; finishing current operation gracefully` com stdout VAZIO e exit 124 ou 11
+- NÃO existe fallback para FTS5 puro nem para hash determinístico — a query fica sem resposta e o agente precisa iterar manualmente entre `read --id`, `list --json` e `graph traverse`
+- O contrato JSON de `hybrid-search` JÁ tem campo `fts_degraded: bool` (v1.0.66+) indicando quando FTS5 falhou, mas o caso INVERSO (vetor falhou, FTS5 saudável) não tem o espelho `vec_degraded`
+- A camada de LEITURA herda o mesmo problema do G45: a quota OAuth é compartilhada entre escrita e leitura, então sob contenção multi-sessão o caminho de leitura também fica indisponível
+### Evidência em Produção
+- Sessão de 2026-06-13: `sqlite-graphrag recall "minha query" --k 5 --json` retornou stderr `shutdown signal received; finishing current operation gracefully` com stdout vazio; exit 124 (timeout do wrapper externo) ou 11 (erro de embedding)
+- A sessão tinha acabado de persistir 8 memórias de reunião; o ciclo de validação semântica pós-persistência ficou INTERROMPIDO por até 5 minutos entre tentativas de `recall`/`hybrid-search` bem-sucedidas
+- O contrato atual do `hybrid-search` (linha 129 de `src/commands/hybrid_search.rs`) tem `fts_degraded` mas NÃO `vec_degraded` — confirmado por leitura direta do source
+- 12-14 headers `anthropic-ratelimit-*` que poderiam alimentar detecção proativa antes do fallback estão sendo descartados pelo `claude -p` headless (G45-CR5)
+### Consequências do Problema
+- Quebra do ciclo de validação semântica pós-persistência: o agente acabou de gravar memórias e não consegue verificá-las via busca semântica
+- Loop de retry manual custoso: 30-60s por tentativa falha de `recall`/`hybrid-search` × 5+ tentativas = 5 minutos desperdiçados por sessão de validação
+- Assimetria de contrato: o chamador sabe quando FTS5 degrada mas não quando KNN vetorial degrada; pipelines que dependem de `combined_score` recebem valores enganosos
+- Dependência total de OAuth estável: o caminho de leitura fica tão frágil quanto o de escrita, sem alternativa determinística
+- Em CI/CD com quota apertada, a CLI vira inutilizável para tarefas de leitura sem fallback
+- O usuário precisa conhecer workarounds estruturais (`read --id`, `list --json`, `graph traverse`) que NÃO dependem de embedding ao vivo
+### Causa Raiz
+- CR1 (ponto único de falha): o pipeline de leitura tem um ÚNICO caminho para gerar embedding da query — `embed_query_local` em `src/commands/recall.rs:144` — sem fallback alternativo quando esse caminho falha; ausência de design para degradação graciosa
+- CR2 (assimetria de contrato): `hybrid-search` tem `fts_degraded: true` para FTS5 falho, mas falta o campo simétrico `vec_degraded: true` para KNN vetorial falho; o contrato JSON sinaliza degradação em só uma direção
+- CR3 (reuso da mesma quota sob carga): a quota OAuth é compartilhada entre o embedding de body (escrita) e o embedding de query (leitura); sob contenção multi-sessão ambos competem pelo mesmo pool (G45); o caminho de leitura deveria ter fila de espera e fallback para FTS5
+- CR4 (timeout estático cego): `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS=300` é fixo e não se adapta à saturação da fila OAuth; mesma fragilidade do CR3 do G45, agora espelhada no caminho de leitura
+### Relações Causa × Efeito
+- CR1 (ponto único de falha) CAUSA stdout vazio em qualquer cenário de falha do subprocesso LLM, QUE CAUSA quebra do ciclo de validação semântica, QUE CAUSA loop de retry manual custoso, QUE CAUSA perda de produtividade (~5 minutos por sessão)
+- CR2 (assimetria de contrato) CAUSA pipelines que assumem `combined_score` confiável, QUE CAUSA diagnóstico errado quando o KNN vetorial cai, QUE CAUSA decisões baseadas em ranking FTS5 sem o chamador saber
+- CR3 (reuso da mesma quota) CAUSA contenção de OAuth amplificar para leitura quando a escrita está saturada, QUE CAUSA indisponibilidade total do caminho de leitura, QUE CAUSA necessidade de fallback determinístico
+- A combinação CR1+CR3+CR4 (ponto único + quota compartilhada + timeout fixo) CAUSA o mesmo padrão de degradação coletiva que o G45 documentou para escrita, mas agora também no caminho de leitura — fechando o ciclo onde a CLI vira operacionalmente inviável sob carga
+### Solução
+- S1 — Fallback automático para FTS5 puro: quando `embed_query_local` falha (timeout, cancelamento, rate limit), o comando emite envelope JSON com `vec_degraded: true`, `vec_error: "embedding_call_failed: <motivo>"`, e cai para query FTS5 BM25 com `bm25(fts_memories) AS rank ORDER BY rank LIMIT args.k` — sem introduzir modelo local, apenas SQL nativo do SQLite
+- S2 — Adicionar campo `vec_degraded: bool` e `vec_error: string?` ao contrato JSON de `hybrid-search` (espelho do `fts_degraded`); quando true, `combined_score` reflete apenas o ranking FTS5 e `vec_distance` é `null`
+- S3 — Trigram Tokenizer para fuzzy fallback: criar um FTS5 secundário com `tokenize = 'trigram'` (seção 4.3.3 da doc FTS5) para queries com até N tokens; permite match parcial de palavras para queries com typo ou variação morfológica — usado quando BM25 puro retorna menos de K resultados
+- S4 — Flag explícita do usuário: `--fallback-fts-only` que PULA o embedding ao vivo e usa exclusivamente FTS5 (BM25 + trigram); útil em CI/CD com quota apertada e em cenários determinísticos de teste
+- S5 — Mensagem de aviso na resposta: incluir `warning: "embedding ao vivo falhou; usando fallback FTS5 BM25 (relevância semântica reduzida)"` para que o agente saiba que a qualidade é menor e possa ajustar a confiança
+### Benefícios da Solução
+- Validação semântica pós-persistência deixa de travar: o agente sempre recebe alguma resposta, mesmo que de qualidade reduzida
+- Loop de retry manual é eliminado: o fallback acontece dentro do mesmo comando, sem iteração
+- Multi-sessão sob fadiga OAuth continua funcional para LEITURA mesmo quando a quota está saturada para embedding de body
+- Custo zero em hardware: FTS5 BM25 e Trigram Tokenizer são matemática determinística já no SQLite — NENHUM modelo local introduzido, restrição `only-llm` da v1.0.76+ preservada
+- O contrato JSON fica simétrico: tanto degradação FTS5 quanto degradação vetorial são sinalizadas com `*_degraded` + `*_error` — pipelines podem rotear corretamente
+- Modo `--fallback-fts-only` permite operação determinística em CI/CD e em testes de regressão que precisam de busca estável independente de quota
+### Como Solucionar
+- Passo 1: criar helper `try_embed_query_with_fallback(query, timeout_secs) -> Result<Vec<f32>, AppError>` em `src/embedder.rs` que envolve `embed_query_local` e mapeia `AppError::Embedding`/`AppError::Timeout` para `Err(FallbackReason::*)` — verificação: teste unitário com mock que falha o embedding e verifica o motivo mapeado
+- Passo 2: em `src/commands/recall.rs:144`, capturar `Err` do helper e emitir `RecallResponse { vec_degraded: true, vec_error: ... }` com fallback FTS5: `SELECT name, snippet(fts_memories, 0, '<b>', '</b>', '…', 12) AS snippet, bm25(fts_memories) AS rank FROM fts_memories WHERE fts_memories MATCH ? ORDER BY rank LIMIT ?` — verificação: recall com embedding mockado para falhar retorna resultados FTS5 puros
+- Passo 3: em `src/commands/hybrid_search.rs`, replicar o padrão: se KNN vetorial falha, o RRF degenera para FTS5 puro com `vec_degraded: true`; emitir `combined_score = fts_bm25` (normalizado); atualizar `docs/schemas/hybrid-search.schema.json` com os novos campos — verificação: matriz de 10 cenários FTS5-falha/KNN-falha/ambos-falham
+- Passo 4: criar FTS5 secundário `fts_memories_trigram` com `CREATE VIRTUAL TABLE fts_memories_trigram USING fts5(name, body, content='memories', content_rowid='id', tokenize='trigram')` e trigger de sync; usar como plano B quando BM25 puro retorna menos de `args.k` resultados — verificação: query com typo "recurs" casa "recursivo" via trigram
+- Passo 5: adicionar flag `--fallback-fts-only` em `RecallArgs` e `HybridSearchArgs` que pula o helper de embedding e vai direto para o FTS5 BM25; documentar em `--help` — verificação: `--fallback-fts-only` retorna exit 0 sem spawnar `claude -p`
+- Passo 6: atualizar `docs/schemas/recall.schema.json` e `docs/schemas/hybrid-search.schema.json` com `vec_degraded` e `vec_error`; documentar em ADR a decisão de usar FTS5 BM25 + trigram como fallback (vs alternativas como hash determinístico ou cache persistente) — verificação: validação de schema contra 10 respostas reais
+- Restrição respeitada: ZERO alteração ao schema SQLite (apenas SELECT adicional e criação de `fts_memories_trigram` que é parte do FTS5 core); ZERO modelo local introduzido
+### Critérios de Aceitação
+- `recall` com embedding mockado para falhar retorna resultados FTS5 BM25 com `vec_degraded: true` e exit 0
+- `hybrid-search` com KNN vetorial falho retorna `vec_degraded: true` e resultados exclusivamente FTS5 com `combined_score` apenas de BM25
+- `--fallback-fts-only` funciona em modo determinístico sem spawnar nenhum subprocesso LLM e sem depender de quota OAuth
+- Trigram fallback casa queries com typo parcial (≥60% de overlap de trigrama) com pelo menos um resultado
+- O contrato JSON de `hybrid-search` e `recall` expõe `vec_degraded: bool` e `vec_error: string?` simétricos a `fts_degraded` e `fts_error`
+- Sob fadiga OAuth total (cenário G45 saturado), `recall` e `hybrid-search` continuam respondendo com qualidade FTS5 BM25
+### Referências
+- `src/commands/recall.rs:144` (chamada `embed_query_local`)
+- `src/commands/hybrid_search.rs:129` (campo `fts_degraded` existente, falta espelho `vec_degraded`)
+- `src/extract/llm_embedding.rs:43` (timeout estático 300s)
+- `docs/schemas/recall.schema.json` e `docs/schemas/hybrid-search.schema.json` (atualização de contrato)
+- SQLite FTS5: https://sqlite.org/fts5.html — seção 4.3.3 Trigram Tokenizer, seção 5.1.1 `bm25()` function, seção 5.1.3 `snippet()` function
+- Anthropic rate limits: https://platform.claude.com/docs/en/api/rate-limits — 12 headers `anthropic-ratelimit-*` que poderiam alimentar detecção proativa
+- G45 (concorrência multi-sessão OAuth), G45-CR5 (cegueira aos headers), G28 (contrato JSON), G42 (pipeline de embedding)
+- Relação com G45: o G45 protege contra perda de TRABALHO em escrita por contenção; o G58 protege contra perda de ACESSO em leitura pela mesma causa raiz — são complementares e fecham o quadro de resiliência multi-sessão

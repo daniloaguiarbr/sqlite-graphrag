@@ -189,8 +189,8 @@ fn insert_default_schema_meta(conn: &Connection) -> Result<(), AppError> {
         rusqlite::params![crate::constants::CURRENT_SCHEMA_VERSION.to_string()],
     )?;
     conn.execute(
-        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', 'multilingual-e5-small')",
-        [],
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', ?1)",
+        rusqlite::params![crate::constants::SQLITE_GRAPHRAG_VERSION],
     )?;
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('dim', ?1)",

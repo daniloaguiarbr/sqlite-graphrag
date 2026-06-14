@@ -340,6 +340,113 @@ pub fn acquire_job_singleton(
     Ok(file)
 }
 
+/// G45: returns the lock file path for the embedding singleton
+/// of a `(namespace, db_hash)` pair. Layout:
+/// `embed-singleton-{namespace_slug}-{db_hash}.lock` in the same
+/// cache directory as the other singletons. The namespace is sanitised
+/// to a filesystem-safe slug the same way as [`job_singleton_path`].
+fn embedding_singleton_path(namespace: &str, db_hash: &str) -> Result<PathBuf, AppError> {
+    let cache = cache_dir()?;
+    std::fs::create_dir_all(&cache)?;
+    let slug = if namespace.is_empty() {
+        "default".to_string()
+    } else {
+        namespace
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    };
+    let safe_hash: String = db_hash
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(16)
+        .collect();
+    Ok(cache.join(format!("embed-singleton-{slug}-{safe_hash}.lock")))
+}
+
+/// G45: acquires a cross-process singleton lock for LLM embedding
+/// operations against a given `(namespace, db)` pair.
+///
+/// The lock is opened and held with `flock` (same mechanism as
+/// [`acquire_job_singleton`]). Two CLI invocations writing to the same
+/// database while both are calling the LLM on entity names will now
+/// serialise: the second one receives [`AppError::EmbeddingSingletonLocked`]
+/// (exit 75) instead of double-spawning `claude -p` / `codex exec`
+/// subprocesses.
+///
+/// Behaviour:
+/// - `wait_seconds = Some(0)` or `None` → fail immediately if held.
+/// - `wait_seconds = Some(n) > 0` → poll every
+///   [`JOB_SINGLETON_POLL_INTERVAL_MS`] ms until the lock drops or the
+///   deadline expires.
+/// - `force = true` → remove a stale lock file before acquiring
+///   (operator escape hatch, same contract as `acquire_job_singleton`).
+///
+/// The returned [`File`] MUST be kept alive for the duration of the
+/// embedding work; dropping it releases the singleton for the next
+/// process.
+pub fn acquire_embedding_singleton(
+    namespace: &str,
+    db_path: &Path,
+    wait_seconds: Option<u64>,
+    force: bool,
+) -> Result<File, AppError> {
+    let db_hash = db_path_hash(db_path);
+    let path = embedding_singleton_path(namespace, &db_hash)?;
+
+    if force && path.exists() {
+        tracing::warn!(target: "lock.g45",
+            path = %path.display(),
+            "force=true; removing pre-existing embedding singleton lock file"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    if let Err(e) = file.try_lock_exclusive() {
+        if !is_lock_contended(&e) {
+            return Err(AppError::Io(e));
+        }
+        let wait_secs = wait_seconds.unwrap_or(0);
+        if wait_secs == 0 {
+            return Err(AppError::EmbeddingSingletonLocked {
+                namespace: namespace.to_string(),
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(wait_secs);
+        drop(file);
+        loop {
+            thread::sleep(Duration::from_millis(JOB_SINGLETON_POLL_INTERVAL_MS));
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)?;
+            if file.try_lock_exclusive().is_ok() {
+                return Ok(file);
+            }
+            if Instant::now() >= deadline {
+                return Err(AppError::EmbeddingSingletonLocked {
+                    namespace: namespace.to_string(),
+                });
+            }
+        }
+    }
+    Ok(file)
+}
+
 /// Tries to acquire any free slot in `1..=max`, returning the first available one.
 ///
 /// Returns `Ok(Some((file, slot)))` if a slot was obtained, `Ok(None)` if all are
@@ -453,5 +560,47 @@ mod tests {
         let a = std::env::temp_dir().join("hash-a.sqlite");
         let b = std::env::temp_dir().join("hash-b.sqlite");
         assert_ne!(db_path_hash(&a), db_path_hash(&b));
+    }
+
+    // G45: embedding singleton — cross-process coordination
+    #[test]
+    fn g45_embedding_singleton_blocks_second_invocation_same_db() {
+        let ns = unique_ns();
+        let db = std::env::temp_dir().join(format!("g45-{}.sqlite", unique_ns()));
+        let first = acquire_embedding_singleton(&ns, &db, Some(0), false)
+            .expect("first acquire should succeed");
+        let second = acquire_embedding_singleton(&ns, &db, Some(0), false);
+        assert!(
+            matches!(second, Err(AppError::EmbeddingSingletonLocked { .. })),
+            "expected EmbeddingSingletonLocked, got {second:?}"
+        );
+        drop(first);
+    }
+
+    #[test]
+    fn g45_embedding_singleton_allows_different_namespaces() {
+        let ns_a = unique_ns();
+        let ns_b = unique_ns();
+        let db = std::env::temp_dir().join(format!("g45-multi-{}.sqlite", unique_ns()));
+        let first =
+            acquire_embedding_singleton(&ns_a, &db, Some(0), false).expect("ns_a should acquire");
+        let second = acquire_embedding_singleton(&ns_b, &db, Some(0), false)
+            .expect("ns_b should acquire in parallel (different namespace)");
+        drop(first);
+        drop(second);
+    }
+
+    #[test]
+    fn g45_embedding_singleton_scoped_by_db_hash() {
+        // Same namespace, different databases → independent locks.
+        let ns = unique_ns();
+        let db_a = std::env::temp_dir().join(format!("g45-x-{}.sqlite", unique_ns()));
+        let db_b = std::env::temp_dir().join(format!("g45-y-{}.sqlite", unique_ns()));
+        let first =
+            acquire_embedding_singleton(&ns, &db_a, Some(0), false).expect("db_a should acquire");
+        let second = acquire_embedding_singleton(&ns, &db_b, Some(0), false)
+            .expect("db_b should acquire independently (G45 db_hash scope)");
+        drop(first);
+        drop(second);
     }
 }

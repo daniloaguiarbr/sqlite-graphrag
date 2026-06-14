@@ -26,6 +26,29 @@ use sqlite_graphrag::{
 };
 
 fn main() -> std::process::ExitCode {
+    // v1.0.80 (A1/G6): the explicit Write::flush calls below are NOT
+    // redundant. `std::process::ExitCode` is a transparent wrapper around
+    // a u8 returned from main; on process exit, the C runtime flushes its
+    // OWN stdio buffers but does NOT know about Rust's internal
+    // `BufWriter` wrapping stdout/stderr. Without the explicit flush, the
+    // last partial line of JSON output (notably from
+    // `output::emit_json_compact` and `emit_progress`) can be lost when
+    // the process is killed by a signal or exits with an error code. This
+    // is a deliberate defensive policy: flush every error-path AND the
+    // success-path before returning.
+    // v1.0.80 (A1/G1): the main thread is intentionally 100% synchronous.
+    // The default LLM-only build (v1.0.76+) does not own a tokio runtime
+    // here: every remember, ingest, and enrich spawns a headless claude
+    // or codex subprocess via std::process::Command and waits on its exit.
+    // The per-subprocess concurrency cap is enforced by the
+    // acquire_cli_slot counting semaphore and the MAX_CONCURRENT_CLI_*
+    // constants; cross-process sync happens via SQLite WAL and flock.
+    // The pre-tokio design is a deliberate policy choice: no async
+    // runtime context to cancel, no tokio::select! arms to skip, and no
+    // JoinSet to drain on shutdown (see ADR-0034 for the SHUTDOWN global
+    // and the audit-mode bypass). Touching this entry point requires
+    // revisiting the per-subprocess cancellation policy, not just adding
+    // a runtime.
     // Reset SIGPIPE to default so pipe consumers (head, jaq) cause clean exit 141.
     #[cfg(unix)]
     unsafe {
@@ -38,44 +61,26 @@ fn main() -> std::process::ExitCode {
     // BEFORE doing any work. The scan is a no-op on non-Unix platforms.
     let _reaper_report = sqlite_graphrag::reaper::scan_and_kill_orphans();
 
-    // Limit the ONNX Runtime thread pool to 1 intra-op and 1 inter-op thread per instance,
-    // preventing parallel invocations from spawning dozens of threads each.
-    // Must be set BEFORE fastembed initializes the ONNX session.
-    if std::env::var_os("ORT_NUM_THREADS").is_none() {
-        // SAFETY: called before tokio runtime starts; single-threaded context
-        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
-        // edition; this comment documents the invariant explicitly.
-        unsafe {
-            std::env::set_var("ORT_NUM_THREADS", "1");
-            std::env::set_var("ORT_INTRA_OP_NUM_THREADS", "1");
-            std::env::set_var("ORT_INTER_OP_NUM_THREADS", "1");
-            std::env::set_var("OMP_NUM_THREADS", "1");
-        }
-    }
+    // v1.0.79: ONNX Runtime removed from default LLM-only build. The
+    // fastembed/ort/onnxruntime crates are no longer in the dependency tree;
+    // embeddings and NER delegate to headless claude/codex subprocesses
+    // (OAuth-only, no MCP, no hooks). Only RAYON_NUM_THREADS below remains
+    // relevant for parallel similarity and batch ops in the LLM-only path.
 
     // Limit the Rayon pool to 2 threads — more is waste for sequential embeddings.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        // SAFETY: called before tokio runtime starts; single-threaded context
-        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
-        // edition; this comment documents the invariant explicitly.
+        // SAFETY: this  runs during single-threaded program startup,
+        // before any rayon pool is built and before any worker thread exists.
+        // Rayon reads  exactly once during
+        //  and never re-reads it, so mutating the env
+        // here is the only correct point to cap the pool. The cap of 2 is
+        // calibrated against : each worker holds a
+        // single batch-embedding call, so > 2 is waste and risks RSS
+        // oversubscription on 4-8 GiB hosts. The 2024 edition makes
+        // ; this comment is the explicit documentation of the
+        // single-threaded invariant.
         unsafe {
             std::env::set_var("RAYON_NUM_THREADS", "2");
-        }
-    }
-
-    // Disables the ONNX Runtime CPU memory arena to avoid aggressive
-    // retention of chunks allocated during variable-shape inferences.
-    // Combined with `with_arena_allocator(false)` on the execution provider, this closes
-    // the door on the explosive RSS growth observed in real corpora.
-    // References:
-    //   - https://onnxruntime.ai/docs/performance/tune-performance/memory.html
-    //   - https://github.com/qdrant/fastembed/issues/570
-    if std::env::var_os("ORT_DISABLE_CPU_MEM_ARENA").is_none() {
-        // SAFETY: called before tokio runtime starts; single-threaded context
-        // guaranteed by program startup order. set_var becomes unsafe in Rust 2024
-        // edition; this comment documents the invariant explicitly.
-        unsafe {
-            std::env::set_var("ORT_DISABLE_CPU_MEM_ARENA", "1");
         }
     }
 
@@ -110,6 +115,21 @@ fn main() -> std::process::ExitCode {
     sqlite_graphrag::telemetry::init_tracing(&log_level, &log_format);
 
     register_vec_extension();
+
+    // v1.0.80 (A1/G7): the deadlock-detection thread below is intentionally
+    // process-scoped (it has no shutdown signal). It is a watchdog: it polls
+    // every 10 seconds and reports any deadlocks it finds via tracing, then
+    // sleeps again. When the process exits (via std::process::ExitCode
+    // return or a signal), the kernel tears down all threads; there is no
+    // leak because the thread is never joined or detached in the Rust
+    // sense. The 10-second poll interval is a balance: short enough to
+    // catch deadlocks in interactive tests, long enough to not pollute
+    // tracing output during normal operation. The thread body is
+    // panic-resistant: a panic inside the loop kills only this thread, and
+    // since the main thread never joins it, the panic is silently dropped
+    // (Rust's default panic-on-thread-death is bypassed for detached
+    // threads). We accept this because the alternative — a panicking
+    // deadlock check — would itself be a deadlock.
 
     #[cfg(feature = "deadlock-detection")]
     {
@@ -328,8 +348,7 @@ fn main() -> std::process::ExitCode {
                 "models": models,
                 "default": "gpt-5.5",
             });
-            println!("{payload}");
-            Ok(())
+            sqlite_graphrag::output::emit_json_compact(&payload).and(Ok(()))
         }
         sqlite_graphrag::cli::Commands::PruneRelations(args) => {
             commands::prune_relations::run(args)

@@ -104,6 +104,43 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 - O código restante do `daemon` foi DELETADO; a CLI é 100% one-shot.
 - Flags da era GLiNER são no-ops formais com `tracing::warn!` explícito: `--gliner-variant` (em `remember` e `ingest`) e `ingest --mode gliner`; `--enable-ner` executa somente extração URL-regex.
 - A matriz de CI roda 2 features desde a v1.0.79: `default` e `llm-only`.
+- A matriz de CI roda 2 features desde a v1.0.79: `default` e `llm-only`.
+
+## Novidades na v1.0.80
+### OBRIGATÓRIO — Estabilidade da API da Biblioteca (ADR-0032, G53, v1.0.80)
+- A **CLI é o contrato público estável**. Os envelopes `--json` documentados em `docs/schemas/*.schema.json` e as variáveis de ambiente listadas em `llms.txt` e `llms-full.txt` são estáveis em todas as releases v1.x.y
+- A **API da biblioteca é instável** dentro de v1.x.y. Re-exports, campos públicos de struct e assinaturas de função podem mudar em qualquer release v1.x.y sem bump de major
+- Bumps de patch (1.0.79 -> 1.0.80) são estritamente aditivos na superfície da lib: 6 novos símbolos são expostos em 1.0.80 e NENHUM foi removido, renomeado ou teve sua assinatura alterada (veja a seção "Library API Changes" do CHANGELOG.md)
+- Consumidores da biblioteca (usuários do crate cargo) devem fixar na versão EXATA: `sqlite-graphrag = "=1.0.80"`. O atalho `^1.0` mantém consumidores na trilha de estabilidade da CLI. O atalho `^1.0.80` permite 1.0.80..<1.1.0 e pode incluir uma futura 1.0.81 com mudanças quebrantes na lib
+- Para uso por agentes, esse split é invisível: o agente chama a CLI e faz parse dos envelopes `--json`, que não são afetados pela instabilidade da lib
+### OBRIGATÓRIO — G45 Singleton de Embedding Cross-Process (v1.0.80)
+- `acquire_embedding_singleton(namespace, db_path, wait_seconds, force)` serializa chamadas de embedding LLM por par `(namespace, db)` entre invocações CLI concorrentes
+- Uma segunda CLI tentando embedar contra o mesmo banco recebe `AppError::EmbeddingSingletonLocked { namespace }` (exit 75, retentável)
+- Passe `--wait-embed-singleton <SEGUNDOS>` para fazer poll até a soltura do lock; bancos ou namespaces distintos adquirem locks independentes
+- Operacionalmente previne a patologia de "duas invocações de remember, dois subprocessos LLM, dois batches paralelos" do incidente G45
+### OBRIGATÓRIO — G55 S2: `MemoryNotFound` Estrutural (v1.0.80)
+- O caminho legado `NotFound(String)` que mascarava qual alvo de lookup falhou é substituído por `AppError::MemoryNotFound { name, namespace }` e `AppError::MemoryNotFoundById { id }` dentro de `read` e `hybrid-search`
+- O identificador agora é parte da variante, eliminando a classe de bugs "not found: unknown"
+- Mensagens em pt-BR carregam nome e namespace explicitamente
+### OBRIGATÓRIO — G56: Cache de Entity-Embed em Processo (v1.0.80)
+- `embed_entity_texts_cached` roteia batches de nome de entidade por um cache chaveado em `blake3(model || \0 || text)`
+- Taxa de hit alta em `ingest` (entidades canônicas re-embedadas entre muitas memórias), modesta em `remember` e `remember-batch`
+- `remember.rs`, `ingest.rs` e `remember_batch.rs` usam o cache; embeddings de chunk continuam no caminho raw
+### OBRIGATÓRIO — G58: Fallback FTS5 para `recall` e `hybrid-search` (v1.0.80)
+- `recall --fallback-fts-only` e `hybrid-search --fallback-fts-only` roteiam a query via FTS5 BM25 quando o subprocesso LLM falha (rate limit, contenção OAuth, dim divergente)
+- Novos campos do envelope `vec_degraded` (bool), `vec_error` (string) e `warning` (string) são preenchidos simetricamente em ambos os comandos
+- Os testes de `recall` e `hybrid-search` ganharam cobertura para o caminho FTS5-only
+### OBRIGATÓRIO — G53-WINDOWS-INFRA (ADR-0033, v1.0.80)
+- Os jobs da matrix windows-2025 ganharam 2 steps novos cada, gateados em `if: matrix.os == 'windows-2025'`: um pre-warm que baixa o rustup no cache do runner, e um step de verify que re-checa `rustup show active-toolchain`
+- Os 2 modos históricos de falha de infra (download do rustup com erros transitórios de rede e `E0463 can't find crate for core` quando a stdlib do target está ausente) agora são recuperáveis na primeira re-run em vez de acumularem como CI vermelho
+- A label explícita `windows-2025` do runner (substituindo `windows-latest` desde a v1.0.73) continua sendo a escolha certa até a data de corte do redirect do VS2026 (2026-06-15)
+### OBRIGATÓRIO — Resiliência de SHUTDOWN (ADR-0034, v1.0.80)
+- `src/signals.rs` é envolvido em uma barreira de captura de panic; mesmo quando o stderr do pai é um pipe fechado (cenário de processo órfão), o handler retorna limpo em vez de `SIGABRT`-ar em `BrokenPipe`
+- O terceiro Ctrl-C consecutivo sai com código 130 e ZERO I/O
+- A receita de bypass SHUTDOWN em 3 camadas (`nohup` → `setsid` → `disown`) é a referência canônica para o harness do agente ao rodar jobs longos de embedding em background
+- Documentado em `docs/HEADLESS_INVOCATION.md` e `docs/COOKBOOK.md`
+
+
 
 
 ## Novidades na v1.0.76

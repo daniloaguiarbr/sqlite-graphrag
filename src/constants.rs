@@ -55,10 +55,20 @@ pub fn embedding_dim() -> usize {
 /// are rejected (returns `None`) so a typo cannot produce degenerate
 /// vectors or multi-MB embedding rows.
 pub fn embedding_dim_from_env() -> Option<usize> {
-    std::env::var("SQLITE_GRAPHRAG_EMBEDDING_DIM")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| (8..=4096).contains(&n))
+    let raw = std::env::var("SQLITE_GRAPHRAG_EMBEDDING_DIM").ok()?;
+    match raw.parse::<usize>() {
+        Ok(n) if (8..=4096).contains(&n) => Some(n),
+        // G49: an invalid value silently fell back to the default (64),
+        // letting a typo permanently stamp a new database with the wrong
+        // dimensionality. Warn loudly instead of discarding in silence.
+        _ => {
+            tracing::warn!(
+                value = %raw,
+                "SQLITE_GRAPHRAG_EMBEDDING_DIM is invalid (expected an integer in [8, 4096]); ignoring and using the database/default dimensionality"
+            );
+            None
+        }
+    }
 }
 
 /// Records the dimensionality found in the opened database
@@ -70,8 +80,8 @@ pub fn set_active_embedding_dim(dim: usize) {
     }
 }
 
-/// Default `fastembed` model identifier used by `remember` and `recall`.
-pub const FASTEMBED_MODEL_DEFAULT: &str = "multilingual-e5-small";
+// G46: FASTEMBED_MODEL_DEFAULT removed — the fastembed model was deleted in
+// v1.0.76 (LLM-only build); `schema_meta.model` now records the CLI version.
 
 /// Batch size for `fastembed` encoding calls.
 pub const FASTEMBED_BATCH_SIZE: usize = 32;

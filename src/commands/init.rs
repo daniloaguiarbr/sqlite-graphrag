@@ -9,9 +9,9 @@ use serde::Serialize;
 
 /// Embedding model choices exposed through `--model`.
 ///
-/// Currently only `multilingual-e5-small` is supported. Additional variants
-/// will be added here as new models are integrated; the `value_enum` derive
-/// ensures the CLI rejects unknown strings at parse time rather than at runtime.
+/// Legacy flag kept for CLI compatibility only: since v1.0.76 the build is
+/// LLM-only and no local model is downloaded. The value is accepted and
+/// ignored; `schema_meta.model` records the CLI version (G46).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum EmbeddingModelChoice {
     #[value(name = "multilingual-e5-small")]
@@ -32,8 +32,8 @@ pub struct InitArgs {
     /// `SQLITE_GRAPHRAG_HOME` env (used as base directory) > cwd.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
-    /// Embedding model identifier. Currently only `multilingual-e5-small` is supported.
-    /// Reserved for future multi-model support; safe to omit.
+    /// Legacy embedding model identifier (accepted and ignored since the
+    /// v1.0.76 LLM-only build; kept for CLI compatibility). Safe to omit.
     #[arg(long, value_enum)]
     pub model: Option<EmbeddingModelChoice>,
     /// Force re-initialization, overwriting any existing schema metadata.
@@ -93,8 +93,8 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
         rusqlite::params![schema_version],
     )?;
     conn.execute(
-        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', 'multilingual-e5-small')",
-        [],
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', ?1)",
+        rusqlite::params![crate::constants::SQLITE_GRAPHRAG_VERSION],
     )?;
     // G43: pre-v1.0.79 this hardcoded '384', stamping NEW databases with a
     // dimensionality that contradicts the active default (64 since G42/S1).
@@ -128,7 +128,7 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     output::emit_json(&InitResponse {
         db_path: paths.db.display().to_string(),
         schema_version,
-        model: "multilingual-e5-small".to_string(),
+        model: crate::constants::SQLITE_GRAPHRAG_VERSION.to_string(),
         dim: test_emb.len(),
         namespace,
         status: "ok".to_string(),
@@ -159,7 +159,7 @@ mod tests {
         let resp = InitResponse {
             db_path: "/tmp/test.sqlite".to_string(),
             schema_version: 6,
-            model: "multilingual-e5-small".to_string(),
+            model: crate::constants::SQLITE_GRAPHRAG_VERSION.to_string(),
             dim: 384,
             namespace: "global".to_string(),
             status: "ok".to_string(),
@@ -168,7 +168,7 @@ mod tests {
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["db_path"], "/tmp/test.sqlite");
         assert_eq!(json["schema_version"], 6);
-        assert_eq!(json["model"], "multilingual-e5-small");
+        assert_eq!(json["model"], crate::constants::SQLITE_GRAPHRAG_VERSION);
         assert_eq!(json["dim"], 384usize);
         assert_eq!(json["namespace"], "global");
         assert_eq!(json["status"], "ok");
@@ -218,7 +218,7 @@ mod tests {
         let resp = InitResponse {
             db_path: "/tmp/x.sqlite".to_string(),
             schema_version: 6,
-            model: "multilingual-e5-small".to_string(),
+            model: crate::constants::SQLITE_GRAPHRAG_VERSION.to_string(),
             dim: 384,
             namespace: "my-project".to_string(),
             status: "ok".to_string(),

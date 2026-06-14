@@ -58,10 +58,16 @@ pub struct HybridSearchArgs {
     pub namespace: Option<String>,
     #[arg(long)]
     pub with_graph: bool,
-    #[arg(long, default_value = "2")]
-    pub max_hops: u32,
-    #[arg(long, default_value = "0.3")]
-    pub min_weight: f64,
+    /// G58 (v1.0.80): skip the live query embedding and serve FTS5 BM25 only.
+    /// Useful in CI/CD with tight OAuth quota and in deterministic tests.
+    #[arg(long, help = "Skip live query embedding; serve FTS5 BM25 only")]
+    pub fallback_fts_only: bool,
+    /// Graph traversal depth (requires --with-graph; default 2 when active).
+    #[arg(long)]
+    pub max_hops: Option<u32>,
+    /// Minimum edge weight for graph traversal (requires --with-graph; default 0.3 when active).
+    #[arg(long)]
+    pub min_weight: Option<f64>,
     #[arg(long, value_enum, default_value_t = JsonOutputFormat::Json)]
     pub format: JsonOutputFormat,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
@@ -139,6 +145,21 @@ pub struct HybridSearchResponse {
     /// Omitted from JSON when `false` to keep the happy-path envelope clean.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fts_auto_rebuilt: bool,
+    /// G58 (v1.0.80): symmetric to `fts_degraded`; `true` when the live query
+    /// embedding failed and the response degraded to FTS5-only. Absent on the
+    /// wire when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub vec_degraded: bool,
+    /// G58 (v1.0.80): human-readable description of the embedding failure
+    /// that triggered the fallback. Absent on the wire when `vec_degraded` is
+    /// false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vec_error: Option<String>,
+    /// G58 (v1.0.80): advisory warning echoed for callers that branch on
+    /// top-level status. Distinguishes a FTS5-only fallback from a clean
+    /// hybrid response so downstream pipelines can lower their confidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
@@ -150,13 +171,15 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     tracing::debug!(target: "hybrid_search", query = %args.query, k = args.k, "fusing results");
 
     // G20: reject graph-specific flags when --with-graph is not active
+    // G48: Option<T> detects an explicitly provided flag even when the value
+    // equals the old default (pre-fix, `--max-hops 2` was silently accepted).
     if !args.with_graph {
-        if args.max_hops != 2 {
+        if args.max_hops.is_some() {
             return Err(AppError::Validation(
                 "--max-hops requires --with-graph to be active".to_string(),
             ));
         }
-        if (args.min_weight - 0.3).abs() > f64::EPSILON {
+        if args.min_weight.is_some() {
             return Err(AppError::Validation(
                 "--min-weight requires --with-graph to be active".to_string(),
             ));
@@ -171,19 +194,37 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         "Computing query embedding...",
         "Calculando embedding da consulta...",
     );
-    let embedding = crate::embedder::embed_query_local(&paths.models, &args.query)?;
-
     let conn = open_ro(&paths.db)?;
+    // G58 (v1.0.80): when the live embedding fails (OAuth contention, rate
+    // limit, timeout, missing CLI), skip the KNN half of the RRF and serve
+    // FTS5-only results. The RRF degenerates to a pure BM25 ranking and the
+    // envelope surfaces `vec_degraded` + `vec_error` + `warning`.
+    let (embedding, vec_degraded, vec_error) = if args.fallback_fts_only {
+        (None, true, Some("fallback_fts_only requested".to_string()))
+    } else {
+        match crate::embedder::try_embed_query_with_fallback(&paths.models, &args.query) {
+            Ok(v) => (Some(v), false, None),
+            Err(reason) => {
+                let msg = reason.to_string();
+                tracing::warn!(target: "hybrid_search", fallback_reason = %msg, "live embedding failed; falling back to FTS5");
+                (None, true, Some(msg))
+            }
+        }
+    };
 
     let memory_type_str = args.r#type.map(|t| t.as_str());
 
-    let vec_results = memories::knn_search(
-        &conn,
-        &embedding,
-        &[namespace.clone()],
-        memory_type_str,
-        args.k * 2,
-    )?;
+    let vec_results: Vec<(i64, f32)> = if let Some(emb) = embedding.as_ref() {
+        memories::knn_search(
+            &conn,
+            emb,
+            std::slice::from_ref(&namespace),
+            memory_type_str,
+            args.k * 2,
+        )?
+    } else {
+        Vec::new()
+    };
 
     // Map vector ranking position by memory_id (1-indexed per schema)
     let vec_rank_map: HashMap<i64, usize> = vec_results
@@ -317,11 +358,12 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     // --- Graph traversal (activated by --with-graph) ---
     let mut graph_matches: Vec<RecallItem> = Vec::with_capacity(8);
-    if args.with_graph && !results.is_empty() {
+        if let Some(emb) = args.with_graph.then_some(()).filter(|_| !results.is_empty()).and(embedding.as_ref()) {
         let namespace_for_graph = namespace.clone();
         let memory_ids: Vec<i64> = results.iter().map(|r| r.memory_id).collect();
 
-        let entity_knn = entities::knn_search(&conn, &embedding, &namespace_for_graph, 5)?;
+        let entity_knn =
+            entities::knn_search(&conn, emb, &namespace_for_graph, 5)?;
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
         let all_seed_ids: Vec<i64> = memory_ids
@@ -335,8 +377,8 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
                 &conn,
                 &all_seed_ids,
                 &namespace_for_graph,
-                args.min_weight,
-                args.max_hops,
+                args.min_weight.unwrap_or(0.3),
+                args.max_hops.unwrap_or(2),
             )?;
 
             let already_in_results: std::collections::HashSet<i64> =
@@ -379,6 +421,16 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
         fts_degraded,
         fts_error,
         fts_auto_rebuilt,
+        vec_degraded,
+        vec_error,
+        warning: if vec_degraded {
+            Some(
+                "live query embedding unavailable; results are FTS5 BM25 only (semantic relevance reduced)"
+                    .to_string(),
+            )
+        } else {
+            None
+        },
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
@@ -388,6 +440,26 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: HybridSearchArgs,
+    }
+
+    #[test]
+    fn graph_flags_parse_as_none_when_absent() {
+        // G48: with plain u32/f64 defaults, an explicit `--max-hops 2` was
+        // indistinguishable from the default and silently bypassed the G20
+        // validation. Option<T> restores real flag-presence detection.
+        use clap::Parser;
+        let cli = TestCli::try_parse_from(["hybrid-search", "q"]).expect("bare query parses");
+        assert!(cli.args.max_hops.is_none());
+        assert!(cli.args.min_weight.is_none());
+        let cli = TestCli::try_parse_from(["hybrid-search", "q", "--max-hops", "2"])
+            .expect("explicit flag parses");
+        assert_eq!(cli.args.max_hops, Some(2));
+    }
 
     fn empty_response(
         k: usize,
@@ -408,6 +480,9 @@ mod tests {
             fts_degraded: false,
             fts_error: None,
             fts_auto_rebuilt: false,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
             elapsed_ms: 0,
         }
     }
@@ -587,6 +662,9 @@ mod tests {
             fts_degraded: false,
             fts_error: None,
             fts_auto_rebuilt: false,
+            vec_degraded: false,
+            vec_error: None,
+            warning: None,
             elapsed_ms: 42,
         };
         let json = serde_json::to_value(&resp).unwrap();

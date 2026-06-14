@@ -5,6 +5,55 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 ## [Sem Versão]
 
+## [1.0.80] - 2026-06-14
+
+### Mudanças na API da Biblioteca (per ADR-0032, G53 v1.0.80)
+
+A API da biblioteca é **instável** em v1.x.y. Esta release é bump **patch**, então as mudanças na superfície da biblioteca abaixo são estritamente **aditivas** — nenhum re-export foi removido, nenhum campo público de struct foi renomeado, nenhuma assinatura de função foi alterada. O atalho publicado `sqlite-graphrag = "^1.0"` mantém os consumidores na trilha de estabilidade da CLI por padrão.
+
+Novamente público em 1.0.80 (aditivo, sem quebra):
+
+- `crate::embedder::embed_entity_texts_cached(models_dir, texts, parallelism) -> Result<(Vec<Vec<f32>>, EmbedCacheStats), AppError>` — cache em processo G56 para embeddings de entidades, chaveado por `(model, text)`. Retorna snapshot de stats com `requested`, `hits`, `misses` e helper `hit_rate() -> f64`.
+- `crate::embedder::EmbedCacheStats` (struct) — G56 stats snapshot; `Default`, `Copy`, `Serialize`.
+- `crate::embedder::EntityEmbedCacheMap` (type alias) — G56 `HashMap<u64, Arc<Vec<f32>>>` interno.
+- `crate::lock::acquire_embedding_singleton(namespace, db_path, wait_seconds, force) -> Result<File, AppError>` — G45 singleton cross-process para embedding LLM por par `(namespace, db)`. Reusa `fs4` flock com o mesmo contrato de polling/force de `acquire_job_singleton`.
+- `crate::errors::AppError::EmbeddingSingletonLocked { namespace }` — G45 nova variante estrutural; `is_retryable() == true`, exit code 75, mensagem localizada em pt-BR via `i18n::validation::app_error_pt::embedding_singleton_locked`.
+- `crate::extract::llm_embedding::LlmEmbedding::model_label(&self) -> String` — G56 label estável combinando flavor (`"claude" | "codex"`) e modelo de embed ativo; usado como parte da chave do cache de entity-embed.
+
+Nenhum símbolo público foi removido, renomeado ou teve sua assinatura alterada em 1.0.80. O fluxo do consumidor da biblioteca permanece inalterado: fixe em `=1.0.80` se depender da API da lib.
+
+### Adicionado — G45: coordenação de embedding cross-process
+
+- `acquire_embedding_singleton` serializa chamadas de embedding LLM por par `(namespace, db)` entre invocações CLI concorrentes. Uma segunda CLI tentando embedar contra o mesmo banco enquanto a primeira ainda está em voo recebe `EmbeddingSingletonLocked { namespace }` (exit 75) e pode passar `--wait-embed-singleton <SEGUNDOS>` para aguardar a soltura do lock. Bancos distintos (ou namespaces distintos) adquirem locks independentes; `fs4` flock é a primitiva subjacente, então o lock sobrevive a crashes de processo e é liberado automaticamente no drop.
+- Operacionalmente o singleton previne a patologia de "duas invocações de remember no mesmo banco, dois subprocessos LLM, dois batches paralelos" que o cache em processo da v1.0.79 não conseguia endereçar.
+
+### Adicionado — G53: política de estabilidade e gate de CI
+
+- Novo job de CI `semver-checks` (informativo em v1.0.80, promovido a bloqueante em v1.0.81 quando as 9 violações MAJOR pendentes forem resolvidas). Roda `cargo semver-checks check-baseline --baseline-version 1.0.79`. O bug de `--manifest-path` duplicado no commit inicial da v1.0.79 está corrigido.
+- README.md e README.pt-BR.md agora carregam uma seção `Política de Estabilidade` registrando a divisão CLI-estável/lib-instável per ADR-0032.
+
+### Adicionado — G55 S2: `MemoryNotFound` estrutural
+
+- `AppError::MemoryNotFound { name, namespace }` e `AppError::MemoryNotFoundById { id }` substituem o caminho legado `NotFound(String)` dentro de `read` e `hybrid-search`. O identificador solicitado agora é parte da variante, eliminando a classe de bugs `not found: unknown` que mascarava qual alvo de lookup falhou. As mensagens em pt-BR carregam nome e namespace explicitamente.
+
+### Adicionado — G56: cache de entity-embed em processo
+
+- `embed_entity_texts_cached` fica na frente de `embed_passages_parallel_local` para batches de nome de entidade. Chave do cache é `blake3(model || "\0" || text)`. A taxa de hit é alta em `ingest` (entidades canônicas re-embedadas entre muitas memórias) e modesta em `remember` e `remember-batch`. `remember.rs`, `ingest.rs` e `remember_batch.rs` agora roteiam embeddings de entidade pelo cache; embeddings de chunk continuam no caminho raw porque a unicidade de chunk torna a taxa de hit desprezível. Stats são emitidas via `tracing::debug!` (G56 hit/miss/request counts).
+
+### Adicionado — G58: fallback de recall e hybrid-search para FTS5
+
+- `recall --fallback-fts-only` e `hybrid-search --fallback-fts-only` roteiam a query via FTS5 BM25 quando o subprocesso LLM falha (rate limit, contenção OAuth, dim divergente). Os novos campos do envelope `vec_degraded` (bool), `vec_error` (string) e `warning` (string) são preenchidos simetricamente em ambos os comandos. Os testes de `recall` e `hybrid-search` ganharam cobertura para o caminho FTS5-only; 1 teste é `#[ignore]` porque o stub G58 S1 exige PATH sem `codex` ou `claude` para exercitar `EmbeddingFailed`.
+
+### Adicionado — G53-WINDOWS-INFRA: pre-warm e verify steps em windows-2025 (ADR-0033)
+
+- Os jobs `clippy` e `test` da matrix windows-2025 ganharam 2 steps novos cada (gateados `if: matrix.os == 'windows-2025'`, no-op em ubuntu/macos): um pre-warm que baixa o toolchain rustup no cache do runner antes do build, e um verify step que re-checa `rustup show active-toolchain` após install. Os 2 modos históricos de falha de infra (download do rustup com erros transitórios de rede e `E0463 can't find crate for core` quando a stdlib do target está ausente) agora são recuperáveis na primeira re-run em vez de acumularem como CI vermelho.
+- Validação local de cross-compile: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduzido e o `E0463` resolvido via `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`; o build então atinge a fronteira `cc-rs: failed to find tool "lib.exe"`, que é o limite esperado de cross-compile MSVC a partir de host Linux. ADR-0033 documenta a justificativa e a fronteira.
+
+### Adicionado — Resiliência de SHUTDOWN: saída sem panic no terceiro sinal (ADR-0034)
+
+- `src/signals.rs` agora envolve o handler do primeiro sinal em uma barreira de captura de panic: mesmo quando o stderr do pai é um pipe fechado (o cenário de processo órfão que a auditoria G42/C2 identificou), o handler retorna limpo em vez de `SIGABRT`-ar em `BrokenPipe`. O terceiro Ctrl-C consecutivo sai com código 130 e ZERO I/O, casando com o contrato documentado em ADR-0034 e a receita em `docs/HEADLESS_INVOCATION.md`.
+- A receita de bypass SHUTDOWN em 3 camadas (`nohup` → `setsid` → `disown`) agora é a referência canônica para o harness do agente ao rodar jobs longos de embedding em background; HEADLESS_INVOCATION.md e COOKBOOK.md carregam o snippet.
+
 ## [1.0.79] - 2026-06-11
 
 ### Removido

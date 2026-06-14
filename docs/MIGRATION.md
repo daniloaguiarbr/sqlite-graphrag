@@ -1,3 +1,66 @@
+# MIGRATING TO v1.0.80 — Stability Policy, Windows Infra, SHUTDOWN Resilience
+
+> This guide is for operators on v1.0.79 who want to upgrade to v1.0.80 without losing data. This release is a PATCH bump with NO database migration.
+
+## What Changed in v1.0.80
+
+- **Stability policy declared** (ADR-0032, G53): the public contract is the CLI; the library API is unstable in v1.x.y. Library consumers must pin to `=1.0.80` and review CHANGELOG.md before bumping
+- **CI semver-checks job** added in informational mode (becomes blocking in v1.0.81 once the 9 outstanding MAJOR violations are resolved)
+- **G45 cross-process embedding singleton** (ADR-0032 follow-up): `acquire_embedding_singleton` serialises LLM embedding calls per `(namespace, db)` pair; `--wait-embed-singleton SECONDS` polls the lock; `AppError::EmbeddingSingletonLocked` is the new structural variant (exit 75, retryable)
+- **G55 S2 structural MemoryNotFound**: replaces the legacy `NotFound(String)` path that masked which lookup target failed; pt-BR messages now carry the name and namespace explicitly
+- **G56 entity-embed in-process cache**: `embed_entity_texts_cached` keyed by `blake3(model || \0 || text)`; high hit rate in `ingest`, modest in `remember`/`remember-batch`
+- **G58 recall and hybrid-search FTS5 fallback**: `recall --fallback-fts-only` and `hybrid-search --fallback-fts-only` route the query through FTS5 BM25 when the LLM subprocess fails; new envelope fields `vec_degraded`, `vec_error`, `warning` are populated symmetrically
+- **G53-WINDOWS-INFRA** (ADR-0033): the windows-2025 matrix jobs gained pre-warm and verify steps gated on `if: matrix.os == windows-2025`. The 2 historical infra failure modes (rustup download with transient network errors and `E0463 can't find crate for core` when the target stdlib is missing) are now recoverable on the first re-run
+- **SHUTDOWN resilience** (ADR-0034): `src/signals.rs` is wrapped in a panic-catching boundary; the third consecutive Ctrl-C exits with code 130 and ZERO I/O, matching the canonical 3-layer SHUTDOWN bypass recipe (`nohup` then `setsid` then `disown`)
+
+## Who Is Affected
+
+- All v1.0.79 users; the changes are all additive at the binary and database level
+- Library consumers (cargo crate users, not CLI users) are STRONGLY advised to pin to `=1.0.80` because the lib API is unstable within v1.x.y
+- Multi-session operators (concurrent agents writing to the same database) benefit from the G45 singleton without any action
+
+## How to Upgrade
+
+```bash
+cargo install sqlite-graphrag --version 1.0.80 --force
+sqlite-graphrag --version   # should report 1.0.80
+```
+
+NO database migration is required. The schema is still v13, the G43 dim-adoption already runs in `open_rw` and `open_ro`, and the new library-API additions are all ADDITIVE (no removed re-exports, no renamed fields, no changed signatures in 1.0.80).
+
+## What Happens Automatically
+
+- All v1.0.79 commands behave identically; the new flags (`--wait-embed-singleton`, `--fallback-fts-only`, `--force-reembed` from v1.0.79) are opt-in
+- The Windows pre-warm steps are no-op on ubuntu and macos; they only run on `matrix.os == windows-2025`
+- The `semver-checks` CI job is informational in v1.0.80; it reports drift without failing the pipeline
+
+## Library API Pinning
+
+If you depend on the lib API, pin to the EXACT version in `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.80"
+```
+
+The `^1.0` shorthand keeps you on the CLI-stability track. The `^1.0.80` shorthand allows 1.0.80..<1.1.0, which can include a future 1.0.81 with lib-breaking changes. For lib users, the exact pin is mandatory.
+
+## What Breaks
+
+- **Library consumers who depend on symbols NOT in the 1.0.80 lib surface**: none added beyond the 6 documented in CHANGELOG. All 6 are additive
+- **CI workflows that reference `windows-latest`**: this release does not change the runner label; the explicit `windows-2025` reference (added in v1.0.73) remains the right call until the VS2026 redirect cutover (2026-06-15)
+
+## Rollback
+
+If v1.0.80 is not working for you:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.79 --force
+```
+
+Your database is unchanged. v1.0.80 made no schema modifications; v1.0.79 reads the same SQLite file.
+
+
 # MIGRATING TO v1.0.78 — G41 Phantom V013 Registration Fix
 
 ## What Changed

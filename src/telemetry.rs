@@ -44,9 +44,16 @@ pub fn init_tracing(log_level: &str, log_format: &str) {
         "tracing subscriber initialized"
     );
 
-    // TR01: panic hook emitting structured tracing::error!
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    // TR01 (v1.0.80, A1/G2): panic hook emits a structured tracing::error!
+    // and DELIBERATELY DOES NOT call the previous hook. The default Rust
+    // panic hook prints the same payload + location to stderr; combined
+    // with the tracing event below, that produces a double-trace (one
+    // structured event in JSON or pretty, one unstructured dump). We
+    // prefer the structured single-trace: the tracing event carries the
+    // same payload and location fields and is captured by the global
+    // subscriber. Test runs still fail on panic because Rust aborts the
+    // process regardless of which hook is installed.
+    std::panic::set_hook(Box::new(|info| {
         let payload = info
             .payload()
             .downcast_ref::<&str>()
@@ -62,6 +69,5 @@ pub fn init_tracing(log_level: &str, log_format: &str) {
             location = location.as_deref().unwrap_or("unknown"),
             "thread panicked"
         );
-        prev_hook(info);
     }));
 }
