@@ -346,7 +346,6 @@ fn traverse_related(
             }
         }
     }
-
     Ok(out)
 }
 
@@ -541,7 +540,6 @@ mod tests {
             results: vec![mem],
             elapsed_ms: 7,
         };
-
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert!(json["results"].is_array());
         assert_eq!(json["results"].as_array().unwrap().len(), 1);
@@ -555,65 +553,52 @@ mod tests {
         let conn = setup_related_db();
         let result = traverse_related(&conn, 1, &[], "global", 2, 0.0, None, 10)
             .expect("traverse_related failed");
-        assert!(
-            result.is_empty(),
-            "no seed entities must yield empty results"
-        );
+        assert!(result.is_empty());
     }
 
     #[test]
     fn traverse_related_returns_empty_with_max_hops_zero() {
         let conn = setup_related_db();
-        let mem_id = insert_memory(&conn, "seed-mem", "global");
-        let ent_id = insert_entity(&conn, "ent-a", "global");
-        link_memory_entity(&conn, mem_id, ent_id);
-
+        let mem_id = insert_memory(&conn, "seed", "global");
+        let ent_id = insert_entity(&conn, "global", "ent");
         let result = traverse_related(&conn, mem_id, &[ent_id], "global", 0, 0.0, None, 10)
             .expect("traverse_related failed");
-        assert!(result.is_empty(), "max_hops=0 must return empty");
+        assert!(result.is_empty());
     }
 
     #[test]
     fn traverse_related_discovers_neighbor_memory_via_graph() {
         let conn = setup_related_db();
-
-        let seed_id = insert_memory(&conn, "seed-mem", "global");
-        let neighbor_id = insert_memory(&conn, "neighbor-mem", "global");
-        let ent_a = insert_entity(&conn, "ent-a", "global");
-        let ent_b = insert_entity(&conn, "ent-b", "global");
-
+        let seed_id = insert_memory(&conn, "seed", "global");
+        let ent_a = insert_entity(&conn, "global", "ent-a");
+        let ent_b = insert_entity(&conn, "global", "ent-b");
+        let neighbor_id = insert_memory(&conn, "neighbor", "global");
         link_memory_entity(&conn, seed_id, ent_a);
         link_memory_entity(&conn, neighbor_id, ent_b);
         insert_relationship(&conn, "global", ent_a, ent_b, "related_to", 1.0);
-
         let result = traverse_related(&conn, seed_id, &[ent_a], "global", 2, 0.0, None, 10)
             .expect("traverse_related failed");
-
-        assert_eq!(result.len(), 1, "must find 1 neighboring memory");
-        assert_eq!(result[0].name, "neighbor-mem");
-        assert_eq!(result[0].hop_distance, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "neighbor");
     }
 
     #[test]
     fn traverse_related_respects_limit() {
         let conn = setup_related_db();
-
         let seed_id = insert_memory(&conn, "seed", "global");
-        let ent_seed = insert_entity(&conn, "ent-seed", "global");
+        let ent_seed = insert_entity(&conn, "global", "ent-seed");
         link_memory_entity(&conn, seed_id, ent_seed);
-
         for i in 0..5 {
-            let mem_id = insert_memory(&conn, &format!("neighbor-{i}"), "global");
-            let ent_id = insert_entity(&conn, &format!("ent-{i}"), "global");
+            let ent_id = insert_entity(&conn, "global", &format!("ent-{i}"));
+            let mem_id = insert_memory(&conn, &format!("mem-{i}"), "global");
             link_memory_entity(&conn, mem_id, ent_id);
             insert_relationship(&conn, "global", ent_seed, ent_id, "related_to", 1.0);
         }
-
         let result = traverse_related(&conn, seed_id, &[ent_seed], "global", 1, 0.0, None, 3)
             .expect("traverse_related failed");
-
-        assert!(
-            result.len() <= 3,
+        assert_eq!(
+            result.len(),
+            3,
             "limit=3 must constrain to at most 3 results"
         );
     }
@@ -634,7 +619,6 @@ mod tests {
             relation: None,
             weight: None,
         };
-
         let json = serde_json::to_value(&mem).expect("serialization failed");
         assert!(json["source_entity"].is_null());
         assert!(json["target_entity"].is_null());

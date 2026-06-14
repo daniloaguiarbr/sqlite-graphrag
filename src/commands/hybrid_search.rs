@@ -358,12 +358,16 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
 
     // --- Graph traversal (activated by --with-graph) ---
     let mut graph_matches: Vec<RecallItem> = Vec::with_capacity(8);
-        if let Some(emb) = args.with_graph.then_some(()).filter(|_| !results.is_empty()).and(embedding.as_ref()) {
+    if let Some(emb) = args
+        .with_graph
+        .then_some(())
+        .filter(|_| !results.is_empty())
+        .and(embedding.as_ref())
+    {
         let namespace_for_graph = namespace.clone();
         let memory_ids: Vec<i64> = results.iter().map(|r| r.memory_id).collect();
 
-        let entity_knn =
-            entities::knn_search(&conn, emb, &namespace_for_graph, 5)?;
+        let entity_knn = entities::knn_search(&conn, emb, &namespace_for_graph, 5)?;
         let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
 
         let all_seed_ids: Vec<i64> = memory_ids

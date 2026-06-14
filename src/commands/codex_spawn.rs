@@ -118,6 +118,12 @@ pub fn validate_codex_model(model: Option<&str>) -> Result<(), AppError> {
 /// [`CODEX_PRO_OAUTH_MODELS`] constant when the file is missing or
 /// malformed. The returned `Vec<String>` is the union of both sources,
 /// de-duplicated.
+///
+/// The official cache file is an object with the shape
+/// `{"fetched_at": "...", "etag": "...", "client_version": "...",
+/// "models": [{"slug": "gpt-5.5", ...}, ...]}` (v1.0.81 fix: previously we
+/// iterated `obj.keys()` which produced bogus entries like `client_version`
+/// and `etag` as "models"; now we extract only the `models` array).
 pub fn list_codex_models() -> Vec<String> {
     use std::collections::BTreeSet;
     let mut out: BTreeSet<String> = CODEX_PRO_OAUTH_MODELS
@@ -130,13 +136,23 @@ pub fn list_codex_models() -> Vec<String> {
             .join(".codex")
             .join("models_cache.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
-            // The file is a JSON object whose keys are model ids.
-            // Use serde_json::Value to traverse safely without depending
-            // on a precise schema.
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(obj) = value.as_object() {
-                    for key in obj.keys() {
-                        out.insert(key.clone());
+                    // v1.0.81 fix: prefer the well-known `models` array
+                    // (each item has a `slug` field). Fall back to keys
+                    // only when `models` is absent (legacy cache format).
+                    if let Some(models_arr) = obj.get("models").and_then(|m| m.as_array()) {
+                        for v in models_arr {
+                            if let Some(slug) = v.get("slug").and_then(|s| s.as_str()) {
+                                out.insert(slug.to_string());
+                            } else if let Some(s) = v.as_str() {
+                                out.insert(s.to_string());
+                            }
+                        }
+                    } else {
+                        for key in obj.keys() {
+                            out.insert(key.clone());
+                        }
                     }
                 } else if let Some(arr) = value.as_array() {
                     for v in arr {
@@ -741,6 +757,91 @@ mod tests {
         let models = list_codex_models();
         let unique: std::collections::HashSet<_> = models.iter().collect();
         assert_eq!(unique.len(), models.len(), "list_codex_models must dedupe");
+    }
+    #[test]
+    fn list_codex_models_extracts_from_models_array_v1_0_81_regression() {
+        // v1.0.81 fix: the official codex CLI writes
+        //   {"fetched_at": "...", "etag": "...", "client_version": "...",
+        //    "models": [{"slug": "gpt-5.5", ...}, ...]}
+        // and the old code iterated obj.keys(), polluting the model
+        // list with metadata keys. Here we simulate a cache file by
+        // setting HOME to a tempdir containing a synthetic cache and
+        // verifying the metadata keys are NOT present in the output.
+        let tmp =
+            std::env::temp_dir().join(format!("codex-models-array-test-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join(".codex")).expect("mkdir");
+        let cache_body = r#"{
+            "fetched_at": "2026-06-14T06:43:56.639903114Z",
+            "etag": "W/\"deadbeef\"",
+            "client_version": "0.139.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.4-mini", "display_name": "GPT-5.4 mini"}
+            ]
+        }"#;
+        std::fs::write(tmp.join(".codex/models_cache.json"), cache_body).expect("write cache");
+        // SAFETY: unit test
+        let prev_home = std::env::var("HOME");
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
+        let models = list_codex_models();
+        unsafe {
+            if let Ok(h) = prev_home {
+                std::env::set_var("HOME", h);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        for forbidden in &["client_version", "etag", "fetched_at", "models"] {
+            assert!(
+                !models.contains(&forbidden.to_string()),
+                "metadata key {forbidden:?} leaked into model list: {models:?}"
+            );
+        }
+        assert!(
+            models.contains(&"gpt-5.5".to_string()),
+            "gpt-5.5 missing from extracted list: {models:?}"
+        );
+        assert!(
+            models.contains(&"gpt-5.4-mini".to_string()),
+            "gpt-5.4-mini missing from extracted list: {models:?}"
+        );
+    }
+
+    #[test]
+    fn list_codex_models_falls_back_to_keys_when_models_field_absent() {
+        // Legacy cache shape: keys are model ids directly (no models
+        // array). v1.0.81 must still merge those keys into the result.
+        let tmp =
+            std::env::temp_dir().join(format!("codex-models-legacy-test-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join(".codex")).expect("mkdir");
+        let cache_body = r#"{"legacy-model-x": 1, "legacy-model-y": 2}"#;
+        std::fs::write(tmp.join(".codex/models_cache.json"), cache_body).expect("write cache");
+        let prev_home = std::env::var("HOME");
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
+        let models = list_codex_models();
+        unsafe {
+            if let Ok(h) = prev_home {
+                std::env::set_var("HOME", h);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        assert!(
+            models.contains(&"legacy-model-x".to_string()),
+            "legacy-model-x missing: {models:?}"
+        );
+        assert!(
+            models.contains(&"legacy-model-y".to_string()),
+            "legacy-model-y missing: {models:?}"
+        );
     }
 
     /// OAuth-only conformance test (gaps.md:41-49, v1.0.69 mandate).

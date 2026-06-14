@@ -4,7 +4,13 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [1.0.81] - 2026-06-14
+
 ## [Unreleased]
+### Fixed (G80b, A2.1 v1.0.80)
+- `codex-models` was returning 9 entries in the `models[]` array (including metadata keys like `client_version`, `etag`, `fetched_at`) when the official Codex CLI cache file `~/.codex/models_cache.json` was in the standard shape `{"models": [{"slug": "..."}, ...]}`. The output now correctly extracts only the slug entries from the `models` array and falls back to direct keys only when the array is absent. Regressed by G33 in v1.0.69 when the static whitelist became the seed for cache merging.
+
 
 ## [1.0.80] - 2026-06-14
 
