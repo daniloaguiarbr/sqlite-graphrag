@@ -655,3 +655,23 @@
 - UM schema `error-envelope.schema.json` universal
 - Schemas de input para payloads de entrada (entities-input, relationships-input)
 - Total típico: 40-60 schemas para um CLI com 30+ subcomandos
+
+
+## v1.0.82 Documentation Framework Additions
+### Five New Schemas (GAP-001/002/004/005)
+- `docs/schemas/pending-list.schema.json` — `sqlite-graphrag pending list` output (ADR-0036, GAP-001)
+- `docs/schemas/embedding-list.schema.json` — `sqlite-graphrag embedding list` and `pending-embeddings list` outputs (ADR-0040, GAP-005)
+- `docs/schemas/embedding-status.schema.json` — `sqlite-graphrag embedding status` output (ADR-0040, GAP-005)
+- `docs/schemas/slots-status.schema.json` — `sqlite-graphrag slots status` output (ADR-0039, GAP-004)
+- `docs/schemas/shutdown-envelope.schema.json` — JSON envelope emitted at exit code 19 (ADR-0037, GAP-002)
+- All five new schemas declare `"additionalProperties": false` and use `$id` URLs with the `daniloaguiarbr` owner consistent with the legacy schemas
+- All five are referenced in `docs/schemas/README.md` under the new "Schemas Adicionados na v1.0.82 (GAP-001/002/004/005)" section
+### Five New ADRs (ADR-0036 through ADR-0040)
+- `docs/decisions/adr-0036-pending-memories-staging.md` (and `.pt-BR.md`) — Three-stage remember checkpoint queue (GAP-001)
+- `docs/decisions/adr-0037-shutdown-json-envelope.md` (and `.pt-BR.md`) — Shutdown envelope at exit 19 (GAP-002)
+- `docs/decisions/adr-0038-llm-backend-user-choice.md` (and `.pt-BR.md`) — `--llm-backend` global flag (GAP-003)
+- `docs/decisions/adr-0039-llm-host-slot-semaphore.md` (and `.pt-BR.md`) — fs4 cross-process slot semaphore (GAP-004)
+- `docs/decisions/adr-0040-stderr-capture-fallback-chain.md` (and `.pt-BR.md`) — codex OAuth 401 mitigation (GAP-005)
+- All five ADRs follow the canonical structure: Contexto, Decisão, Consequências, Alternativas Consideradas, Notas de Transcrição
+- All five ADRs link to the relevant JSON schema in the Consequências section
+- The pt-BR translations preserve the H2 section count parity with the EN originals

@@ -61,6 +61,95 @@ cargo install sqlite-graphrag --version 1.0.79 --force
 Your database is unchanged. v1.0.80 made no schema modifications; v1.0.79 reads the same SQLite file.
 
 
+# MIGRATING TO v1.0.82 — Five Gaps Closed, Two Migrations, Four Subcommands, OAuth 401 Mitigation
+
+> This guide is for operators on v1.0.80 or v1.0.81 who want to upgrade to v1.0.82 without losing data. This release is a PATCH bump but DOES carry two additive database migrations (V014 and V015) that run automatically on first `init` or `migrate`. The schema version advances from 13 to 15.
+
+## What Changed in v1.0.82
+
+- **GAP-001 closed (ADR-0036)** — three-stage `remember` checkpoint queue. The `pending_memories` table (V014) buffers the body, entities and relationships separately; if a SIGTERM/SIGINT arrives during stage 2 or 3, the row stays in `queued` state for later reprocessing via `sqlite-graphrag pending list|show|cleanup`. See `docs/decisions/adr-0036-pending-memories-staging.md`.
+- **GAP-002 closed (ADR-0037)** — Shutdown JSON envelope at exit code 19. Any LLM-spawning command that receives SIGTERM, SIGINT or SIGHUP now emits a deterministic JSON envelope to stdout and exits with `SHUTDOWN_EXIT_CODE = 19`. The envelope fields `error`, `code`, `signal`, `graceful` and `message` are validated by `docs/schemas/shutdown-envelope.schema.json`.
+- **GAP-003 closed (ADR-0038)** — `--llm-backend` user-choice flag. Operators can now pass `--llm-backend codex,claude,none` (or any subset) to control the backend chain tried in order. The first backend that does not error wins; `none` as the last entry writes the memory with embedding NULL when paired with `--skip-embedding-on-failure`.
+- **GAP-004 closed (ADR-0039)** — Host-wide LLM slot semaphore via `fs4 = "0.9"` with `sync` feature. Cross-process coordination uses `fcntl(F_SETLK)` on Linux/macOS and `LockFileEx` on Windows. Default is `min(ncpus, oauth_tier_max)` (Pro=4, Max=8). Inspect with `sqlite-graphrag slots status --json`; reap orphans with `sqlite-graphrag slots release --slot-id <N> --yes`. Pair with `--llm-max-host-concurrency N` to override the default ceiling.
+- **GAP-005 closed (ADR-0040)** — Stderr-capture fallback chain for embedding failures. The pending-embeddings table (V015) holds rows that failed every backend in the chain. The chain detects `refresh_token_reused` (the 2026-06-14 codex incident) and routes to the next backend; if all backends fail the row is enqueued for retry via `sqlite-graphrag pending-embeddings list|process`. The `LlmBackendError` struct gained 4 variants (`Codex401`, `CodexRateLimit`, `ClaudeTimeout`, `Generic`) and `EXIT_CODE_HINTS` documents 9 codes.
+
+## Who Is Affected
+
+- All v1.0.80 and v1.0.81 users
+- Operators running `codex exec` heavily who experienced HTTP 401 `refresh_token_reused` in 2026-06-14 — they MUST run `codex login` after upgrading to refresh the OAuth refresh token; the fallback chain in GAP-005 mitigates but does not eliminate the failure mode
+- Library consumers must re-pin to `=1.0.82`; the 4 new subcommand surfaces are additive but the new exit code 19 and the new `--llm-backend` global flag are visible to lib consumers that enumerate `CommandKind`
+- CI workflows: the `codex-models` whitelist now includes `gpt-5.5` as the default; CI tests that pinned `gpt-4*`, `o4-mini` or `gpt-5-codex` need to switch to the whitelisted set
+
+## How to Upgrade
+
+```bash
+# 1. Backup antes de upgrade (recomendado)
+sqlite-graphrag backup --output /var/backups/graphrag-pre-v1-0-82.sqlite --json
+
+# 2. Instalar a nova versão
+cargo install sqlite-graphrag --version 1.0.82 --force
+sqlite-graphrag --version   # should report 1.0.82
+
+# 3. Aplicar migrations V014 e V015 (automático, mas pode ser explícito)
+sqlite-graphrag migrate --json
+
+# 4. codex login OBRIGATÓRIO pós-upgrade (mitigação do incidente 2026-06-14)
+codex login
+
+# 5. Smoke test — valida que subcomandos novos funcionam
+sqlite-graphrag pending list --json
+sqlite-graphrag slots status --json
+sqlite-graphrag embedding status --json
+sqlite-graphrag pending-embeddings list --json
+
+# 6. Validar saúde geral
+sqlite-graphrag health --json
+```
+
+## What Happens Automatically
+
+- `V014__pending_memories.sql` and `V015__pending_embeddings.sql` run on the first `init` or `migrate` invocation; both use `CREATE TABLE IF NOT EXISTS` so re-running is safe
+- The `--llm-backend` flag defaults to `codex` if unset; behavior is identical to v1.0.81 for operators who never set the flag
+- The slot semaphore is created on demand at `${XDG_RUNTIME_DIR:-~/.local/share}/sqlite-graphrag/llm-slots/`; no operator action required
+- The shutdown JSON envelope replaces the old "panic-on-third-Ctrl-C" exit (ADR-0034, v1.0.80) when the signal arrives during a LLM subprocess; the legacy 130 exit on third signal still applies for non-LLM paths
+- The pending-embeddings table starts empty; existing v1.0.81 databases have zero rows in it
+
+## Library API Pinning
+
+If you depend on the lib API, pin to the EXACT version in `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.82"
+```
+
+The `^1.0` shorthand keeps you on the CLI-stability track. The `^1.0.82` shorthand allows 1.0.82..<1.1.0, which can include a future 1.0.83 with lib-breaking changes. For lib users, the exact pin is mandatory.
+
+## What Breaks
+
+- **Library consumers who enumerate the `CommandKind` enum**: 4 new variants (`Pending`, `Slots`, `Embedding`, `PendingEmbeddings`) are appended; non-exhaustive patterns will fail to compile
+- **CI workflows that reference `--llm-backend claude` or `--llm-backend codex` as exclusive choices**: the new flag is a comma-separated chain; pre-v1.0.82 invocations of `--llm-backend foo` will now fail validation with exit 1 (single backend must not contain commas; chain must contain at least one of `codex`, `claude`, `none`)
+- **Shell pipelines that grep stderr for "panic"**: the v1.0.80 third-Ctrl-C panic message no longer appears in v1.0.82; instead a JSON envelope appears on stdout at exit 19
+
+## Rollback
+
+If v1.0.82 is not working for you:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.81 --force
+```
+
+The two new migrations (V014, V015) are NOT auto-reverted on rollback. If you need a true schema revert, restore from the pre-upgrade backup:
+
+```bash
+sqlite-graphrag --version  # confirm rolled back to 1.0.81
+cp /var/backups/graphrag-pre-v1-0-82.sqlite ./graphrag.sqlite
+sqlite-graphrag health --json   # confirm schema_v13
+```
+
+WARNING: the v1.0.81 binary will not understand the V014 and V015 tables; they will be ignored but still present in the file. A subsequent re-upgrade to v1.0.82 will skip them via `CREATE TABLE IF NOT EXISTS`.
+
+
 # MIGRATING TO v1.0.78 — G41 Phantom V013 Registration Fix
 
 ## What Changed

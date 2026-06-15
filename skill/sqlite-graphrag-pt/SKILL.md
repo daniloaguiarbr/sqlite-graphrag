@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar memória persistente, GraphRAG ou contexto de longo prazo ao Claude Code, Codex, Cursor, Windsurf ou qualquer agente de código. DEVE acionar para queries mencionando lembrar disso, salvar conversa, recuperar contexto anterior, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, dimensionalidade de embedding, embedding-dim, llm-parallelism, embedding em lote, lote adaptativo, re-embed, force-reembed, ou remediação de gaps G28-G58. Auto-invoca sem menção explícita quando o usuário descreve agente perdendo contexto entre sessões ou quer memória local offline-first em Rust. DEVE também acionar em enforcement OAuth-only, aborto de ANTHROPIC_API_KEY ou OPENAI_API_KEY, flags de endurecimento para Claude e Codex, Mock LLM CLI em CI, ou remoção do daemon. DEVE também acionar em correções da auditoria A1 (panic hook estruturado, main thread sync, cobertura de completions, política de flush, watchdog de deadlock), auditoria A2 de observabilidade, ADR-0032 estabilidade da API da lib, ADR-0033 resiliência de infra CI Windows, ADR-0034 resiliência de SHUTDOWN, receita de bypass SHUTDOWN em 3 camadas, ou remediação do cluster G45/G53/G55 S2/G56/G58. Keywords memória RAG GraphRAG SQLite OAuth grafo entidade v1.0.80.
+description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar memória persistente, GraphRAG ou contexto de longo prazo ao Claude Code, Codex, Cursor, Windsurf ou qualquer agente de código. DEVE acionar para queries mencionando lembrar disso, salvar conversa, recuperar contexto anterior, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, dimensionalidade de embedding, embedding-dim, llm-parallelism, embedding em lote, lote adaptativo, re-embed, force-reembed, ou remediação de gaps G28-G58. Auto-invoca sem menção explícita quando o usuário descreve agente perdendo contexto entre sessões ou quer memória local offline-first em Rust. DEVE também acionar em enforcement OAuth-only, aborto de ANTHROPIC_API_KEY ou OPENAI_API_KEY, flags de endurecimento para Claude e Codex, Mock LLM CLI em CI, ou remoção do daemon. DEVE também acionar em correções da auditoria A1 (panic hook estruturado, main thread sync, cobertura de completions, política de flush, watchdog de deadlock), auditoria A2 de observabilidade, ADR-0032 estabilidade da API da lib, ADR-0033 resiliência de infra CI Windows, ADR-0034 resiliência de SHUTDOWN, receita de bypass SHUTDOWN em 3 camadas, ou remediação do cluster G45/G53/G55 S2/G56/G58. DEVE também acionar em remediação dos cinco gaps v1.0.82 (GAP-001 checkpoint de três estágios do remember, GAP-002 envelope JSON de shutdown no exit code 19, GAP-003 escolha de backend llm-backend pelo usuário, GAP-004 semáforo cross-process de slots via fs4, GAP-005 cadeia de fallback de captura de stderr para codex OAuth 401), fila de retry pending-embeddings, subcomandos slots status e release, subcomandos pending list/show/cleanup, subcomandos embedding status e list, migrações V014 pending_memories e V015 pending_embeddings, flag llm-max-host-concurrency, flag llm-slot-wait-secs, flag llm-slot-no-wait, flag graceful-shutdown-secs, constante SHUTDOWN_EXIT_CODE, ou codex login pós-upgrade. Keywords memória RAG GraphRAG SQLite one-shot OAuth offline persistente grafo entidade v1.0.82.
 ---
 
 
@@ -1084,6 +1084,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `13` igual falha parcial em batch, reprocessar apenas falhos
 - `14` igual erro de I/O (arquivo inacessível, permissão, disco cheio)
 - `15` igual banco ocupado (busy), ampliar `--wait-lock`
+- `19` igual envelope JSON de shutdown (ADR-0037, v1.0.82) emitido no stdout quando SIGTERM/SIGINT/SIGHUP chega durante subprocesso LLM; envelope é `{"error": true, "code": 19, "signal": "...", "graceful": bool, "message": "..."}`
 - `20` igual erro interno ou falha de serialização JSON
 - `75` igual slots exauridos no ingest ou outro pesado OU `AppError::JobSingletonLocked` de `enrich`, `ingest --mode claude-code` ou `ingest --mode codex` desde a v1.0.68; o campo `message` embute `job_type` e `namespace` para parsing via regex `job '(\w+)'.*namespace '(\w+)'`
 - `77` igual pressão de RAM, aguardar memória livre
@@ -1094,6 +1095,7 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - NUNCA tentar `restore` sem inspecionar `history` antes
 - NUNCA culpar ambiguidade sem ler stderr primeiro
 - NUNCA confundir exit 1 (validação) com exit 9 (duplicata)
+- NUNCA ignorar exit 19 (envelope de shutdown, v1.0.82) — trabalho parcial foi descartado, retry é mandatório
 
 
 ## Concorrência e Recursos
@@ -1110,6 +1112,26 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - AJUSTAR ambos independentemente conforme RAM e CPU
 - USAR `--low-memory` para forçar paralelismo unitário
 - HONRAR `SQLITE_GRAPHRAG_LOW_MEMORY=1` em hosts restritos
+
+
+## Subcomandos e Flags Globais Novos da v1.0.82
+### OBRIGATÓRIO — Quatro Novos Subcomandos
+- `pending list` e `pending show <id>` e `pending cleanup --yes` (ADR-0036) expõem a fila de checkpoint de três estágios do remember respaldada pela tabela `pending_memories` (V014)
+- `pending-embeddings list` e `pending-embeddings process` (ADR-0040) expõem a fila de retry para embeddings que falharam, respaldada pela tabela `pending_embeddings` (V015)
+- `slots status` e `slots release --slot-id <N> --yes` (ADR-0039) expõem o semáforo cross-process de slots host-wide bloqueado via `fs4 = "0.9"` com `fcntl(F_SETLK)` no Unix e `LockFileEx` no Windows
+- `embedding status` e `embedding list` (ADR-0040) expõem a saúde agregada da fila pending_embeddings com contagens por status e inspeção por entrada
+### OBRIGATÓRIO — Schema v15 e Arquivos de Migração
+- CURRENT_SCHEMA_VERSION é igual a 15 após rodar `init` ou `migrate` em banco fresco v1.0.82
+- `V014__pending_memories.sql` cria a tabela de checkpoint do fluxo de três estágios do remember
+- `V015__pending_embeddings.sql` cria a fila de retry da cadeia de fallback de captura de stderr
+- VALIDAR com `sqlite-graphrag health --json` e confirmar `schema_ok: true` além de `schema_version >= 15`
+### OBRIGATÓRIO — Sete Novas Flags Globais
+- `--llm-backend codex,claude` (ADR-0038) seleciona a cadeia de backend; padrão é `codex`; cadeia explícita habilita fallback automático em `refresh_token_reused`
+- `--llm-fallback-mode <claude|codex>` troca o backend ativo mid-job em detecção de rate-limit
+- `--llm-max-host-concurrency N` limita subprocessos LLM simultâneos no host; pareado com o semáforo `slots`
+- `--llm-slot-wait-secs N` bloqueia o processo chamador esperando por um slot até N segundos; `--llm-slot-no-wait` aborta imediatamente em contenção
+- `--graceful-shutdown-secs N` reserva orçamento de cleanup antes de SIGKILL após SIGTERM/SIGINT/SIGHUP; consumido pelo envelope de exit code 19 (ADR-0037)
+- `--skip-embedding-on-failure` aceita embedding NULL quando a cadeia completa de backend falha; requer `--llm-backend codex,claude,none`
 
 
 ## Gerenciamento FTS5 (v1.0.56)
@@ -1232,3 +1254,40 @@ description: Use esta skill SEMPRE que o usuário perguntar sobre adicionar mem�
 - `sqlite-graphrag completions bash > ~/.local/share/bash-completion/completions/sqlite-graphrag`
 - `sqlite-graphrag completions zsh > ~/.zfunc/_sqlite-graphrag`
 - `sqlite-graphrag completions fish > ~/.config/fish/completions/sqlite-graphrag.fish`
+
+
+## Superfície Nova da v1.0.82 (Cinco Gaps Fechados)
+### OBRIGATÓRIO — Subcomando `pending` (Checkpoint de Três Estágios do `remember`, ADR-0036)
+- USAR `sqlite-graphrag pending list --filter-status queued --json` para inspecionar a fila
+- USAR `sqlite-graphrag pending show <id> --json` para inspecionar uma linha
+- USAR `sqlite-graphrag pending cleanup --yes --json` para remover linhas em estado terminal
+- ESQUEMA: `docs/schemas/pending-list.schema.json`
+- RESPALDADO pela migração `V014__pending_memories.sql`
+### OBRIGATÓRIO — Subcomando `pending-embeddings` (Fila de Retry, ADR-0040)
+- USAR `sqlite-graphrag pending-embeddings list --json` para inspecionar a fila
+- USAR `sqlite-graphrag pending-embeddings process --json` para reprocessar com o próximo backend
+- ESQUEMA: `docs/schemas/embedding-list.schema.json`
+- RESPALDADO pela migração `V015__pending_embeddings.sql`
+### OBRIGATÓRIO — Subcomando `slots` (Semáforo Cross-Process, ADR-0039)
+- USAR `sqlite-graphrag slots status --json` para inspecionar uso host-wide de slots
+- USAR `sqlite-graphrag slots release --slot-id <N> --yes --json` para limpar slots órfãos
+- ESQUEMA: `docs/schemas/slots-status.schema.json`
+- CRATE de lock é `fs4 = "0.9"` com `sync` (NÃO `fs2`); `fcntl(F_SETLK)` no Unix, `LockFileEx` no Windows
+### OBRIGATÓRIO — Subcomando `embedding` (Saúde da Fila, ADR-0040)
+- USAR `sqlite-graphrag embedding status --json` para contagens agregadas por status
+- USAR `sqlite-graphrag embedding list --json` para inspeção por entrada
+- ESQUEMAS: `docs/schemas/embedding-status.schema.json` e `embedding-list.schema.json`
+### OBRIGATÓRIO — Flag Global `--llm-backend` (ADR-0038)
+- USAR `--llm-backend codex,claude` para codex-primeiro com fallback para claude
+- USAR `--llm-backend codex,claude,none` com `--skip-embedding-on-failure` para embedding NULL
+- PADRÃO é `codex`; cadeia explícita apenas quando o operador quer fallback
+### OBRIGATÓRIO — Envelope JSON de Shutdown no Exit Code 19 (ADR-0037)
+- TRATAR exit code 19 como `SHUTDOWN_EXIT_CODE`; trabalho parcial foi descartado
+- ENVELOPE no stdout quando SIGTERM/SIGINT/SIGHUP chega durante subprocesso LLM
+- CAMPOS: `error: true`, `code: 19`, `signal`, `graceful: bool`, `message`
+- ESQUEMA: `docs/schemas/shutdown-envelope.schema.json`
+- COMBINAR com `--graceful-shutdown-secs <N>` para reservar tempo de cleanup antes do kill
+### OBRIGATÓRIO — Incidente codex OAuth 401 (2026-06-14, ADR-0040)
+- AÇÃO DO OPERADOR após upgrade: `codex login` para refrescar o refresh token OAuth
+- A cadeia de fallback de captura de stderr detecta `refresh_token_reused` e roteia para o próximo backend
+- NÃO existe fix definitivo upstream; mitigação depende de `codex login` dirigido pelo operador

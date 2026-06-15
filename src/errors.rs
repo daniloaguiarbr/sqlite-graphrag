@@ -163,6 +163,18 @@ pub enum AppError {
          to load the model; abort other loads or use --skip-memory-guard (exit 77)"
     )]
     LowMemory { available_mb: u64, required_mb: u64 },
+
+    /// v1.0.82 (GAP-002 final): shutdown was requested via SIGINT, SIGTERM or
+    /// SIGHUP before the current command completed. Maps to exit code
+    /// [`crate::constants::SHUTDOWN_EXIT_CODE`] (19).
+    ///
+    /// The signal name is preserved in the `signal` field so the JSON
+    /// envelope emitted before exit can route the operator to a
+    /// deterministic branch. Distinct from the legacy `128 + signal`
+    /// Unix convention (130/143/129) so LLM agents can match on a
+    /// single code for "cancelled by user".
+    #[error("shutdown signal received: {signal}")]
+    Shutdown { signal: String },
 }
 
 impl AppError {
@@ -220,6 +232,7 @@ impl AppError {
             Self::JobSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::EmbeddingSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
+            Self::Shutdown { .. } => crate::constants::SHUTDOWN_EXIT_CODE,
         }
     }
 
@@ -250,6 +263,26 @@ impl AppError {
                 | Self::RateLimited { .. }
                 | Self::Timeout { .. }
         )
+    }
+
+    /// Returns `true` when shutdown was requested by the user via signal.
+    ///
+    /// Distinct from `is_permanent` because shutdown is a USER intent, not
+    /// a state to retry against. The operation should be retried with
+    /// `--resume` (GAP-001) when the persisted staging row still exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sqlite_graphrag::errors::AppError;
+    ///
+    /// assert!(AppError::Shutdown { signal: "SIGINT".into() }.is_shutdown());
+    /// assert!(!AppError::Validation("x".into()).is_shutdown());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        matches!(self, Self::Shutdown { .. })
     }
 
     /// Returns `true` when the error is permanent and must NOT be retried.
@@ -355,6 +388,7 @@ impl AppError {
                 available_mb,
                 required_mb,
             } => pt::low_memory(*available_mb, *required_mb),
+            Self::Shutdown { signal } => pt::shutdown(signal),
         }
     }
 }

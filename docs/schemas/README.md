@@ -72,8 +72,11 @@
 | `vec purge-orphan` (v1.0.69) | `vec-purge-orphan.schema.json` |
 | `vec stats` (v1.0.69) | `vec-stats.schema.json` |
 | `codex-models` (v1.0.69) | `codex-models.schema.json` |
-| `migrate --rehash` (v1.0.76, updated v1.0.77, v1.0.78) | `migrate-rehash.schema.json` |
-| `migrate --to-llm-only` (v1.0.76, updated v1.0.77, v1.0.78) | `migrate-to-llm-only.schema.json` |
+| `slots status` (v1.0.82, GAP-004) | `slots-status.schema.json` |
+| `pending list` (v1.0.82, GAP-001) | `pending-list.schema.json` |
+| `embedding status` (v1.0.82, GAP-005) | `embedding-status.schema.json` |
+| `embedding list` (v1.0.82, GAP-005) | `embedding-list.schema.json` |
+| shutdown envelope (v1.0.82, GAP-002) | `shutdown-envelope.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
 ### Commands Without JSON Schemas
 - `completions` emits shell completion scripts (Bash, Zsh, Fish, PowerShell, Elvish) as plain text — no JSON schema applies
@@ -145,6 +148,13 @@
 - `codex-models.schema.json` cobre `sqlite-graphrag codex-models --json`; emite a lista branca de modelos ChatGPT Pro OAuth, o modelo padrão e um campo opcional `suggestion` quando `--suggest <substring>` é usado.
 - Os quatro novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto.
 - Schemas existentes (`optimize.schema.json`, `enrich-*.schema.json`, `backup.schema.json`) permanecem inalterados em shape; os novos campos v1.0.69 (`fts_progress_polls`, `enrich_preservation_score`, `backup_step_sleep_ms`) vivem dentro de seus objetos existentes como campos opcionais.
+### Schemas Adicionados na v1.0.82 (GAP-001/002/004/005)
+- `pending-list.schema.json` cobre `sqlite-graphrag pending list` para inspeção da fila de checkpoint do `remember` em três estágios (GAP-001, ADR-0036); aceita `--filter-status queued|processing|done|failed` e `--limit`.
+- `embedding-list.schema.json` cobre `sqlite-graphrag embedding list` para inspeção por entrada da fila `pending_embeddings` (GAP-005, ADR-0040); aceita `--filter-status queued|processing|done|failed|skipped` e `--limit`.
+- `embedding-status.schema.json` cobre `sqlite-graphrag embedding status` para a saúde da fila de embeddings pendentes (GAP-005); retorna contagens por status e elapsed_ms.
+- `slots-status.schema.json` cobre `sqlite-graphrag slots status` para inspeção do semáforo cross-process de subprocessos LLM (GAP-004, ADR-0039); retorna `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`, `p50_wait_ms` e `p99_wait_ms`.
+- `shutdown-envelope.schema.json` é o envelope JSON emitido para stdout quando um sinal de shutdown interrompe a execução (GAP-002, ADR-0037); exit code 19 fixo, campos `signal` (`SIGTERM` | `SIGINT` | `SIGHUP`) e `graceful` (bool) obrigatórios.
+- Os cinco novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto; os campos `$id` usam `https://github.com/daniloaguiarbr/sqlite-graphrag/...` consistente com os schemas legados.
 
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`

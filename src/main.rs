@@ -309,19 +309,29 @@ fn main() -> std::process::ExitCode {
 
     let result = match cli.command {
         sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
-        sqlite_graphrag::cli::Commands::Remember(args) => commands::remember::run(args),
+        sqlite_graphrag::cli::Commands::Remember(args) => {
+            commands::remember::run(args, cli.llm_backend)
+        }
         sqlite_graphrag::cli::Commands::RememberBatch(args) => commands::remember_batch::run(args),
-        sqlite_graphrag::cli::Commands::Ingest(args) => commands::ingest::run(args),
-        sqlite_graphrag::cli::Commands::Recall(args) => commands::recall::run(args),
+        sqlite_graphrag::cli::Commands::Ingest(args) => {
+            commands::ingest::run(args, cli.llm_backend)
+        }
+        sqlite_graphrag::cli::Commands::Recall(args) => {
+            commands::recall::run(args, cli.llm_backend)
+        }
+        // v1.0.82 (GAP-003): pass LlmBackendChoice (Copy) so the dispatch
+        // match arm can move `args` while still borrowing `cli`.
+        sqlite_graphrag::cli::Commands::Edit(args) => commands::edit::run(args, cli.llm_backend),
+        sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
+        sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
+        sqlite_graphrag::cli::Commands::HybridSearch(args) => {
+            commands::hybrid_search::run(args, cli.llm_backend)
+        }
         sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
         sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),
         sqlite_graphrag::cli::Commands::Forget(args) => commands::forget::run(args),
         sqlite_graphrag::cli::Commands::Purge(args) => commands::purge::run(args),
         sqlite_graphrag::cli::Commands::Rename(args) => commands::rename::run(args),
-        sqlite_graphrag::cli::Commands::Edit(args) => commands::edit::run(args),
-        sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
-        sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
-        sqlite_graphrag::cli::Commands::HybridSearch(args) => commands::hybrid_search::run(args),
         sqlite_graphrag::cli::Commands::Health(args) => commands::health::run(args),
         sqlite_graphrag::cli::Commands::Migrate(args) => commands::migrate::run(args),
         sqlite_graphrag::cli::Commands::NamespaceDetect(args) => {
@@ -365,7 +375,9 @@ fn main() -> std::process::ExitCode {
         sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
         sqlite_graphrag::cli::Commands::RenameEntity(args) => commands::rename_entity::run(args),
         sqlite_graphrag::cli::Commands::MergeEntities(args) => commands::merge_entities::run(args),
-        sqlite_graphrag::cli::Commands::Enrich(args) => commands::enrich::run(&args),
+        sqlite_graphrag::cli::Commands::Enrich(args) => {
+            commands::enrich::run(&args, cli.llm_backend)
+        }
         sqlite_graphrag::cli::Commands::ReclassifyRelation(args) => {
             commands::reclassify_relation::run(args)
         }
@@ -374,6 +386,12 @@ fn main() -> std::process::ExitCode {
         }
         sqlite_graphrag::cli::Commands::Completions(args) => commands::completions::run(args),
         sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
+        sqlite_graphrag::cli::Commands::Slots(args) => commands::slots::run(args),
+        sqlite_graphrag::cli::Commands::Pending(args) => commands::pending::run(args),
+        sqlite_graphrag::cli::Commands::Embedding(args) => commands::embedding::run(args),
+        sqlite_graphrag::cli::Commands::PendingEmbeddings(args) => {
+            commands::pending_embeddings::run(args)
+        }
     };
 
     if let Err(e) = result {
@@ -388,13 +406,13 @@ fn main() -> std::process::ExitCode {
     let _ = std::io::Write::flush(&mut std::io::stderr());
 
     if sqlite_graphrag::shutdown_requested() {
-        let sig = sqlite_graphrag::shutdown_signal();
-        let code = if sig > 0 {
-            128u8.saturating_add(sig)
-        } else {
-            130u8
-        };
-        return std::process::ExitCode::from(code);
+        // GAP-002 (v1.0.82): deterministic code 19 for shutdown, regardless
+        // of which Unix signal triggered it. The JSON envelope has already
+        // been emitted to stdout by the signal handler itself; this branch
+        // just propagates the code to the shell.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        return std::process::ExitCode::from(sqlite_graphrag::constants::SHUTDOWN_EXIT_CODE as u8);
     }
 
     std::process::ExitCode::SUCCESS

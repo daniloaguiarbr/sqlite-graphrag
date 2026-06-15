@@ -61,6 +61,95 @@ cargo install sqlite-graphrag --version 1.0.79 --force
 Seu banco está inalterado. A v1.0.80 não fez modificações de schema; a v1.0.79 lê o mesmo arquivo SQLite.
 
 
+# MIGRANDO PARA v1.0.82 — Cinco Gaps Fechados, Duas Migrations, Quatro Subcomandos, Mitigação OAuth 401
+
+> Este guia é para operadores na v1.0.80 ou v1.0.81 que querem atualizar para a v1.0.82 sem perder dados. Esta release é bump PATCH mas carrega DUAS migrations aditivas (V014 e V015) que rodam automaticamente no primeiro `init` ou `migrate`. A versão de schema avança de 13 para 15.
+
+## O Que Mudou na v1.0.82
+
+- **GAP-001 fechado (ADR-0036)** — fila de checkpoint do `remember` em três estágios. A tabela `pending_memories` (V014) guarda separadamente o body, as entidades e os relacionamentos; se um SIGTERM/SIGINT chega durante os estágios 2 ou 3, a linha fica no estado `queued` para reprocessamento posterior via `sqlite-graphrag pending list|show|cleanup`. Veja `docs/decisions/adr-0036-pending-memories-staging.md`.
+- **GAP-002 fechado (ADR-0037)** — Envelope JSON de shutdown no exit code 19. Qualquer comando que spawna LLM e recebe SIGTERM, SIGINT ou SIGHUP agora emite um envelope JSON determinístico no stdout e sai com `SHUTDOWN_EXIT_CODE = 19`. Os campos do envelope `error`, `code`, `signal`, `graceful` e `message` são validados por `docs/schemas/shutdown-envelope.schema.json`.
+- **GAP-003 fechado (ADR-0038)** — flag `--llm-backend` de escolha do usuário. Operadores podem passar `--llm-backend codex,claude,none` (ou qualquer subconjunto) para controlar a cadeia de backends tentada em ordem. O primeiro backend que não der erro vence; `none` como última entrada grava a memória com embedding NULL quando combinado com `--skip-embedding-on-failure`.
+- **GAP-004 fechado (ADR-0039)** — Semáforo host-wide de slots LLM via `fs4 = "0.9"` com feature `sync`. Coordenação cross-process usa `fcntl(F_SETLK)` no Linux/macOS e `LockFileEx` no Windows. O padrão é `min(ncpus, oauth_tier_max)` (Pro=4, Max=8). Inspecione com `sqlite-graphrag slots status --json`; reapa órfãos com `sqlite-graphrag slots release --slot-id <N> --yes`. Combine com `--llm-max-host-concurrency N` para sobrescrever o teto padrão.
+- **GAP-005 fechado (ADR-0040)** — Cadeia de fallback de captura de stderr para falhas de embedding. A tabela `pending_embeddings` (V015) guarda linhas que falharam em todos os backends da cadeia. A cadeia detecta `refresh_token_reused` (o incidente codex de 2026-06-14) e roteia para o próximo backend; se todos falharem, a linha é enfileirada para retry via `sqlite-graphrag pending-embeddings list|process`. A struct `LlmBackendError` ganhou 4 variantes (`Codex401`, `CodexRateLimit`, `ClaudeTimeout`, `Generic`) e `EXIT_CODE_HINTS` documenta 9 códigos.
+
+## Quem É Afetado
+
+- Todos os usuários da v1.0.80 e v1.0.81
+- Operadores que rodam `codex exec` intensamente e tiveram HTTP 401 `refresh_token_reused` em 2026-06-14 — DEVEM rodar `codex login` após atualizar para refrescar o refresh token; a cadeia de fallback do GAP-005 mitiga mas não elimina o modo de falha
+- Consumidores da biblioteca devem re-fixar em `=1.0.82`; as 4 novas superfícies de subcomando são aditivas mas o novo exit code 19 e a nova flag global `--llm-backend` são visíveis para consumidores de lib que enumeram `CommandKind`
+- Workflows de CI: a whitelist `codex-models` agora inclui `gpt-5.5` como padrão; testes de CI que fixavam `gpt-4*`, `o4-mini` ou `gpt-5-codex` precisam migrar para o conjunto whitelisted
+
+## Como Atualizar
+
+```bash
+# 1. Backup antes do upgrade (recomendado)
+sqlite-graphrag backup --output /var/backups/graphrag-pre-v1-0-82.sqlite --json
+
+# 2. Instalar a nova versão
+cargo install sqlite-graphrag --version 1.0.82 --force
+sqlite-graphrag --version   # deve reportar 1.0.82
+
+# 3. Aplicar migrations V014 e V015 (automático, mas pode ser explícito)
+sqlite-graphrag migrate --json
+
+# 4. codex login OBRIGATÓRIO pós-upgrade (mitigação do incidente 2026-06-14)
+codex login
+
+# 5. Smoke test — valida que os subcomandos novos funcionam
+sqlite-graphrag pending list --json
+sqlite-graphrag slots status --json
+sqlite-graphrag embedding status --json
+sqlite-graphrag pending-embeddings list --json
+
+# 6. Validar saúde geral
+sqlite-graphrag health --json
+```
+
+## O Que Acontece Automaticamente
+
+- `V014__pending_memories.sql` e `V015__pending_embeddings.sql` rodam na primeira invocação de `init` ou `migrate`; ambas usam `CREATE TABLE IF NOT EXISTS` então re-rodar é seguro
+- A flag `--llm-backend` padroniza em `codex` se não definida; comportamento é idêntico ao da v1.0.81 para operadores que nunca setaram a flag
+- O semáforo de slots é criado sob demanda em `${XDG_RUNTIME_DIR:-~/.local/share}/sqlite-graphrag/llm-slots/`; nenhuma ação do operador necessária
+- O envelope JSON de shutdown substitui a antiga saída de "panic no terceiro Ctrl-C" (ADR-0034, v1.0.80) quando o sinal chega durante um subprocesso LLM; o exit 130 legado no terceiro sinal ainda vale para caminhos sem LLM
+- A tabela `pending_embeddings` começa vazia; bancos v1.0.81 existentes têm zero linhas nela
+
+## Fixação da API de Biblioteca
+
+Se você depende da API de biblioteca, fixe na versão EXATA em `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.82"
+```
+
+A forma curta `^1.0` mantém você na trilha de estabilidade da CLI. A forma curta `^1.0.82` permite 1.0.82..<1.1.0, que pode incluir uma futura 1.0.83 com mudanças breaking de lib. Para usuários de lib, o pin exato é mandatório.
+
+## O Que Quebra
+
+- **Consumidores de biblioteca que enumeram o enum `CommandKind`**: 4 novas variantes (`Pending`, `Slots`, `Embedding`, `PendingEmbeddings`) são anexadas; patterns não-exaustivos vão falhar ao compilar
+- **Workflows de CI que referenciam `--llm-backend claude` ou `--llm-backend codex` como escolhas exclusivas**: a nova flag é uma cadeia separada por vírgula; invocações pré-v1.0.82 de `--llm-backend foo` agora falham a validação com exit 1 (backend único não pode conter vírgula; cadeia precisa conter ao menos um de `codex`, `claude`, `none`)
+- **Pipelines shell que fazem grep em stderr por "panic"**: a mensagem de panic do terceiro Ctrl-C da v1.0.80 não aparece mais na v1.0.82; em vez disso um envelope JSON aparece no stdout no exit 19
+
+## Rollback
+
+Se a v1.0.82 não estiver funcionando para você:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.81 --force
+```
+
+As duas novas migrations (V014, V015) NÃO são revertidas automaticamente no rollback. Se você precisa de um revert de schema real, restaure do backup pré-upgrade:
+
+```bash
+sqlite-graphrag --version  # confirma rollback para 1.0.81
+cp /var/backups/graphrag-pre-v1-0-82.sqlite ./graphrag.sqlite
+sqlite-graphrag health --json   # confirma schema_v13
+```
+
+AVISO: o binário v1.0.81 não vai entender as tabelas V014 e V015; elas serão ignoradas mas ainda presentes no arquivo. Um re-upgrade subsequente para v1.0.82 vai pulá-las via `CREATE TABLE IF NOT EXISTS`.
+
+
 # MIGRAÇÃO PARA v1.0.78 — Correção do Registro Fantasma de V013 (G41)
 
 ## O Que Mudou

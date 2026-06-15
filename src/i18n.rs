@@ -551,6 +551,12 @@ pub mod validation {
             )
         }
 
+        pub fn shutdown(signal: &str) -> String {
+            format!(
+                "sinal de desligamento recebido: {signal}; operação cancelada pelo usuário (exit 19)"
+            )
+        }
+
         pub fn binary_not_found(name: &str) -> String {
             format!("binário não encontrado: {name} — instale e adicione ao PATH")
         }

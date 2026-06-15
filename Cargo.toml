@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.81"
+version = "1.0.82"
 edition = "2021"
 rust-version = "1.88"
 description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 6 MB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
@@ -158,6 +158,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 chrono-tz = "0.10"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 ctrlc = { version = "3.4", features = ["termination"] }
+# v1.0.82 GAP-002: SIGTERM + SIGHUP coverage that the ctrlc crate cannot
+# provide (it only handles SIGINT on Unix; SIGTERM/SIGHUP need their own
+# async-signal-safe handler). `signal-hook-iterator` is the documented
+# cross-platform pattern for registering multiple signals with a single
+# C-level handler that just writes to a pipe. The `iterator` feature is
+# unix-only by design.
+signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
 # Pin preventivo — constant_time_eq 0.4.3 bumped MSRV para 1.95.0 em versão patch.
 # Entra como dep transitiva de blake3 (range ^0.4). Sem este pin, `cargo install`
 # sem --locked resolve 0.4.3 e quebra a instalação em toolchains 1.88..1.94.

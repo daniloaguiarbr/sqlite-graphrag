@@ -2196,3 +2196,67 @@ sqlite-graphrag --lang pt read --name memoria-fantasma --json
 ### See Also
 - Recipe "How to integrate sqlite-graphrag with Claude Code subprocess loop"
 - docs/HOW_TO_USE.md → "Capping process proliferation on Claude Code runs (G28, v1.0.68)"
+
+
+## Recipes added in v1.0.82
+### Recipe — Three-Stage remember With Checkpoint Recovery (GAP-001, ADR-0036)
+```bash
+# Stage 1: persist memory with entities/relationships in pending queue
+sqlite-graphrag remember --name v1-0-82-release --type decision \
+  --body "v1.0.82 ships five gaps closed; see CHANGELOG.md" \
+  --entities-file /tmp/ents.json --relationships-file /tmp/rels.json --json
+
+# Stage 2: SIGTERM during LLM embed subprocess -> row stays queued
+# Stage 3: re-spawn the embed subprocess manually
+sqlite-graphrag pending list --filter-status queued --json | jaq '.pending[] | .id'
+
+# Cleanup terminal-state rows periodically
+sqlite-graphrag pending cleanup --filter-status done --yes --json
+```
+### Recipe — codex OAuth 401 Mitigation (GAP-005, ADR-0040)
+```bash
+# After upgrading to v1.0.82, refresh the OAuth token once
+codex login
+
+# Configure fallback chain so a refresh_token_reused 401 routes to claude
+sqlite-graphrag remember --name auth-design --type decision \
+  --body "OAuth 401 mitigation pattern with backend chain" \
+  --llm-backend codex,claude --json
+
+# Inspect any rows that exhausted all backends
+sqlite-graphrag pending-embeddings list --filter-status failed --json
+```
+### Recipe — Cross-Process Slot Observability (GAP-004, ADR-0039)
+```bash
+# Cap concurrent LLM subprocesses host-wide
+sqlite-graphrag remember --name my-memory --type note \
+  --body "..." --llm-max-host-concurrency 4 --json
+
+# Inspect slot usage in another terminal
+sqlite-graphrag slots status --json | jaq '{acquired, waiting, p50_wait_ms}'
+
+# Reap orphan slots from a dead PID
+sqlite-graphrag slots release --slot-id 3 --yes --json
+```
+### Recipe — Graceful Shutdown Envelope (GAP-002, ADR-0037)
+```bash
+# Trigger a shutdown mid-embed (in another terminal)
+kill -SIGTERM $(pgrep -f "sqlite-graphrag remember")
+
+# The process exits 19 with a JSON envelope on stdout
+sqlite-graphrag remember --name foo --type note --body "..." --json
+# {"error":true,"code":19,"signal":"SIGTERM","graceful":true,"message":"..."}
+```
+### Recipe — Custom Backend Chain (GAP-003, ADR-0038)
+```bash
+# Force claude only (no fallback)
+sqlite-graphrag remember --name a --type note --body "..." \
+  --llm-backend claude --json
+
+# Allow null embedding when both fail
+sqlite-graphrag remember --name b --type note --body "..." \
+  --llm-backend codex,claude,none --skip-embedding-on-failure --json
+
+# Health check after batch
+sqlite-graphrag health --json | jaq '.counts'
+```

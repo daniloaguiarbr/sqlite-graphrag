@@ -230,7 +230,7 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
 }
 
 #[tracing::instrument(skip_all, level = "debug", name = "remember")]
-pub fn run(args: RememberArgs) -> Result<(), AppError> {
+pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
@@ -639,7 +639,8 @@ pub fn run(args: RememberArgs) -> Result<(), AppError> {
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
     let embedding = if chunks_info.len() == 1 {
-        crate::embedder::embed_passage_local(&paths.models, &raw_body)?
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
+        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))?
     } else {
         let chunk_texts: Vec<String> = chunks_info
             .iter()

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/shutdown-envelope.schema.json",
+  "title": "shutdown envelope",
+  "description": "JSON envelope emitted to stdout when a shutdown signal interrupts execution (GAP-002, v1.0.82).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error", "code", "message", "signal", "graceful"],
+  "properties": {
+    "error": { "const": true },
+    "code": {
+      "const": 19,
+      "description": "Deterministic SHUTDOWN_EXIT_CODE, distinct from 128+N Unix convention."
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable description including the triggering signal name."
+    },
+    "signal": {
+      "type": "string",
+      "enum": ["SIGINT", "SIGTERM", "SIGHUP", "unknown"],
+      "description": "The Unix signal that triggered the shutdown."
+    },
+    "graceful": {
+      "const": true,
+      "description": "True distinguishes operator-requested shutdown from crash (which uses stderr-only)."
+    }
+  }
+}

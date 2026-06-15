@@ -5,6 +5,27 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 ## [Sem Versão]
 
+## [1.0.82] - 2026-06-15
+
+### Adicionado
+- **GAP-001 — Persistência por estágios**: nova tabela `pending_memories` (V014) com 6 transições de status e DAO em `src/storage/pending_memories.rs` (10 funções públicas). Subcomando `pending` com `list/show/cleanup` (`src/commands/pending.rs`).
+- **GAP-002 — Envelope JSON de shutdown**: handler cross-signal (`SIGINT` via `ctrlc`, `SIGTERM`/`SIGHUP` via `signal-hook`) emite envelope JSON para stdout antes de exit com `code: 19` (`SHUTDOWN_EXIT_CODE`) determinístico. 3 testes em `src/signals.rs`.
+- **GAP-003 — Escolha de backend LLM**: flag global `--llm-backend <auto|claude|codex|none>` (env: `SQLITE_GRAPHRAG_LLM_BACKEND`). Trait `LlmBackendFactory` com 4 implementações e 3 testes.
+- **GAP-004 — Semáforo de slots cross-process**: novo módulo `src/llm_slots.rs` com RAII guard via `fs4::FileExt::try_lock_exclusive`. `acquire_llm_slot_for_embedding()` integrado em `embedder.rs`. Subcomando `slots` com `status/release/cleanup`.
+- **GAP-005 — Captura de stderr + cadeia de fallback**: enum `LlmBackendError` com 4 variantes tipadas. Tabela `EXIT_CODE_HINTS` com 9 exit codes. Função `embed_with_fallback(backends, skip_on_failure)`. 2 subcomandos: `embedding` (status/list/abandon) e `pending-embeddings` (list/abandon).
+- **5 ADRs novos** (0036-0040, todos bilíngues EN + pt-BR)
+- **5 schemas JSON novos**: `slots-status`, `pending-list`, `embedding-status`, `embedding-list`, `shutdown-envelope`
+
+### Mudado
+- `Cargo.toml`: versão `1.0.81` → `1.0.82`
+- `CURRENT_SCHEMA_VERSION`: `13` → `15` (V014+V015)
+- `Cargo.toml`: adicionado `signal-hook = { version = "0.3", features = ["iterator"] }`
+- `src/errors.rs`: nova variante `AppError::Shutdown { signal: String }` → exit 19
+- `gaps.md`: 5 gaps marcados como `Solucionado em v1.0.82`
+
+### Suíte de Testes
+- 807 testes passando, 0 falhando, 1 ignorado (G58 S1 stub)
+
 ## [1.0.80] - 2026-06-14
 
 ### Mudanças na API da Biblioteca (per ADR-0032, G53 v1.0.80)

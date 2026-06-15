@@ -2194,3 +2194,67 @@ sqlite-graphrag --lang pt read --name memoria-fantasma --json
 ### Veja Também
 - Receita "Como integrar sqlite-graphrag com o loop de subprocessos do Claude Code"
 - docs/HOW_TO_USE.pt-BR.md → "Limitando proliferação de processos em execuções com Claude Code (G28, v1.0.68)"
+
+
+## Receitas adicionadas na v1.0.82
+### Receita — `remember` em Três Estágios Com Recuperação de Checkpoint (GAP-001, ADR-0036)
+```bash
+# Estágio 1: persiste a memória com entidades/relacionamentos na fila pending
+sqlite-graphrag remember --name v1-0-82-release --type decision \
+  --body "v1.0.82 entrega cinco gaps fechados; veja CHANGELOG.pt-BR.md" \
+  --entities-file /tmp/ents.json --relationships-file /tmp/rels.json --json
+
+# Estágio 2: SIGTERM durante subprocesso LLM de embed -> a linha fica queued
+# Estágio 3: re-spawna manualmente o subprocesso de embed
+sqlite-graphrag pending list --filter-status queued --json | jaq '.pending[] | .id'
+
+# Limpa linhas em estado terminal periodicamente
+sqlite-graphrag pending cleanup --filter-status done --yes --json
+```
+### Receita — Mitigação do codex OAuth 401 (GAP-005, ADR-0040)
+```bash
+# Após atualizar para v1.0.82, refresque o token OAuth uma vez
+codex login
+
+# Configure a cadeia de fallback para que um 401 refresh_token_reused roteie para claude
+sqlite-graphrag remember --name design-auth --type decision \
+  --body "Padrão de mitigação OAuth 401 com cadeia de backend" \
+  --llm-backend codex,claude --json
+
+# Inspecione linhas que esgotaram todos os backends
+sqlite-graphrag pending-embeddings list --filter-status failed --json
+```
+### Receita — Observabilidade de Slots Cross-Process (GAP-004, ADR-0039)
+```bash
+# Limita subprocessos LLM simultâneos host-wide
+sqlite-graphrag remember --name minha-memoria --type note \
+  --body "..." --llm-max-host-concurrency 4 --json
+
+# Inspeciona uso de slots em outro terminal
+sqlite-graphrag slots status --json | jaq '{acquired, waiting, p50_wait_ms}'
+
+# Reapa slots órfãos de um PID morto
+sqlite-graphrag slots release --slot-id 3 --yes --json
+```
+### Receita — Envelope de Shutdown Gracioso (GAP-002, ADR-0037)
+```bash
+# Dispara um shutdown no meio do embed (em outro terminal)
+kill -SIGTERM $(pgrep -f "sqlite-graphrag remember")
+
+# O processo sai com 19 e emite envelope JSON no stdout
+sqlite-graphrag remember --name foo --type note --body "..." --json
+# {"error":true,"code":19,"signal":"SIGTERM","graceful":true,"message":"..."}
+```
+### Receita — Cadeia de Backend Customizada (GAP-003, ADR-0038)
+```bash
+# Força claude apenas (sem fallback)
+sqlite-graphrag remember --name a --type note --body "..." \
+  --llm-backend claude --json
+
+# Permite embedding NULL quando ambos falham
+sqlite-graphrag remember --name b --type note --body "..." \
+  --llm-backend codex,claude,none --skip-embedding-on-failure --json
+
+# Health check após o lote
+sqlite-graphrag health --json | jaq '.counts'
+```

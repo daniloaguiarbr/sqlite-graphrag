@@ -425,6 +425,15 @@ pub const LOW_MEMORY_EXIT_CODE: i32 = 77;
 /// this version onwards.
 pub const DUPLICATE_EXIT_CODE: i32 = 9;
 
+/// Process exit code returned when shutdown is requested via SIGINT/SIGTERM/SIGHUP
+/// (v1.0.82, GAP-002 final).
+///
+/// The shell sees this code INSTEAD of the legacy `128 + signal` (130/143/129) so
+/// that LLM agents and orchestrators can branch on a single deterministic value
+/// when the operation was cancelled by the user. The signal name is preserved in
+/// the JSON envelope emitted before exit (`{"code":19,"signal":"SIGINT",...}`).
+pub const SHUTDOWN_EXIT_CODE: i32 = 19;
+
 /// Canonical value of `PRAGMA user_version` written after migrations.
 ///
 /// **Why 49 instead of `CURRENT_SCHEMA_VERSION` (9)?**
@@ -443,7 +452,7 @@ pub const SCHEMA_USER_VERSION: i64 = 50;
 /// Added in v1.0.27 as a runtime and test sanity check.
 /// Must be bumped in sync with new Refinery migrations; the unit test
 /// `schema_version_matches_migrations_count` validates this automatically.
-pub const CURRENT_SCHEMA_VERSION: u32 = 13;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 
 #[cfg(test)]
 mod tests_schema_version {

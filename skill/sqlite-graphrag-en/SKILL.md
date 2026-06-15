@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Use this skill WHENEVER the user asks about adding persistent memory, GraphRAG or long-term context to Claude Code, Codex, Cursor, Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding dimensionality, embedding-dim, llm-parallelism, batched embedding, adaptive batch, re-embed, force-reembed, or any G28-G58 gap remediation. Auto-invokes even without explicit mention when the user describes an agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, hardening flags for Claude and Codex, Mock LLM CLI in CI, or daemon removal. MUST also trigger on A1 audit fixes (structured panic hook, main thread sync, completions coverage, flush policy, deadlock watchdog), A2 observability audit, ADR-0032 lib API stability, ADR-0033 windows CI infra resilience, ADR-0034 SHUTDOWN resilience, 3-layer SHUTDOWN bypass recipe, or any G45/G53/G55 S2/G56/G58 cluster remediation. Keywords memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.80.
+description: Use this skill WHENEVER the user asks about adding persistent memory, GraphRAG or long-term context to Claude Code, Codex, Cursor, Windsurf or any AI coding agent. MUST trigger for queries mentioning remember this, save conversation, retrieve previous context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding dimensionality, embedding-dim, llm-parallelism, batched embedding, adaptive batch, re-embed, force-reembed, or any G28-G58 gap remediation. Auto-invokes even without explicit mention when the user describes an agent losing context between sessions or wants an offline-first local memory layer in Rust. MUST also trigger on OAuth-only enforcement, ANTHROPIC_API_KEY or OPENAI_API_KEY abort, hardening flags for Claude and Codex, Mock LLM CLI in CI, or daemon removal. MUST also trigger on A1 audit fixes (structured panic hook, main thread sync, completions coverage, flush policy, deadlock watchdog), A2 observability audit, ADR-0032 lib API stability, ADR-0033 windows CI infra resilience, ADR-0034 SHUTDOWN resilience, 3-layer SHUTDOWN bypass recipe, or any G45/G53/G55 S2/G56/G58 cluster remediation. MUST also trigger on v1.0.82 five-gap remediation (GAP-001 three-stage remember, GAP-002 shutdown JSON envelope at exit code 19, GAP-003 llm-backend user choice, GAP-004 fs4 cross-process slot semaphore, GAP-005 codex OAuth 401 stderr-capture fallback chain), pending-embeddings retry queue, slots status/release subcommands, pending list/show/cleanup subcommands, embedding status/list subcommands, V014 pending_memories migration, V015 pending_embeddings migration, llm-max-host-concurrency flag, llm-slot-wait-secs flag, llm-slot-no-wait flag, graceful-shutdown-secs flag, SHUTDOWN_EXIT_CODE constant, or codex login post-upgrade. Keywords memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.82.
 ---
 
 
@@ -1084,6 +1084,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `13` equals partial batch failure; reprocess only failed
 - `14` equals I/O error (inaccessible file, permission, disk full)
 - `15` equals database busy; widen `--wait-lock`
+- `19` equals shutdown JSON envelope (ADR-0037, v1.0.82) emitted on stdout when SIGTERM/SIGINT/SIGHUP arrives during an LLM subprocess; envelope is `{"error": true, "code": 19, "signal": "...", "graceful": bool, "message": "..."}`
 - `20` equals internal error or JSON serialization failure
 - `75` equals exhausted slots in ingest or other heavy command OR `AppError::JobSingletonLocked` from `enrich`, `ingest --mode claude-code`, or `ingest --mode codex` since v1.0.68; the `message` field embeds `job_type` and `namespace` for parsing via `job '(\w+)'.*namespace '(\w+)'` regex
 - `77` equals RAM pressure; wait for free memory
@@ -1094,6 +1095,7 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - NEVER attempt `restore` without inspecting `history` first
 - NEVER assume ambiguity without reading stderr first
 - NEVER confuse exit 1 (validation) with exit 9 (duplicate)
+- NEVER ignore exit 19 (shutdown envelope, v1.0.82) — partial work was discarded, retry is mandatory
 
 
 ## Concurrency and Resources
@@ -1110,6 +1112,26 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - ADJUST both independently according to RAM and CPU
 - USE `--low-memory` to force unitary parallelism
 - HONOR `SQLITE_GRAPHRAG_LOW_MEMORY=1` on constrained hosts
+
+
+## v1.0.82 New Subcommands and Global Flags
+### REQUIRED — Four New Subcommands
+- `pending list` and `pending show <id>` and `pending cleanup --yes` (ADR-0036) expose the three-stage remember checkpoint queue backed by `pending_memories` table (V014)
+- `pending-embeddings list` and `pending-embeddings process` (ADR-0040) expose the retry queue for failed embeddings backed by `pending_embeddings` table (V015)
+- `slots status` and `slots release --slot-id <N> --yes` (ADR-0039) expose the host-wide cross-process slot semaphore locked via `fs4 = "0.9"` `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows
+- `embedding status` and `embedding list` (ADR-0040) expose aggregate health of the pending_embeddings queue with per-status counts and per-entry inspection
+### REQUIRED — Schema v15 and Migration Files
+- CURRENT_SCHEMA_VERSION equals 15 after `init` or `migrate` is run on a fresh v1.0.82 database
+- `V014__pending_memories.sql` creates the checkpoint table for the three-stage remember flow
+- `V015__pending_embeddings.sql` creates the retry queue for the stderr-capture fallback chain
+- VALIDATE with `sqlite-graphrag health --json` and confirm `schema_ok: true` plus `schema_version >= 15`
+### REQUIRED — Seven New Global Flags
+- `--llm-backend codex,claude` (ADR-0038) selects backend chain; default is `codex`; explicit chain enables automatic fallback on `refresh_token_reused`
+- `--llm-fallback-mode <claude|codex>` swaps the active backend mid-job on rate-limit detection
+- `--llm-max-host-concurrency N` caps simultaneous LLM subprocesses across the host; pairs with the `slots` semaphore
+- `--llm-slot-wait-secs N` blocks the calling process waiting for a slot up to N seconds; `--llm-slot-no-wait` aborts immediately on contention
+- `--graceful-shutdown-secs N` reserves cleanup budget before SIGKILL after SIGTERM/SIGINT/SIGHUP; consumed by the exit code 19 envelope (ADR-0037)
+- `--skip-embedding-on-failure` accepts null embedding when the full backend chain fails; requires `--llm-backend codex,claude,none`
 
 
 ## FTS5 Management (v1.0.56)
@@ -1232,3 +1254,40 @@ description: Use this skill WHENEVER the user asks about adding persistent memor
 - `sqlite-graphrag completions bash > ~/.local/share/bash-completion/completions/sqlite-graphrag`
 - `sqlite-graphrag completions zsh > ~/.zfunc/_sqlite-graphrag`
 - `sqlite-graphrag completions fish > ~/.config/fish/completions/sqlite-graphrag.fish`
+
+
+## v1.0.82 New Surface (Five Gaps Closed)
+### REQUIRED — pending Subcommand (Three-Stage remember Checkpoint, ADR-0036)
+- USE `sqlite-graphrag pending list --filter-status queued --json` to inspect the queue
+- USE `sqlite-graphrag pending show <id> --json` to inspect one row
+- USE `sqlite-graphrag pending cleanup --yes --json` to remove terminal-state rows
+- SCHEMA: `docs/schemas/pending-list.schema.json`
+- BACKED BY `V014__pending_memories.sql` migration
+### REQUIRED — pending-embeddings Subcommand (Retry Queue, ADR-0040)
+- USE `sqlite-graphrag pending-embeddings list --json` to inspect the queue
+- USE `sqlite-graphrag pending-embeddings process --json` to reprocess with the next backend
+- SCHEMA: `docs/schemas/embedding-list.schema.json`
+- BACKED BY `V015__pending_embeddings.sql` migration
+### REQUIRED — slots Subcommand (Cross-Process Semaphore, ADR-0039)
+- USE `sqlite-graphrag slots status --json` to inspect host-wide slot usage
+- USE `sqlite-graphrag slots release --slot-id <N> --yes --json` to reap orphan slots
+- SCHEMA: `docs/schemas/slots-status.schema.json`
+- LOCK crate is `fs4 = "0.9"` with `sync` (NOT `fs2`); `fcntl(F_SETLK)` on Unix, `LockFileEx` on Windows
+### REQUIRED — embedding Subcommand (Queue Health, ADR-0040)
+- USE `sqlite-graphrag embedding status --json` for aggregate counts per status
+- USE `sqlite-graphrag embedding list --json` for per-entry inspection
+- SCHEMAS: `docs/schemas/embedding-status.schema.json` and `embedding-list.schema.json`
+### REQUIRED — --llm-backend Global Flag (ADR-0038)
+- USE `--llm-backend codex,claude` for codex-first with claude fallback
+- USE `--llm-backend codex,claude,none` with `--skip-embedding-on-failure` for null embedding
+- DEFAULT is `codex`; explicit chain only when operator wants fallback
+### REQUIRED — Exit Code 19 Shutdown Envelope (ADR-0037)
+- TREAT exit code 19 as `SHUTDOWN_EXIT_CODE`; partial work was discarded
+- ENVELOPE on stdout when SIGTERM/SIGINT/SIGHUP arrives during LLM subprocess
+- FIELDS: `error: true`, `code: 19`, `signal`, `graceful: bool`, `message`
+- SCHEMA: `docs/schemas/shutdown-envelope.schema.json`
+- COMBINE with `--graceful-shutdown-secs <N>` to reserve cleanup time before kill
+### REQUIRED — codex OAuth 401 Incident (2026-06-14, ADR-0040)
+- OPERATOR ACTION after upgrade: `codex login` to refresh the OAuth refresh token
+- The stderr-capture fallback chain detects `refresh_token_reused` and routes to the next backend
+- No definitive upstream fix; mitigation depends on operator-driven `codex login`

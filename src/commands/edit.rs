@@ -90,7 +90,7 @@ struct EditResponse {
     elapsed_ms: u64,
 }
 
-pub fn run(args: EditArgs) -> Result<(), AppError> {
+pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
@@ -199,7 +199,12 @@ pub fn run(args: EditArgs) -> Result<(), AppError> {
             "Re-computing embedding for edited body...",
             crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),
         );
-        let embedding = crate::embedder::embed_passage_local(&paths.models, &new_body)?;
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
+        let embedding = crate::embedder::embed_passage_with_choice(
+            &paths.models,
+            &new_body,
+            Some(llm_backend),
+        )?;
         let snippet: String = new_body.chars().take(300).collect();
         memories::upsert_vec(
             &tx,

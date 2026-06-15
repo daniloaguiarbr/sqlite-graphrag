@@ -377,3 +377,17 @@
 - cargo-nextest documentation: `https://nexte.st/`
 - cargo-nextest configuration reference: `https://nexte.st/docs/configuration/`
 - serial_test crate: `https://docs.rs/serial_test/latest/serial_test/`
+
+
+## v1.0.82 Test Suite Notes
+### Test Count and Known Flakes
+- v1.0.82 ships with 807 tests, 1 ignored, 0 failing (per the gaps.md ledger at 2026-06-15)
+- The four new subcommands (`pending`, `slots`, `embedding`, `pending-embeddings`) each have 2-3 unit tests and 1-2 integration tests
+- The 5 new ADRs (0036-0040) each have a regression test in `tests/` named after the ADR number
+- Known flake: `slot_enforces_max_concurrency` is timing-sensitive on slow CI runners; it is auto-retried once with a 50ms backoff before being marked as failed
+- Known flake: `pending-embeddings process reprocesses failed rows` requires a working OAuth session; gate it on `tests/mock-llm/codex` being on `PATH`
+- The new `fs4` crate (NOT `fs2`) is exercised in `src/llm_slots.rs::acquire_llm_slot`; the test `llm_slots_acquire_release_cross_process` runs 2 child processes that race for the same slot
+### Test Plan Artifact
+- See `docs/TEST_PLAN_v1.0.82.md` for the 10-phase end-to-end validation plan
+- The plan validates schema migrations V014 and V015, all 5 ADR decisions, the new exit code 19, and the codex OAuth 401 incident mitigation
+- Run via `bash docs/TEST_PLAN_v1.0.82.md`'s Phase 1 to Phase 10 sequentially with a fresh database per run

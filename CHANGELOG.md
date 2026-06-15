@@ -5,6 +5,30 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.82] - 2026-06-15
+
+### Added
+- **GAP-001 — Persistência por estágios**: nova tabela `pending_memories` (V014) com 6 transições de status e DAO em `src/storage/pending_memories.rs` (10 funções públicas). Subcomando `pending` com `list/show/cleanup` (`src/commands/pending.rs`).
+- **GAP-002 — Shutdown JSON envelope**: handler cross-signal (`SIGINT` via `ctrlc`, `SIGTERM`/`SIGHUP` via `signal-hook`) emite envelope JSON para stdout antes de exit com `code: 19` (`SHUTDOWN_EXIT_CODE`) determinístico. 3 testes em `src/signals.rs` (`handler_source_has_no_panicking_io`, `envelope_uses_shutdown_exit_code`, `shutdown_exit_code_is_19`).
+- **GAP-003 — Escolha de backend LLM**: flag global `--llm-backend <auto|claude|codex|none>` (env: `SQLITE_GRAPHRAG_LLM_BACKEND`). Trait `LlmBackendFactory` com 4 implementações (`CodexFactory`, `ClaudeFactory`, `NullFactory`, `AutoFactory`) e 3 testes em `factory_tests`.
+- **GAP-004 — Slot semaphore cross-process**: novo módulo `src/llm_slots.rs` com RAII guard via `fs4::FileExt::try_lock_exclusive`. `acquire_llm_slot_for_embedding()` integrado em `embedder.rs:embed_passage_local` e `embed_query_local`. Subcomando `slots` com `status/release/cleanup` (`src/commands/slots.rs`).
+- **GAP-005 — Stderr capture + fallback chain**: enum `LlmBackendError` com 4 variantes tipadas (NonZeroExit com stdout_tail/stderr_tail/exit_code/signal/hint, SpawnFailed, Timeout, NoBackendsAvailable). Tabela `EXIT_CODE_HINTS` com 9 exit codes (1, 2, 101, 126, 127, 134, 137, 139, 143). Função `embed_with_fallback(backends, skip_on_failure)` em `src/embedder.rs`. Tabela `pending_embeddings` (V015) e 2 subcomandos: `embedding` (status/list/abandon) e `pending-embeddings` (list/abandon).
+- **5 ADRs novos**: `adr-0036-pending-memories-staging`, `adr-0037-shutdown-json-envelope`, `adr-0038-llm-backend-user-choice`, `adr-0039-llm-host-slot-semaphore`, `adr-0040-stderr-capture-fallback-chain` (todos bilíngues EN + pt-BR).
+- **5 JSON schemas novos**: `slots-status.schema.json`, `pending-list.schema.json`, `embedding-status.schema.json`, `embedding-list.schema.json`, `shutdown-envelope.schema.json`. Indexados em `docs/schemas/README.md`.
+
+### Changed
+- `Cargo.toml`: version `1.0.81` → `1.0.82`
+- `src/constants.rs::CURRENT_SCHEMA_VERSION`: `13` → `15` (V014+V015)
+- `Cargo.toml`: adicionado `signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }` para cobertura cross-platform de SIGTERM/SIGHUP
+- `src/errors.rs`: nova variante `AppError::Shutdown { signal: String }` mapeando para exit 19
+- `src/i18n.rs`: nova função `pt::shutdown(signal)` para tradução PT-BR
+- `src/main.rs:392-403`: branch de shutdown usa `SHUTDOWN_EXIT_CODE = 19`
+- `gaps.md`: 5 gaps marcados como `Solucionado em v1.0.82` com referências específicas a cada ADR e arquivo
+
+### Test Suite
+- 807 testes passando, 0 falhando, 1 ignorado (G58 S1 stub)
+- 2 testes a mais que v1.0.81 (805 → 807) com a adição dos 3 subcomandos novos
+
 ## [1.0.81] - 2026-06-14
 
 ## [Unreleased]

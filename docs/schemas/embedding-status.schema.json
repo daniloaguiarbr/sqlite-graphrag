@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/embedding-status.schema.json",
+  "title": "embedding status",
+  "description": "Output of `sqlite-graphrag embedding status` for the pending-embeddings queue health (GAP-005, v1.0.82).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "counts", "elapsed_ms"],
+  "properties": {
+    "action": { "const": "embedding_status" },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pending", "in_progress", "done", "abandoned"],
+      "properties": {
+        "pending": { "type": "integer", "minimum": 0 },
+        "in_progress": { "type": "integer", "minimum": 0 },
+        "done": { "type": "integer", "minimum": 0 },
+        "abandoned": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

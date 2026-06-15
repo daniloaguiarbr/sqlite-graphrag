@@ -1514,3 +1514,41 @@ cargo install --path . && sqlite-graphrag init
 - First invocation requires a working OAuth session (Claude Pro/Max or OpenAI ChatGPT Pro)
 - Each embedding call spawns and discards an LLM subprocess; there is no persistent model or daemon
 - Uninstall with `cargo uninstall sqlite-graphrag` leaving the database file in place
+
+
+## New in v1.0.82 — Five Gaps Closed
+### REQUIRED — pending (Three-Stage remember Checkpoint Queue, ADR-0036)
+- USE `sqlite-graphrag pending list --filter-status queued --json` to inspect the queue
+- USE `sqlite-graphrag pending show <id> --json` to inspect one row
+- USE `sqlite-graphrag pending cleanup --yes --json` to remove terminal-state rows
+- SCHEMA: `docs/schemas/pending-list.schema.json`
+- EXIT code 4 when `show <id>` references a missing id; exit 1 for invalid `--filter-status`
+### REQUIRED — pending-embeddings (Retry Queue, ADR-0040)
+- USE `sqlite-graphrag pending-embeddings list --json` to inspect the queue
+- USE `sqlite-graphrag pending-embeddings process --json` to reprocess with the next backend in `--llm-backend`
+- SCHEMA: `docs/schemas/embedding-list.schema.json`
+- COMBINE with `--llm-backend codex,claude` for automatic backend rotation
+### REQUIRED — slots (Cross-Process LLM Semaphore, ADR-0039)
+- USE `sqlite-graphrag slots status --json` to inspect host-wide slot usage
+- USE `sqlite-graphrag slots release --slot-id <N> --yes --json` to reap orphan slots
+- FIELDS: `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`, `p50_wait_ms`, `p99_wait_ms`
+- LOCK crate is `fs4 = "0.9"` with `sync` (NOT `fs2`); native backend is `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows
+- COMBINE with `--llm-max-host-concurrency N` to override the default ceiling
+### REQUIRED — embedding (Pending Queue Health, ADR-0040)
+- USE `sqlite-graphrag embedding status --json` for aggregate counts per status
+- USE `sqlite-graphrag embedding list --json` for per-entry inspection
+- SCHEMAS: `docs/schemas/embedding-status.schema.json` and `embedding-list.schema.json`
+### REQUIRED — --llm-backend Global Flag (ADR-0038)
+- USE `--llm-backend codex,claude` to fall back from codex to claude on error
+- USE `--llm-backend codex,claude,none` with `--skip-embedding-on-failure` to allow null embedding
+- DEFAULT is `codex`; explicit chain only when operators want fallback behavior
+### REQUIRED — Exit Code 19 Shutdown JSON Envelope (ADR-0037)
+- TREAT exit code 19 as `SHUTDOWN_EXIT_CODE`; partial work was discarded
+- ENVELOPE on stdout when SIGTERM/SIGINT/SIGHUP arrives during LLM subprocess
+- FIELDS: `error: true`, `code: 19`, `signal`, `graceful: bool`, `message`
+- SCHEMA: `docs/schemas/shutdown-envelope.schema.json`
+- COMBINE with `--graceful-shutdown-secs <N>` to reserve cleanup time before kill
+### REQUIRED — codex OAuth 401 Incident (2026-06-14)
+- OPERATOR ACTION after upgrade: `codex login` to refresh the OAuth refresh token
+- The stderr-capture fallback chain in ADR-0040 detects `refresh_token_reused` and routes to the next backend in `--llm-backend`
+- There is NO definitive upstream fix; mitigation depends on operator-driven `codex login`

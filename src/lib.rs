@@ -205,6 +205,16 @@ pub mod i18n;
 /// `enrich`, `ingest --mode claude-code`, `ingest --mode codex`.
 pub mod lock;
 
+/// GAP-004 (v1.0.82): Cross-process slot semaphore for LLM subprocesses.
+/// `acquire_llm_slot` limits concurrent `codex`/`claude` spawns per host
+/// to prevent OAuth rate limit saturation when N+ sessions run in parallel.
+pub mod llm_slots;
+
+/// GAP-005 (v1.0.82): Exit code diagnostics for LLM subprocess crashes.
+pub mod llm {
+    pub mod exit_code_hints;
+}
+
 /// v1.0.75 (G22 solution): spawn subsystem abstraction with
 /// `VersionAdapter` trait for codex/claude/opencode executors.
 pub mod spawn;

@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
-> **Current release: v1.0.80 — LLM-Only and one-shot, with stability policy.** Every build embeds through `claude -p` or `codex exec` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~6 MB binary. The `embedding-legacy` feature was REMOVED in v1.0.79; there is no local-model build path. v1.0.80 adds the CLI-stable / lib-unstable split per ADR-0032 and the `semver-checks` CI gate (informational).
+> **Current release: v1.0.82 — Five gaps closed, four new subcommands, schema v13→v15.** Every build embeds through `claude -p` or `codex exec` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~6 MB binary. v1.0.82 ships two new migrations (`V014__pending_memories`, `V015__pending_embeddings`), four new subcommands (`pending list/show/cleanup`, `slots status/release`, `embedding status/list`, `pending-embeddings list/process`), the host-wide LLM slot semaphore (ADR-0039, `fs4` cross-process flock), the `--llm-backend` user-choice flag (ADR-0038), the shutdown JSON envelope at exit code 19 (ADR-0037), the three-stage `remember` checkpoint queue (ADR-0036), and the stderr-capture fallback chain that mitigates the codex OAuth 401 incident of 2026-06-14 (ADR-0040). Library consumers must pin to `=1.0.82`; see the `Stability Policy` below.
 
 - Read this document in [Portuguese (pt-BR)](README.pt-BR.md).
 
@@ -21,6 +21,7 @@
 - Build directly from the local checkout with `cargo install --path .`
 - **Upgrading from v1.0.74 / v1.0.75?** See [docs/MIGRATION.md](docs/MIGRATION.md) for the v1.0.76 / v1.0.77 / v1.0.78 / v1.0.79 migration procedure
 - **Upgrading from v1.0.79 to v1.0.80?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.80 adds the CI `semver-checks` job (informational), the Windows pre-warm steps (ADR-0033), and the panic-free third-signal exit (ADR-0034). Library consumers must pin to `=1.0.80`; see the `Stability Policy` below.
+- **Upgrading from v1.0.80 / v1.0.81 to v1.0.82?** Two new migrations run automatically on first `init`/`migrate`: `V014__pending_memories` (pending `remember` checkpoint queue) and `V015__pending_embeddings` (pending embedding retry queue). After upgrading, run `codex login` once to refresh the OAuth refresh token — the 2026-06-14 incident showed that `codex exec` returning HTTP 401 `refresh_token_reused` is now caught by the new fallback chain (ADR-0040) and routed to the next backend in `--llm-backend codex,claude`. See [docs/MIGRATION.md](docs/MIGRATION.md) for the full 6-step procedure including rollback.
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -495,6 +496,27 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `remember-batch` | `--json`, `--transaction`, `--force-merge`, `--fail-fast` | Batch-create memories from NDJSON stdin (one invocation, one slot, one DB connection) |
 | `namespace-detect` | `--json`, `--namespace <name>` | Resolve namespace precedence for the current invocation |
 | `deep-research` | `<query>`, `--k`, `--max-sub-queries`, `--max-hops`, `--min-weight`, `--max-results`, `--with-bodies`, `--max-concurrency`, `--timeout`, `--rrf-k`, `--graph-decay`, `--graph-min-score`, `--max-neighbors-per-hop`, `--json` | Parallel multi-hop GraphRAG research via query decomposition; returns `sub_queries[]`, `results[]`, `evidence_chains[]`, `graph_context?`, `stats` |
+
+### v1.0.82 subcommands
+| Command | Arguments | Description |
+| --- | --- | --- |
+| `pending` | `list`, `show <id>`, `cleanup`, `--filter-status queued\|processing\|done\|failed`, `--limit`, `--json` | Inspect and process the three-stage `remember` checkpoint queue (GAP-001, ADR-0036); `cleanup` removes terminal-state rows |
+| `pending-embeddings` | `list`, `process`, `--filter-status queued\|processing\|done\|failed\|skipped`, `--limit`, `--json` | Inspect and process the embedding retry queue (GAP-005, ADR-0040); `process` retries failed embeddings with the next backend in `--llm-backend` |
+| `slots` | `status`, `release --slot-id <N> --yes`, `--json` | Cross-process LLM slot semaphore inspection and cleanup (GAP-004, ADR-0039); `status` returns `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`, `p50_wait_ms`, `p99_wait_ms`; `release` reaps orphan slots from dead PIDs |
+| `embedding` | `status`, `list`, `--filter-status queued\|processing\|done\|failed\|skipped`, `--limit`, `--json` | Health and per-entry inspection of the pending-embeddings queue (GAP-005) |
+
+### v1.0.82 global flags
+| Flag | Applies to | Description |
+| --- | --- | --- |
+| `--llm-backend <codex\|claude\|none,codex,...>` | `remember`, `edit`, `ingest`, `enrich` | Comma-separated backend chain tried in order; first non-error wins (ADR-0038, ADR-0040) |
+| `--llm-fallback-mode <claude\|codex>` | `remember`, `edit`, `enrich` | Swap backend on rate-limit; requires `--llm-backend` chain with at least 2 entries |
+| `--llm-max-host-concurrency <N>` | All LLM-spawning commands | Cap concurrent LLM subprocesses host-wide via `fs4` flock (ADR-0039); default derived from CPU and OAuth tier |
+| `--llm-slot-wait-secs <N>` | All LLM-spawning commands | Seconds to wait for a free slot before failing (default 30s); pair with `--llm-slot-no-wait` for fail-fast |
+
+### v1.0.82 exit codes
+| Code | Meaning | Emitted by |
+| --- | --- | --- |
+| `19` | Shutdown signal received; partial work discarded; see `shutdown-envelope.schema.json` for stdout envelope | Any LLM-spawning command on SIGTERM/SIGINT/SIGHUP (ADR-0037) |
 
 ### `cache` subcommands
 | Subcommand | Description |

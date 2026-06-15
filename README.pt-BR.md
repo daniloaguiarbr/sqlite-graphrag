@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.80 — LLM-Only e one-shot, com política de estabilidade.** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A feature `embedding-legacy` foi REMOVIDA na v1.0.79; não existe mais build com modelo local. A v1.0.80 adiciona a divisão CLI-estável/lib-instável per ADR-0032 e o gate de CI `semver-checks` (informativo).
+> **Release atual: v1.0.82 — Cinco gaps fechados, quatro subcomandos novos, schema v13→v15.** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A v1.0.82 entrega duas novas migrations (`V014__pending_memories`, `V015__pending_embeddings`), quatro subcomandos novos (`pending list/show/cleanup`, `slots status/release`, `embedding status/list`, `pending-embeddings list/process`), o semáforo host-wide de slots LLM (ADR-0039, `fs4` flock cross-process), a flag `--llm-backend` de escolha do usuário (ADR-0038), o envelope JSON de shutdown no exit code 19 (ADR-0037), a fila de checkpoint do `remember` em três estágios (ADR-0036) e a cadeia de fallback de captura de stderr que mitiga o incidente codex OAuth 401 de 2026-06-14 (ADR-0040). Consumidores da biblioteca devem fixar em `=1.0.82`; veja a `Política de Estabilidade` abaixo.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -21,6 +21,7 @@
 - Faça o build direto do checkout local com `cargo install --path .`
 - **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76
 - **Atualizando de v1.0.79 para v1.0.80?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.80 adiciona o job de CI `semver-checks` (informativo), os steps de pre-warm do Windows (ADR-0033) e a saída sem panic no terceiro sinal (ADR-0034). Consumidores da biblioteca devem fixar em `=1.0.80`; veja a `Política de Estabilidade` abaixo. / v1.0.77 / v1.0.78 / v1.0.79
+- **Atualizando de v1.0.80 / v1.0.81 para v1.0.82?** Duas novas migrations rodam automaticamente no primeiro `init`/`migrate`: `V014__pending_memories` (fila de checkpoint do `remember`) e `V015__pending_embeddings` (fila de retry de embedding). Após atualizar, rode `codex login` uma vez para refrescar o refresh token OAuth — o incidente de 2026-06-14 mostrou que `codex exec` retornando HTTP 401 `refresh_token_reused` agora é capturado pela nova cadeia de fallback (ADR-0040) e roteado para o próximo backend em `--llm-backend codex,claude`. Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento completo em 6 passos incluindo rollback.
 
 ```bash
 cargo install sqlite-graphrag --locked --force

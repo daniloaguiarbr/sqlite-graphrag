@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/pending-list.schema.json",
+  "title": "pending list",
+  "description": "Output of `sqlite-graphrag pending list` for three-stage `remember` checkpoint queue inspection (GAP-001, v1.0.82).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "filter_status",
+    "count",
+    "entries",
+    "elapsed_ms"
+  ],
+  "properties": {
+    "action": { "const": "pending_list" },
+    "filter_status": {
+      "type": ["string", "null"],
+      "description": "Status filter as echoed; null when listing all buckets."
+    },
+    "count": { "type": "integer", "minimum": 0 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending_id",
+          "name",
+          "namespace",
+          "memory_type",
+          "status",
+          "attempt_count",
+          "last_error",
+          "embedding_dim",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "pending_id": { "type": "integer", "minimum": 0 },
+          "name": { "type": "string" },
+          "namespace": { "type": "string" },
+          "memory_type": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": [
+              "validated",
+              "embedding_in_progress",
+              "embedding_done",
+              "committed",
+              "abandoned",
+              "failed"
+            ]
+          },
+          "attempt_count": { "type": "integer", "minimum": 0 },
+          "last_error": { "type": ["string", "null"] },
+          "embedding_dim": { "type": ["integer", "null"] },
+          "created_at": { "type": "integer", "minimum": 0 },
+          "updated_at": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

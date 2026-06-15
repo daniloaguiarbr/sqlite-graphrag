@@ -453,6 +453,7 @@ fn stage_file(
     gliner_variant: crate::extraction::GlinerVariant,
     max_rss_mb: u64,
     llm_parallelism: usize,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -572,7 +573,8 @@ fn stage_file(
 
     let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
     let embedding = if chunks_info.len() == 1 {
-        crate::embedder::embed_passage_local(&paths.models, &raw_body)?
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
+        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))?
     } else {
         // G42/S2+S3 (v1.0.79): batched bounded fan-out replaces the
         // serial per-chunk subprocess loop.
@@ -940,7 +942,7 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
 // ---------------------------------------------------------------------------
 
 #[tracing::instrument(skip_all, level = "debug", name = "ingest")]
-pub fn run(args: IngestArgs) -> Result<(), AppError> {
+pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     // G20: mode-conditional flag validation BEFORE any DB access.
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_ingest(&args)?;
@@ -1269,6 +1271,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
     // all rayon workers finish — if called on the main thread it would
     // reintroduce the 2-phase blocking behaviour we are eliminating.
     let paths_owned = paths.clone();
+    let llm_backend_owned = llm_backend;
     let producer_handle = std::thread::spawn(move || {
         pool.install(|| {
             process_items.into_par_iter().for_each(|item| {
@@ -1285,6 +1288,7 @@ pub fn run(args: IngestArgs) -> Result<(), AppError> {
                     gliner_variant,
                     max_rss_mb,
                     llm_parallelism,
+                    llm_backend_owned,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

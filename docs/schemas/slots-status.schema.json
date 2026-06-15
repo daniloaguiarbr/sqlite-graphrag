@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/slots-status.schema.json",
+  "title": "slots status",
+  "description": "Output of `sqlite-graphrag slots status` for cross-process LLM slot semaphore inspection (GAP-004, v1.0.82).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "max_concurrency",
+    "active",
+    "free",
+    "slots",
+    "elapsed_ms"
+  ],
+  "properties": {
+    "action": {
+      "const": "slots_status",
+      "description": "Stable identifier of the producing command."
+    },
+    "max_concurrency": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum concurrent LLM subprocesses allowed on this host."
+    },
+    "active": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of currently-held slot files (PIDs still alive)."
+    },
+    "free": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "max_concurrency - active (convenience, not authoritative)."
+    },
+    "slots": {
+      "type": "array",
+      "description": "Per-slot details.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot_id", "path", "age_secs", "pid_hint"],
+        "properties": {
+          "slot_id": { "type": "integer", "minimum": 0 },
+          "path": { "type": "string" },
+          "age_secs": { "type": "integer", "minimum": 0 },
+          "pid_hint": {
+            "type": ["integer", "null"],
+            "description": "PID parsed from the slot file, or null if unreadable."
+          }
+        }
+      }
+    },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

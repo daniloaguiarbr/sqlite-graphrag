@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/embedding-list.schema.json",
+  "title": "embedding list",
+  "description": "Output of `sqlite-graphrag embedding list` for per-entry inspection of the pending-embeddings queue (GAP-005, v1.0.82).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "filter_status",
+    "count",
+    "entries",
+    "elapsed_ms"
+  ],
+  "properties": {
+    "action": { "const": "embedding_list" },
+    "filter_status": {
+      "type": "string",
+      "enum": ["pending", "in_progress", "done", "abandoned"]
+    },
+    "count": { "type": "integer", "minimum": 0 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending_id",
+          "memory_id",
+          "name",
+          "namespace",
+          "backend_chain",
+          "last_error",
+          "last_exit_code",
+          "last_stderr_tail",
+          "attempt_count",
+          "status",
+          "updated_at"
+        ],
+        "properties": {
+          "pending_id": { "type": "integer", "minimum": 0 },
+          "memory_id": { "type": "integer", "minimum": 0 },
+          "name": { "type": "string" },
+          "namespace": { "type": "string" },
+          "backend_chain": {
+            "type": "string",
+            "description": "Comma-separated backend chain tried before failure (e.g. 'codex,claude,none')."
+          },
+          "last_error": { "type": ["string", "null"] },
+          "last_exit_code": { "type": ["integer", "null"] },
+          "last_stderr_tail": {
+            "type": ["string", "null"],
+            "description": "Up to 1 KB of subprocess stderr, UTF-8 safe truncated."
+          },
+          "attempt_count": { "type": "integer", "minimum": 0 },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "done", "abandoned"]
+          },
+          "updated_at": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

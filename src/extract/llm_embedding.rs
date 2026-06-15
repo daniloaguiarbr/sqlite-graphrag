@@ -483,22 +483,52 @@ impl LlmEmbedding {
         if let Some(config_dir) = claude_embedding_config_dir() {
             cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
         }
-        let output = tokio::time::timeout(embed_timeout(), cmd.output())
-            .await
-            .map_err(|_| {
-                AppError::Embedding(format!(
-                    "claude embedding call timed out after {}s \
-                     (override via SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS)",
-                    embed_timeout().as_secs()
-                ))
-            })?
-            .map_err(|e| AppError::Embedding(format!("claude spawn failed: {e}")))?;
+        let binary_str = self.binary.to_string_lossy().into_owned();
+        let output = match tokio::time::timeout(embed_timeout(), cmd.output()).await {
+            Err(_elapsed) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::Timeout {
+                        secs: embed_timeout().as_secs(),
+                        binary: binary_str.clone(),
+                    },
+                ));
+            }
+            Ok(Err(e)) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                        binary: binary_str.clone(),
+                        source: e.to_string(),
+                    },
+                ));
+            }
+            Ok(Ok(o)) => o,
+        };
         if !output.status.success() {
-            return Err(AppError::Embedding(format!(
-                "claude exited with {}: stderr={}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            let (exit_code, signal) = if let Some(code) = output.status.code() {
+                (Some(code), None)
+            } else {
+                use std::os::unix::process::ExitStatusExt;
+                (None, output.status.signal())
+            };
+            let stdout_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stdout,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let stderr_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stderr,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let hint = crate::llm::exit_code_hints::diagnose_exit_code(exit_code, signal);
+            return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                &crate::llm::exit_code_hints::LlmBackendError::NonZeroExit {
+                    exit_code,
+                    signal,
+                    stdout_tail,
+                    stderr_tail,
+                    binary: binary_str,
+                    hint,
+                },
+            ));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -508,44 +538,81 @@ impl LlmEmbedding {
         prompt: &str,
         schema_path: &std::path::Path,
     ) -> Result<String, AppError> {
-        let mut child = build_codex_embedding_command(&self.binary, &self.model, schema_path)
-            .spawn()
-            .map_err(|e| AppError::Embedding(format!("codex spawn failed: {e}")))?;
+        let binary_str = self.binary.to_string_lossy().into_owned();
+        let mut child =
+            match build_codex_embedding_command(&self.binary, &self.model, schema_path).spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                        &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                            binary: binary_str,
+                            source: e.to_string(),
+                        },
+                    ));
+                }
+            };
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(prompt.as_bytes())
                 .await
                 .map_err(|e| AppError::Embedding(format!("codex stdin write failed: {e}")))?;
         }
-        let output = tokio::time::timeout(embed_timeout(), child.wait_with_output())
-            .await
-            .map_err(|_| {
-                AppError::Embedding(format!(
-                    "codex embedding call timed out after {}s \
-                     (override via SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS)",
-                    embed_timeout().as_secs()
-                ))
-            })?
-            .map_err(|e| AppError::Embedding(format!("codex wait failed: {e}")))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // G42/S7: the headless spawn can still hit interactive
-            // prompts on some codex builds; map the failure to an
-            // actionable message instead of an opaque exit.
-            if stderr.contains("request_user_input") {
-                return Err(AppError::Embedding(format!(
-                    "codex requested interactive input in a headless embedding call \
-                     (exit {}). This codex build ignores the non-interactive flags; \
-                     upgrade codex (>= 0.134) or switch the embedding backend to \
-                     claude by removing `codex` from PATH or installing `claude`. \
-                     stderr={stderr}",
-                    output.status
-                )));
+        let output = match tokio::time::timeout(embed_timeout(), child.wait_with_output()).await {
+            Err(_elapsed) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::Timeout {
+                        secs: embed_timeout().as_secs(),
+                        binary: binary_str,
+                    },
+                ));
             }
-            return Err(AppError::Embedding(format!(
-                "codex exited with {}: stderr={stderr}",
-                output.status
-            )));
+            Ok(Err(e)) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                        binary: binary_str,
+                        source: format!("codex wait failed: {e}"),
+                    },
+                ));
+            }
+            Ok(Ok(o)) => o,
+        };
+        if !output.status.success() {
+            let (exit_code, signal) = if let Some(code) = output.status.code() {
+                (Some(code), None)
+            } else {
+                use std::os::unix::process::ExitStatusExt;
+                (None, output.status.signal())
+            };
+            let stdout_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stdout,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let stderr_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stderr,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let hint = crate::llm::exit_code_hints::diagnose_exit_code(exit_code, signal);
+            // G42/S7: the headless spawn can still hit interactive
+            // prompts on some codex builds; keep the legacy request_user_input
+            // branch as a special-case hint, and stamp the diagnostic
+            // tail on top of the canonical NonZeroExit envelope.
+            let mut combined_hint = hint;
+            if stderr_tail.contains("request_user_input") {
+                combined_hint.push_str(
+                    " | codex requested interactive input in a headless embedding call; \
+                     upgrade codex (>= 0.134) or switch the embedding backend to claude",
+                );
+            }
+            return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                &crate::llm::exit_code_hints::LlmBackendError::NonZeroExit {
+                    exit_code,
+                    signal,
+                    stdout_tail,
+                    stderr_tail,
+                    binary: binary_str,
+                    hint: combined_hint,
+                },
+            ));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }

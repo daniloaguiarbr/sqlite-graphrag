@@ -165,7 +165,10 @@ pub struct HybridSearchResponse {
 }
 
 #[tracing::instrument(skip_all, level = "debug", name = "hybrid_search")]
-pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
+pub fn run(
+    args: HybridSearchArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
     tracing::debug!(target: "hybrid_search", query = %args.query, k = args.k, "fusing results");
@@ -202,7 +205,12 @@ pub fn run(args: HybridSearchArgs) -> Result<(), AppError> {
     let (embedding, vec_degraded, vec_error) = if args.fallback_fts_only {
         (None, true, Some("fallback_fts_only requested".to_string()))
     } else {
-        match crate::embedder::try_embed_query_with_fallback(&paths.models, &args.query) {
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
+        match crate::embedder::try_embed_query_with_choice(
+            &paths.models,
+            &args.query,
+            Some(llm_backend),
+        ) {
             Ok(v) => (Some(v), false, None),
             Err(reason) => {
                 let msg = reason.to_string();

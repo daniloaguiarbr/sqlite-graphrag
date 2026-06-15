@@ -1258,6 +1258,7 @@ fn persist_entity_description(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reembed_memory_vector(
     conn: &Connection,
     namespace: &str,
@@ -1266,9 +1267,12 @@ fn reembed_memory_vector(
     memory_type: &str,
     body: &str,
     paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<(), AppError> {
     let snippet: String = body.chars().take(200).collect();
-    let embedding = crate::embedder::embed_passage_local(&paths.models, body)?;
+    // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
+    let embedding =
+        crate::embedder::embed_passage_with_choice(&paths.models, body, Some(llm_backend))?;
     memories::upsert_vec(
         conn,
         memory_id,
@@ -1292,6 +1296,7 @@ fn persist_enriched_body(
     memory_name: &str,
     new_body: &str,
     paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<(), AppError> {
     // Read current values for FTS sync
     let (old_name, old_desc, old_body): (String, String, String) = conn.query_row(
@@ -1374,6 +1379,7 @@ fn persist_enriched_body(
         &memory_type,
         new_body,
         paths,
+        llm_backend,
     ) {
         tracing::warn!(target: "enrich", memory = %memory_name, error = %e, "vec upsert failed after body-enrich");
     }
@@ -1466,7 +1472,7 @@ fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppEr
 // ---------------------------------------------------------------------------
 
 /// Main entry point for the `enrich` command.
-pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
+pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     // G20: mode-conditional flag validation BEFORE any DB access.
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_enrich(args)?;
@@ -1834,8 +1840,8 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                             let call_result = match operation {
                                 EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
-                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths),
-                                EnrichOperation::ReEmbed => call_reembed(&w_conn, namespace, &item_key, paths),
+                                EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths, llm_backend),
+                                EnrichOperation::ReEmbed => call_reembed(&w_conn, namespace, &item_key, paths, llm_backend),
                                 EnrichOperation::WeightCalibrate => call_weight_calibrate(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::RelationReclassify => call_relation_reclassify(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => call_entity_connect(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
@@ -2035,8 +2041,11 @@ pub fn run(args: &EnrichArgs) -> Result<(), AppError> {
                     args.prompt_template.as_deref(),
                     args.preserve_threshold,
                     &paths,
+                    llm_backend,
                 ),
-                EnrichOperation::ReEmbed => call_reembed(&conn, &namespace, &item_key, &paths),
+                EnrichOperation::ReEmbed => {
+                    call_reembed(&conn, &namespace, &item_key, &paths, llm_backend)
+                }
                 EnrichOperation::WeightCalibrate => call_weight_calibrate(
                     &conn,
                     &namespace,
@@ -2542,6 +2551,7 @@ fn call_body_enrich(
     prompt_template: Option<&Path>,
     preserve_threshold: f64,
     paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<EnrichItemResult, AppError> {
     let (memory_id, body, description, memory_type): (i64, String, String, String) = conn
         .query_row(
@@ -2694,6 +2704,7 @@ fn call_body_enrich(
         memory_name,
         enriched_body,
         paths,
+        llm_backend,
     )?;
 
     Ok(EnrichItemResult::Done {
@@ -2713,6 +2724,7 @@ fn call_reembed(
     namespace: &str,
     memory_name: &str,
     paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<EnrichItemResult, AppError> {
     let (memory_id, body, memory_type): (i64, String, String) = conn
         .query_row(
@@ -2743,6 +2755,7 @@ fn call_reembed(
         &memory_type,
         &body,
         paths,
+        llm_backend,
     )?;
 
     Ok(EnrichItemResult::Done {

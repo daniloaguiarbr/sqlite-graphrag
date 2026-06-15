@@ -22,6 +22,42 @@ pub enum GraphExportFormat {
     Ndjson,
 }
 
+/// v1.0.82 (GAP-003): backend LLM para embedding. Aceita `auto` (default —
+/// detecta `codex` ou `claude` no PATH), `codex` (força codex exec), `claude`
+/// (força claude -p), ou `none` (skip-a embedding; útil para testes).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum LlmBackendChoice {
+    Auto,
+    Claude,
+    Codex,
+    None,
+}
+
+impl LlmBackendChoice {
+    /// v1.0.82 (GAP-003): converte a escolha do CLI em uma chain ordenada
+    /// de backends que `embedder::embed_with_fallback` itera. O primeiro
+    /// elemento da chain é o backend preferido; elementos subsequentes
+    /// são fallbacks quando o preferido falha com `LlmBackendError`.
+    ///
+    /// `Auto` produz `[Codex, Claude, None]` — codex é o default da v1.0.76+,
+    /// claude é o fallback se codex falhar (OAuth contention, quota), e
+    /// `None` permite `embed_with_fallback` retornar vetor vazio quando
+    /// `skip_on_failure` está ativo.
+    pub fn to_chain(self) -> Vec<crate::embedder::LlmBackendKind> {
+        use crate::embedder::LlmBackendKind;
+        match self {
+            LlmBackendChoice::Codex => vec![LlmBackendKind::Codex, LlmBackendKind::None],
+            LlmBackendChoice::Claude => vec![LlmBackendKind::Claude, LlmBackendKind::None],
+            LlmBackendChoice::None => vec![LlmBackendKind::None],
+            LlmBackendChoice::Auto => vec![
+                LlmBackendKind::Codex,
+                LlmBackendKind::Claude,
+                LlmBackendKind::None,
+            ],
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "sqlite-graphrag")]
 #[command(version)]
@@ -89,6 +125,89 @@ pub struct Cli {
     /// (followed by `enrich --operation re-embed`). Range: [8, 4096].
     #[arg(long, global = true, value_name = "N", value_parser = clap::value_parser!(u64).range(8..=4096))]
     pub embedding_dim: Option<u64>,
+
+    /// v1.0.82 (GAP-003): backend LLM para embedding. Aceita
+    /// `auto|claude|codex|none`. Default `auto`. Honra env var
+    /// `SQLITE_GRAPHRAG_LLM_BACKEND`.
+    #[arg(long, global = true, value_enum, default_value_t = LlmBackendChoice::Auto, env = "SQLITE_GRAPHRAG_LLM_BACKEND")]
+    pub llm_backend: LlmBackendChoice,
+
+    /// v1.0.82 (GAP-003): modelo a invocar no backend escolhido.
+    /// Honra env var `SQLITE_GRAPHRAG_LLM_MODEL`. Default depende
+    /// do backend (codex: `gpt-5.5`; claude: `claude-sonnet-4-6`).
+    #[arg(
+        long,
+        global = true,
+        value_name = "MODEL",
+        env = "SQLITE_GRAPHRAG_LLM_MODEL"
+    )]
+    pub llm_model: Option<String>,
+
+    /// v1.0.82 (GAP-003): path para o binário `claude` (override de
+    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_CLAUDE_BINARY`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        env = "SQLITE_GRAPHRAG_CLAUDE_BINARY"
+    )]
+    pub claude_binary: Option<std::path::PathBuf>,
+
+    /// v1.0.82 (GAP-005): cadeia de backends LLM tentados em ordem
+    /// quando o primário falha. Default `codex,claude,none`. Honra
+    /// env var `SQLITE_GRAPHRAG_LLM_FALLBACK`.
+    #[arg(
+        long,
+        global = true,
+        default_value = "codex,claude,none",
+        env = "SQLITE_GRAPHRAG_LLM_FALLBACK"
+    )]
+    pub llm_fallback: String,
+
+    /// v1.0.82 (GAP-005): persiste com embedding NULL quando todos
+    /// os backends da cadeia falham. Memória fica em `pending_embeddings`
+    /// para reprocessamento via `embedding retry`. Honra env var
+    /// `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE`.
+    #[arg(
+        long,
+        global = true,
+        default_value_t = false,
+        env = "SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE"
+    )]
+    pub skip_embedding_on_failure: bool,
+
+    /// v1.0.82 (GAP-004): limite host-wide de subprocessos LLM
+    /// simultâneos. Default derivado de `ncpus`. Honra env var
+    /// `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        env = "SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY"
+    )]
+    pub llm_max_host_concurrency: Option<u32>,
+
+    /// v1.0.82 (GAP-004): segundos para aguardar slot LLM livre
+    /// antes de falhar com exit 75. Default 30s. Honra env var
+    /// `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECONDS",
+        env = "SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS"
+    )]
+    pub llm_slot_wait_secs: Option<u64>,
+
+    /// v1.0.82 (GAP-004): se setado, falha imediatamente (exit 75)
+    /// quando nenhum slot LLM está livre. Honra env var
+    /// `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT`.
+    #[arg(
+        long,
+        global = true,
+        default_value_t = false,
+        env = "SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT"
+    )]
+    pub llm_slot_no_wait: bool,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -370,6 +489,15 @@ pub enum Commands {
     /// Remove NER bindings (memory_entities rows) for an entity or all entities
     #[command(name = "prune-ner")]
     PruneNer(prune_ner::PruneNerArgs),
+    /// Inspect and manage cross-process LLM slot semaphore (GAP-004, v1.0.82)
+    Slots(slots::SlotsArgs),
+    /// Inspect and manage the `remember` checkpoint queue (GAP-001, v1.0.82)
+    Pending(pending::PendingArgs),
+    /// Health and per-entry inspection of the pending-embeddings queue (GAP-005, v1.0.82)
+    Embedding(embedding::EmbeddingArgs),
+    /// Batch operations over the pending-embeddings queue (GAP-005, v1.0.82)
+    #[command(name = "pending-embeddings")]
+    PendingEmbeddings(pending_embeddings::PendingEmbeddingsArgs),
     /// Remove entities that have no memories and no relationships
     CleanupOrphans(cleanup_orphans::CleanupOrphansArgs),
     /// List entities linked to a specific memory

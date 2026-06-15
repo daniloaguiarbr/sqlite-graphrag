@@ -231,3 +231,22 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - Migration: run `claude login` (Claude Pro/Max) or `codex login` (ChatGPT Pro) once on each host and remove the env var from the shell rc
 - Defence-in-depth: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are INTENTIONALLY ABSENT from the `env_clear` whitelists on every platform; even if a future refactor moves the OAuth-only guard, the variable never reaches the child
 - See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale and `src/commands/claude_runner.rs:574-666` and `src/commands/codex_spawn.rs:684-758` for the four OAuth-only conformance tests on each binary
+
+
+## v1.0.82 Cross-Platform Behaviour
+### SHUTDOWN_EXIT_CODE = 19 Constant (ADR-0037)
+- The constant `SHUTDOWN_EXIT_CODE = 19` in `src/constants.rs` is emitted identically on Linux glibc, aarch64 GNU, macOS, and Windows targets when SIGTERM/SIGINT/SIGHUP arrives during an LLM subprocess
+- The shutdown JSON envelope on stdout is byte-identical across platforms; validated by `tests/shutdown_envelope_regression.rs`
+- The envelope schema is `docs/schemas/shutdown-envelope.schema.json` and is platform-agnostic by construction
+- The `nix` crate (Unix) and the `windows-sys` crate (Windows) both call the same downstream `try_reset_shutdown` and `install_shutdown_handler` functions, so behaviour diverges only at the syscall boundary
+### fs4 Cross-Process Lock (ADR-0039)
+- The `fs4 = "0.9"` crate with feature `sync` provides cross-platform file locking via `FileExt::lock_exclusive` and `try_lock_exclusive`
+- Linux and macOS use `fcntl(F_SETLK)` (POSIX advisory lock) on the underlying `slot-{0..N}.lock` file descriptor
+- Windows uses `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK` for the same exclusive semantics
+- The lock is RELEASED automatically when the process exits (kernel reclaims the file descriptor) — no manual cleanup required for the happy path
+- The `slots release --slot-id <N>` subcommand is the only way to forcibly reap an orphan lock held by a dead PID; it must be cross-platform because the orphan-detection heuristic (`kill -0 <pid>`) is also cross-platform via `std::process::Command`
+### Stderr-Capture Fallback Chain (ADR-0040)
+- The chain inspects `codex exec` stderr for the magic string `refresh_token_reused` (2026-06-14 incident) and routes to the next backend in `--llm-backend`
+- The detection is regex-based and operates on the raw stderr bytes; it does not depend on the `codex` CLI version or platform
+- The fallback writes the original failure to `tracing::warn!` (stderr) and persists the row in `pending_embeddings` if no backend succeeds
+- Operator action `codex login` is required on every host where `codex` is the primary backend; the env-var-based refresh-token management is host-wide, not per-invocation

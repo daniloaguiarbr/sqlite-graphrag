@@ -296,3 +296,50 @@ X
 - `opencode.ai/docs/mcp-servers/` — MCP control via `enabled: false` per server
 - `open-code.ai/en/docs/config` — `opencode.json` reference with providers, models, MCP
 - `computingforgeeks.com/opencode-cli-cheat-sheet/` — cheat sheet with headless and MCP flags
+
+
+## Headless Patterns Added in v1.0.82
+### Shutdown envelope capture pattern (GAP-002, ADR-0037)
+```bash
+# Wrap a long-running sqlite-graphrag invocation in a signal handler
+# that captures the shutdown JSON envelope on stdout at exit 19.
+timeout 300 sqlite-graphrag remember --name big-corpus --type document \
+  --body-file ./big.md --json 2>/tmp/err.log
+EXIT=$?
+if [ $EXIT -eq 19 ]; then
+  # parse the envelope from the last line of stdout
+  jaq -e '.error and .code == 19' /tmp/err.log
+  jaq -r '.signal, .graceful' /tmp/err.log
+fi
+```
+### Fallback chain wrap pattern (GAP-003 + GAP-005, ADR-0038 + ADR-0040)
+```bash
+# Pre-flight: validate both backends are reachable before launching
+timeout 30 codex exec --help >/dev/null 2>&1 || { echo "codex missing"; exit 1; }
+timeout 30 claude --help >/dev/null 2>&1 || { echo "claude missing"; exit 1; }
+
+# Launch with the fallback chain
+sqlite-graphrag remember --name foo --type note --body "..." \
+  --llm-backend codex,claude --json
+
+# If all backends fail, inspect the pending queue
+sqlite-graphrag pending-embeddings list --filter-status failed --json
+```
+### Slot semaphore poll pattern (GAP-004, ADR-0039)
+```bash
+# Wait until a slot is free before launching a heavy batch
+while [ "$(sqlite-graphrag slots status --json | jaq '.acquired')" -gt 0 ]; do
+  sleep 5
+done
+sqlite-graphrag ingest ./big-corpus --recursive --json
+```
+### codex OAuth 401 mitigation pattern (ADR-0040, 2026-06-14 incident)
+```bash
+# Refresh the OAuth token at the start of any long batch
+codex login
+
+# Configure the fallback chain to handle refresh_token_reused 401
+sqlite-graphrag remember --name auth-fix --type decision \
+  --body "Refresh-token rotation policy" \
+  --llm-backend codex,claude --json
+```

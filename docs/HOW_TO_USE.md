@@ -1,4 +1,4 @@
-# HOW TO USE sqlite-graphrag (v1.0.80 — LLM-Only)
+# HOW TO USE sqlite-graphrag (v1.0.82 — Five Gaps Closed, Two Migrations)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
@@ -6,6 +6,41 @@
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 X
+
+
+## What v1.0.82 Changed (Five Gaps, Two Migrations, Four Subcommands)
+
+v1.0.82 is a **patch** bump that DOES carry two additive database migrations (`V014__pending_memories`, `V015__pending_embeddings`). The schema version advances from 13 to 15. Library consumers must pin to `=1.0.82` per the stability policy (ADR-0032). The 5 gaps closed: GAP-001 three-stage `remember` checkpoint queue (ADR-0036), GAP-002 shutdown JSON envelope at exit code 19 (ADR-0037), GAP-003 `--llm-backend` user-choice flag (ADR-0038), GAP-004 host-wide LLM slot semaphore via `fs4` (ADR-0039), GAP-005 stderr-capture fallback chain that mitigates the codex OAuth 401 incident of 2026-06-14 (ADR-0040).
+
+- **GAP-001 (ADR-0036)**: `pending_memories` table (V014) buffers the body, entities and relationships separately; SIGTERM during stage 2 or 3 leaves the row in `queued` for reprocessing. Inspect with `sqlite-graphrag pending list|show|cleanup --json`.
+- **GAP-002 (ADR-0037)**: `SHUTDOWN_EXIT_CODE = 19` constant in `src/constants.rs`; any LLM-spawning command that receives SIGTERM/SIGINT/SIGHUP emits a deterministic JSON envelope on stdout. Envelope fields: `error`, `code`, `signal`, `graceful`, `message`. Schema: `docs/schemas/shutdown-envelope.schema.json`.
+- **GAP-003 (ADR-0038)**: `--llm-backend <codex|claude|none,codex,...>` global flag; first non-error backend wins. `--llm-backend codex,claude,none` paired with `--skip-embedding-on-failure` allows null embedding when both backends fail.
+- **GAP-004 (ADR-0039)**: Host-wide LLM slot semaphore via `fs4 = "0.9"` with `sync` feature (NOT `fs2`); `fcntl(F_SETLK)` on Linux/macOS, `LockFileEx` on Windows. Default `min(ncpus, oauth_tier_max)`. Inspect with `sqlite-graphrag slots status --json`; reap with `sqlite-graphrag slots release --slot-id <N> --yes`.
+- **GAP-005 (ADR-0040)**: `pending_embeddings` table (V015) holds rows that failed every backend; the stderr-capture chain detects `refresh_token_reused` (2026-06-14 codex incident) and routes to the next backend. Inspect with `sqlite-graphrag embedding status|list --json`; retry with `sqlite-graphrag pending-embeddings process`.
+
+### Migration Procedure (Operators on v1.0.80 / v1.0.81)
+```bash
+# 1. Backup before upgrade (recommended)
+sqlite-graphrag backup --output /var/backups/graphrag-pre-v1-0-82.sqlite --json
+
+# 2. Install v1.0.82
+cargo install sqlite-graphrag --version 1.0.82 --force
+sqlite-graphrag --version   # should report 1.0.82
+
+# 3. Migrations V014 and V015 run automatically on first init/migrate
+sqlite-graphrag migrate --json
+
+# 4. codex login is MANDATORY after upgrade (OAuth 401 mitigation)
+codex login
+
+# 5. Smoke test the new subcommands
+sqlite-graphrag pending list --json
+sqlite-graphrag slots status --json
+sqlite-graphrag embedding status --json
+sqlite-graphrag pending-embeddings list --json
+```
+
+See [MIGRATION.md](MIGRATION.md) for the full 6-step procedure including rollback.
 
 
 ## What v1.0.80 Changed (G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034)
