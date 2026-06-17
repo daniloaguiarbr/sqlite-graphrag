@@ -5,6 +5,30 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.83] - 2026-06-17
+
+### Fixed
+- `claude_runner`, `codex_spawn` and `ingest_claude` now preserve custom-provider credentials (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`) in the subprocess environment. Enables use of Anthropic-compatible providers (MiniMax/api.minimax.io, OpenRouter, corporate gateways) without altering the OAuth-only mandate that continues to reject `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. Resolves partially the gap G58 (`recall`/`hybrid-search` fallback under OAuth fatigue).
+
+### Added
+- New helper module `src/spawn/env_whitelist.rs` consolidating the duplicated whitelist logic across three spawners. Exposes `apply_env_whitelist(cmd, strict)` and `is_strict_env_clear()`.
+- New global flag `--strict-env-clear` (env: `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`) for compliance environments that forbid credential forwarding via env vars. Strict mode preserves only `PATH`.
+- Orientative marker arg `--oauth-only-resolution-use-anthropic-auth-token` (claude) and `--oauth-only-resolution-use-codex-auth-json-or-openai-base-url` (codex) surfaced via the diagnostic pipeline when the OAuth-only guard fires.
+- New integration tests in `tests/claude_runner_env.rs` (5 scenarios) covering custom-provider propagation, OAuth-only abort, codex base-url inheritance, strict-mode credential dropping, and audit-of-no-token-leak.
+- New ADR `adr-0041-preserve-custom-provider-env.md` (EN + pt-BR) justifying the architectural change.
+
+### Changed
+- `Cargo.toml`: version `1.0.82` → `1.0.83`
+- `src/commands/claude_runner.rs`: removed local `ENV_WHITELIST`/`ENV_WHITELIST_WINDOWS` constants; now delegates to `apply_env_whitelist()`.
+- `src/commands/codex_spawn.rs`: removed inline whitelist array (lines 277-293 prior); now delegates to `apply_env_whitelist()`. `CODEX_HOME` isolation is preserved as a runtime override after the helper call.
+- `src/commands/ingest_claude.rs`: removed inline whitelist arrays; now delegates to `apply_env_whitelist()`.
+
+### Test Suite
+- 3 unit tests in `src/spawn/env_whitelist.rs` (`whitelist_includes_custom_provider_vars`, `whitelist_excludes_api_key_vars`, `strict_mode_drops_credentials`).
+- 5 integration tests in `tests/claude_runner_env.rs` (hermetic, no network).
+- 0 regressions in 807+ pre-existing tests (8 serial OAuth-only tests remain green).
+
+
 ## [1.0.82] - 2026-06-15
 
 ### Added

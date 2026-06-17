@@ -16,6 +16,7 @@
 use crate::errors::AppError;
 use crate::extract::codex_compat::codex_supports_ask_for_approval;
 use crate::extraction::{ExtractedUrl, ExtractionResult};
+use crate::spawn::env_whitelist::apply_env_whitelist;
 use crate::storage::entities::{NewEntity, NewRelationship};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -253,14 +254,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
 pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
     let full_prompt = format!("{}\n\n{}", args.prompt, args.input_text);
 
-    // OAuth-only guard (gaps.md:48). If `OPENAI_API_KEY` is set in the
-    // environment we MUST abort — that is the API-key path which is
+    // OAuth-only guard (gaps.md:48, ADR-0011). If `OPENAI_API_KEY` is set
+    // in the environment we MUST abort — that is the API-key path which is
     // explicitly PROHIBITED. Use the OAuth `auth.json` flow exclusively.
     if let Ok(_key) = std::env::var("OPENAI_API_KEY") {
         let mut cmd = Command::new("false");
         cmd.env_clear();
         cmd.env("PATH", "/nonexistent");
         cmd.arg("--oauth-only-violation-openai-api-key-set");
+        cmd.arg("--oauth-only-resolution-use-codex-auth-json-or-openai-base-url");
         return cmd;
     }
 
@@ -269,52 +271,18 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
     std::fs::write(&args.schema_path, args.json_schema).ok();
 
     let mut cmd = Command::new(args.binary);
-    cmd.env_clear();
-    // OAuth flow: `CODEX_ACCESS_TOKEN` (Bearer) is whitelisted.
-    // `OPENAI_API_KEY` is INTENTIONALLY ABSENT.
-    // v1.0.77: CODEX_HOME is overridden to an isolated dir (see below)
-    // to prevent loading ~/.codex/config.toml trust_level and sandbox_mode.
-    for var in &[
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "TERM",
-        "LANG",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_RUNTIME_DIR",
-        "XDG_CACHE_HOME",
-        "CODEX_ACCESS_TOKEN",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "DYLD_FALLBACK_LIBRARY_PATH",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
+    // v1.0.83 (ADR-0041): env whitelist delegated to the shared helper.
+    // `OPENAI_API_KEY` is INTENTIONALLY ABSENT (defence-in-depth).
+    // `CODEX_ACCESS_TOKEN` and `OPENAI_BASE_URL` ARE whitelisted for
+    // custom providers via the canonical list in src/spawn/env_whitelist.rs.
+    apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
+
     // v1.0.77: point CODEX_HOME at an isolated dir that only contains
     // auth.json — this prevents the codex subprocess from loading
     // ~/.codex/config.toml (which has trust_level=trusted for the project,
     // causing sandbox escalation per openai/codex#18113).
     if let Some(isolated) = prepare_isolated_codex_home_spawn() {
         cmd.env("CODEX_HOME", isolated);
-    }
-
-    #[cfg(windows)]
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
     }
 
     // v1.0.77: `-c` TOML overrides bypass the codex exec --sandbox propagation

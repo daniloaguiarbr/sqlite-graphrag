@@ -2,50 +2,19 @@
 //!
 //! Eliminates duplication between `enrich.rs` and `ingest_claude.rs` (G02).
 //! Detects `terminal_reason: "max_turns"` in the JSON output (G03).
+//!
+//! v1.0.83 (ADR-0041): env whitelist now delegates to
+//! `crate::spawn::env_whitelist::apply_env_whitelist` so the canonical list
+//! lives in one place. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` remain
+//! INTENTIONALLY ABSENT (defence-in-depth alongside the OAuth-only guards).
 
 use crate::errors::AppError;
+use crate::spawn::env_whitelist::apply_env_whitelist;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// Minimum Claude Code version required for structured JSON output.
 const MIN_CLAUDE_VERSION: &str = "2.1.0";
-
-/// Environment variables whitelisted for the subprocess.
-const ENV_WHITELIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "SHELL",
-    "TERM",
-    "LANG",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_RUNTIME_DIR",
-    // NOTE: `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT from this whitelist
-    // (gaps.md:47). The OAuth-only flow uses the session token from
-    // `~/.claude/.credentials.json` (or the OS keychain), not an env var.
-    // The OAuth-only guard in `build_claude_command` aborts the spawn if
-    // `ANTHROPIC_API_KEY` is set in the environment, but defence-in-depth
-    // also requires the variable to never reach the child process.
-    "CLAUDE_CONFIG_DIR",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "DYLD_FALLBACK_LIBRARY_PATH",
-];
-
-/// Windows-only environment variables.
-#[cfg(windows)]
-const ENV_WHITELIST_WINDOWS: &[&str] = &[
-    "LOCALAPPDATA",
-    "APPDATA",
-    "USERPROFILE",
-    "SystemRoot",
-    "COMSPEC",
-    "PATHEXT",
-    "HOMEPATH",
-    "HOMEDRIVE",
-];
 
 /// Default virtual memory limit for LLM subprocesses (4 GiB).
 #[cfg(target_os = "linux")]
@@ -267,35 +236,29 @@ pub fn build_claude_command(
     model: Option<&str>,
     max_turns: u32,
 ) -> Command {
-    // OAuth-only guard (gaps.md:47). If `ANTHROPIC_API_KEY` is set in the
-    // environment we MUST abort — that is the API-key path which is
-    // explicitly PROHIBITED. Use the OAuth flow exclusively.
+    // OAuth-only guard (gaps.md:47, ADR-0011). If `ANTHROPIC_API_KEY` is
+    // set in the environment we MUST abort — that is the API-key path
+    // which is explicitly PROHIBITED. Use the OAuth flow exclusively.
     if let Ok(_key) = std::env::var("ANTHROPIC_API_KEY") {
         // Return a command that will fail loudly at spawn time. We
         // intentionally do NOT pass `--bare` (PROHIBITED) and we do NOT
-        // allow the API-key path at all.
+        // allow the API-key path at all. The second marker arg is the
+        // orientative hint surfaced via the diagnostic pipeline (ADR-0041).
         let mut cmd = Command::new("false");
         cmd.env_clear();
         cmd.env("PATH", "/nonexistent");
         cmd.arg("--oauth-only-violation-anthropic-api-key-set");
+        cmd.arg("--oauth-only-resolution-use-anthropic-auth-token");
         return cmd;
     }
 
     let mut cmd = Command::new(binary);
 
-    cmd.env_clear();
-    for var in ENV_WHITELIST {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    #[cfg(windows)]
-    for var in ENV_WHITELIST_WINDOWS {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
+    // v1.0.83 (ADR-0041): env whitelist delegated to
+    // `crate::spawn::env_whitelist::apply_env_whitelist`. The single source of
+    // truth lives in `src/spawn/env_whitelist.rs`; do NOT reintroduce a
+    // local whitelist here.
+    apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
 
     // G28-A: if the user has pointed us at an empty config dir, force Claude
     // Code to use it (which suppresses user-scoped MCP servers and hooks).

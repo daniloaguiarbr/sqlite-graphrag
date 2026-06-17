@@ -43,6 +43,7 @@ sqlite-graphrag --version
 ## Why sqlite-graphrag?
 ### Differentiators against cloud RAG stacks
 - **OAuth-only LLM flow** — no API keys ever in the environment; the spawn ABORTS if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set (defence in depth since v1.0.69)
+- **Custom Anthropic-compatible providers (v1.0.83+)** — preserves `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` so Claude Code can route to MiniMax, OpenRouter or corporate gateways without breaking the OAuth-only mandate. Set `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` (or `--strict-env-clear`) for compliance environments that forbid credential forwarding.
 - **No recurring embedding fees** — embeddings come from your existing Claude Pro / Max or ChatGPT Pro subscription
 - Single-file SQLite storage replaces Docker clusters of vector databases entirely
 - Graph-native retrieval beats pure vector RAG on multi-hop questions by design

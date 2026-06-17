@@ -13,6 +13,7 @@ use crate::commands::ingest::IngestArgs;
 use crate::entity_type::EntityType;
 use crate::errors::AppError;
 use crate::paths::AppPaths;
+use crate::spawn::env_whitelist::apply_env_whitelist;
 use crate::storage::connection::{ensure_db_ready, open_rw};
 use crate::storage::entities::{self, NewEntity, NewRelationship};
 use crate::storage::memories::{self, NewMemory};
@@ -295,44 +296,9 @@ fn extract_with_claude(
 
     let mut cmd = Command::new(binary);
 
-    cmd.env_clear();
-    for var in &[
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "TERM",
-        "LANG",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_RUNTIME_DIR",
-        // NOTE: `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT (gaps.md:47).
-        "CLAUDE_CONFIG_DIR",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "DYLD_FALLBACK_LIBRARY_PATH",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
-
-    #[cfg(windows)]
-    for var in &[
-        "LOCALAPPDATA",
-        "APPDATA",
-        "USERPROFILE",
-        "SystemRoot",
-        "COMSPEC",
-        "PATHEXT",
-        "HOMEPATH",
-        "HOMEDRIVE",
-    ] {
-        if let Ok(val) = std::env::var(var) {
-            cmd.env(var, val);
-        }
-    }
+    // v1.0.83 (ADR-0041): env whitelist delegated to the shared helper.
+    // `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT (defence-in-depth).
+    apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
 
     // Canonical OAuth-only command line (gaps.md:201-208 + 211-213).
     // `--bare` is PROHIBITED (gaps.md:49) — never emitted.

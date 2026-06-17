@@ -5,6 +5,30 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 ## [Sem Versão]
 
+## [1.0.83] - 2026-06-17
+
+### Corrigido
+- `claude_runner`, `codex_spawn` e `ingest_claude` agora preservam credenciais de provider customizado (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`) no ambiente do subprocesso. Habilita uso de providers Anthropic-compatible (MiniMax/api.minimax.io, OpenRouter, gateways corporativos) sem alterar o mandato OAuth-only que continua rejeitando `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. Resolve parcialmente o gap G58 (fallback de `recall`/`hybrid-search` sob fadiga OAuth).
+
+### Adicionado
+- Novo módulo helper `src/spawn/env_whitelist.rs` consolidando a lógica de whitelist duplicada entre três spawners. Expõe `apply_env_whitelist(cmd, strict)` e `is_strict_env_clear()`.
+- Nova flag global `--strict-env-clear` (env: `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`) para ambientes de compliance que proíbem encaminhamento de credenciais via env vars. Modo estrito preserva apenas `PATH`.
+- Args de marcador orientativo `--oauth-only-resolution-use-anthropic-auth-token` (claude) e `--oauth-only-resolution-use-codex-auth-json-or-openai-base-url` (codex) expostos via pipeline de diagnóstico quando o guard OAuth-only dispara.
+- Novos testes de integração em `tests/claude_runner_env.rs` (5 cenários) cobrindo propagação de provider customizado, abort OAuth-only, herança de base-url pelo codex, queda de credenciais em modo estrito, e auditoria de ausência de leak de token.
+- Novo ADR `adr-0041-preserve-custom-provider-env.md` (EN + pt-BR) justificando a mudança arquitetural.
+
+### Alterado
+- `Cargo.toml`: versão `1.0.82` → `1.0.83`
+- `src/commands/claude_runner.rs`: removidas constantes locais `ENV_WHITELIST`/`ENV_WHITELIST_WINDOWS`; agora delega para `apply_env_whitelist()`.
+- `src/commands/codex_spawn.rs`: removido array inline de whitelist (linhas 277-293 anteriores); agora delega para `apply_env_whitelist()`. Isolamento de `CODEX_HOME` preservado como override de runtime após a chamada do helper.
+- `src/commands/ingest_claude.rs`: removidos arrays inline de whitelist; agora delega para `apply_env_whitelist()`.
+
+### Suite de Testes
+- 3 testes unitários em `src/spawn/env_whitelist.rs` (`whitelist_includes_custom_provider_vars`, `whitelist_excludes_api_key_vars`, `strict_mode_drops_credentials`).
+- 5 testes de integração em `tests/claude_runner_env.rs` (herméticos, sem rede).
+- 0 regressões em 807+ testes pré-existentes (8 testes seriais OAuth-only permanecem verdes).
+
+
 ## [1.0.82] - 2026-06-15
 
 ### Adicionado

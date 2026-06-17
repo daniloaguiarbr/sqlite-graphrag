@@ -7,6 +7,7 @@
 pub mod claude_adapter;
 pub mod codex_adapter;
 pub mod compat_matrix;
+pub mod env_whitelist;
 pub mod error_propagator;
 pub mod executor_version;
 pub mod opencode_adapter;

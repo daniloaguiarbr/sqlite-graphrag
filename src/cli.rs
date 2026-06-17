@@ -84,6 +84,23 @@ pub struct Cli {
     #[arg(long, global = true, hide = true, default_value_t = false)]
     pub skip_memory_guard: bool,
 
+    /// v1.0.83 (ADR-0041): strict env-clear mode for compliance environments.
+    ///
+    /// When enabled, the LLM subprocess receives ONLY `PATH` — no
+    /// `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`
+    /// or other custom-provider credentials are forwarded. Defaults to
+    /// the standard v1.0.83 whitelist that preserves custom-provider
+    /// credentials (ADR-0041). Honors env var
+    /// `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` when set.
+    #[arg(
+        long,
+        global = true,
+        hide = true,
+        default_value_t = false,
+        env = "SQLITE_GRAPHRAG_STRICT_ENV_CLEAR"
+    )]
+    pub strict_env_clear: bool,
+
     /// Language for human-facing stderr messages. Accepts `en` or `pt`.
     ///
     /// Without the flag, detection falls back to `SQLITE_GRAPHRAG_LANG` and then
