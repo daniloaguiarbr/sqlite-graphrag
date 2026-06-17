@@ -1,3 +1,94 @@
+## How To Use Custom Anthropic-Compatible Providers (v1.0.83+)
+
+### Problem
+- You want to use Minimax/api.minimax.io, OpenRouter, AWS Bedrock, or a corporate Anthropic-compatible gateway
+- The v1.0.69 OAuth-only mandate rejects `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the spawn environment
+- The v1.0.76+ env-clear whitelist accidentally stripped `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` along with the prohibited vars
+- You get `exit 11` with `401 Invalid authentication credentials` in stderr and orphan rows growing in `pending_embeddings`
+
+
+### Solution
+Set the custom-provider env vars in your shell profile; sqlite-graphrag forwards them automatically:
+
+```bash
+# For Minimax (canonical scenario for this fix)
+export ANTHROPIC_AUTH_TOKEN="sk-cp-your-minimax-token"
+export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+
+# For OpenRouter (uses Anthropic-compatible endpoint)
+export ANTHROPIC_AUTH_TOKEN="sk-or-your-openrouter-token"
+export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
+
+# For AWS Bedrock (Anthropic-compatible endpoint)
+export ANTHROPIC_AUTH_TOKEN="your-bedrock-token"
+export ANTHROPIC_BASE_URL="https://bedrock-runtime.us-east-1.amazonaws.com/anthropic"
+
+# For a corporate gateway
+export ANTHROPIC_AUTH_TOKEN="your-corp-token"
+export ANTHROPIC_BASE_URL="https://llm-gateway.corporate.internal/anthropic"
+
+# Verify with smoke test
+sqlite-graphrag remember \
+  --name v183-custom-provider \
+  --type note \
+  --description "custom provider smoke test" \
+  --body "if you can read this, the custom provider is wired correctly"
+sqlite-graphrag read --name v183-custom-provider --json | jaq '.body'
+```
+
+
+### Explanation
+- v1.0.83 (ADR-0041) preserves six custom-provider env vars when spawning the LLM subprocess: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+- The OAuth-only guard at `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, and `extract/llm_embedding.rs:237-253` is preserved; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` still abort the spawn with `exit 1`
+- The shared helper `src/spawn/env_whitelist.rs` exposes `apply_env_whitelist(cmd, strict)` so the three spawners delegate instead of inlining the array
+- Default mode is permissive — no manual flag needed to enable custom-provider env forwarding
+- Resolves GAP-058 partially by routing around OAuth quota contention; `recall`/`hybrid-search` stay deterministic when official OAuth quotas are exhausted
+
+
+### Compliance Mode (Strict env-clear)
+For PCI-DSS, SOC2, or HIPAA environments that forbid credential forwarding via env vars:
+
+```bash
+# Per-invocation
+sqlite-graphrag remember --name my-memory --body "x" --strict-env-clear
+
+# Session-wide
+export SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1
+sqlite-graphrag remember --name my-memory --body "x"
+```
+
+In strict mode, only `PATH` is preserved. The custom-provider vars stay in the parent process; the subprocess routes via OAuth subscription or fails explicitly.
+
+
+### Common Pitfalls
+
+| Symptom | Root Cause | Fix |
+| --- | --- | --- |
+| `exit 11` with `401 Invalid authentication credentials` | v1.0.82 or earlier; env_clear stripped the token | Upgrade to v1.0.83 (`cargo install sqlite-graphrag --version 1.0.83 --force`) |
+| `exit 1` with `OAuth-only mandate violated` | `ANTHROPIC_API_KEY` is set; guard rejects it | Unset `ANTHROPIC_API_KEY`; use `ANTHROPIC_AUTH_TOKEN` instead |
+| Embedding succeeds but `recall` returns nothing | Provider returned different dimensionality than the database | Run `sqlite-graphrag enrich --operation re-embed --limit 100` to refresh embeddings at the active provider's dim |
+| Token appears in stderr logs | (should never happen; audit test enforces) | File a bug with stderr capture; the no-leak test `audit_no_token_leak_in_subprocess_stderr` enforces this invariant |
+
+
+### Verification That The Fix Worked
+
+```bash
+# 1. Confirm version
+sqlite-graphrag --version   # must report 1.0.83
+
+# 2. Confirm env propagates to subprocess
+export ANTHROPIC_AUTH_TOKEN="sk-cp-test-12345"
+sqlite-graphrag remember --name v183-verify --body "x" 2> /tmp/stderr.log
+grep -F "sk-cp-test-12345" /tmp/stderr.log   # must return nothing
+
+# 3. Confirm OAuth-only abort still works
+export ANTHROPIC_API_KEY="sk-ant-violation"
+sqlite-graphrag remember --name v183-oauth-abort --body "x"
+echo $?   # must print 1
+unset ANTHROPIC_API_KEY
+```
+
+See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural decision.
 # sqlite-graphrag Cookbook
 
 

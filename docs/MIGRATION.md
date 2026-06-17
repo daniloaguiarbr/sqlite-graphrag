@@ -1,3 +1,151 @@
+# MIGRATING TO v1.0.83 — Custom Provider Credential Preservation (ADR-0041)
+
+> This guide is for operators on v1.0.82 who want to upgrade to v1.0.83 without losing data. This release is a PATCH bump with NO database migration. Schema stays at v15. Behaviour is ADDITIVE for default OAuth operators.
+
+## What Changed in v1.0.83
+
+- **GAP-058 partial resolution (ADR-0041)** — six custom-provider env vars are now preserved when spawning `claude -p` or `codex exec` subprocesses. Enables Anthropic-compatible providers (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, corporate gateways) without altering the OAuth-only mandate that continues to reject `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. The preserved vars are `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- **Shared whitelist helper** — the previously duplicated `env_clear` + re-injection logic in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs` is consolidated in `src/spawn/env_whitelist.rs`. The three spawners delegate to `apply_env_whitelist(cmd, strict)` instead of inlining the array.
+- **Compliance opt-out flag** — `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` enables strict mode that preserves only `PATH`. Use in PCI-DSS, SOC2, HIPAA environments where credential forwarding via env vars is forbidden by policy. Without this flag, the default is to forward the six custom-provider vars alongside the OAuth-only rejection guard.
+- **OAuth-only guard stays intact** — the four guards in `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, and `extract/llm_embedding.rs:237-253` still abort the spawn with `AppError::Validation` (exit 1) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` are set. The error message now points to `ANTHROPIC_AUTH_TOKEN` and `~/.codex/auth.json` as legitimate resolutions.
+- **NO telemetry** — the fix is silent. No new `tracing::info!` macro logs which provider the operator is using. The no-leak audit test in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`.
+- **6 new regression tests** — `tests/claude_runner_env.rs` covers custom-provider propagation, OAuth-only abort preservation, codex base-URL inheritance, strict-mode credential dropping, and the no-leak audit. All carry `#[serial_test::serial(env)]`.
+
+## Who Is Affected
+
+- All v1.0.82 users running custom Anthropic-compatible providers (Minimax, OpenRouter, AWS Bedrock, corporate gateways) — previously had `exit 11` embedding failures with `401 Invalid authentication credentials` in stderr (G58 S5 scenario)
+- Default OAuth operators (Claude Pro/Max, ChatGPT Pro) are UNAFFECTED — the guard rejects `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` identically to v1.0.82
+- Shared-host operators with strict credential policy should set `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` BEFORE running the new binary to avoid inadvertently forwarding secrets
+- Library consumers see ONE additive public symbol: `crate::spawn::env_whitelist::{apply_env_whitelist, is_strict_env_clear, PRESERVED_ENV_VARS}` — re-pin to `=1.0.83`
+
+## Semantic Distinction the Fix Resolves
+
+- `ANTHROPIC_API_KEY` — paid Anthropic API key (`sk-ant-...`), PROHIBITED by ADR-0011 OAuth-only mandate
+- `ANTHROPIC_AUTH_TOKEN` — OAuth token used by Claude Code with custom provider, semantically distinct and now PRESERVED
+- `OPENAI_API_KEY` — paid OpenAI API key, PROHIBITED
+- `OPENAI_BASE_URL` — endpoint override for custom OpenAI-compatible providers, now PRESERVED
+- `ANTHROPIC_BASE_URL` — endpoint override for custom Anthropic-compatible providers, now PRESERVED
+
+The v1.0.69 mandate was correct in rejecting the paid-API vars; the env-clear whitelist was overly broad and accidentally stripped the legitimate custom-provider vars too. v1.0.83 corrects the implementation while preserving the OAuth-only invariant.
+
+## How to Upgrade
+
+```bash
+# 1. Backup before upgrade (recommended, mirrors v1.0.82 pattern)
+sqlite-graphrag backup --output /var/backups/graphrag-pre-v1-0-83.sqlite --json
+
+# 2. Install the new version
+cargo install sqlite-graphrag --version 1.0.83 --force
+sqlite-graphrag --version   # should report 1.0.83
+
+# 3. NO migration needed — schema stays at v15
+sqlite-graphrag health --json | jaq '.schema_version'   # confirm 15
+
+# 4. For Minimax operators (the canonical scenario for this fix)
+export ANTHROPIC_AUTH_TOKEN="sk-cp-your-minimax-token"
+export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+
+# 5. Smoke test — validates custom-provider env propagates to subprocess
+sqlite-graphrag remember \
+  --name v183-smoke \
+  --type note \
+  --description "v1.0.83 custom provider smoke test" \
+  --body "if you can read this, the custom provider is wired correctly"
+
+# 6. Verify embedding was written
+sqlite-graphrag read --name v183-smoke --json | jaq '.body, .memory_id'
+sqlite-graphrag health --json | jaq '.counts.memories'
+
+# 7. For shared hosts with strict policy (compliance)
+export SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1
+# OR pass --strict-env-clear per-invocation
+sqlite-graphrag remember --name v183-strict --body "x" --strict-env-clear
+```
+
+## What Happens Automatically
+
+- All v1.0.82 commands behave identically for default OAuth operators — no flag changes required
+- The six custom-provider vars are now forwarded ONLY when set in the operator's environment (no manual enabling needed)
+- The strict-mode opt-out is the only operator-actionable change; default remains permissive
+- The OAuth-only guard's error message now references `ANTHROPIC_AUTH_TOKEN` and `~/.codex/auth.json` as legitimate resolutions when an operator mistakenly sets `ANTHROPIC_API_KEY`
+- Test count increases from 812 to 818 (6 new serial env tests)
+
+## Library API Pinning
+
+If you depend on the lib API, pin to the EXACT version in `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.83"
+```
+
+The `^1.0` shorthand keeps you on the CLI-stability track. The `^1.0.83` shorthand allows 1.0.83..<1.1.0, which can include a future 1.0.84 with lib-breaking changes.
+
+## What Breaks
+
+- **NONE for default OAuth operators** — behaviour identical to v1.0.82
+- **Library consumers who enumerate `PRESERVED_ENV_VARS` length** — the slice gained 4 entries (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`); non-exhaustive patterns are unaffected
+- **Operators who relied on `ANTHROPIC_AUTH_TOKEN` being stripped** — unlikely scenario but possible: the var now reaches the subprocess, which may change LLM-side behaviour. Use `--strict-env-clear` to restore v1.0.82 semantics
+
+## Verification Scenarios
+
+### Scenario A — Default OAuth operator (no custom provider)
+
+```bash
+unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+sqlite-graphrag remember --name test-oauth-default --body "x"
+# Expected: exit 0, OAuth subscription used, identical to v1.0.82
+```
+
+### Scenario B — Minimax custom provider
+
+```bash
+export ANTHROPIC_AUTH_TOKEN="sk-cp-minimax-test"
+export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+sqlite-graphrag remember --name test-minimax --body "x"
+# Expected: exit 0, custom provider routed, no 401 in stderr
+```
+
+### Scenario C — OAuth-only abort preserved
+
+```bash
+unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+export ANTHROPIC_API_KEY="sk-ant-violation"
+sqlite-graphrag remember --name test-oauth-abort --body "x"
+# Expected: exit 1, stderr mentions OAuth-only mandate and ANTHROPIC_AUTH_TOKEN as resolution
+```
+
+### Scenario D — Strict compliance mode
+
+```bash
+export ANTHROPIC_AUTH_TOKEN="sk-cp-strict-test"
+export SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1
+sqlite-graphrag remember --name test-strict --body "x"
+# Expected: subprocess receives ONLY PATH; ANTHROPIC_AUTH_TOKEN is NOT forwarded
+# Confirms compliance posture: secrets stay in parent process
+```
+
+### Scenario E — No token leak audit
+
+```bash
+export ANTHROPIC_AUTH_TOKEN="sk-cp-secret-value-XYZ-12345"
+export RUST_LOG=trace
+sqlite-graphrag remember --name test-no-leak --body "x" 2> /tmp/stderr.log
+# Expected: literal token NEVER appears in /tmp/stderr.log
+# Validated by audit_no_token_leak_in_subprocess_stderr in tests/claude_runner_env.rs
+```
+
+## Rollback
+
+If v1.0.83 is not working for you:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.82 --force
+```
+
+Your database is unchanged. v1.0.83 made no schema modifications; v1.0.82 reads the same SQLite file.
+
+To restore v1.0.82 behaviour for shared hosts without rolling back, set `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` — only PATH will be forwarded.
 # MIGRATING TO v1.0.80 — Stability Policy, Windows Infra, SHUTDOWN Resilience
 
 > This guide is for operators on v1.0.79 who want to upgrade to v1.0.80 without losing data. This release is a PATCH bump with NO database migration.

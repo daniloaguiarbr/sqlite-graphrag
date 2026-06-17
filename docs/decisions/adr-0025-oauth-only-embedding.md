@@ -85,3 +85,17 @@ that exports them cannot bypass the check.
   green — the EmbeddingFlavour enum serializes correctly.
 - `claude_runner.rs::tests::*` and `codex_spawn.rs::tests::*`:
   the canonical 7-flag set is preserved across all spawn paths.
+
+## Related Decisions
+
+- ADR-0011 — OAuth-only mandate (the policy this ADR reaffirms at the
+  embedding layer).
+- ADR-0041 — Custom Provider Credential Preservation (v1.0.83). The
+  OAuth-only guard in `extract/llm_embedding.rs:237-253` still
+  rejects `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`; ADR-0041 extends the
+  env-clear whitelist so legitimate custom-provider vars
+  (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`)
+  reach the subprocess. The two ADRs compose: ADR-0011/0025
+  reject the paid API keys; ADR-0041 preserves the OAuth tokens
+  and base-URL overrides for Anthropic-compatible providers like
+  Minimax, OpenRouter, AWS Bedrock, and corporate gateways.

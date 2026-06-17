@@ -442,6 +442,67 @@
 - Dica de ouro é reusar o mesmo namespace entre todos os modelos roteados para contexto coeso
 
 
+## Minimax (desde v1.0.83 — ADR-0041)
+### Provider Anthropic-Compatível — MiniMax/api.minimax.io
+- Receita pronta para rotear Claude Code através de qualquer endpoint Anthropic-compatível sem violar o mandato OAuth-only
+- Embora a guarda OAuth-only continue rejeitando `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` com exit 1 (defesa em profundidade desde v1.0.69), a nova whitelist preserva `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY` e `OTEL_EXPORTER_OTLP_ENDPOINT`
+- Propósito é habilitar providers Anthropic-compatíveis (MiniMax/api.minimax.io, OpenRouter, rotas customizadas do AWS Bedrock, gateways corporativos) sem forçar operadores a pagar pela rota oficial de chave de API Anthropic
+- Use as variáveis de ambiente abaixo antes de invocar qualquer comando `sqlite-graphrag` que dispara embedding (`remember`, `edit`, `ingest --mode claude-code`)
+- Versão mínima requer `sqlite-graphrag` 1.0.83 ou posterior; releases anteriores vão spawnar o subprocesso sem as vars do provider customizado e o provider retornará `401 Invalid authentication credentials`
+- Documentação oficial em https://platform.minimax.io/document e `docs/decisions/adr-0041-preserve-custom-provider-env.md` explica a justificativa arquitetural
+- Dica de ouro é verificar a alcançabilidade do provider com `curl -fsS "$ANTHROPIC_BASE_URL/v1/models" -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN"` antes de rodar qualquer comando `sqlite-graphrag`
+
+### Bloco de Configuração
+```bash
+# Configure uma vez por sessão de shell antes de invocar sqlite-graphrag
+export ANTHROPIC_AUTH_TOKEN="sk-cp-seu-token-do-provider"
+export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+# Opcional: opt-out de encaminhamento de telemetria do subprocesso
+export DISABLE_TELEMETRY="1"
+# Opcional: roteia OpenTelemetry para collector local em vez do padrão do provider
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+```
+
+### Smoke Test
+```bash
+# 1. Verifica que o provider retorna modelos para o token configurado
+curl -fsS "$ANTHROPIC_BASE_URL/v1/models" \
+  -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+  | head -c 200 && echo
+
+# 2. Persiste uma memória de smoke test através do provider customizado
+sqlite-graphrag remember \
+  --name smoke-test-minimax-v183 \
+  --type note \
+  --description "validacao do provider customizado via v1.0.83" \
+  --body "smoke test executado em $(date -u +%FT%TZ)" \
+  --graph-stdin <<'EOF'
+{
+  "body": "smoke test executado em $(date -u +%FT%TZ)",
+  "entities": [
+    {"name": "minimax", "entity_type": "tool", "description": "Provider Anthropic-compatível"}
+  ],
+  "relationships": []
+}
+EOF
+
+# 3. Confirma que o embedding aterrissou em memory_embeddings (não NULL)
+sqlite-graphrag read --name smoke-test-minimax-v183 --json | jaq '{name, memory_id, has_embedding: (.body | length > 0)}'
+
+# 4. Roda recall para verificar que o embedding participa da busca vetorial
+sqlite-graphrag recall "validacao do provider customizado" --k 3 --json | jaq '.results[] | {name, score}'
+```
+
+### Troubleshooting 401 Invalid Authentication Credentials
+- **Sintoma**: `sqlite-graphrag remember` retorna exit 11 com `claude exited with exit status: 1: stderr=` (ou equivalente `codex`)
+- **Causa**: as env vars `ANTHROPIC_AUTH_TOKEN` ou `ANTHROPIC_BASE_URL` NÃO chegaram ao subprocesso (sqlite-graphrag antigo, modo estrito, ou wrapping de shell que remove env)
+- **Caminhos de resolução**:
+  - Confirme que `sqlite-graphrag --version` reporta `1.0.83` ou posterior
+  - Confirme que as env vars estão exportadas no MESMO shell onde o comando roda (não shell pai, não `.envrc` consumido só pelo direnv)
+  - Rode `env | rg "ANTHROPIC_(AUTH_TOKEN|BASE_URL)"` para confirmar presença
+  - Se o host impõe isolamento de env vars, remova o override de modo estrito: `unset SQLITE_GRAPHRAG_STRICT_ENV_CLEAR` ou remova `--strict-env-clear`
+  - Capture o erro exato com `RUST_LOG=trace sqlite-graphrag remember ... 2> trace.log` e procure por `apply_env_whitelist`
+- **Confirmação de defesa em profundidade**: a guarda OAuth-only ainda rejeita `ANTHROPIC_API_KEY` se acidentalmente setada; verifique com `export ANTHROPIC_API_KEY=sk-ant-test && sqlite-graphrag remember --name test --body x` retornando exit 1
 ## Shells POSIX
 ### Bash Zsh Fish PowerShell — Qualquer Versão
 - Receita pronta para colar em alias ou script de shell, zero custo, pipes funcionam imediatamente

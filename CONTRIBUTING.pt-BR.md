@@ -121,6 +121,17 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Publicação final no crates.io é feita manualmente com `cargo publish --locked`
 
 ## Releases Recentes
+### v1.0.83 - 2026-06-17 — Preservação de Credenciais de Provider Customizado (ADR-0041)
+- **Providers Anthropic-compatíveis customizados** agora funcionam de ponta a ponta: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY` e `OTEL_EXPORTER_OTLP_ENDPOINT` fluem do processo orquestrador para o subprocesso `claude -p` / `codex exec`. Provider MiniMax/api.minimax.io (que motivou esta release), OpenRouter, rotas customizadas do AWS Bedrock e gateways Anthropic-compatíveis corporativos agora são cidadãos de primeira classe
+- **Mandato OAuth-only intacto** como defesa em profundidade: as guardas em `claude_runner.rs`, `codex_spawn.rs` e `ingest_claude.rs` ainda rejeitam `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` com `AppError::Validation` (exit 1). Os oito testes pré-existentes `#[serial_test::serial(env)]` em `claude_runner.rs` e `codex_spawn.rs` permanecem verdes
+- **DRY achieved** via novo módulo helper `src/spawn/env_whitelist.rs` expondo `apply_env_whitelist(cmd, strict)` e `is_strict_env_clear()`. Os três spawners (`claude_runner`, `codex_spawn`, `ingest_claude`) delegam ao helper em vez de carregar arrays inline idênticos
+- **Compliance opt-in** via flag `--strict-env-clear` / env `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`. Modo estrito preserva apenas `PATH` e descarta todas as outras env vars; atende ambientes PCI-DSS, SOC2 e HIPAA que proíbem encaminhamento de credenciais via env vars
+- **Novos testes de regressão** em `tests/claude_runner_env.rs` (311 linhas, cinco cenários `#[serial_test::serial(env)]`): propagação de provider customizado, preservação do aborto OAuth-only, herança de base-URL pelo codex, descarte de credenciais no modo estrito e auditoria de no-leak que varre o stderr do subprocesso procurando o valor literal do token com `RUST_LOG=trace`. Três testes unitários companheiros vivem em `src/spawn/env_whitelist.rs::tests`
+- **Nenhuma telemetria emitida** pela própria correção; as únicas novas linhas de log são os warnings da guarda OAuth-only agora aumentados com args de marcador orientativos `--oauth-only-resolution-use-anthropic-auth-token` (claude) e `--oauth-only-resolution-use-codex-auth-json-or-openai-base-url` (codex)
+- **Um novo ADR**: `docs/decisions/adr-0041-preserve-custom-provider-env.md` (PT-BR + EN) explicando por que as env vars de provider customizado são preservadas, por que `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` permanecem rejeitadas, as três alternativas consideradas (flag opt-in, documentação de workaround, refator completo dos spawners) e cross-references a `gap-g58-recall-sem-fallback-deterministic-2026-06-13` (parcialmente resolvido por esta release)
+- **Atualizações de documentação** em `gaps.md` (nova seção GAP-006), `SECURITY.md` / `SECURITY.pt-BR.md` (nova seção "v1.0.83 Preservação de Credenciais de Provider Customizado" após a seção v1.0.76 OAuth-Only existente, mais dois novos bullets em Melhores Práticas), `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` (nova seção "Minimax (desde v1.0.83)" entre OpenRouter e Shells POSIX com bloco de configuração, smoke test e checklist de troubleshooting 401), `README.md` / `README.pt-BR.md` (entrada Custom Anthropic-compatible providers no topo do bloco de Destaques) e `CHANGELOG.md` / `CHANGELOG.pt-BR.md` (entrada completa sob `[1.0.83]`)
+- 818 testes lib + 6 testes unitários env-whitelist + 5 testes de integração passam; `cargo clippy --all-targets --all-features -- -D warnings` zero warnings; `cargo fmt --all --check` limpo
+- Veja `gaps.md` GAP-006, entrada `CHANGELOG.md` v1.0.83 e `docs/decisions/adr-0041-preserve-custom-provider-env.md` para a justificativa completa da mudança
 ### v1.0.76 - 2026-06-07 — Apenas LLM One-Shot, Credencial LLM Apenas OAuth
 - **MUDANÇA ARQUITETURAL QUEBRANTE**: o build padrão não embute mais nenhum modelo local. Toda geração de embedding, NER e busca vetorial delega para `claude -p` ou `codex exec` headless (OAuth, sem MCP, sem hooks). A CLI é one-shot. Binário cai de 39 MB para ~6 MB.
 - **Crates removidos**: `fastembed 5.13.4`, `ort 2.0.0-rc.12`, `ndarray 0.16`, `tokenizers 0.22`, `huggingface-hub 0.4`, `sqlite-vec 0.1.9`
@@ -151,7 +162,7 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - [ ] `cargo check --all-targets` passa
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` reporta zero warnings
 - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` reporta zero warnings
-- [ ] `cargo test --lib` reporta 692 passed, 0 failed
+- [ ] `cargo test --lib` reporta 818 passed, 0 failed (era 692 antes da v1.0.83)
 - [ ] `cargo test --test terminal_compile_windows` reporta 2 passed
 - [ ] Título do PR está em inglês e segue Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`, `build:`, `perf:`)
 - [ ] Sem trailer `Co-authored-by: ...` para qualquer agente de IA (Claude, Codex, GPT, Copilot, Cursor, Gemini, Anthropic, OpenAI)

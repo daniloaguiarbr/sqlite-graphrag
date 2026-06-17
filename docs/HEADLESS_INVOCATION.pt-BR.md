@@ -1,3 +1,11 @@
+## Preservação de Env de Custom Provider em Invocação Headless (v1.0.83+)
+- O pipeline de invocação headless (`claude_runner`, `codex_spawn`, `ingest_claude`) agora preserva seis env vars de custom-provider ao spawnar subprocessos: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+- Os três spawners delegam para `apply_env_whitelist(cmd, strict)` de `src/spawn/env_whitelist.rs` em vez de inlinear o array de whitelist. Isso elimina o drift entre os três blocos duplicados de `env_clear` + re-injeção
+- O guard OAuth-only em `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, `extract/llm_embedding.rs:237-253` permanece inalterado; `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` ainda abortam com `AppError::Validation` (exit 1) e a nova mensagem de erro referencia `ANTHROPIC_AUTH_TOKEN` e `~/.codex/auth.json` como resoluções legítimas
+- Nova flag global `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` ativa modo estrito que preserva apenas `PATH`. Use em ambientes compliance (PCI-DSS, SOC2, HIPAA) onde encaminhamento de credenciais via env vars é proibido por política
+- As 7 flags de endurecimento para `claude -p` (`--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema` mais model e prompt) e o conjunto canônico para `codex exec` permanecem inalterados. A mudança no whitelist de env é puramente aditiva no passo de whitelist entre `env_clear()` e a construção das flags canônicas
+- Sem telemetria nova: o fix é silencioso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
+- Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` para a justificativa arquitetural completa
 # Invocação Headless — Claude Code, Codex, OpenCode sem MCP e sem Hooks
 
 > Como invocar LLMs headless neste projeto sem herdar MCPs ou hooks do ambiente, mantendo o login OAuth de assinatura.

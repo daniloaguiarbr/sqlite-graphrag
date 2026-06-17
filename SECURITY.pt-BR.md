@@ -65,6 +65,16 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa e `docs/decisions/adr-0025-oauth-only-embedding.md` para a aplicação específica em embedding da v1.0.76.
 - Migração: qualquer operador que dependa de `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` precisa migrar para OAuth antes de atualizar.
 
+## v1.0.83 Preservação de Credenciais de Provider Customizado (ADR-0041)
+- O build padrão agora PRESERVA sete variáveis de ambiente de provider customizado ao spawnar subprocessos `claude -p` ou `codex exec`, habilitando providers Anthropic-compatíveis (MiniMax/api.minimax.io, OpenRouter, AWS Bedrock, gateways corporativos)
+- As variáveis preservadas são `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY` e `OTEL_EXPORTER_OTLP_ENDPOINT`
+- Essas variáveis são SEMANTICAMENTE DISTINTAS das rejeitadas pelo OAuth-only `ANTHROPIC_API_KEY` e `OPENAI_API_KEY`; a guarda OAuth-only em `claude_runner.rs`, `codex_spawn.rs` e `ingest_claude.rs` continua rejeitando as chaves de API com exit 1 (defesa em profundidade preservada)
+- A whitelist agora vive em um helper compartilhado único `src/spawn/env_whitelist.rs` expondo `apply_env_whitelist(cmd, strict)` e `is_strict_env_clear()`; os três spawners delegam em vez de duplicar o array inline
+- Para ambientes de compliance que proíbem encaminhamento de credenciais via env vars (PCI-DSS, SOC2, HIPAA), operadores podem definir `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` ou passar `--strict-env-clear`; o modo estrito preserva apenas `PATH` e descarta todas as outras env vars
+- Cinco testes de regressão `#[serial_test::serial(env)]` vivem em `tests/claude_runner_env.rs` cobrindo propagação de provider customizado, preservação do aborto OAuth-only, herança de base-URL pelo codex, descarte de credenciais no modo estrito e auditoria de no-leak que varre o stderr do subprocesso procurando o valor literal do token com `RUST_LOG=trace`
+- Nenhuma telemetria é emitida; a correção é silenciosa exceto quando a guarda OAuth-only dispara (que emite um arg de marcador orientativo apontando para `ANTHROPIC_AUTH_TOKEN` ou `~/.codex/auth.json` como resoluções legítimas)
+- Modelo de ameaça: valores de credencial para providers customizados fluem do processo orquestrador para o subprocesso LLM pela fronteira de processo. O teste de auditoria de no-leak previne regressões futuras onde uma macro `tracing` possa imprimir o token bruto no stderr. Operadores em hosts compartilhados devem preferir `--strict-env-clear` para evitar encaminhar segredos
+- Veja `docs/decisions/adr-0041-preserve-custom-provider-env.md` (PT-BR) e `.md` (EN) para a decisão arquitetural completa e alternativas consideradas
 
 ## Hall da Fama
 - Reconhecemos publicamente pesquisadores que reportam vulnerabilidades de forma responsável
@@ -82,3 +92,5 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - JAMAIS desabilite o memory guard em produção via flags não documentadas
 - JAMAIS eleve concorrência de comandos pesados cegamente em hosts com memória restrita; prefira execução serial em auditorias
 - JAMAIS ignore warnings do `cargo audit` sem abrir um advisory de segurança rastreado
+- JAMAIS defina `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn abortará com exit 1
+- JAMAIS dependa do encaminhamento de `ANTHROPIC_AUTH_TOKEN` quando o host é compartilhado com processos não confiáveis; prefira `--strict-env-clear` para que credenciais permaneçam apenas no processo pai

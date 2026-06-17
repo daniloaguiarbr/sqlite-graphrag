@@ -78,3 +78,21 @@ Persistência em fila `pending_embeddings` (V015) para reprocessamento posterior
 - `src/embedder.rs:embed_with_fallback` (cadeia)
 - `migrations/V015__pending_embeddings.sql` (fila persistente)
 - `src/commands/embedding.rs` + `src/commands/pending_embeddings.rs` (subcomandos)
+
+## Decisões Relacionadas
+
+- **ADR-0041 — Preservação de Credenciais de Provider Customizado (v1.0.83)**:
+  resolve G58 parcialmente ao permitir que providers customizados
+  (Minimax, OpenRouter, AWS Bedrock, gateways corporativos) roteiem
+  a chamada via env vars preservadas (`ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Complementa este ADR-0040:
+  enquanto a cadeia codex→claude→none deste ADR mitiga falha de OAuth
+  oficial via fallback, o ADR-0041 fornece uma rota alternativa
+  determinística ao preservar credenciais de providers customizados —
+  contornando completamente o problema de fadiga OAuth em vez de
+  apenas fazer fallback após ele.
+- **ADR-0038 — Escolha de LLM-Backend pelo Usuário (v1.0.82)**: a flag
+  `--llm-backend codex,claude,none` deste ADR-0038 interage com a
+  cadeia de fallback deste ADR-0040; o usuário pode explicitamente
+  limitar a cadeia para `codex` apenas (e o ADR-0041 faz com que
+  `OPENAI_BASE_URL` chegue ao codex para OpenRouter).

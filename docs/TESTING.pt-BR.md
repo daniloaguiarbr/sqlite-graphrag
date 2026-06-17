@@ -1,3 +1,14 @@
+## Adições à Suite de Testes da v1.0.83 (ADR-0041)
+- 6 novos testes de regressão em `tests/claude_runner_env.rs` cobrem o fix do env whitelist
+- `claude_subprocess_inherits_custom_anthropic_provider_env` — documenta a decisão de design de que o caminho de integração equivalente é coberto pela variante codex abaixo (a instalação real de `claude` em CI colide com o truque de prefixar PATH com o mock); veja ADR-0041 §Verification
+- `claude_subprocess_rejects_prohibited_anthropic_api_key` — confirma que o guard OAuth-only ainda aborta o spawn com exit não-zero quando `ANTHROPIC_API_KEY` está setada; o script mock pode ou não rodar dependendo se o guard dispara primeiro
+- `codex_subprocess_inherits_openai_base_url` — verifica que a env var `OPENAI_BASE_URL` propaga do pai para o subprocesso codex, o caminho canônico de teste de integração cross-process
+- `strict_env_clear_drops_custom_provider_credentials` — confirma que `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` descarta `ANTHROPIC_AUTH_TOKEN` do env do subprocesso, preservando apenas `PATH`
+- `audit_no_token_leak_in_subprocess_stderr` — varre o stdout e stderr capturados do subprocesso com `RUST_LOG=trace` e afirma que o valor literal do token NUNCA aparece em nenhum dos dois streams; esta é a auditoria que previne regressões futuras onde um macro `tracing` possa imprimir o token bruto
+- Mais 3 testes unitários helper em `src/spawn/env_whitelist.rs::tests` cobrindo a API Rust diretamente: `whitelist_includes_custom_provider_vars`, `whitelist_excludes_api_key_vars`, `strict_mode_drops_credentials`
+- Todos os testes carregam `#[serial_test::serial(env)]` para serializar mutações de env no runner de testes paralelo
+- Contagem total de testes: 818 (de 812 na v1.0.82; os 6 novos testes estão divididos entre 3 testes unitários em `env_whitelist.rs` e 3 testes de integração em `claude_runner_env.rs` mais os 2 testes estilo auditoria)
+- Testes OAuth-only pré-existentes em `claude_runner.rs:574-666` e `codex_spawn.rs:684-758` permanecem verdes; a extensão do env whitelist NÃO enfraquece o guard
 # Guia de Testes
 
 

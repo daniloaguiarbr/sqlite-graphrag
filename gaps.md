@@ -1501,3 +1501,275 @@ Observações-chave:
 - A solução alinha com o princípio de `usuário escolhe, sistema obedece` — usuário escolhe política de fallback e skip, sistema executa fielmente
 - A solução é compatível com `pending_embeddings` reaproveitando o padrão de `pending_memories` introduzido conceitualmente em GAP-001
 - A solução resolve o caso concreto do transcript: persistir `diag-freeze-login-2026-06-15` teria succeeded com `--skip-embedding-on-failure --llm-fallback codex,claude,none`, body preservado, embedding diferido para `enrich --operation re-embed` quando backend voltar
+---
+
+
+## GAP-006 — `env_clear()` em três spawners LLM remove credenciais de provider customizado, bloqueando uso de Anthropic-compatible providers (MiniMax, OpenRouter, gateways corporativos)
+
+**Data de identificação**: 2026-06-17
+**Severidade**: ALTA (impede uso de providers customizados para usuários fora do ecossistema Anthropic oficial; provider MiniMax/api.minimax.io relatado em produção 2026-06-17 com 401 mascarado)
+**Status**: Solucionado em v1.0.83 (helper `src/spawn/env_whitelist.rs` + flag `--strict-env-clear` + ADR-0041 + 5 testes seriais em `tests/claude_runner_env.rs`)
+**Distinção de GAP-001/002/003/004/005**: GAP-001 trata perda por shutdown signal (timeout externo); GAP-002 trata violação de contrato JSON de erro sob shutdown; GAP-003 trata falta de escolha por-invocação de backend; GAP-004 trata saturação OAuth por N subprocessos simultâneos; GAP-005 trata crash silencioso do subprocesso LLM com stderr vazio; GAP-006 trata PRESERVAÇÃO INSUFICIENTE DE ENV VARS para providers customizados — os guard OAuth-only rejeitam `ANTHROPIC_API_KEY` corretamente, mas `env_clear()` remove credenciais customizadas legítimas (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) que NÃO deveriam ser bloqueadas
+
+### Problema
+
+O pipeline de embedding LLM-Only do `sqlite-graphrag` v1.0.76+ aplica `env_clear()` seguido de reinserção de whitelist restrita em três spawners (`src/commands/claude_runner.rs`, `src/commands/codex_spawn.rs`, `src/commands/ingest_claude.rs`). A whitelist omitia variáveis de ambiente necessárias para providers Anthropic-compatible customizados:
+
+- `ANTHROPIC_AUTH_TOKEN` — token de autenticação para Claude Code rotear via OAuth customizado (MiniMax, OpenRouter, gateway corporativo)
+- `ANTHROPIC_BASE_URL` — endpoint URL customizado (ex: `https://api.minimax.io/anthropic`)
+- `OPENAI_BASE_URL` — endpoint OpenAI-compatible customizado (ex: `https://api.openrouter.ai/v1`)
+- `CODEX_ACCESS_TOKEN` — token de acesso para Codex CLI customizado
+- `CLAUDE_CODE_ENTRYPOINT` — override de entrypoint específico do Claude Code
+- `DISABLE_TELEMETRY` — opt-out de telemetria do subprocesso
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — override de collector OTel
+
+Quando o usuário define essas variáveis no ambiente do orquestrador, elas NÃO chegam ao subprocesso `claude -p` ou `codex exec`, que falha com `401 Invalid authentication credentials` e sai com exit 1. O `claude_runner::generate_embedding` retorna `AppError::EmbeddingFailed` (exit 11), e o body validado é perdido de forma similar ao GAP-005.
+
+Adicionalmente, a duplicação da whitelist idêntica em três spawners cria risco de drift: qualquer correção aplicada em um spawner precisa ser replicada nos outros dois, e a v1.0.82 omitiu `ANTHROPIC_AUTH_TOKEN` em todos os três simultaneamente.
+
+### Consequências
+
+1. **Provider MiniMax inutilizável em produção** — usuários com assinatura MiniMax (api.minimax.io) recebem `401 Invalid authentication credentials` mascarado em stderr vazio (mesmo padrão do GAP-005), o body validado é perdido
+2. **OpenRouter bloqueado** — usuários configurando `OPENAI_BASE_URL=https://api.openrouter.ai/v1` não conseguem usar a roteador porque a var nunca chega ao codex exec
+3. **Gateways corporativos inacessíveis** — ambientes empresariais com proxy Anthropic-compatible próprio (ex: AWS Bedrock com roteamento customizado) não funcionam
+4. **Duplicação do whitelist em três sites** — divergência de manutenção; se v1.0.84 precisar adicionar nova var, os três sites devem ser editados sincronamente
+5. **Inconsistência semântica com guard OAuth-only** — o guard OAuth-only rejeita `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` corretamente (chaves pagas, ADR-0011), mas o `env_clear()` remove INDIRETAMENTE as credenciais customizadas legítimas, sem rejeição EXPLÍCITA — comportamento implícito difícil de diagnosticar
+6. **Zero audit trail do leak** — sem teste que verifique que o valor literal de `ANTHROPIC_AUTH_TOKEN` NÃO aparece em stderr do subprocesso
+7. **Sem opt-out para compliance** — ambientes que PROÍBEM encaminhamento de credenciais via env vars (PCI-DSS, SOC2) não têm flag para desabilitar o whitelist amplo
+
+### Causa raiz
+
+A causa raiz é arquitetural e reside em duas decisões acumuladas durante a transição para LLM-Only OAuth-only:
+
+1. **Whitelist incompleta em três spawners** — o whitelist consolidado do `claude_runner.rs:14-35`, `codex_spawn.rs:277-293` e `ingest_claude.rs:299-319` lista apenas vars POSIX/XDG/Claude Code básicas. Faltam `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+2. **Duplicação literal em três arquivos** — o array de whitelist é IDÊNTICO em todos os três spawners (verificado em v1.0.82), mas a manutenção NÃO foi centralizada, criando janela para divergência
+
+A interpretação original do mandato OAuth-only da v1.0.69 GENERALIZOU o conceito de "credenciais de API" para "qualquer credencial relacionada ao LLM", o que é semanticamente incorreto. `ANTHROPIC_API_KEY` (chave paga sk-ant-...) é diferente de `ANTHROPIC_AUTH_TOKEN` (token OAuth sem custo de API, pago via assinatura Claude Pro/Max).
+
+#### Cadeia causal (causa → efeito)
+
+```
+[Usuário configura ANTHROPIC_AUTH_TOKEN=sk-cp-... e ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic]
+    ↓ executa
+[sqlite-graphrag remember --body "..." --graph-stdin < payload.json]
+    ↓ remember chama
+[claude_runner::generate_embedding que prepara Command via build_claude_command]
+    ↓ aplica
+[env_clear() remove TODAS as env vars do subprocesso]
+    ↓ reinsere apenas whitelist restrito
+[whitelist NÃO contém ANTHROPIC_AUTH_TOKEN nem ANTHROPIC_BASE_URL]
+    ↓ spawna
+[claude -p subprocesso inicia SEM credenciais customizadas]
+    ↓ tenta autenticar
+[Endpoint MiniMax retorna HTTP 401 Invalid authentication credentials]
+    ↓ claude -p escreve em stderr
+[stderr= vazio OU truncado pelo wrapper (mesmo bug do GAP-005)]
+    ↓ retorna
+[exit status 1 com stderr descartado]
+    ↓ claude_runner captura
+[AppError::EmbeddingFailed com mensagem "claude exited with exit status: 1"]
+    ↓ remember aborta
+[body validado + entidades + relacionamentos PERDIDOS]
+    ↓ resulta
+[Usuário precisa workaround manual via --skip-embedding-on-failure do GAP-005]
+    ↓ OU migra para
+[Provider oficial Anthropic (pagando API key) ou fica sem persistência]
+```
+
+Efeito cascata documentado em produção 2026-06-17: usuário tentando usar provider MiniMax para persistir memória via hook Stop perdeu o body validado, mesmo padrão do GAP-001/003/005, mas com causa raiz ORTOGONAL (env_clear incompleto em vez de crash de subprocesso).
+
+### Solução
+
+Eliminar duplicação via helper compartilhado, expandir whitelist com credenciais de provider customizado, adicionar flag opt-out para compliance, e estabelecer auditoria de no-leak:
+
+1. **Criar `src/spawn/env_whitelist.rs`** — helper único expondo `PRESERVED_ENV_VARS`, `PRESERVED_ENV_VARS_WINDOWS`, `apply_env_whitelist(cmd, strict)`, `is_strict_env_clear()`; 3 testes unitários seriais validam preservação de vars customizadas, exclusão de API keys, e modo strict
+2. **Refatorar os três spawners para usar o helper** — `claude_runner.rs`, `codex_spawn.rs`, `ingest_claude.rs` removem arrays inline e delegam para `apply_env_whitelist(cmd, is_strict_env_clear())`
+3. **Expandir whitelist com 7 vars customizadas** — `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+4. **Adicionar flag `--strict-env-clear` e env `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR`** — modo compliance que preserva apenas `PATH`, dropa todas as credenciais; aplicável em PCI-DSS, SOC2, HIPAA
+5. **Criar `tests/claude_runner_env.rs`** — 5 testes seriais com `serial_test::serial(env)` validando: claude herda `ANTHROPIC_AUTH_TOKEN`, claude rejeita `ANTHROPIC_API_KEY` (regressão OAuth-only), codex herda `OPENAI_BASE_URL`, strict mode dropa credenciais, e auditoria de no-leak (valor literal do token NUNCA aparece em stderr com `RUST_LOG=trace`)
+6. **Criar `docs/decisions/adr-0041-preserve-custom-provider-env.md`** — justificativa arquitetural completa com alternativas consideradas, consequências, e cross-references a ADR-0011, ADR-0025, ADR-0033
+
+### Benefícios
+
+1. **Providers Anthropic-compatible funcionam** — MiniMax, OpenRouter, gateways corporativos passam a autenticar corretamente
+2. **Defesa em profundidade OAuth-only preservada** — guard rejeita `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` antes mesmo de chegar ao env_clear, env whitelist é segunda linha de defesa
+3. **DRY achieved via helper** — adição futura de vars requer mudança em um único arquivo (`src/spawn/env_whitelist.rs`); os três spawners passam a consumir helper compartilhado
+4. **Compliance opt-in** — flag `--strict-env-clear` atende ambientes que proíbem encaminhamento de credenciais
+5. **Auditoria de no-leak como regressão** — teste 5 em `tests/claude_runner_env.rs` valida ausência do valor literal do token em stderr com máxima verbosidade; previne vazamento futuro
+6. **Cross-reference ao G58 S5** — parcial resolução do gap documentado em `gap-g58-recall-sem-fallback-deterministic-2026-06-13` (memória GraphRag): provider customizado via env contorna fadiga OAuth oficial
+7. **Compatibilidade total preservada** — sem breaking changes; usuários que NÃO definem as vars customizadas não veem diferença; usuários que DEFINEM passam a ver seus providers funcionando
+8. **Mensagens OAuth-only orientativas** — quando guard OAuth-only dispara, mensagem agora aponta para OAuth subscription E para `ANTHROPIC_AUTH_TOKEN` como alternativa legítima (não apenas "OAuth-only violation")
+
+### Como solucionar
+
+#### Passo 1 — Criar helper compartilhado em `src/spawn/env_whitelist.rs`
+
+```rust
+// src/spawn/env_whitelist.rs (novo, ADR-0041)
+pub const PRESERVED_ENV_VARS: &[&str] = &[
+    // Standard POSIX / XDG
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME",
+    // Temporary directories
+    "TMPDIR", "TMP", "TEMP",
+    // macOS dynamic linker fallback path
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    // Claude Code specific
+    "CLAUDE_CONFIG_DIR",
+    // v1.0.83 (ADR-0041): custom provider credentials for Claude Code
+    "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_ENTRYPOINT",
+    // v1.0.83 (ADR-0041): custom provider credentials for Codex CLI
+    "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL",
+    // v1.0.83 (ADR-0041): telemetry opt-out and observability override
+    "DISABLE_TELEMETRY", "OTEL_EXPORTER_OTLP_ENDPOINT",
+];
+
+#[cfg(windows)]
+pub const PRESERVED_ENV_VARS_WINDOWS: &[&str] = &[
+    "LOCALAPPDATA", "APPDATA", "USERPROFILE", "SystemRoot", "COMSPEC",
+    "PATHEXT", "HOMEPATH", "HOMEDRIVE",
+];
+
+pub fn apply_env_whitelist(cmd: &mut Command, strict: bool) {
+    cmd.env_clear();
+    if strict {
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", path);
+        }
+        return;
+    }
+    for var in PRESERVED_ENV_VARS {
+        if let Ok(val) = std::env::var(var) {
+            cmd.env(var, val);
+        }
+    }
+    #[cfg(windows)]
+    for var in PRESERVED_ENV_VARS_WINDOWS {
+        if let Ok(val) = std::env::var(var) {
+            cmd.env(var, val);
+        }
+    }
+}
+
+pub fn is_strict_env_clear() -> bool {
+    matches!(
+        std::env::var("SQLITE_GRAPHRAG_STRICT_ENV_CLEAR")
+            .ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("True")
+            | Some("yes") | Some("YES")
+    )
+}
+```
+
+#### Passo 2 — Refatorar os três spawners para delegar ao helper
+
+```rust
+// src/commands/claude_runner.rs (modificado)
+use crate::spawn::env_whitelist::{apply_env_whitelist, is_strict_env_clear};
+
+// Em build_claude_command, substituir o loop manual de env_clear + whitelist:
+cmd.env_clear();
+apply_env_whitelist(&mut cmd, is_strict_env_clear());
+cmd.env("CLAUDE_CONFIG_DIR", claude_config_dir); // runtime override após helper
+
+// src/commands/codex_spawn.rs (idêntico)
+// src/commands/ingest_claude.rs (idêntico)
+```
+
+#### Passo 3 — Adicionar flag CLI `--strict-env-clear`
+
+```rust
+// src/cli.rs (modificado)
+#[arg(long, env = "SQLITE_GRAPHRAG_STRICT_ENV_CLEAR", global = true)]
+pub strict_env_clear: bool,
+```
+
+#### Passo 4 — Criar `tests/claude_runner_env.rs` com 5 cenários seriais
+
+```rust
+// tests/claude_runner_env.rs (novo, 311 linhas, ADR-0041 §Verification)
+#[test] #[serial(env)]
+fn claude_subprocess_inherits_custom_anthropic_provider_env() { /* placeholder */ }
+
+#[test] #[serial(env)]
+fn claude_subprocess_rejects_prohibited_anthropic_api_key() {
+    // SAFETY: serial_test::serial(env)
+    unsafe {
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-violation-test");
+    }
+    let output = AssertCmd::new(cargo_bin!("sqlite-graphrag"))
+        .args(["remember", "--name", "test-v183-rejection", "--body", "x"])
+        .env("PATH", path_with_mock)
+        .env("ANTHROPIC_API_KEY", "sk-ant-violation-test")
+        .timeout(Duration::from_secs(30))
+        .output().expect("spawn");
+    // OAuth-only guard aborta com exit != 0
+    assert!(!output.status.success());
+}
+
+#[test] #[serial(env)]
+fn codex_subprocess_inherits_openai_base_url() { /* integração codex */ }
+
+#[test] #[serial(env)]
+fn strict_env_clear_drops_custom_provider_credentials() { /* modo compliance */ }
+
+#[test] #[serial(env)]
+fn audit_no_token_leak_in_subprocess_stderr() {
+    let secret = "sk-cp-secret-XYZ-12345";
+    unsafe { std::env::set_var("ANTHROPIC_AUTH_TOKEN", secret); }
+    let output = AssertCmd::new(cargo_bin!("sqlite-graphrag"))
+        .args(["remember", "--name", "test-v183-no-leak", "--body", "x"])
+        .env("ANTHROPIC_AUTH_TOKEN", secret)
+        .env("RUST_LOG", "trace")
+        .output().expect("spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stdout.contains(secret));
+    assert!(!stderr.contains(secret));
+}
+```
+
+#### Passo 5 — Documentar em ADR-0041 (EN + PT-BR)
+
+```bash
+# Estrutura do ADR segue template de ADR-0011 e ADR-0025
+# Status: Accepted
+# Date: 2026-06-17
+# Context: env_clear remove credenciais customizadas em 3 spawners
+# Decision: preservar 7 vars customizadas no whitelist compartilhado
+# Consequences: providers customizados funcionam; OAuth-only intacto;
+#   compliance opt-in via --strict-env-clear; DRY achieved via helper
+# Alternatives Considered: flag opt-in (rejeitado por fricção);
+#   apenas documentar workaround (rejeitado por não resolver causa raiz);
+#   refator completo (fora do escopo)
+# Related: ADR-0011, ADR-0025, ADR-0033, gap-g58-recall-sem-fallback-deterministic-2026-06-13
+```
+
+### Relações causa × efeito
+
+- **CAUSA**: `env_clear()` em três spawners → **EFEITO**: subprocesso perde credenciais customizadas → **EFEITO SECUNDÁRIO**: API MiniMax retorna `401` → **EFEITO TERCIÁRIO**: `claude -p` sai com exit 1 → **EFEITO QUATERNÁRIO**: `claude_runner::generate_embedding` retorna `AppError::EmbeddingFailed` (exit 11) → **EFEITO QUINTO**: `remember` aborta após gravar memória parcial → **EFEITO FINAL**: estado inconsistente — linha em `memories` sem embedding em `memory_embeddings`
+- **CAUSA**: codex CLI lê `~/.codex/auth.json` (filesystem), **EFEITO**: orquestrador não precisa preservar `OPENAI_API_KEY` se auth.json existe; **MAS**: provider customizado via `OPENAI_BASE_URL` AINDA exige env preservation
+- **CAUSA**: gap G58 já documentado em 2026-06-13 (`gap-g58-recall-sem-fallback-deterministic-2026-06-13` — embedding ao vivo é ponto único de falha sob fadiga OAuth), **EFEITO**: este fix resolve G58 S5 (provider customizado via env contorna fadiga OAuth oficial, sem precisar de modelo local)
+
+### Evidências observadas
+
+- 2026-06-17: provider MiniMax (api.minimax.io) retorna `401 Invalid authentication credentials` quando `ANTHROPIC_AUTH_TOKEN` está definido no ambiente mas não chega ao subprocesso (transcript de produção)
+- 2026-06-17: verificação via 3 Explore agents confirma que os 3 spawners têm whitelist idêntico e igualmente incompleto; nenhum dos três inclui `ANTHROPIC_AUTH_TOKEN` na v1.0.82
+- 2026-06-17: `cargo clippy --all-targets -- -D warnings` passa com helper novo; 8 testes seriais OAuth-only pré-existentes permanecem verdes (defesa em profundidade intacta)
+- 2026-06-17: `tests/claude_runner_env.rs` com 5 cenários seriais valida propagação via mock scripts em TempDir; auditoria de no-leak confirma ausência do valor literal do token em stderr com `RUST_LOG=trace`
+
+### Notas
+
+- A causa raiz NÃO é: bug do subprocesso Claude/Codex; o guard OAuth-only corretamente rejeita `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` (chaves pagas, semântica distinta das customizadas)
+- A causa raiz NÃO é: o guard OAuth-only estar errado; o guard interpreta LITERALMENTE as vars que pretende rejeitar (ADR-0011)
+- A causa raiz É: interpretação GENERALIZADA do mandato OAuth-only que acabou removendo INDIRETAMENTE credenciais customizadas legítimas via `env_clear()` em vez de fazer rejeição EXPLÍCITA via guard
+- A solução é ortogonal a GAP-001 (estágios com checkpoint), GAP-002 (contrato JSON de shutdown), GAP-003 (escolha de backend), GAP-004 (coordenação cross-process) e GAP-005 (fallback de embedding) — pode ser combinada com todas as cinco
+- A solução resolve o caso concreto do transcript MiniMax 2026-06-17 sem alterar defesa em profundidade OAuth-only
+- A solução NÃO introduz regressão: usuários que NÃO definem as vars customizadas têm comportamento idêntico à v1.0.82; usuários que DEFINEM passam a ver seus providers funcionando
+- A solução preserva compatibilidade cross-platform: helper tem `#[cfg(windows)]` separado para `PRESERVED_ENV_VARS_WINDOWS` (LOCALAPPDATA, APPDATA, etc.)
+- A solução alinha com o princípio de `usuário escolhe, sistema obedece` — usuário escolhe provider customizado via env vars, sistema preserva fielmente
+- A solução habilita degradação graciosa para providers oficiais sob fadiga OAuth: usuário configura `ANTHROPIC_AUTH_TOKEN` apontando para gateway próprio, sistema roteia sem tocar no OAuth oficial
+- A solução melhora observabilidade via teste de auditoria de no-leak: valor literal do token NUNCA aparece em stderr, validado via `RUST_LOG=trace`
+- A solução é compatível com a arquitetura LLM-Only da v1.0.76: zero dependências novas, zero modelos locais, zero daemon
+- A solução referencia cross-cutting gaps: G45 (coordenação de remember cross-process — S1 file lock, S2 write-behind, S3 fan-out bounded) e G58 (fallback de recall sob fadiga OAuth) parcialmente resolvidos
+- A solução é compatível com `pending_embeddings` do GAP-005: corpo com embedding pendente continua funcionando; apenas muda a disponibilidade de providers

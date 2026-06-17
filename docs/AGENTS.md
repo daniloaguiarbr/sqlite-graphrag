@@ -1,3 +1,14 @@
+## New in v1.0.83
+### REQUIRED — Custom Provider Credential Preservation (ADR-0041)
+- Six custom-provider env vars are now preserved when spawning `claude -p` or `codex exec` subprocesses. The preserved vars are `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT`. Enables Anthropic-compatible providers (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, corporate gateways) without altering the OAuth-only mandate that continues to reject `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`
+- The OAuth-only guard at `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, and `extract/llm_embedding.rs:237-253` is preserved; the abort error message now references `ANTHROPIC_AUTH_TOKEN` and `~/.codex/auth.json` as legitimate resolutions when an operator mistakenly sets `ANTHROPIC_API_KEY`
+- New shared helper `src/spawn/env_whitelist.rs` exposes `apply_env_whitelist(cmd, strict)` and `is_strict_env_clear()`. The three spawners (`claude_runner`, `codex_spawn`, `ingest_claude`) delegate instead of inlining the array, eliminating the drift between duplicated whitelists
+- New global flag `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` enables strict mode that preserves only `PATH`. Use in PCI-DSS, SOC2, HIPAA environments where credential forwarding via env vars is forbidden by policy. Default remains permissive (forwards the six custom-provider vars)
+- NO new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
+- 6 new regression tests in `tests/claude_runner_env.rs` cover: custom-provider propagation, OAuth-only abort preservation, codex base-URL inheritance, strict-mode credential dropping, no-leak audit, and one documented scenario left intentionally empty (claude env test) with the equivalent integration path covered for codex. All carry `#[serial_test::serial(env)]`
+- Semantic distinction the fix resolves: `ANTHROPIC_API_KEY` (paid API key, PROHIBITED by ADR-0011), `ANTHROPIC_AUTH_TOKEN` (OAuth token for custom provider, PRESERVED), `OPENAI_API_KEY` (PROHIBITED), `OPENAI_BASE_URL` (PRESERVED), `ANTHROPIC_BASE_URL` (PRESERVED). The v1.0.69 mandate was correct; the v1.0.69 env-clear whitelist was overly broad
+- See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale and `docs/MIGRATION.md#migrating-to-v1083` for operator upgrade steps
+- G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
 # sqlite-graphrag for AI Agents (v1.0.79)
 
 > Persistent memory for 27 AI agents in a single 6 MB Rust binary.

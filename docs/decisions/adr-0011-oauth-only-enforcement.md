@@ -32,6 +32,26 @@ A re-read of gaps.md lines 41-49 (the four PROIBIÇÕES ABSOLUTAS on Claude/Code
 - The marker `--oauth-only-violation-{anthropic,openai}-api-key-set` makes spawn failures self-documenting in CI logs.
 - The `ENV_WHITELIST` arrays are now in two places (claude + codex). A future refactor should extract `whitelist_env_clear` into a shared helper. Filed as a follow-up.
 
+## Related Decisions
+
+- ADR-0041 — Custom Provider Credential Preservation (v1.0.83).
+  This ADR-0011 follow-up was filed in 2026-06-17 and RESOLVES
+  the helper-extraction follow-up via `src/spawn/env_whitelist.rs`.
+  The shared `apply_env_whitelist(cmd, strict)` helper unifies
+  the three duplicated spawners (`claude_runner`, `codex_spawn`,
+  `ingest_claude`) and extends the whitelist to preserve the
+  custom-provider vars (`ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+  `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT`) while keeping the OAuth-only
+  guard from this ADR-0011 intact. The two ADRs compose: this
+  one rejects `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`; ADR-0041
+  preserves the OAuth tokens and base-URL overrides used by
+  Anthropic-compatible providers (Minimax, OpenRouter, AWS
+  Bedrock, corporate gateways).
+- ADR-0025 — OAuth-Only Embedding (v1.0.76). Reaffirms this
+  ADR-0011 at the `extract/llm_embedding.rs` layer.
+
 ## Alternatives Considered
 
 - Keep the API-key path with a warning. REJECTED. gaps.md:47,48,49 are PROIBIÇÕES ABSOLUTAS. Warnings do not satisfy absolute prohibitions.

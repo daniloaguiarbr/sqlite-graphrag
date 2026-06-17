@@ -1,3 +1,11 @@
+## Custom Provider Env Whitelist on Windows (v1.0.83+)
+- The shared env whitelist helper `src/spawn/env_whitelist.rs` exposes a Windows-specific set via `PRESERVED_ENV_VARS_WINDOWS` behind `#[cfg(windows)]`: `LOCALAPPDATA`, `APPDATA`, `USERPROFILE`, `SystemRoot`, `COMSPEC`, `PATHEXT`, `HOMEPATH`, `HOMEDRIVE`
+- The Windows set is applied in addition to the POSIX set; `apply_env_whitelist(cmd, false)` covers both via the `#[cfg(windows)]` second loop in the helper
+- On Windows the custom-provider env vars `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT` flow to the LLM subprocess identically to Linux/macOS
+- `LockFileEx` is used by the slot semaphore (ADR-0039, v1.0.82) on Windows; this release adds no new lock primitives
+- The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
+- `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
+- See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
 # CROSS PLATFORM SUPPORT
 
 > One 6 MB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)

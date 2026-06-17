@@ -129,6 +129,17 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Final publication to crates.io is done manually with `cargo publish --locked`
 
 ## Recent Releases
+### v1.0.83 - 2026-06-17 — Custom-Provider Credential Preservation (ADR-0041)
+- **Custom Anthropic-compatible providers** now work end-to-end: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT` flow from the orchestrator process to the `claude -p` / `codex exec` subprocess. Provider MiniMax/api.minimax.io (the trigger of this release), OpenRouter, AWS Bedrock custom routes, and corporate Anthropic-compatible gateways are now first-class.
+- **OAuth-only mandate intact** as defence in depth: the guards in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs` still reject `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` with `AppError::Validation` (exit 1). The eight pre-existing `#[serial_test::serial(env)]` tests in `claude_runner.rs` and `codex_spawn.rs` remain green.
+- **DRY achieved** via new helper module `src/spawn/env_whitelist.rs` exposing `apply_env_whitelist(cmd, strict)` and `is_strict_env_clear()`. The three spawners (`claude_runner`, `codex_spawn`, `ingest_claude`) delegate to the helper instead of carrying identical inline whitelist arrays.
+- **Compliance opt-in** via flag `--strict-env-clear` / env `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`. Strict mode preserves only `PATH` and drops every other env var; targets PCI-DSS, SOC2, and HIPAA environments that forbid credential forwarding via env vars.
+- **New regression tests** in `tests/claude_runner_env.rs` (311 lines, five `#[serial_test::serial(env)]` scenarios): custom-provider propagation, OAuth-only abort preservation, codex base-URL inheritance, strict-mode credential dropping, and a no-leak audit that scans subprocess stderr for the literal token value with `RUST_LOG=trace`. Three companion unit tests live in `src/spawn/env_whitelist.rs::tests`.
+- **No telemetry emitted** by the fix itself; the only new log lines are the existing OAuth-only guard warnings now augmented with orientative marker args `--oauth-only-resolution-use-anthropic-auth-token` (claude) and `--oauth-only-resolution-use-codex-auth-json-or-openai-base-url` (codex).
+- **One new ADR**: `docs/decisions/adr-0041-preserve-custom-provider-env.md` (EN + PT-BR) explaining why custom-provider env vars are preserved, why `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` remain rejected, the three alternatives considered (flag opt-in, workaround documentation, full spawner refactor), and cross-references to `gap-g58-recall-sem-fallback-deterministic-2026-06-13` (partially resolved by this release).
+- **Documentation updates** in `gaps.md` (new GAP-006 section), `SECURITY.md` / `SECURITY.pt-BR.md` (new "v1.0.83 Custom Provider Credential Preservation" section after the existing v1.0.76 OAuth-Only section, plus two new bullet points in Best Practices), `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` (new "Minimax (since v1.0.83)" section between OpenRouter and POSIX Shells with configuration block, smoke test, and 401 troubleshooting checklist), `README.md` / `README.pt-BR.md` (Custom Anthropic-compatible providers entry at the top of the Highlights block), and `CHANGELOG.md` / `CHANGELOG.pt-BR.md` (full entry under `[1.0.83]`).
+- 818 lib tests + 6 env-whitelist unit tests + 5 integration tests pass; `cargo clippy --all-targets --all-features -- -D warnings` zero warnings; `cargo fmt --all --check` clean
+- See `gaps.md` GAP-006, `CHANGELOG.md` v1.0.83 entry, and `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full change rationale
 ### v1.0.76 - 2026-06-07 — LLM-Only One-Shot, OAuth-Only Embedding
 - **BREAKING ARCHITECTURAL CHANGE**: the default build no longer bundles any local model. All embedding generation, NER, and vector search delegate to `claude -p` or `codex exec` headless (OAuth, no MCP, no hooks). The CLI is one-shot. Binary drops from 39 MB to ~6 MB.
 - **Removed crates**: `fastembed 5.13.4`, `ort 2.0.0-rc.12`, `ndarray 0.16`, `tokenizers 0.22`, `huggingface-hub 0.4`, `sqlite-vec 0.1.9`
@@ -159,7 +170,7 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - [ ] `cargo check --all-targets` passes
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` reports zero warnings
 - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` reports zero warnings
-- [ ] `cargo test --lib` reports 692 passed, 0 failed
+- [ ] `cargo test --lib` reports 818 passed, 0 failed (was 692 prior to v1.0.83)
 - [ ] `cargo test --test terminal_compile_windows` reports 2 passed
 - [ ] PR title is in English and follows Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`, `build:`, `perf:`)
 - [ ] No `Co-authored-by: ...` trailer for any AI agent (Claude, Codex, GPT, Copilot, Cursor, Gemini, Anthropic, OpenAI)

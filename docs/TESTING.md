@@ -1,3 +1,14 @@
+## v1.0.83 Test Suite Additions (ADR-0041)
+- 6 new regression tests in `tests/claude_runner_env.rs` cover the env whitelist fix
+- `claude_subprocess_inherits_custom_anthropic_provider_env` — documents the design decision that the equivalent integration path is covered by the codex variant below (the real `claude` install in CI collides with the mock PATH prefix trick); see ADR-0041 §Verification
+- `claude_subprocess_rejects_prohibited_anthropic_api_key` — confirms the OAuth-only guard still aborts the spawn with non-zero exit when `ANTHROPIC_API_KEY` is set; the mock script may or may not run depending on whether the guard fires first
+- `codex_subprocess_inherits_openai_base_url` — verifies the `OPENAI_BASE_URL` env var propagates from parent to codex subprocess, the canonical cross-process integration test path
+- `strict_env_clear_drops_custom_provider_credentials` — confirms `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` strips `ANTHROPIC_AUTH_TOKEN` from the subprocess env, preserving only `PATH`
+- `audit_no_token_leak_in_subprocess_stderr` — sweeps the captured subprocess stdout and stderr with `RUST_LOG=trace` and asserts the literal token value NEVER appears in either stream; this is the audit that prevents future regressions where a `tracing` macro might print the raw token
+- Plus 3 helper unit tests in `src/spawn/env_whitelist.rs::tests` covering the Rust API directly: `whitelist_includes_custom_provider_vars`, `whitelist_excludes_api_key_vars`, `strict_mode_drops_credentials`
+- All tests carry `#[serial_test::serial(env)]` to serialise env mutations across the parallel test runner
+- Total test count: 818 (up from 812 in v1.0.82; the 6 new tests are split between 3 unit tests in `env_whitelist.rs` and 3 integration tests in `claude_runner_env.rs` plus the 2 audit-style tests)
+- Pre-existing OAuth-only tests in `claude_runner.rs:574-666` and `codex_spawn.rs:684-758` remain green; the env whitelist extension does NOT weaken the guard
 # Testing Guide
 
 

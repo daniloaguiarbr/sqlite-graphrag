@@ -64,3 +64,15 @@ implementação isoladamente (3 testes em `factory_tests`).
 - `src/cli.rs` (flag `--llm-backend`)
 - `src/extract/llm_backend.rs` (trait + 4 implementações)
 - `src/embedder.rs:embed_with_fallback` (usa factory trait)
+
+## Decisões Relacionadas
+
+- **ADR-0041 — Preservação de Credenciais de Provider Customizado (v1.0.83)**:
+  complementa este ADR-0038 ao estender o whitelist env-clear para que
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` e `OPENAI_BASE_URL`
+  cheguem ao subprocesso codex ou claude quando o usuário escolhe
+  `--llm-backend codex` ou `--llm-backend claude` apontando para
+  provider customizado. Os dois ADRs compõem: ADR-0038 dá ao usuário
+  o controle de qual backend usar; ADR-0041 garante que providers
+  customizados funcionem quando o backend escolhido for roteado via
+  env vars customizadas.

@@ -65,6 +65,16 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - See `docs/decisions/adr-0011-oauth-only-enforcement.md` for the full rationale and `docs/decisions/adr-0025-oauth-only-embedding.md` for the v1.0.76 embedding-specific application.
 - Migration: any operator currently relying on `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` must migrate to OAuth before upgrading.
 
+## v1.0.83 Custom Provider Credential Preservation (ADR-0041)
+- The default build now PRESERVES seven custom-provider env vars when spawning `claude -p` or `codex exec` subprocesses, enabling Anthropic-compatible providers (MiniMax/api.minimax.io, OpenRouter, AWS Bedrock, corporate gateways)
+- The preserved vars are `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT`
+- These vars are SEMANTICALLY DISTINCT from the OAuth-only-rejected `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`; the OAuth-only guard in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs` continues to reject the API keys with exit 1 (defence in depth preserved)
+- The whitelist now lives in a single shared helper `src/spawn/env_whitelist.rs` exposing `apply_env_whitelist(cmd, strict)` and `is_strict_env_clear()`; the three spawners delegate instead of duplicating the inline array
+- For compliance environments that forbid credential forwarding via env vars (PCI-DSS, SOC2, HIPAA), operators can set `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` or pass `--strict-env-clear`; strict mode preserves only `PATH` and drops every other env var
+- Five `#[serial_test::serial(env)]` regression tests live in `tests/claude_runner_env.rs` covering custom-provider propagation, OAuth-only abort preservation, codex base-URL inheritance, strict-mode credential dropping, and a no-leak audit that scans subprocess stderr for the literal token value with `RUST_LOG=trace`
+- No telemetry is emitted; the fix is silent unless the OAuth-only guard fires (which surfaces an orientative marker arg pointing to `ANTHROPIC_AUTH_TOKEN` or `~/.codex/auth.json` as legitimate resolutions)
+- Threat model: credential values for custom providers flow from the orchestrator process to the LLM subprocess over the process boundary. The audit-of-no-leak test prevents future regressions where a `tracing` macro might print the raw token to stderr. Operators on shared hosts should prefer `--strict-env-clear` to avoid forwarding secrets
+- See `docs/decisions/adr-0041-preserve-custom-provider-env.md` (EN) and `.pt-BR.md` for the full architectural decision and the alternatives considered
 
 ## Hall of Fame
 - We publicly acknowledge researchers who report vulnerabilities responsibly
@@ -82,3 +92,5 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - JAMAIS disable the memory guard in production via undocumented flags
 - JAMAIS raise heavy-command concurrency blindly on memory-constrained hosts; prefer serial execution during audits
 - JAMAIS bypass `cargo audit` warnings without opening a tracked security advisory
+- JAMAIS set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn will abort with exit 1
+- JAMAIS rely on `ANTHROPIC_AUTH_TOKEN` forwarding when the host is shared with untrusted processes; prefer `--strict-env-clear` so credentials stay in the parent process only

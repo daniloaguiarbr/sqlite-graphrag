@@ -1,3 +1,13 @@
+## Custom Providers (v1.0.83+)
+- sqlite-graphrag supports Anthropic-compatible providers (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, corporate gateways) by preserving the following env vars when spawning `claude -p` or `codex exec`
+- Preserved vars: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+- The OAuth-only mandate remains active: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` still abort the spawn with exit 1
+- The four OAuth-only guards at `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, `extract/llm_embedding.rs:237-253` are unchanged; only the env-clear whitelist was extended
+- Shared helper `src/spawn/env_whitelist.rs` exposes `apply_env_whitelist(cmd, strict)`; the three spawners delegate instead of inlining the array
+- For compliance environments that require strict env-clear (PCI-DSS, SOC2, HIPAA), set `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` or pass `--strict-env-clear`; strict mode preserves only `PATH`
+- No new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
+- See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
+- Resolves GAP-058 partially: custom-provider env vars route around OAuth quota contention; `recall`/`hybrid-search` stay deterministic under official OAuth fatigue
 # HOW TO USE sqlite-graphrag (v1.0.82 — Five Gaps Closed, Two Migrations)
 
 > Ship persistent memory to any AI agent with one local binary, a

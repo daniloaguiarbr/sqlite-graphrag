@@ -1,3 +1,11 @@
+## Custom Provider Env Preservation in Headless Invocation (v1.0.83+)
+- The headless invocation pipeline (`claude_runner`, `codex_spawn`, `ingest_claude`) now preserves six custom-provider env vars when spawning subprocesses: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+- The three spawners delegate to `apply_env_whitelist(cmd, strict)` from `src/spawn/env_whitelist.rs` instead of inlining the whitelist array. This eliminates drift between the three duplicated `env_clear` + re-injection blocks
+- The OAuth-only guard at `claude_runner.rs:273`, `codex_spawn.rs:259`, `ingest_claude.rs:282`, `extract/llm_embedding.rs:237-253` is unchanged; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` still abort with `AppError::Validation` (exit 1) and the new error message references `ANTHROPIC_AUTH_TOKEN` and `~/.codex/auth.json` as legitimate resolutions
+- New global flag `--strict-env-clear` / `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` enables strict mode that preserves only `PATH`. Use in compliance environments (PCI-DSS, SOC2, HIPAA) where credential forwarding via env vars is forbidden by policy
+- The 7 hardening flags for `claude -p` (`--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema` plus model and prompt) and the canonical set for `codex exec` remain unchanged. The env whitelist change is purely additive in the whitelist step between `env_clear()` and the canonical flag construction
+- No new telemetry: the fix is silent. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
+- See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale
 # Headless Invocation — Claude Code, Codex, OpenCode without MCP and without Hooks
 
 > How to invoke headless LLMs in this project without inheriting MCPs or hooks from the environment, while keeping the subscription OAuth login.

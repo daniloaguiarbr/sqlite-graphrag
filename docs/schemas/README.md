@@ -156,6 +156,12 @@
 - `shutdown-envelope.schema.json` é o envelope JSON emitido para stdout quando um sinal de shutdown interrompe a execução (GAP-002, ADR-0037); exit code 19 fixo, campos `signal` (`SIGTERM` | `SIGINT` | `SIGHUP`) e `graceful` (bool) obrigatórios.
 - Os cinco novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto; os campos `$id` usam `https://github.com/daniloaguiarbr/sqlite-graphrag/...` consistente com os schemas legados.
 
+### Schemas na v1.0.83 (ADR-0041)
+- **Nenhum schema novo** foi adicionado na v1.0.83. A release preserva credenciais de provider customizado no env dos subprocessos LLM (ADR-0041) e adiciona a flag global `--strict-env-clear` / env `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`. Nenhuma destas mudanças afeta o contrato de stdout JSON — os schemas existentes permanecem válidos sem alterações.
+- O erro OAuth-only abort agora referencia `ANTHROPIC_AUTH_TOKEN` e `~/.codex/auth.json` como resoluções legítimas na mensagem de erro (texto livre em stderr), mas o envelope JSON do erro em stdout permanece idêntico ao da v1.0.82. Veja `error-envelope.schema.json`.
+- O helper compartilhado `src/spawn/env_whitelist.rs` expõe `apply_env_whitelist(cmd, strict)` e `is_strict_env_clear()` — ambos são APIs internas da biblioteca Rust, não da CLI. Consumidores da lib que desejem empilhar com a v1.0.83 devem re-pinar para `=1.0.83` (veja ADR-0032, política de estabilidade da lib).
+- O gate de auditoria no-leak (`audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs`) garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`. Este é um invariante de segurança, não um schema.
+
 ### Schemas de Payload de Entrada
 - `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
 - `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`
