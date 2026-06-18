@@ -1,4 +1,4 @@
-# MIGRANDO PARA v1.0.83 — Preservação de Credenciais de Provider Customizado (ADR-0041)
+# MIGRANDO PARA v1.0.85 — Remediação de Cinco Gaps + Split do Claude + Hotfixes (ADR-0042, ADR-0043, ADR-0044)
 
 > Este guia é para operadores na v1.0.82 que querem atualizar para a v1.0.83 sem perder dados. Esta release é bump PATCH sem NENHUMA migração de banco. O schema permanece em v15. O comportamento é ADITIVO para operadores OAuth padrão.
 
@@ -27,6 +27,28 @@
 - `ANTHROPIC_BASE_URL` — override de endpoint para providers Anthropic-compatíveis customizados, agora PRESERVADO
 
 O mandato da v1.0.69 estava correto ao rejeitar as vars de API paga; o whitelist env-clear era amplo demais e acidentalmente descartava as vars legítimas de provider customizado também. A v1.0.83 corrige a implementação preservando o invariante OAuth-only.
+
+## MIGRANDO PARA v1.0.84 — Split do Backend Claude (ADR-0042, GAP-002)
+
+Se você dependia de `--llm-backend claude` em v1.0.83 para forçar o entry point Claude, agora essa flag realmente funciona como documentado. Anteriormente era um sinônimo para codex (GAP-002). O split passa por `LlmEmbeddingBuilder` (novo em v1.0.84) e a nova função `embed_via_claude_local` em `src/embedder.rs:190+`. Use `--dry-run-backend` para verificar qual backend será invocado antes de qualquer chamada de embedding.
+
+## MIGRANDO PARA v1.0.85 — Remediação de Cinco Gaps (ADR-0043)
+
+O enum `FallbackReason` agora distingue 7 causas via `reason_code`: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`. Scripts que parseiam o campo `vec_degraded: bool` dos envelopes `recall` e `hybrid-search` devem ser atualizados para ler `vec_degraded_reason: Option<String>` para diagnósticos finos. O caminho `try_embed_query_with_deterministic_fallback` retenta em `OAuthQuota` e aplica um teto de 750ms em `SlotExhausted` antes de cair em modo FTS5-puro.
+
+Os 12-14 headers HTTP `anthropic-ratelimit-*-remaining` retornados por `claude -p` agora são capturados por `LlmEmbedding::invoke_claude` (G45-CR5). Um valor `0` aborta o embed e dispara fallback para codex em vez de esperar pela ativação do circuit breaker.
+
+A dimensionalidade default de embedding está travada em 64 (Matryoshka Representation Learning, arXiv 2205.13147). Bancos 384-dim pré-existentes continuam funcionando inalterados; bancos novos criados sob v1.0.85 consomem 6x menos tokens OAuth por chamada (G56).
+
+## HOTFIX v1.0.85.1 — Fallback Gracioso `--llm-backend none` em `recall`/`hybrid-search` (GAP-004)
+
+Se você passa `--llm-backend none` para `recall` ou `hybrid-search`, a resposta agora emite corretamente `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"` e sai com exit 0. Antes do hotfix, o failsafe do v1.0.80 estava quebrado para essa escolha específica de backend. O fix vive em `src/embedder.rs:351` como braço intermediário `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)`.
+
+## HOTFIX v1.0.85.2 — `--dry-run-backend` Standalone + `embed_via_backend` Resolved Kind (ADR-0044)
+
+`--dry-run-backend` agora funciona como flag standalone sem exigir subcommand. O fix é `pub command: Option<Commands>` em `src/cli.rs:248`. Chamar `sqlite-graphrag --llm-backend claude --dry-run-backend` sai com exit 0 e JSON `{action, backend, binary, model, flavour, chain, strict_env_clear}`.
+
+`embed_via_backend` agora retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` em vez de apenas `Result<Vec<f32>, AppError>`. O `resolved_kind` propaga para 7 envelopes (edit, embedding-status, enrich-summary, hybrid-search, ingest-summary, recall, remember) que agora reportam `backend_invoked: "claude" | "codex" | "none"` consistentemente.
 
 ## Como Atualizar
 
@@ -498,4 +520,3 @@ Depois de reinstalar a v1.0.75, você pode reimportar os embeddings rodando `ini
 | `vec_memories` / `vec_entities` / `vec_chunks` (sqlite-vec) | v1.0.76 | `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` (BLOB) |
 | `daemon` (infraestrutura totalmente removida) | v1.0.76 | Nenhuma — o subprocesso LLM é o novo "carregador de modelo" |
 | Variáveis `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | v1.0.69 (ainda aplicadas) | OAuth via `claude login` / `codex login` |
-

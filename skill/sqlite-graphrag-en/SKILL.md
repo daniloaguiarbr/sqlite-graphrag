@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description:For persistent memory, GraphRAG, or long-term context in Claude Code, Codex, Cursor, Windsurf, AI agents. On: remember this, save conversation, retrieve context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding-dim, llm-parallelism, batched embedding, re-embed, force-reembed, G28-G58 gaps, OAuth-only enforcement, ANTHROPIC_API_KEY/OPENAI_API_KEY abort, Claude/Codex hardening flags, Mock LLM CLI in CI, daemon removal, A1/A2 audits, ADR-0032/0033/0034, G45/G53/G55/G56/G58, v1.0.82 five-gap (GAP-001..005), pending-embeddings, slots/pending/embedding subcommands, V014/V015 migrations, llm-max-host-concurrency, llm-slot-wait-secs, graceful-shutdown-secs, SHUTDOWN_EXIT_CODE, codex login, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, Minimax, OpenRouter, AWS Bedrock. KW: memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.82 v1.0.83.
+description:For persistent memory, GraphRAG, or long-term context in Claude Code, Codex, Cursor, Windsurf, AI agents. On: remember this, save conversation, retrieve context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding-dim, llm-parallelism, batched embedding, re-embed, force-reembed, G28-G58 gaps, OAuth-only enforcement, ANTHROPIC_API_KEY/OPENAI_API_KEY abort, Claude/Codex hardening flags, Mock LLM CLI in CI, daemon removal, A1/A2 audits, ADR-0032/0033/0034, G45/G53/G55/G56/G58, v1.0.82 five-gap (GAP-001..005), pending-embeddings, slots/pending/embedding subcommands, V014/V015 migrations, llm-max-host-concurrency, llm-slot-wait-secs, graceful-shutdown-secs, SHUTDOWN_EXIT_CODE, codex login, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, Minimax, OpenRouter, AWS Bedrock, --dry-run-backend, backend_invoked, vec_degraded_reason, embed_via_claude_local, LlmEmbeddingBuilder, GAP-003 slot circuit breaker, G58 deterministic OAuth fallback, G45-CR5 anthropic-ratelimit headers, G55 bilingual NotFound, v1.0.84, v1.0.85. KW: memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.82 v1.0.83 v1.0.84 v1.0.85.
 ---
 
 
@@ -51,7 +51,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - SET `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` for compliance mode (ADR-0041)
 - SET `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1` ONLY for CI test harnesses
 - VALID `--type` values: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
-- GLOBAL flags: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend codex,claude`, `--graceful-shutdown-secs N`
+- GLOBAL flags: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`
 
 
 ## Architecture Contract (OAuth/LLM/One-Shot)
@@ -130,6 +130,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - INVOKE `read --with-graph` to include linked entities and relationships
 - PARSE fields `body`, `description`, `created_at_iso`, `updated_at_iso`
 - TREAT exit code 4 as memory not found in namespace
+- EXPECT v1.0.85 G55 bilingual message: `--lang en` emits `Memory not found`, `--lang pt` emits `Memória não encontrada`
 - INVOKE `list --type <kind> --limit N` to filter by memory type
 - USE `--offset N` to paginate large datasets
 - USE `--include-deleted` to include soft-deleted memories
@@ -226,7 +227,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - PASS `--rrf-k 60` for standard RRF fusion constant
 - PASS `--weight-vec 1.0` and `--weight-fts 1.0` for balanced fusion
 - USE `--with-graph --max-hops 2 --min-weight 0.3` for graph expansion
-- EXPECT `hybrid-search` response: `results[]`, `graph_matches[]`, `fts_degraded`, `elapsed_ms`
+- EXPECT `hybrid-search` response (v1.0.84+): `results[]`, `graph_matches[]`, `fts_degraded`, `vec_degraded_reason?`, `backend_invoked`, `elapsed_ms`
 - READ BOTH `results[]` AND `graph_matches[]` when `--with-graph` active
 - INVOKE `related <name> --hops N` for multi-hop traversal from memory
 - PASS `--relation <type>` to filter traversal by relation
@@ -268,6 +269,9 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - `pending list` top fields: `id`, `name`, `status`, `created_at`, `namespace`
 - `slots status` top fields: `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`
 - `embedding status` top fields: `pending`, `processing`, `done`, `failed`, `skipped`
+- `recall` top fields (v1.0.84+): add `backend_invoked`, `vec_degraded_reason?`
+- `hybrid-search` top fields (v1.0.84+): add `backend_invoked`, `vec_degraded_reason?`
+- `remember`/`edit`/`ingest`/`enrich`/`read` envelopes (v1.0.84+): include `backend_invoked`
 - ALL schemas use `"additionalProperties": false` (SemVer-versioned JSON API)
 - FULL schemas in `docs/schemas/*.schema.json` (never inline full schema in skill)
 
@@ -291,6 +295,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - EXIT 20 means internal error or JSON serialization failure
 - EXIT 75 means slots exhausted OR `JobSingletonLocked`
 - EXIT 75 from `enrich`/`ingest --mode claude-code|codex`: parse `job '(\w+)'.*namespace '(\w+)'`
+- EXIT 75 v1.0.85 GAP-003 circuit breaker: respect per-namespace cooldown window; do NOT retry immediately
 - EXIT 77 means RAM pressure; wait for free memory
 - NEVER ignore non-zero exit code as success
 - NEVER reprocess entire batch after exit 13
@@ -316,7 +321,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER run `enrich` in parallel against same database
 
 
-## v1.0.82 Surface (pending, slots, embedding, llm-backend, shutdown)
+## v1.0.82+ Surface (pending, slots, embedding, llm-backend, shutdown, v1.0.84/85 fields)
 - INVOKE `pending list --filter-status queued` to inspect three-stage remember checkpoint queue
 - INVOKE `pending show <id>` to inspect single checkpoint row
 - INVOKE `pending cleanup --yes` to remove terminal-state rows
@@ -333,11 +338,24 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - PASS `--llm-backend codex,claude,none` for null embedding fallback
 - DEFAULT `--llm-backend` is `codex`
 - PASS `--llm-fallback-mode <claude|codex>` to swap backend mid-job on rate-limit
+- EXPECT v1.0.85 G58 deterministic fallback when alt backend listed in `--llm-backend codex,claude`
 - PASS `--graceful-shutdown-secs N` to reserve cleanup budget before SIGKILL
 - PASS `--skip-embedding-on-failure` only when `--llm-backend …,none`
 - PASS ADR-0041 `--strict-env-clear` to drop custom-provider credentials in subprocess
 - RUN `codex login` after upgrade to refresh OAuth refresh token (2026-06-14 incident)
 - OPERATOR action for stale OAuth: `codex login` then retry
+- v1.0.84: PASS `--dry-run-backend` to plan backend operation without executing it (idempotent preview)
+- v1.0.84: PARSE `backend_invoked` field in recall, hybrid-search, remember, edit, ingest, enrich, read envelopes to confirm effective backend
+- v1.0.84: READ `vec_degraded_reason` in recall/hybrid-search envelopes when vec path is degraded
+- v1.0.84: KNOW claude backend splits into local embedder via `embed_via_claude_local` (zero-token, OAuth-compatible)
+- v1.0.84: USE `LlmEmbeddingBuilder` to compose embedding pipeline: `with_backend(Codex).or_fallback(Claude).or_skip()`
+- v1.0.85 GAP-003: RESPECT slot exhaustion circuit breaker; on exit 75, backoff per-namespace cooldown before retry
+- v1.0.85 G58: EXPECT deterministic OAuth quota fallback when alt backend declared in `--llm-backend` list
+- v1.0.85 G45-CR5: CAPTURE `anthropic-ratelimit-requests-remaining`, `anthropic-ratelimit-tokens-remaining`, `anthropic-ratelimit-input-tokens-reset`, `anthropic-ratelimit-output-tokens-reset` from response headers in envelope
+- v1.0.85 G55: EXPECT bilingual NotFound from `read --name <missing>` based on `--lang`: EN emits `Memory not found`, PT emits `Memória não encontrada`
+- v1.0.85 G56: DEFAULT embedding dim is 64 (MRL) when `SQLITE_GRAPHRAG_EMBEDDING_DIM` unset and `schema_meta.dim` absent
+- v1.0.85.1: KNOW `recall --llm-backend none` and `hybrid-search --llm-backend none` return exit 0 with `vec_degraded_reason: "dim_zero"` (GAP-004 hotfix)
+- v1.0.85.2: USE `--dry-run-backend` standalone without a subcommand (BUG-001); `setup_mock_path()` test mock emits proper JSON for claude and JSONL for codex (BUG-002); the `backend_invoked` field in 7 envelopes reflects the RESOLVED backend (BUG-003)
 
 
 ## Maintenance (fts, backup, vacuum, optimize, migrate, export, debug-schema, vec, completions)

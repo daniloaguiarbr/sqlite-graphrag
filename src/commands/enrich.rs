@@ -592,6 +592,12 @@ struct EnrichSummary {
     skipped: usize,
     cost_usd: f64,
     elapsed_ms: u64,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o re-embedding durante o enrich. `"claude" | "codex" | "none"`.
+    /// Absent on the wire when `None` (kept for happy-path envelope cleanliness,
+    /// ou quando a operação não envolveu re-embed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend_invoked: Option<&'static str>,
 }
 
 use crate::output::emit_json_line as emit_json;
@@ -1258,6 +1264,11 @@ fn persist_entity_description(
     Ok(())
 }
 
+/// v1.0.84 (ADR-0042): on successful re-embed, records the active backend
+/// into the shared accumulator (`ENRICH_LAST_BACKEND`) so the final
+/// `EnrichSummary` can expose `backend_invoked` without changing every
+/// caller's signature. Best-effort observability — concurrent enrich runs
+/// may race, but `Mutex` keeps the mutation safe.
 #[allow(clippy::too_many_arguments)]
 fn reembed_memory_vector(
     conn: &Connection,
@@ -1270,9 +1281,13 @@ fn reembed_memory_vector(
     llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<(), AppError> {
     let snippet: String = body.chars().take(200).collect();
-    // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-    let embedding =
+    // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+    // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
+    // backend que efetivamente rodou e popula o accumulator para o
+    // EnrichSummary agregado.
+    let (embedding, backend_kind) =
         crate::embedder::embed_passage_with_choice(&paths.models, body, Some(llm_backend))?;
+    record_enrich_backend(backend_kind.as_str());
     memories::upsert_vec(
         conn,
         memory_id,
@@ -1284,6 +1299,23 @@ fn reembed_memory_vector(
     )?;
     Ok(())
 }
+
+/// v1.0.84 (ADR-0042): process-local accumulator of the last LLM backend
+/// that successfully ran a re-embed during the current enrich invocation.
+/// Read by `run` once at summary emission. Scoped to a single process —
+/// cross-process enrichment is gated by the per-namespace singleton, so
+/// there is no concurrency hazard across DBs.
+fn record_enrich_backend(backend: &'static str) {
+    if let Ok(mut guard) = ENRICH_LAST_BACKEND.lock() {
+        *guard = Some(backend);
+    }
+}
+
+fn take_enrich_backend() -> Option<&'static str> {
+    ENRICH_LAST_BACKEND.lock().ok().and_then(|mut g| g.take())
+}
+
+static ENRICH_LAST_BACKEND: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
 
 /// Persists an enriched memory body (body-enrich, GAP-18).
 ///
@@ -1634,6 +1666,7 @@ pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
             skipped: 0,
             cost_usd: 0.0,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            backend_invoked: take_enrich_backend(),
         });
         return Ok(());
     }
@@ -2367,6 +2400,7 @@ pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
         skipped,
         cost_usd: cost_total,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        backend_invoked: take_enrich_backend(),
     });
 
     if failed == 0 {

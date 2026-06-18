@@ -96,3 +96,6 @@ Persistência em fila `pending_embeddings` (V015) para reprocessamento posterior
   cadeia de fallback deste ADR-0040; o usuário pode explicitamente
   limitar a cadeia para `codex` apenas (e o ADR-0041 faz com que
   `OPENAI_BASE_URL` chegue ao codex para OpenRouter).
+### Refined by ADR-0043 (v1.0.85)
+
+ADR-0043 (`docs/decisions/adr-0043-five-gap-remediation.md`) extends the observability introduced here. The `LlmBackendError` enum from ADR-0040 is complemented by the 7-variant `FallbackReason` with `reason_code` discriminator. The `vec_degraded_reason: Option<String>` field on `recall` and `hybrid-search` envelopes tells operators whether the live embedding failed due to quota (`"oauth_quota"`), backend mismatch (`"backend_mismatch"`), slot exhaustion (`"slot_exhausted"`), or one of the other 4 reasons. The `anthropic-ratelimit-*-remaining=0` capture (G45-CR5) is the proactive trigger that feeds the `oauth_quota` reason code.

@@ -253,6 +253,11 @@ pub struct RememberResponse {
     /// keep the common (already-kebab) payload small.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_name: Option<String>,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o embedding da passagem. `"claude" | "codex" | "none"`.
+    /// Absent on the wire when `None` (kept for happy-path envelope cleanliness).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_invoked: Option<&'static str>,
 }
 
 /// Individual item returned by the `recall` query.
@@ -359,6 +364,16 @@ pub struct RecallResponse {
     /// hybrid response so downstream pipelines can lower their confidence.
     #[serde(skip_serializing_if = "std::option::Option::is_none")]
     pub warning: Option<String>,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o embedding live. `"claude" | "codex" | "none"`. Absent
+    /// on the wire when `None` (kept for happy-path envelope cleanliness).
+    #[serde(skip_serializing_if = "std::option::Option::is_none")]
+    pub backend_invoked: Option<&'static str>,
+    /// v1.0.84 (ADR-0042): reason code discriminador de degradação
+    /// (`"embedding_failed" | "cancelled" | "timeout"`). Absent when
+    /// `vec_degraded` is false.
+    #[serde(skip_serializing_if = "std::option::Option::is_none")]
+    pub vec_degraded_reason: Option<String>,
 }
 
 #[cfg(test)]
@@ -438,6 +453,7 @@ mod tests {
             elapsed_ms: 123,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("memory_id"));
@@ -486,6 +502,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("direct_matches"));
@@ -511,6 +529,8 @@ mod tests {
             vec_degraded: true,
             vec_error: Some("embedding cancelled by external signal".to_string()),
             warning: Some("live query embedding unavailable; results are FTS5 BM25 only (semantic relevance reduced)".to_string()),
+            backend_invoked: None,
+            vec_degraded_reason: Some("embedding cancelled by external signal".to_string()),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"vec_degraded\":true"));

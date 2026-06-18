@@ -12,17 +12,17 @@
 | Subcommand | Schema file |
 |---|---|
 | `init` | `init.schema.json` |
-| `remember` | `remember.schema.json` |
-| `recall` | `recall.schema.json` |
+| `remember` (updated v1.0.84, ADR-0042) | `remember.schema.json` |
+| `recall` (updated v1.0.84, ADR-0042 / v1.0.85, ADR-0043 enum 7 variants) | `recall.schema.json` |
 | `read` | `read.schema.json` |
 | `list` | `list.schema.json` |
 | `forget` | `forget.schema.json` |
 | `purge` | `purge.schema.json` |
 | `rename` | `rename.schema.json` |
-| `edit` | `edit.schema.json` |
+| `edit` (updated v1.0.84, ADR-0042) | `edit.schema.json` |
 | `history` | `history.schema.json` |
 | `restore` | `restore.schema.json` |
-| `hybrid-search` | `hybrid-search.schema.json` |
+| `hybrid-search` (updated v1.0.84, ADR-0042 / v1.0.85, ADR-0043 enum 7 variants) | `hybrid-search.schema.json` |
 | `deep-research` | `deep-research.schema.json` |
 | `health` | `health.schema.json` |
 | `migrate` | `migrate.schema.json` |
@@ -46,9 +46,9 @@
 | `normalize-entities` | `normalize-entities.schema.json` |
 | `enrich` (phase event) | `enrich-phase.schema.json` |
 | `enrich` (per-item event) | `enrich-item-event.schema.json` |
-| `enrich` (summary) | `enrich-summary.schema.json` |
+| `enrich` (summary, updated v1.0.84, ADR-0042) | `enrich-summary.schema.json` |
 | `ingest` (per-file event) | `ingest-file-event.schema.json` |
-| `ingest` (summary) | `ingest-summary.schema.json` |
+| `ingest` (summary, updated v1.0.84, ADR-0042) | `ingest-summary.schema.json` |
 | `ingest --mode claude-code` (phase event) | `ingest-claude-phase.schema.json` |
 | `ingest --mode claude-code` (per-file event) | `ingest-claude-file-event.schema.json` |
 | `ingest --mode claude-code` (summary) | `ingest-claude-summary.schema.json` |
@@ -74,7 +74,7 @@
 | `codex-models` (v1.0.69) | `codex-models.schema.json` |
 | `slots status` (v1.0.82, GAP-004) | `slots-status.schema.json` |
 | `pending list` (v1.0.82, GAP-001) | `pending-list.schema.json` |
-| `embedding status` (v1.0.82, GAP-005) | `embedding-status.schema.json` |
+| `embedding status` (v1.0.82, GAP-005, updated v1.0.84, ADR-0042) | `embedding-status.schema.json` |
 | `embedding list` (v1.0.82, GAP-005) | `embedding-list.schema.json` |
 | shutdown envelope (v1.0.82, GAP-002) | `shutdown-envelope.schema.json` |
 | error envelope (all commands) | `error-envelope.schema.json` |
@@ -95,6 +95,43 @@
 - Template B (legacy): `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` — emitted by the counting semaphore for any other command
 - Agents can disambiguate the two with a regex on `message`: matches `^job ` for Template A and `^all ` for Template B
 - The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
+
+### Schema Changes in v1.0.84 (ADR-0042 / GAP-002)
+- Seven response schemas gained an OPTIONAL `backend_invoked: enum [claude, codex, none]` field that reports which LLM backend the live embedding path actually invoked
+- Affected envelopes: `embedding-status`, `remember`, `edit`, `recall`, `hybrid-search`, `ingest-summary`, `enrich-summary`
+- The field is omitted (not `null`) when no backend was invoked, keeping happy-path envelopes clean
+- Agents SHOULD treat `backend_invoked` as the ground truth for which CLI binary ran during the call
+### Update (v1.0.85 / ADR-0043)
+- Two response schemas gained `vec_degraded_reason` with the seven-variant enum `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout` plus explicit `null` for happy-path. Callers can switch on this discriminator instead of regex against `vec_error` strings.
+- Two response schemas also gained `vec_degraded_reason: enum [embedding_failed, cancelled, timeout, null]` for callers that need to distinguish OAuth quota exhaustion from cancellation from timeout
+- Affected envelopes: `recall`, `hybrid-search`
+- The field is omitted when live embedding succeeded, and explicitly `null` when no degradation path was triggered
+- All seven updated schemas keep `"additionalProperties": false`; the new fields are additive and `null`/`omitted` are distinct contract states
+- See `docs/decisions/adr-0042-claude-backend-split.md` (EN) and `.pt-BR.md` for the full rationale
+### Schema Changes in v1.0.85 (ADR-0043 / five-gap remediation)
+- `recall` and `hybrid-search` response schemas extended `vec_degraded_reason` enum from 3 to 7 variants: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
+- `slot_exhausted` (GAP-003) discriminates LLM subprocess semaphore contention from quota exhaustion; callers can retry with `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS` override
+- `oauth_quota` (G58, G45-CR5) discriminates Anthropic usage limit exhaustion from structural embedding errors; triggers deterministic codex <-> claude backend swap before falling back to FTS5
+- `backend_mismatch` discriminates requested vs resolved backend divergence (e.g. `--llm-backend claude` resolved to codex via PATH-probe)
+- `dim_zero` discriminates an embedding that returned a zero-dimension vector (structural bug indicator distinct from quota or contention)
+- The expanded enum is backwards compatible: existing callers that switch on `embedding_failed | cancelled | timeout` continue to work; new variants are additive
+- Default embedding `dim` is 64 (MRL, arXiv 2205.13147) since v1.0.79; v1.0.85 confirms and locks the constant at `src/constants.rs:22 DEFAULT_EMBEDDING_DIM = 64` (G56 docs)
+- `anthropic-ratelimit-*-remaining` headers are now first-class signal in `LlmEmbedding::invoke_claude` (G45-CR5); a zero value aborts the spawn with `AppError::Embedding` mapped to `FallbackReason::OAuthQuota`
+- `read` `AppError::MemoryNotFound` / `MemoryNotFoundById` Display is bilingue via `pt::memory_not_found` / `pt::memory_not_found_by_id` (G55 docs, preserved from v1.0.80)
+- All schemas keep `"additionalProperties": false`; the seven-variant enum is the canonical discriminator for live-embedding degradation
+- See `docs/decisions/adr-0043-five-gap-remediation.md` (EN) and `.pt-BR.md` for the full rationale
+### Mudancas de Schema em v1.0.85 (ADR-0043 / remediacao dos cinco gaps)
+- Schemas de resposta `recall` e `hybrid-search` estenderam o enum `vec_degraded_reason` de 3 para 7 variantes: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
+- `slot_exhausted` (GAP-003) discrimina contencao do semaforo de subprocessos LLM de exaustao de cota; chamadores podem re-tentar com override `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS`
+- `oauth_quota` (G58, G45-CR5) discrimina exaustao de cota Anthropic de erros estruturais de embedding; dispara troca deterministica codex <-> claude antes de cair em FTS5-puro
+- `backend_mismatch` discrimina divergencia entre backend solicitado e resolvido (ex. `--llm-backend claude` resolvido para codex via PATH-probe)
+- `dim_zero` discrimina embedding que retornou vetor de dimensao zero (indicador de bug estrutural distinto de cota ou contencao)
+- O enum expandido e retrocompativel: chamadores existentes que chaveiam em `embedding_failed | cancelled | timeout` continuam funcionando; variantes novas sao aditivas
+- `dim` default de embedding e 64 (MRL, arXiv 2205.13147) desde v1.0.79; v1.0.85 confirma e tranca a constante em `src/constants.rs:22 DEFAULT_EMBEDDING_DIM = 64` (G56 docs)
+- Headers `anthropic-ratelimit-*-remaining` agora sao sinal de primeira classe em `LlmEmbedding::invoke_claude` (G45-CR5); valor zero aborta o spawn com `AppError::Embedding` mapeado para `FallbackReason::OAuthQuota`
+- `read` `AppError::MemoryNotFound` / `MemoryNotFoundById` Display e bilingue via `pt::memory_not_found` / `pt::memory_not_found_by_id` (G55 docs, preservado desde v1.0.80)
+- Todos os schemas mantem `"additionalProperties": false`; o enum de sete variantes e o discriminador canonico para degradacao de embedding live
+- Veja `docs/decisions/adr-0043-five-gap-remediation.md` (EN) e `.pt-BR.md` para a justificativa completa
 ### Input Payload Schemas
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
@@ -102,81 +139,82 @@
 - Inspect a `recall` response shape quickly: `sqlite-graphrag recall "query" | jaq '.'`
 - Validate with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
 - The `debug-schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`debug-schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
-### Flag Behavior
-- Schemas describe the OUTPUT JSON contract, not the CLI input shape
-- Several subcommands accept multiple flag aliases that produce the same output
-- `sync-safe-copy` accepts `--dest` (primary), `--to`, and `--output` — all write to the same `dest_path` field in the response
-- `graph stats` accepts both `--json` and `--format json`; if `--json` is combined with `--format text`, `--json` wins and the response remains JSON
-- `debug-schema` is exposed by the binary with a double-underscore prefix; the schema file uses kebab-case `debug-schema.schema.json` following the directory convention
-- The `--json` flag is the universal compatibility switch for JSON stdout; on commands with alternate text formats, `--json` wins
-### Stability Guarantee
-- Schemas track the `main` branch and are updated with every breaking change
-- Minor additions (new optional fields) do NOT bump the schema version
-- Removals or renames of required fields constitute a breaking change and increment the CLI major version
 
 
 ## Português Brasileiro
-### Objetivo
+### Propósito
 - Cada arquivo neste diretório é um documento JSON Schema Draft 2020-12
-- Os schemas de saída descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
-- Os schemas de entrada descrevem os payloads JSON aceitos pela ingestão de grafo orientada a arquivo
+- Schemas de saída descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
+- Schemas de entrada descrevem os payloads JSON aceitos para ingestão de grafo orientada a arquivo
 - Agentes e parsers DEVEM validar respostas contra estes schemas antes de processar
 - Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
 ### Arquivos de Schema
-- Veja a tabela na seção English acima — os nomes de arquivo são idênticos entre idiomas
-### Comandos Sem JSON Schema
-- `completions` emite scripts de completion de shell (Bash, Zsh, Fish, PowerShell, Elvish) como texto puro — nenhum JSON schema se aplica
-- `daemon` foi removido na v1.0.76 (código restante deletado na v1.0.79) — nenhum JSON schema se aplica (histórico)
-### Seleção de Schema por Modo de Ingestão
-- `--mode none` e `--mode gliner` (DEPRECIADO desde a v1.0.79: somente URL-regex, emite aviso de depreciação) usam `ingest-file-event.schema.json` e `ingest-summary.schema.json`
-- `--mode claude-code` usa `ingest-claude-phase.schema.json`, `ingest-claude-file-event.schema.json` e `ingest-claude-summary.schema.json`
-- Modo claude-code emite eventos de fase adicionais (validate, scan) antes dos eventos por arquivo
-- Eventos por arquivo no modo claude-code incluem campos `entities`, `rels` e `cost_usd` não presentes na ingestão normal
-- `--mode codex` (adicionado na v1.0.62) reutiliza o mesmo formato NDJSON do `--mode claude-code` — nenhum schema codex separado é necessário
-- Modo Codex emite os mesmos shapes de PhaseEvent, FileEvent e Summary; agentes que validam saída claude-code podem reutilizar esses schemas sem alteração
-
-### Error Envelope Changes in v1.0.68 (G28-B)
-- The `error-envelope.schema.json` `message` field for `code: 75` now has two distinct templates, both routed to the same exit code
-- Template A (new since v1.0.68, G28-B): `job <job_type> for namespace '<namespace>' is already running (exit 75); wait for it to finish or pass --wait-job-singleton <SECONDS>` — emitted by `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` when a concurrent invocation holds the singleton
-- Template B (legacy): `all <max> concurrency slots occupied after waiting <waited_secs>s (exit 75); use --max-concurrency or wait for other invocations to finish` — emitted by the counting semaphore for any other command
-- Agents can disambiguate the two with a regex on `message`: matches `^job ` for Template A and `^all ` for Template B
-- The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
-### Schemas Adicionados na v1.0.69 (G33 + G39)
-- `vec-orphan-list.schema.json` cobre `sqlite-graphrag vec orphan-list --json`; lista cada linha órfã com `vector_hash` e `kind` (`memory` | `entity` | `chunk`).
-- `vec-purge-orphan.schema.json` cobre `sqlite-graphrag vec purge-orphan --yes --json`; emite contagens de purga por tabela para `vec_memories`, `vec_entities` e `vec_chunks`.
-- `vec-stats.schema.json` cobre `sqlite-graphrag vec stats --json`; emite contagens de linhas mais contagens de órfãos nas três tabelas vec.
-- `codex-models.schema.json` cobre `sqlite-graphrag codex-models --json`; emite a lista branca de modelos ChatGPT Pro OAuth, o modelo padrão e um campo opcional `suggestion` quando `--suggest <substring>` é usado.
-- Os quatro novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto.
-- Schemas existentes (`optimize.schema.json`, `enrich-*.schema.json`, `backup.schema.json`) permanecem inalterados em shape; os novos campos v1.0.69 (`fts_progress_polls`, `enrich_preservation_score`, `backup_step_sleep_ms`) vivem dentro de seus objetos existentes como campos opcionais.
-### Schemas Adicionados na v1.0.82 (GAP-001/002/004/005)
-- `pending-list.schema.json` cobre `sqlite-graphrag pending list` para inspeção da fila de checkpoint do `remember` em três estágios (GAP-001, ADR-0036); aceita `--filter-status queued|processing|done|failed` e `--limit`.
-- `embedding-list.schema.json` cobre `sqlite-graphrag embedding list` para inspeção por entrada da fila `pending_embeddings` (GAP-005, ADR-0040); aceita `--filter-status queued|processing|done|failed|skipped` e `--limit`.
-- `embedding-status.schema.json` cobre `sqlite-graphrag embedding status` para a saúde da fila de embeddings pendentes (GAP-005); retorna contagens por status e elapsed_ms.
-- `slots-status.schema.json` cobre `sqlite-graphrag slots status` para inspeção do semáforo cross-process de subprocessos LLM (GAP-004, ADR-0039); retorna `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`, `p50_wait_ms` e `p99_wait_ms`.
-- `shutdown-envelope.schema.json` é o envelope JSON emitido para stdout quando um sinal de shutdown interrompe a execução (GAP-002, ADR-0037); exit code 19 fixo, campos `signal` (`SIGTERM` | `SIGINT` | `SIGHUP`) e `graceful` (bool) obrigatórios.
-- Os cinco novos schemas declaram `"additionalProperties": false` para casar com a convenção de schemas do projeto; os campos `$id` usam `https://github.com/daniloaguiarbr/sqlite-graphrag/...` consistente com os schemas legados.
-
-### Schemas na v1.0.83 (ADR-0041)
-- **Nenhum schema novo** foi adicionado na v1.0.83. A release preserva credenciais de provider customizado no env dos subprocessos LLM (ADR-0041) e adiciona a flag global `--strict-env-clear` / env `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1`. Nenhuma destas mudanças afeta o contrato de stdout JSON — os schemas existentes permanecem válidos sem alterações.
-- O erro OAuth-only abort agora referencia `ANTHROPIC_AUTH_TOKEN` e `~/.codex/auth.json` como resoluções legítimas na mensagem de erro (texto livre em stderr), mas o envelope JSON do erro em stdout permanece idêntico ao da v1.0.82. Veja `error-envelope.schema.json`.
-- O helper compartilhado `src/spawn/env_whitelist.rs` expõe `apply_env_whitelist(cmd, strict)` e `is_strict_env_clear()` — ambos são APIs internas da biblioteca Rust, não da CLI. Consumidores da lib que desejem empilhar com a v1.0.83 devem re-pinar para `=1.0.83` (veja ADR-0032, política de estabilidade da lib).
-- O gate de auditoria no-leak (`audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs`) garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`. Este é um invariante de segurança, não um schema.
-
-### Schemas de Payload de Entrada
-- `entities-input.schema.json` valida o array JSON aceito por `remember --entities-file`
-- `relationships-input.schema.json` valida o array JSON aceito por `remember --relationships-file`
-### Comportamento de Flags
-- Os schemas descrevem o contrato de OUTPUT JSON, não o formato de entrada CLI
-- Vários subcomandos aceitam múltiplos aliases de flag que produzem a mesma saída
-- `sync-safe-copy` aceita `--dest` (primária), `--to` e `--output` — todos gravam no mesmo campo `dest_path` da resposta
-- `graph stats` aceita `--json` e `--format json`; se `--json` for combinado com `--format text`, `--json` vence e a resposta continua JSON
-- `debug-schema` é exposto pelo binário com prefixo duplo sublinhado; o arquivo de schema usa kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
-- A flag `--json` é o switch universal de compatibilidade para JSON no stdout; em comandos com formatos textuais alternativos, `--json` vence
-### Uso
-- Inspecionar rapidamente o shape da resposta do `recall`: `sqlite-graphrag recall "consulta" | jaq '.'`
-- Validar com um validador JSON Schema real: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
-- O subcomando `debug-schema` é oculto e destinado apenas a ferramentas de diagnóstico — o binário o expõe com prefixo duplo sublinhado (`debug-schema`) enquanto o arquivo de schema usa o nome kebab-case `debug-schema.schema.json` seguindo a convenção do diretório
-### Garantia de Estabilidade
-- Os schemas acompanham a branch `main` e são atualizados a cada breaking change
-- Adições menores (novos campos opcionais) NÃO incrementam a versão do schema
-- Remoções ou renomeações de campos obrigatórios constituem breaking change e incrementam a versão major da CLI
+| Subcomando | Arquivo de schema |
+|---|---|
+| `init` | `init.schema.json` |
+| `remember` (atualizado v1.0.84, ADR-0042) | `remember.schema.json` |
+| `recall` (atualizado v1.0.84, ADR-0042 / v1.0.85, ADR-0043 enum 7 variantes) | `recall.schema.json` |
+| `read` | `read.schema.json` |
+| `list` | `list.schema.json` |
+| `forget` | `forget.schema.json` |
+| `purge` | `purge.schema.json` |
+| `rename` | `rename.schema.json` |
+| `edit` (atualizado v1.0.84, ADR-0042) | `edit.schema.json` |
+| `history` | `history.schema.json` |
+| `restore` | `restore.schema.json` |
+| `hybrid-search` (atualizado v1.0.84, ADR-0042 / v1.0.85, ADR-0043 enum 7 variantes) | `hybrid-search.schema.json` |
+| `deep-research` | `deep-research.schema.json` |
+| `health` | `health.schema.json` |
+| `migrate` | `migrate.schema.json` |
+| `migrate --rehash` (v1.0.76, atualizado v1.0.77, v1.0.78) | `migrate-rehash.schema.json` |
+| `migrate --to-llm-only` (v1.0.76, atualizado v1.0.77, v1.0.78) | `migrate-to-llm-only.schema.json` |
+| `namespace-detect` | `namespace-detect.schema.json` |
+| `optimize` | `optimize.schema.json` |
+| `stats` | `stats.schema.json` |
+| `sync-safe-copy` | `sync-safe-copy.schema.json` |
+| `vacuum` | `vacuum.schema.json` |
+| `link` | `link.schema.json` |
+| `unlink` | `unlink.schema.json` |
+| `related` | `related.schema.json` |
+| `graph` | `graph.schema.json` |
+| `graph traverse` | `graph-traverse.schema.json` |
+| `graph stats` | `graph-stats.schema.json` |
+| `graph entities` | `graph-entities.schema.json` |
+| `cleanup-orphans` | `cleanup-orphans.schema.json` |
+| `prune-relations` | `prune-relations.schema.json` |
+| `reclassify-relation` | `reclassify-relation.schema.json` |
+| `normalize-entities` | `normalize-entities.schema.json` |
+| `enrich` (evento de fase) | `enrich-phase.schema.json` |
+| `enrich` (evento por item) | `enrich-item-event.schema.json` |
+| `enrich` (sumário, atualizado v1.0.84, ADR-0042) | `enrich-summary.schema.json` |
+| `ingest` (evento por arquivo) | `ingest-file-event.schema.json` |
+| `ingest` (sumário, atualizado v1.0.84, ADR-0042) | `ingest-summary.schema.json` |
+| `ingest --mode claude-code` (evento de fase) | `ingest-claude-phase.schema.json` |
+| `ingest --mode claude-code` (evento por arquivo) | `ingest-claude-file-event.schema.json` |
+| `ingest --mode claude-code` (sumário) | `ingest-claude-summary.schema.json` |
+| `debug-schema` | `debug-schema.schema.json` |
+| `fts rebuild` | `fts-rebuild.schema.json` |
+| `fts check` | `fts-check.schema.json` |
+| `fts stats` | `fts-stats.schema.json` |
+| `backup` | `backup.schema.json` |
+| `delete-entity` | `delete-entity.schema.json` |
+| `reclassify` | `reclassify.schema.json` |
+| `merge-entities` | `merge-entities.schema.json` |
+| `rename-entity` | `rename-entity.schema.json` |
+| `memory-entities` (forward: `--name`) | `memory-entities.schema.json` |
+| `memory-entities` (reverso: `--entity`) | `memory-entities-reverse.schema.json` |
+| `prune-ner` | `prune-ner.schema.json` |
+| `remember-batch` (evento por item) | `remember-batch.schema.json` |
+| `remember-batch` (sumário) | `remember-batch-summary.schema.json` |
+| `export` (linha por memória) | `export-memory-line.schema.json` |
+| `export` (sumário) | `export-summary.schema.json` |
+| `vec orphan-list` (v1.0.69) | `vec-orphan-list.schema.json` |
+| `vec purge-orphan` (v1.0.69) | `vec-purge-orphan.schema.json` |
+| `vec stats` (v1.0.69) | `vec-stats.schema.json` |
+| `codex-models` (v1.0.69) | `codex-models.schema.json` |
+| `slots status` (v1.0.82, GAP-004) | `slots-status.schema.json` |
+| `pending list` (v1.0.82, GAP-001) | `pending-list.schema.json` |
+| `embedding status` (v1.0.82, GAP-005, atualizado v1.0.84, ADR-0042) | `embedding-status.schema.json` |
+| `embedding list` (v1.0.82, GAP-005) | `embedding-list.schema.json` |
+| envelope de shutdown (v1.0.82, GAP-002) | `shutdown-envelope.schema.json` |
+| envelope de erro (todos os comandos) | `error-envelope.schema.json` |

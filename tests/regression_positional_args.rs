@@ -15,7 +15,7 @@ use sqlite_graphrag::cli::{Cli, Commands};
 fn regression_read_args_accepts_name_positional() {
     // Simulate: sqlite-graphrag read minha-memoria
     let cli = Cli::try_parse_from(["sqlite-graphrag", "read", "minha-memoria"]).unwrap();
-    if let Commands::Read(args) = cli.command {
+    if let Some(Commands::Read(args)) = cli.command {
         assert_eq!(
             args.name_positional.as_deref(),
             Some("minha-memoria"),
@@ -34,7 +34,7 @@ fn regression_read_args_accepts_name_positional() {
 fn regression_read_args_accepts_flag_name() {
     // Simulate: sqlite-graphrag read --name minha-memoria (back-compat)
     let cli = Cli::try_parse_from(["sqlite-graphrag", "read", "--name", "minha-memoria"]).unwrap();
-    if let Commands::Read(args) = cli.command {
+    if let Some(Commands::Read(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("minha-memoria"),
@@ -56,7 +56,7 @@ fn regression_read_args_accepts_flag_name() {
 #[test]
 fn regression_forget_args_accepts_name_positional() {
     let cli = Cli::try_parse_from(["sqlite-graphrag", "forget", "minha-memoria"]).unwrap();
-    if let Commands::Forget(args) = cli.command {
+    if let Some(Commands::Forget(args)) = cli.command {
         assert_eq!(
             args.name_positional.as_deref(),
             Some("minha-memoria"),
@@ -75,7 +75,7 @@ fn regression_forget_args_accepts_name_positional() {
 fn regression_forget_args_accepts_flag_name() {
     let cli =
         Cli::try_parse_from(["sqlite-graphrag", "forget", "--name", "minha-memoria"]).unwrap();
-    if let Commands::Forget(args) = cli.command {
+    if let Some(Commands::Forget(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("minha-memoria"),
@@ -94,7 +94,7 @@ fn regression_forget_args_accepts_flag_name() {
 #[test]
 fn regression_history_args_accepts_name_positional() {
     let cli = Cli::try_parse_from(["sqlite-graphrag", "history", "minha-memoria"]).unwrap();
-    if let Commands::History(args) = cli.command {
+    if let Some(Commands::History(args)) = cli.command {
         assert_eq!(
             args.name_positional.as_deref(),
             Some("minha-memoria"),
@@ -110,7 +110,7 @@ fn regression_history_args_accepts_name_positional() {
 fn regression_history_args_accepts_flag_name() {
     let cli =
         Cli::try_parse_from(["sqlite-graphrag", "history", "--name", "minha-memoria"]).unwrap();
-    if let Commands::History(args) = cli.command {
+    if let Some(Commands::History(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("minha-memoria"),
@@ -136,7 +136,7 @@ fn regression_edit_args_accepts_name_positional() {
         "novo-conteudo",
     ])
     .unwrap();
-    if let Commands::Edit(args) = cli.command {
+    if let Some(Commands::Edit(args)) = cli.command {
         assert_eq!(
             args.name_positional.as_deref(),
             Some("minha-memoria"),
@@ -159,7 +159,7 @@ fn regression_edit_args_accepts_flag_name() {
         "novo-conteudo",
     ])
     .unwrap();
-    if let Commands::Edit(args) = cli.command {
+    if let Some(Commands::Edit(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("minha-memoria"),
@@ -185,7 +185,7 @@ fn regression_rename_args_accepts_name_positional() {
         "nome-novo",
     ])
     .unwrap();
-    if let Commands::Rename(args) = cli.command {
+    if let Some(Commands::Rename(args)) = cli.command {
         assert_eq!(
             args.name_positional.as_deref(),
             Some("nome-antigo"),
@@ -213,7 +213,7 @@ fn regression_rename_args_accepts_flag_name() {
         "nome-novo",
     ])
     .unwrap();
-    if let Commands::Rename(args) = cli.command {
+    if let Some(Commands::Rename(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("nome-antigo"),
@@ -237,7 +237,7 @@ fn regression_rename_args_accepts_alias_old() {
         "nome-novo",
     ])
     .unwrap();
-    if let Commands::Rename(args) = cli.command {
+    if let Some(Commands::Rename(args)) = cli.command {
         assert_eq!(
             args.name.as_deref(),
             Some("nome-antigo"),

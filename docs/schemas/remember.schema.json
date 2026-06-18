@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/remember.schema.json",
   "title": "RememberResponse",
-  "description": "Response emitted by `sqlite-graphrag remember` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag remember` on stdout as a single JSON line. backend_invoked added in v1.0.84 by ADR-0042.",
   "type": "object",
   "required": [
     "memory_id", "name", "namespace", "action", "operation", "version",
@@ -30,6 +30,11 @@
     "warnings":                 { "type": "array", "items": { "type": "string" } },
     "created_at":               { "type": "integer", "description": "Unix epoch seconds." },
     "created_at_iso":           { "type": "string",  "format": "date-time", "description": "RFC 3339 UTC timestamp." },
-    "elapsed_ms":               { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+    "elapsed_ms":               { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." },
+    "backend_invoked": {
+      "description": "v1.0.84 (ADR-0042): backend LLM that ran the live embedding (claude, codex, or none). Omitted when no backend was invoked (e.g. dry-run or LLM-free path).",
+      "type": "string",
+      "enum": ["claude", "codex", "none"]
+    }
   }
 }

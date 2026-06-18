@@ -1,10 +1,10 @@
-# sqlite-graphrag (v1.0.79 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.85 LLM-Only One-Shot)
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 6 MB
 
-27 agentes de IA. Um binário de 6 MB. Zero download de modelo. sqlite-graphrag v1.0.79 entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code` ou `codex` (OAuth) para gerar embeddings. Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
+27 agentes de IA. Um binário de 6 MB. Zero download de modelo. sqlite-graphrag v1.0.85 (atual; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code` ou `codex` (OAuth) para gerar embeddings. Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
 
-## Arquitetura v1.0.79 (apenas LLM)
+## Arquitetura v1.0.85 (apenas LLM, substitui v1.0.79)
 ### Build one-shot sem modelo local
 - Todo build é LLM-only e one-shot: não há daemon (removido na v1.0.79), não há runtime ONNX, não há download de modelo
 - Features `embedding-legacy`, `ner-legacy` e `full` REMOVIDAS na v1.0.79 com as dependências opcionais fastembed/ort/ndarray/tokenizers/hf-hub

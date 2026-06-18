@@ -209,7 +209,10 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     }
 
-    let embedding_heavy = cli.command.is_embedding_heavy();
+    let embedding_heavy = cli
+        .command
+        .as_ref()
+        .is_some_and(|c| c.is_embedding_heavy());
     let measured_available_mb = if embedding_heavy {
         let available_mb = if cli.skip_memory_guard {
             available_memory_mb()
@@ -291,7 +294,7 @@ fn main() -> std::process::ExitCode {
 
     // Acquire a slot in the counting semaphore. The handle is kept alive until end of main
     // so the flock is released automatically when the file descriptor is closed.
-    let _slot_guard = if cli.command.uses_cli_slot() {
+    let _slot_guard = if cli.command.as_ref().is_some_and(|c| c.uses_cli_slot()) {
         Some(match acquire_cli_slot(max_concurrency, Some(wait_secs)) {
             Ok(pair) => pair,
             Err(e) => {
@@ -307,91 +310,132 @@ fn main() -> std::process::ExitCode {
 
     sqlite_graphrag::signals::register_shutdown_handler();
 
+    // v1.0.84 (ADR-0042 / GAP-002): early-exit branch for `--dry-run-backend`.
+    // Resolves the LLM backend that WOULD be invoked for embedding,
+    // prints a compact JSON envelope, and exits 0 without spawning any
+    // subprocess. Sits BEFORE the subcommand match so it works even when
+    // no positional command is provided (sanity-check flag).
+    if cli.dry_run_backend {
+        match commands::dry_run_backend::emit_dry_run_backend(&cli) {
+            Ok(()) => {
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                return std::process::ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                sqlite_graphrag::output::emit_error_json(e.exit_code(), &e.localized_message());
+                sqlite_graphrag::output::emit_error(&e.localized_message());
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                return std::process::ExitCode::from(e.exit_code() as u8);
+            }
+        }
+    }
+
     let result = match cli.command {
-        sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
-        sqlite_graphrag::cli::Commands::Remember(args) => {
-            commands::remember::run(args, cli.llm_backend)
-        }
-        sqlite_graphrag::cli::Commands::RememberBatch(args) => commands::remember_batch::run(args),
-        sqlite_graphrag::cli::Commands::Ingest(args) => {
-            commands::ingest::run(args, cli.llm_backend)
-        }
-        sqlite_graphrag::cli::Commands::Recall(args) => {
-            commands::recall::run(args, cli.llm_backend)
-        }
-        // v1.0.82 (GAP-003): pass LlmBackendChoice (Copy) so the dispatch
-        // match arm can move `args` while still borrowing `cli`.
-        sqlite_graphrag::cli::Commands::Edit(args) => commands::edit::run(args, cli.llm_backend),
-        sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
-        sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
-        sqlite_graphrag::cli::Commands::HybridSearch(args) => {
-            commands::hybrid_search::run(args, cli.llm_backend)
-        }
-        sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
-        sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),
-        sqlite_graphrag::cli::Commands::Forget(args) => commands::forget::run(args),
-        sqlite_graphrag::cli::Commands::Purge(args) => commands::purge::run(args),
-        sqlite_graphrag::cli::Commands::Rename(args) => commands::rename::run(args),
-        sqlite_graphrag::cli::Commands::Health(args) => commands::health::run(args),
-        sqlite_graphrag::cli::Commands::Migrate(args) => commands::migrate::run(args),
-        sqlite_graphrag::cli::Commands::NamespaceDetect(args) => {
-            commands::namespace_detect::run(args)
-        }
-        sqlite_graphrag::cli::Commands::Optimize(args) => commands::optimize::run(args),
-        sqlite_graphrag::cli::Commands::Stats(args) => commands::stats::run(args),
-        sqlite_graphrag::cli::Commands::SyncSafeCopy(args) => commands::sync_safe_copy::run(args),
-        sqlite_graphrag::cli::Commands::Backup(args) => commands::backup::run(args),
-        sqlite_graphrag::cli::Commands::Vacuum(args) => commands::vacuum::run(args),
-        sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
-        sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
-        sqlite_graphrag::cli::Commands::DeepResearch(args) => commands::deep_research::run(args),
-        sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
-        sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
-        sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
-        sqlite_graphrag::cli::Commands::Fts(args) => commands::fts::run(args),
-        sqlite_graphrag::cli::Commands::Vec(args) => commands::vec::run(args),
-        sqlite_graphrag::cli::Commands::CodexModels => {
-            let models = commands::codex_spawn::list_codex_models();
-            let payload = serde_json::json!({
-                "action": "codex_models",
-                "count": models.len(),
-                "models": models,
-                "default": "gpt-5.5",
-            });
-            sqlite_graphrag::output::emit_json_compact(&payload).and(Ok(()))
-        }
-        sqlite_graphrag::cli::Commands::PruneRelations(args) => {
-            commands::prune_relations::run(args)
-        }
-        sqlite_graphrag::cli::Commands::PruneNer(args) => commands::prune_ner::run(args),
-        sqlite_graphrag::cli::Commands::CleanupOrphans(args) => {
-            commands::cleanup_orphans::run(args)
-        }
-        sqlite_graphrag::cli::Commands::MemoryEntities(args) => {
-            commands::memory_entities::run(args)
-        }
-        sqlite_graphrag::cli::Commands::Cache(args) => commands::cache::run(args),
-        sqlite_graphrag::cli::Commands::DeleteEntity(args) => commands::delete_entity::run(args),
-        sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
-        sqlite_graphrag::cli::Commands::RenameEntity(args) => commands::rename_entity::run(args),
-        sqlite_graphrag::cli::Commands::MergeEntities(args) => commands::merge_entities::run(args),
-        sqlite_graphrag::cli::Commands::Enrich(args) => {
-            commands::enrich::run(&args, cli.llm_backend)
-        }
-        sqlite_graphrag::cli::Commands::ReclassifyRelation(args) => {
-            commands::reclassify_relation::run(args)
-        }
-        sqlite_graphrag::cli::Commands::NormalizeEntities(args) => {
-            commands::normalize_entities::run(args)
-        }
-        sqlite_graphrag::cli::Commands::Completions(args) => commands::completions::run(args),
-        sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
-        sqlite_graphrag::cli::Commands::Slots(args) => commands::slots::run(args),
-        sqlite_graphrag::cli::Commands::Pending(args) => commands::pending::run(args),
-        sqlite_graphrag::cli::Commands::Embedding(args) => commands::embedding::run(args),
-        sqlite_graphrag::cli::Commands::PendingEmbeddings(args) => {
-            commands::pending_embeddings::run(args)
-        }
+        Some(cmd) => match cmd {
+            sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
+            sqlite_graphrag::cli::Commands::Remember(args) => {
+                commands::remember::run(args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::RememberBatch(args) => {
+                commands::remember_batch::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Ingest(args) => {
+                commands::ingest::run(args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::Recall(args) => {
+                commands::recall::run(args, cli.llm_backend)
+            }
+            // v1.0.82 (GAP-003): pass LlmBackendChoice (Copy) so the dispatch
+            // match arm can move `args` while still borrowing `cli`.
+            sqlite_graphrag::cli::Commands::Edit(args) => {
+                commands::edit::run(args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
+            sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
+            sqlite_graphrag::cli::Commands::HybridSearch(args) => {
+                commands::hybrid_search::run(args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
+            sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),
+            sqlite_graphrag::cli::Commands::Forget(args) => commands::forget::run(args),
+            sqlite_graphrag::cli::Commands::Purge(args) => commands::purge::run(args),
+            sqlite_graphrag::cli::Commands::Rename(args) => commands::rename::run(args),
+            sqlite_graphrag::cli::Commands::Health(args) => commands::health::run(args),
+            sqlite_graphrag::cli::Commands::Migrate(args) => commands::migrate::run(args),
+            sqlite_graphrag::cli::Commands::NamespaceDetect(args) => {
+                commands::namespace_detect::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Optimize(args) => commands::optimize::run(args),
+            sqlite_graphrag::cli::Commands::Stats(args) => commands::stats::run(args),
+            sqlite_graphrag::cli::Commands::SyncSafeCopy(args) => {
+                commands::sync_safe_copy::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Backup(args) => commands::backup::run(args),
+            sqlite_graphrag::cli::Commands::Vacuum(args) => commands::vacuum::run(args),
+            sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
+            sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
+            sqlite_graphrag::cli::Commands::DeepResearch(args) => {
+                commands::deep_research::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
+            sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
+            sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
+            sqlite_graphrag::cli::Commands::Fts(args) => commands::fts::run(args),
+            sqlite_graphrag::cli::Commands::Vec(args) => commands::vec::run(args),
+            sqlite_graphrag::cli::Commands::CodexModels => {
+                let models = commands::codex_spawn::list_codex_models();
+                let payload = serde_json::json!({
+                    "action": "codex_models",
+                    "count": models.len(),
+                    "models": models,
+                    "default": "gpt-5.5",
+                });
+                sqlite_graphrag::output::emit_json_compact(&payload).and(Ok(()))
+            }
+            sqlite_graphrag::cli::Commands::PruneRelations(args) => {
+                commands::prune_relations::run(args)
+            }
+            sqlite_graphrag::cli::Commands::PruneNer(args) => commands::prune_ner::run(args),
+            sqlite_graphrag::cli::Commands::CleanupOrphans(args) => {
+                commands::cleanup_orphans::run(args)
+            }
+            sqlite_graphrag::cli::Commands::MemoryEntities(args) => {
+                commands::memory_entities::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Cache(args) => commands::cache::run(args),
+            sqlite_graphrag::cli::Commands::DeleteEntity(args) => {
+                commands::delete_entity::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
+            sqlite_graphrag::cli::Commands::RenameEntity(args) => {
+                commands::rename_entity::run(args)
+            }
+            sqlite_graphrag::cli::Commands::MergeEntities(args) => {
+                commands::merge_entities::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Enrich(args) => {
+                commands::enrich::run(&args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::ReclassifyRelation(args) => {
+                commands::reclassify_relation::run(args)
+            }
+            sqlite_graphrag::cli::Commands::NormalizeEntities(args) => {
+                commands::normalize_entities::run(args)
+            }
+            sqlite_graphrag::cli::Commands::Completions(args) => commands::completions::run(args),
+            sqlite_graphrag::cli::Commands::DebugSchema(args) => commands::debug_schema::run(args),
+            sqlite_graphrag::cli::Commands::Slots(args) => commands::slots::run(args),
+            sqlite_graphrag::cli::Commands::Pending(args) => commands::pending::run(args),
+            sqlite_graphrag::cli::Commands::Embedding(args) => {
+                commands::embedding::run(args, cli.llm_backend)
+            }
+            sqlite_graphrag::cli::Commands::PendingEmbeddings(args) => {
+                commands::pending_embeddings::run(args)
+            }
+        },
+        None => Ok(()),
     };
 
     if let Err(e) = result {

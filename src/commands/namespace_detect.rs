@@ -127,7 +127,7 @@ mod tests {
         .expect("namespace-detect must accept --db as a no-op");
 
         match cli.command {
-            crate::cli::Commands::NamespaceDetect(args) => {
+            Some(crate::cli::Commands::NamespaceDetect(args)) => {
                 assert_eq!(args.db.as_deref(), Some("/tmp/graphrag.sqlite"));
             }
             _ => unreachable!("unexpected command parsed"),

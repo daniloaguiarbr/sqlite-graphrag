@@ -4,6 +4,103 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 # Changelog
 
 ## [Sem Versão]
+## [1.0.85.2] - 2026-06-17
+
+### Corrigido
+- `--dry-run-backend` agora funciona standalone sem subcommand obrigatório. Resolvido BUG-001 (ADR-0044) com `pub command: Option<Commands>` em `src/cli.rs:248`. Exit 0 imprime JSON com `{action, backend, binary, model, flavour, chain, strict_env_clear}`.
+- `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`. Resolvido BUG-002 (ADR-0044). 7 envelopes JSON (edit, embedding-status, enrich-summary, hybrid-search, ingest-summary, recall, remember) agora populam `backend_invoked: "claude" | "codex" | "none"` consistentemente.
+- `setup_mock_path()` em `tests/embedder.rs:37-77` corrigido para emitir JSON alinhado com expectation (não JSONL). Resolvido BUG-003 (ADR-0044). Testes `embed_via_backend_*` rodam sem mascaramento de formato.
+
+### Suite de Testes
+- 945 testes verdes via `cargo nextest -P ci`.
+
+## [1.0.85.1] - 2026-06-17
+
+### Corrigido
+- `recall --llm-backend none` e `hybrid-search --llm-backend none` agora retornam exit 0 com envelope `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`. Resolvido GAP-004 (ADR-0043 hotfix) com braço intermediário em `src/embedder.rs:351`. Failsafe do v1.0.80 restaurado para o caso `--llm-backend none`.
+
+### Suite de Testes
+- 945 testes verdes via `cargo nextest -P ci`.
+
+## [1.0.85] - 2026-06-17
+
+### Corrigido
+- `FallbackReason` estendido de 3 para 7 variantes (`SlotExhausted`,
+  `OAuthQuota { backend }`, `BackendMismatch { requested, resolved }`,
+  `DimZero`) para que os discriminadores de `recall` / `hybrid-search`
+  possam distinguir exaustão de quota de exaustão de slot de bugs
+  estruturais. Resolve GAP-003.
+- `LlmEmbedding::invoke_claude` agora captura 12-14 headers
+  `anthropic-ratelimit-*-remaining` ANTES de checar o exit status do
+  subprocesso. Quando `requests-remaining=0` ou `tokens-remaining=0`,
+  retorna `OAuthQuota` para que o fallback determinístico troque para
+  codex imediatamente. Resolve G45-CR5.
+- `try_embed_query_with_deterministic_fallback` re-tenta com o backend
+  alternativo em `OAuthQuota` (codex ↔ claude) e dorme 750ms antes de
+  desistir em `SlotExhausted`. Resolve G58.
+
+### Adicionado
+- `classify_embedding_error` em `src/embedder.rs` — função pura de
+  mapeamento de `AppError` para `FallbackReason` via match lexical.
+- `try_embed_query_with_deterministic_fallback` em `src/embedder.rs`.
+- 5 novos testes de regressão em `tests/embedder.rs` cobrindo GAP-003,
+  G58, G45-CR5, G55, G56.
+- ADR `adr-0043-five-gap-remediation.pt-BR.md`.
+- `.github/workflows/embedder-ignore.yml` rodando testes `#[ignore]`
+  em env hermético (sem API keys).
+
+### Mudado
+- `Cargo.toml`: versão `1.0.84` → `1.0.85`.
+- `gaps.md`: 5 entradas marcadas como `Solucionado em v1.0.85 (ADR-0043)`.
+- `src/embedder.rs:289-317`: `acquire_llm_slot_for_embedding` reescreve
+  `LockBusy` como `Embedding("slot exhausted: ...")` para que
+  `classify_embedding_error` possa discriminar.
+- `src/commands/{hybrid_search,recall}.rs`: call sites agora usam
+  `try_embed_query_with_deterministic_fallback`.
+
+### Suite de Testes
+- 5 novos testes em `tests/embedder.rs` (regressão five-gap).
+- 0 regressões em 830+ testes pré-existentes (`cargo nextest -P ci`).
+
+## [1.0.84] - 2026-06-17
+
+### Corrigido
+- `--llm-backend claude` agora força invocação do binário `claude`
+  sem o fallback silencioso para `codex` via `LlmEmbedding::detect_available`.
+  O ramo `LlmBackendKind::Claude` em `embed_via_backend` agora delega
+  para o novo `embed_via_claude_local` que constrói
+  `LlmEmbedding::with_claude_builder()` diretamente. Resolve GAP-002.
+
+### Adicionado
+- Entry point `embed_via_claude_local` em `src/embedder.rs`.
+- `LlmEmbeddingBuilder` em `src/extract/llm_embedding.rs` com
+  `with_claude_builder`, `with_codex_builder`, `override_binary`,
+  `override_model`.
+- Campo `backend_invoked` em 7 envelopes JSON: `embedding status`,
+  `remember`, `edit`, `ingest`, `recall`, `hybrid-search`, `enrich`.
+- Campo `vec_degraded_reason` em `hybrid-search` e `recall`.
+- Flag global `--dry-run-backend` que resolve e imprime o backend
+  sem executar o subprocesso.
+- Helper `apply_env_whitelist_for_claude` em `src/spawn/env_whitelist.rs`.
+- `LlmBackendKind::as_str` e `FallbackReason::reason_code` em
+  `src/embedder.rs`.
+- ADR `adr-0042-claude-backend-split.md` (EN + pt-BR).
+- 5 novos testes em `tests/embedder.rs` (regressão GAP-002).
+
+### Alterado
+- `Cargo.toml`: versão `1.0.83` → `1.0.84`.
+- `src/embedder.rs:435-444`: ramo `LlmBackendKind::Claude` chama
+  `embed_via_claude_local` em vez de `embed_passage_local`.
+- `src/embedder.rs:205-218`: `embed_passage_with_choice` retorna
+  `(Vec<f32>, LlmBackendKind)` em vez de `Vec<f32>`.
+- `src/commands/embedding.rs:run_status` aceita `LlmBackendChoice`.
+- `src/main.rs:391`: `Commands::Embedding(args)` propaga
+  `cli.llm_backend`.
+
+### Suite de Testes
+- 5 novos testes em `tests/embedder.rs` (regressão GAP-002).
+- 0 regressões em 818+ testes pré-existentes (cargo nextest -P ci).
+
 
 ## [1.0.83] - 2026-06-17
 

@@ -53,3 +53,11 @@ Cross-signal via `signal-hook` crate (feature `iterator`) com dedup via `AtomicB
 - `src/output.rs:emit_shutdown_envelope`
 - `src/constants.rs:SHUTDOWN_EXIT_CODE = 19`
 - `src/main.rs:392-403`
+### Nota — GAP-002 ID Sobrecarregado
+
+O ID de gap `GAP-002` é usado por dois gaps distintos entre releases:
+
+- **GAP-002 (v1.0.82)** — este ADR documenta a correção do envelope SHUTDOWN
+- **GAP-002 (v1.0.84)** — `docs/decisions/adr-0042-claude-backend-split.pt-BR.md` documenta o split do backend Claude
+
+Ao citar `GAP-002` em cross-references, anexe o sufixo de versão (ex.: `GAP-002@1.0.82`) para desambiguar. ADRs futuros devem adotar esta convenção para prevenir novas colisões de ID.

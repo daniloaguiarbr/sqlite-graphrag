@@ -36,6 +36,13 @@ default `auto`). Default `auto` é 100% retrocompatível com v1.0.81.
 - 4 implementações exigem manutenção quando API evolui
 - `AutoFactory` faz PATH probing no startup (latência ~5-10ms)
 - Validação de modelo (whitelist ChatGPT Pro OAuth) ainda é responsabilidade do caller
+## Alternativas Consideradas
+
+1. Manter `Auto` como única opção, sem override — REJEITADO: casos de OAuth exhausted em codex exigem bypass explícito
+2. Flag separada `--force-claude` em vez de `--llm-backend claude` — REJEITADO: aumenta superfície CLI; `claude` já é enum value
+3. Aceitar `codex,claude,none` apenas — REJEITADO: `none` deve ser opt-in explícito, não dentro de chain
+4. Renomear `--llm-backend` para `--embedder` — REJEITADO: quebra compat com v1.0.82
+
 
 ## Referências
 
@@ -43,3 +50,6 @@ default `auto`). Default `auto` é 100% retrocompatível com v1.0.81.
 - `src/cli.rs` (flag `--llm-backend`)
 - `src/extract/llm_backend.rs` (trait + 4 implementações)
 - `src/embedder.rs:embed_with_fallback`
+### Refinado por ADR-0042 (v1.0.84)
+
+ADR-0042 (`docs/decisions/adr-0042-claude-backend-split.pt-BR.md`) separou o entry point Claude de modo que `LlmBackendChoice::to_chain()` não mais roteia silenciosamente `Claude` através de codex via `LlmEmbedding::detect_available`. O novo `LlmEmbeddingBuilder` (`src/extract/llm_embedding.rs:232+`) e `embed_via_claude_local` (`src/embedder.rs:190+`) tornam o caminho `--llm-backend claude` observável via `backend_invoked: "claude"` em 7 envelopes (edit, embedding-status, enrich-summary, hybrid-search, ingest-summary, recall, remember). O pre-flight `--dry-run-backend` é a forma recomendada para verificar qual backend será invocado antes de qualquer chamada de embedding.

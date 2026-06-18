@@ -14,6 +14,7 @@
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
+use crate::cli::LlmBackendChoice;
 use crate::errors::AppError;
 use crate::output::emit_json_compact;
 use crate::paths::AppPaths;
@@ -90,6 +91,11 @@ pub struct EmbeddingAbandonArgs {
 #[derive(Serialize)]
 struct EmbeddingStatusOutput {
     action: &'static str,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que seria
+    /// invocado para processar embeddings live. `"claude" | "codex"
+    /// | "none" | "auto"`. `"auto"` indica que o caller pediu Auto e
+    /// a chain codex→claude→none seria iterada em runtime.
+    backend_invoked: &'static str,
     counts: EmbeddingStatusCounts,
     elapsed_ms: u64,
 }
@@ -153,9 +159,9 @@ struct EmbeddingAbandonOutput {
     yes: bool,
 }
 
-pub fn run(args: EmbeddingArgs) -> Result<(), AppError> {
+pub fn run(args: EmbeddingArgs, llm_backend: LlmBackendChoice) -> Result<(), AppError> {
     match args.cmd {
-        EmbeddingCmd::Status(a) => run_status(a),
+        EmbeddingCmd::Status(a) => run_status(a, llm_backend),
         EmbeddingCmd::List(a) => run_list(a),
         EmbeddingCmd::Abandon(a) => run_abandon(a),
     }
@@ -167,7 +173,7 @@ fn open_conn() -> Result<(AppPaths, rusqlite::Connection), AppError> {
     Ok((paths, conn))
 }
 
-fn run_status(_args: EmbeddingStatusArgs) -> Result<(), AppError> {
+fn run_status(_args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let (_paths, conn) = open_conn()?;
 
@@ -194,8 +200,16 @@ fn run_status(_args: EmbeddingStatusArgs) -> Result<(), AppError> {
         .len(),
     };
 
+    let backend_invoked: &'static str = match llm_backend {
+        LlmBackendChoice::Claude => "claude",
+        LlmBackendChoice::Codex => "codex",
+        LlmBackendChoice::None => "none",
+        LlmBackendChoice::Auto => "auto",
+    };
+
     let output = EmbeddingStatusOutput {
         action: "embedding_status",
+        backend_invoked,
         counts,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };

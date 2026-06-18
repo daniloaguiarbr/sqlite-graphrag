@@ -387,6 +387,12 @@ struct IngestFileEvent<'a> {
     action: Option<String>,
     /// Byte length of the body ingested; 0 when not yet read (e.g. skip or dry-run events).
     body_length: usize,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o embedding live. `"claude" | "codex" | "none"`. Absent on
+    /// the wire when `None` (kept for happy-path envelope cleanliness, ou
+    /// quando o arquivo não chegou à fase de embed por duplicação/erro).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend_invoked: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -407,6 +413,7 @@ struct FileSuccess {
     memory_id: i64,
     action: String,
     body_length: usize,
+    backend_invoked: Option<&'static str>,
 }
 
 /// NDJSON progress event emitted to stderr after each file completes Phase A.
@@ -436,6 +443,11 @@ struct StagedFile {
     relationships: Vec<NewRelationship>,
     entity_embeddings: Vec<Vec<f32>>,
     urls: Vec<crate::extraction::ExtractedUrl>,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o embedding do body. `None` quando o batch paralelo
+    /// embed_passages_parallel_local fallback em backends diferentes
+    /// entre chunks (não há um único discriminador estável).
+    backend_invoked: Option<&'static str>,
 }
 
 /// Phase A worker: reads, chunks, embeds and extracts NER for one file.
@@ -572,9 +584,13 @@ fn stage_file(
     }
 
     let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
-    let embedding = if chunks_info.len() == 1 {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))?
+    // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
+    // backend que efetivamente rodou para popular `backend_invoked` no
+    // envelope NDJSON por arquivo.
+    let (embedding, backend_invoked) = if chunks_info.len() == 1 {
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))
+            .map(|(v, k)| (v, Some(k.as_str())))?
     } else {
         // G42/S2+S3 (v1.0.79): batched bounded fan-out replaces the
         // serial per-chunk subprocess loop.
@@ -605,7 +621,9 @@ fn stage_file(
         )?;
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
         chunk_embeddings_opt = Some(chunk_embeddings);
-        aggregated
+        // v1.0.84 (ADR-0042): batch paralelo não retorna discriminador
+        // único por chamada. Conservadoramente, populamos None aqui.
+        (aggregated, None)
     };
 
     // G42/S2+A4 (v1.0.79): entity names use the short-text batch profile.
@@ -643,6 +661,7 @@ fn stage_file(
         relationships: extracted_relationships,
         entity_embeddings,
         urls: extracted_urls,
+        backend_invoked,
     })
 }
 
@@ -800,6 +819,7 @@ fn persist_staged(
         memory_id,
         action: "created".to_string(),
         body_length: new_memory.body.len(),
+        backend_invoked: staged.backend_invoked,
     })
 }
 
@@ -1155,6 +1175,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                         memory_id: None,
                         action: None,
                         body_length: 0,
+                        backend_invoked: None,
                     })?;
                 }
                 SlotMeta::Process {
@@ -1175,6 +1196,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                         memory_id: None,
                         action: None,
                         body_length: 0,
+                        backend_invoked: None,
                     })?;
                 }
             }
@@ -1355,6 +1377,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                 memory_id: None,
                 action: None,
                 body_length: 0,
+                backend_invoked: None,
             })?;
             skipped += 1;
         }
@@ -1422,6 +1445,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     memory_id: None,
                     action: None,
                     body_length: 0,
+                    backend_invoked: None,
                 })?;
                 failed += 1;
                 if fail_fast {
@@ -1452,6 +1476,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                 memory_id,
                 action,
                 body_length,
+                backend_invoked: file_backend_invoked,
             }) => {
                 output::emit_json_compact(&IngestFileEvent {
                     file: file_str,
@@ -1464,6 +1489,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     memory_id: Some(memory_id),
                     action: Some(action),
                     body_length,
+                    backend_invoked: file_backend_invoked,
                 })?;
                 succeeded += 1;
             }
@@ -1479,6 +1505,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     memory_id: None,
                     action: Some("duplicate".to_string()),
                     body_length: 0,
+                    backend_invoked: None,
                 })?;
                 skipped += 1;
             }
@@ -1495,6 +1522,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     memory_id: None,
                     action: None,
                     body_length: 0,
+                    backend_invoked: None,
                 })?;
                 failed += 1;
                 if fail_fast {
@@ -2002,7 +2030,7 @@ mod tests {
         ])
         .expect("parse must succeed");
         match cli.command {
-            crate::cli::Commands::Ingest(args) => {
+            Some(crate::cli::Commands::Ingest(args)) => {
                 assert!(args.low_memory, "--low-memory must set field to true");
             }
             _ => panic!("expected Ingest subcommand"),
@@ -2021,7 +2049,7 @@ mod tests {
         ])
         .expect("parse must succeed");
         match cli.command {
-            crate::cli::Commands::Ingest(args) => {
+            Some(crate::cli::Commands::Ingest(args)) => {
                 assert!(!args.low_memory, "default must be false");
             }
             _ => panic!("expected Ingest subcommand"),

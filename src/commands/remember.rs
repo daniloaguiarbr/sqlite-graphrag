@@ -638,9 +638,15 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
     let mut chunk_embeddings_cache: Option<Vec<Vec<f32>>> = None;
 
-    let embedding = if chunks_info.len() == 1 {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))?
+    // v1.0.84 (ADR-0042): extrai o backend que efetivamente executou o
+    // embedding da passagem (ou do batch em chunks) para popular
+    // `backend_invoked` no envelope de resposta.
+    let (embedding, backend_invoked_passage): (Vec<f32>, Option<&str>) = if chunks_info.len() == 1 {
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+        // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — kind
+        // é o backend que efetivamente rodou (Claude/Codex/None).
+        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))
+            .map(|(v, k)| (v, Some(k.as_str())))?
     } else {
         let chunk_texts: Vec<String> = chunks_info
             .iter()
@@ -694,7 +700,12 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
         );
         let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
         chunk_embeddings_cache = Some(chunk_embeddings);
-        aggregated
+        // v1.0.84 (ADR-0042): o batch paralelo embed_passages_parallel_local
+        // não retorna o discriminador por chamada (cada chunk pode ter caído
+        // em backends diferentes via fallback chain). Conservadoramente,
+        // populamos `None` aqui — o envelope ainda carrega o caminho
+        // single-chunk via `backend_invoked_passage` para corpos de 1 chunk.
+        (aggregated, None)
     };
     let body_for_storage = raw_body;
 
@@ -989,6 +1000,7 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
         elapsed_ms: inicio.elapsed().as_millis() as u64,
         name_was_normalized,
         original_name: name_was_normalized.then_some(original_name),
+        backend_invoked: backend_invoked_passage,
     })?;
 
     Ok(())
@@ -1043,6 +1055,7 @@ mod tests {
             elapsed_ms: 55,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -1078,6 +1091,7 @@ mod tests {
             elapsed_ms: 0,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -1113,6 +1127,7 @@ mod tests {
             elapsed_ms: 10,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -1179,6 +1194,7 @@ mod tests {
             elapsed_ms: 0,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -1209,6 +1225,7 @@ mod tests {
             elapsed_ms: 0,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["urls_persisted"], 3);
@@ -1287,6 +1304,7 @@ mod tests {
             elapsed_ms: 0,
             name_was_normalized: false,
             original_name: None,
+            backend_invoked: None,
         };
         let json_false = serde_json::to_value(&resp_false).expect("serialization failed");
         assert_eq!(json_false["relationships_truncated"], false);

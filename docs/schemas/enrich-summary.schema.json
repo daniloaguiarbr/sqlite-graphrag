@@ -2,7 +2,7 @@
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/enrich-summary.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Final summary NDJSON line emitted by `sqlite-graphrag enrich`. Always the last line. The 'summary' sentinel field distinguishes it from per-item events.",
+  "description": "Final summary NDJSON line emitted by `sqlite-graphrag enrich`. Always the last line. The 'summary' sentinel field distinguishes it from per-item events. backend_invoked added in v1.0.84 by ADR-0042.",
   "properties": {
     "completed": {
       "description": "Items successfully processed.",
@@ -49,6 +49,11 @@
     "summary": {
       "const": true,
       "description": "Sentinel field; always true. Distinguishes this line from per-item events."
+    },
+    "backend_invoked": {
+      "description": "v1.0.84 (ADR-0042): backend LLM that ran the live embedding across this enrich run (claude, codex, or none). Omitted when enrich ran without embedding.",
+      "type": "string",
+      "enum": ["claude", "codex", "none"]
     }
   },
   "required": [

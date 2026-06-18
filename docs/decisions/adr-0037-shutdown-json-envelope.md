@@ -74,3 +74,11 @@ independente de qual Unix signal disparou o cancelamento:
 - `src/output.rs:emit_shutdown_envelope` (helper)
 - `src/constants.rs:SHUTDOWN_EXIT_CODE = 19`
 - `src/main.rs:392-403` (propagação do código 19 ao exit)
+### Note — GAP-002 ID Overloaded
+
+The gap ID `GAP-002` is used by two distinct gaps across releases:
+
+- **GAP-002 (v1.0.82)** — this ADR documents the SHUTDOWN envelope fix
+- **GAP-002 (v1.0.84)** — `docs/decisions/adr-0042-claude-backend-split.md` documents the Claude backend split
+
+When citing `GAP-002` in cross-references, append the version suffix (e.g., `GAP-002@1.0.82`) to disambiguate. Future ADRs should adopt this convention to prevent further ID collisions.

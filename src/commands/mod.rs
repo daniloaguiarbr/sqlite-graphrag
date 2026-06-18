@@ -7,6 +7,7 @@ pub mod completions;
 pub mod debug_schema;
 pub mod deep_research;
 pub mod delete_entity;
+pub mod dry_run_backend;
 pub mod edit;
 pub mod embedding;
 pub mod enrich;

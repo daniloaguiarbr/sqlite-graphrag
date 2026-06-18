@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/recall.schema.json",
   "title": "RecallResponse",
-  "description": "Response emitted by `sqlite-graphrag recall` on stdout as a single JSON line.",
+  "description": "Response emitted by `sqlite-graphrag recall` on stdout as a single JSON line. backend_invoked and vec_degraded_reason added in v1.0.84 by ADR-0042.",
   "$defs": {
     "RecallItem": {
       "type": "object",
@@ -31,6 +31,16 @@
     "direct_matches": { "type": "array", "items": { "$ref": "#/$defs/RecallItem" } },
     "graph_matches":  { "type": "array", "items": { "$ref": "#/$defs/RecallItem" } },
     "results":        { "type": "array", "items": { "$ref": "#/$defs/RecallItem" }, "description": "Aggregate alias of direct_matches + graph_matches." },
-    "elapsed_ms":     { "type": "integer", "minimum": 0 }
-  }
+    "elapsed_ms":     { "type": "integer", "minimum": 0 },
+    "backend_invoked": {
+      "description": "v1.0.84 (ADR-0042): backend LLM that ran the live embedding for this query (claude, codex, or none). Omitted when embedding was skipped or the response fell back fully to graph.",
+      "type": "string",
+      "enum": ["claude", "codex", "none"]
+    },
+    "vec_degraded_reason": {
+      "description": "v1.0.84 (ADR-0042) / v1.0.85 (ADR-0043): structured reason why live embedding degraded. Seven-variant enum discriminates embedding_failed, slot_exhausted (GAP-003), oauth_quota (G58, G45-CR5), backend_mismatch, dim_zero, cancelled, timeout. Omitted when live embedding succeeded. Null when no degradation path was triggered.",
+      "type": ["string", "null"],
+      "enum": ["embedding_failed", "slot_exhausted", "oauth_quota", "backend_mismatch", "dim_zero", "cancelled", "timeout", null]
+    }
+}
 }

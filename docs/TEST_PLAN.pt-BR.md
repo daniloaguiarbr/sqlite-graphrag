@@ -91,7 +91,11 @@
 - `cargo-nextest` e `cargo-llvm-cov` NÃO são assumidos instalados; instalar via binários pré-compilados antes da Camada 1
 
 
-## Deltas do Plano v1.0.80 — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
+## Planos Mais Recentes — v1.0.84 e v1.0.85
+
+Veja [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) para o plano de teste do Split do Backend Claude (ADR-0042). Veja [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) para o plano de teste da Remediação de Cinco Gaps (ADR-0043). Ambos os novos planos são snapshots do design de teste liberado.
+
+## Plano Histórico — Deltas do Plano v1.0.80 — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
 
 A release v1.0.80 (bump patch, sem migração de schema) adicionou os
 seguintes deltas de teste à matriz por camada acima.

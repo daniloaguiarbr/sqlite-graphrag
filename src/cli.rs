@@ -101,6 +101,21 @@ pub struct Cli {
     )]
     pub strict_env_clear: bool,
 
+    /// v1.0.84 (ADR-0042 / GAP-002): resolve and print the LLM backend that
+    /// WOULD be invoked for embedding (binary path + model + flavour),
+    /// then exit 0 without executing the subprocess. Useful for CI
+    /// audit and sanity-check of `--llm-backend` before long sessions.
+    ///
+    /// Honors env var `SQLITE_GRAPHRAG_DRY_RUN_BACKEND=1` when set.
+    #[arg(
+        long,
+        global = true,
+        hide = true,
+        default_value_t = false,
+        env = "SQLITE_GRAPHRAG_DRY_RUN_BACKEND"
+    )]
+    pub dry_run_backend: bool,
+
     /// Language for human-facing stderr messages. Accepts `en` or `pt`.
     ///
     /// Without the flag, detection falls back to `SQLITE_GRAPHRAG_LANG` and then
@@ -143,8 +158,11 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "N", value_parser = clap::value_parser!(u64).range(8..=4096))]
     pub embedding_dim: Option<u64>,
 
-    /// v1.0.82 (GAP-003): backend LLM para embedding. Aceita
-    /// `auto|claude|codex|none`. Default `auto`. Honra env var
+    /// v1.0.82 (GAP-003) / v1.0.84 (ADR-0042): backend LLM para embedding.
+    /// Aceita `auto` (detecta via PATH, codex-first), `codex` (força
+    /// `codex exec`), `claude` (força `claude -p`; desde v1.0.84 NÃO cai em
+    /// codex — emite `AppError::Validation` se `claude` ausente), ou `none`
+    /// (skip-a embedding; útil para testes). Honra env var
     /// `SQLITE_GRAPHRAG_LLM_BACKEND`.
     #[arg(long, global = true, value_enum, default_value_t = LlmBackendChoice::Auto, env = "SQLITE_GRAPHRAG_LLM_BACKEND")]
     pub llm_backend: LlmBackendChoice,
@@ -227,7 +245,7 @@ pub struct Cli {
     pub llm_slot_no_wait: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[cfg(test)]
@@ -567,7 +585,10 @@ mod heavy_concurrency_tests {
     #[test]
     fn command_heavy_detects_init_and_embeddings() {
         let init = Cli::try_parse_from(["sqlite-graphrag", "init"]).expect("parse init");
-        assert!(init.command.is_embedding_heavy());
+        assert!(init
+            .command
+            .as_ref()
+            .is_some_and(|c| c.is_embedding_heavy()));
 
         let remember = Cli::try_parse_from([
             "sqlite-graphrag",
@@ -580,21 +601,33 @@ mod heavy_concurrency_tests {
             "desc",
         ])
         .expect("parse remember");
-        assert!(remember.command.is_embedding_heavy());
+        assert!(remember
+            .command
+            .as_ref()
+            .is_some_and(|c| c.is_embedding_heavy()));
 
         let recall =
             Cli::try_parse_from(["sqlite-graphrag", "recall", "query"]).expect("parse recall");
-        assert!(recall.command.is_embedding_heavy());
+        assert!(recall
+            .command
+            .as_ref()
+            .is_some_and(|c| c.is_embedding_heavy()));
 
         let hybrid = Cli::try_parse_from(["sqlite-graphrag", "hybrid-search", "query"])
             .expect("parse hybrid");
-        assert!(hybrid.command.is_embedding_heavy());
+        assert!(hybrid
+            .command
+            .as_ref()
+            .is_some_and(|c| c.is_embedding_heavy()));
     }
 
     #[test]
     fn command_light_does_not_mark_stats() {
         let stats = Cli::try_parse_from(["sqlite-graphrag", "stats"]).expect("parse stats");
-        assert!(!stats.command.is_embedding_heavy());
+        assert!(!stats
+            .command
+            .as_ref()
+            .is_some_and(|c| c.is_embedding_heavy()));
     }
 }
 

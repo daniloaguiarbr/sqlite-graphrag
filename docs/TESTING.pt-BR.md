@@ -9,7 +9,7 @@
 - Todos os testes carregam `#[serial_test::serial(env)]` para serializar mutações de env no runner de testes paralelo
 - Contagem total de testes: 818 (de 812 na v1.0.82; os 6 novos testes estão divididos entre 3 testes unitários em `env_whitelist.rs` e 3 testes de integração em `claude_runner_env.rs` mais os 2 testes estilo auditoria)
 - Testes OAuth-only pré-existentes em `claude_runner.rs:574-666` e `codex_spawn.rs:684-758` permanecem verdes; a extensão do env whitelist NÃO enfraquece o guard
-# Guia de Testes
+# Guia de Testes — v1.0.85 Suite de Testes de Cinco Gaps + Hotfixes (ADR-0043, ADR-0044)
 
 
 - Leia a versão em inglês em [TESTING.md](TESTING.md)
@@ -48,6 +48,31 @@
 ### Testes Unitários em `src/commands/migrate.rs`
 - `rehash_does_not_insert_missing_migrations` — verifica que `run_rehash` não insere mais linhas fantasma para migrações não aplicadas (ATUALIZADO de `rehash_insert_includes_applied_on`)
 - `ensure_v013_tables_noop_when_no_history` — verifica no-op quando `refinery_schema_history` não existe
+## v1.0.85 — Suite de Testes de Cinco Gaps (ADR-0043)
+
+Cinco novos testes de regressão em `tests/embedder.rs` cobrem o enum FallbackReason com 7 variantes:
+
+- `slot_exhaustion_returns_typed_error` — GAP-003: `acquire_llm_slot_for_embedding` retorna `AppError::Embedding` com `reason_code: "slot_exhausted"` após teto de backoff de 750ms
+- `oauth_quota_fallback_deterministic` — G58: `try_embed_query_with_deterministic_fallback` retenta em `OAuthQuota` e propaga `reason_code` para `vec_degraded_reason`
+- `anthropic_ratelimit_headers_captured` — G45-CR5: `LlmEmbedding::invoke_claude` parseia 12-14 headers `anthropic-ratelimit-*-remaining` e aborta em `0`
+- `read_notfound_preserves_identifier` — G55 docs: `read NotFound` retorna mensagem bilíngue com identificador (nome ou id) e namespace preservados
+- `embedding_dim_reduces_token_cost` — G56: dim=64 produz ≤1/6 dos tokens OAuth consumidos por dim=384
+
+Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir poluição de PATH entre runs concorrentes.
+
+## v1.0.85.1 — Teste de Regressão GAP-004
+
+`try_embed_query_with_none_returns_dim_zero_fallback` em `tests/embedder.rs`: `--llm-backend none` em `recall` e `hybrid-search` agora sai com exit 0 e `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`. Sem este teste, v1.0.85.0 quebrou o failsafe do v1.0.80 silenciosamente.
+
+## v1.0.85.2 — Testes BUG-001/002/003 (ADR-0044)
+
+- `cli_dry_run_backend_works_standalone` — `--dry-run-backend` sai com exit 0 sem subcommand, imprime `{action, backend, binary, model, flavour, chain, strict_env_clear}`
+- `embed_via_backend_returns_resolved_kind` — `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`
+- `setup_mock_path_emits_json` — `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado para emitir JSON (não JSONL)
+
+## Tamanho Atual da Suite de Testes
+
+945 testes passando via `cargo nextest -P ci` a partir de v1.0.85.2. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
 - `ensure_v013_tables_noop_when_tables_exist` — verifica no-op quando `memory_embeddings` já existe
 - `ensure_v013_tables_creates_when_phantom` — verifica reparo quando V013 está no histórico mas as tabelas não existem
 ### Justificativa de Cobertura

@@ -88,6 +88,12 @@ struct EditResponse {
     version: i64,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o re-embedding do body editado. `"claude" | "codex" | "none"`.
+    /// Absent on the wire when `None` (kept for happy-path envelope cleanliness,
+    /// ou quando body não mudou e re-embedding não foi invocado).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend_invoked: Option<&'static str>,
 }
 
 pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
@@ -194,17 +200,25 @@ pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<
         ));
     }
 
+    // v1.0.84 (ADR-0042): backend discriminator for the JSON envelope.
+    // Populated only when re-embedding actually ran; stays None for
+    // description-only or metadata-only edits.
+    let mut backend_invoked: Option<&'static str> = None;
+
     if body_changed || type_changed || args.force_reembed {
         output::emit_progress_i18n(
             "Re-computing embedding for edited body...",
             crate::i18n::validation::runtime_pt::edit_recomputing_embedding(),
         );
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-        let embedding = crate::embedder::embed_passage_with_choice(
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+        // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
+        // backend que efetivamente rodou para popular `backend_invoked`.
+        let (embedding, backend_kind) = crate::embedder::embed_passage_with_choice(
             &paths.models,
             &new_body,
             Some(llm_backend),
         )?;
+        backend_invoked = Some(backend_kind.as_str());
         let snippet: String = new_body.chars().take(300).collect();
         memories::upsert_vec(
             &tx,
@@ -253,6 +267,7 @@ pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<
         action: "updated".to_string(),
         version: next_v,
         elapsed_ms: inicio.elapsed().as_millis() as u64,
+        backend_invoked,
     })?;
 
     Ok(())
@@ -289,6 +304,7 @@ mod tests {
             action: "updated".to_string(),
             version: 3,
             elapsed_ms: 7,
+            backend_invoked: None,
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memory_id"], 42i64);
@@ -306,6 +322,7 @@ mod tests {
             action: "updated".to_string(),
             version: 1,
             elapsed_ms: 0,
+            backend_invoked: None,
         };
         assert_eq!(
             resp.action, "updated",

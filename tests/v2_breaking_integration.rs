@@ -212,6 +212,11 @@ fn hybrid_search_response_shape_tem_results() {
             source: "graph".to_string(),
             graph_depth: Some(1),
         }],
+        vec_degraded: false,
+        vec_error: None,
+        warning: None,
+        backend_invoked: None,
+        vec_degraded_reason: None,
     };
 
     let json_str = serde_json::to_string(&resp).unwrap();

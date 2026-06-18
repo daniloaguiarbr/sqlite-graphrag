@@ -91,7 +91,11 @@
 - `cargo-nextest` and `cargo-llvm-cov` are NOT assumed installed; install via prebuilt binaries before Layer 1
 
 
-## v1.0.80 Plan Deltas — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
+## Latest Plans — v1.0.84 and v1.0.85
+
+See [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) for the Claude Backend Split test plan (ADR-0042). See [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) for the Five-Gap Remediation test plan (ADR-0043). Both new plans are snapshots of the released test design.
+
+## Historical Plan — v1.0.80 Plan Deltas — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
 
 The v1.0.80 release (patch bump, no schema migration) added the
 following test deltas to the per-layer matrix above. Library

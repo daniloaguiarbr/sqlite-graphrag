@@ -160,6 +160,16 @@ pub struct HybridSearchResponse {
     /// hybrid response so downstream pipelines can lower their confidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
+    /// executou o embedding live. `"claude" | "codex" | "none"`. Absent
+    /// on the wire when `None` (kept for happy-path envelope cleanliness).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_invoked: Option<&'static str>,
+    /// v1.0.84 (ADR-0042): reason code discriminador de degradação
+    /// (`"embedding_failed" | "cancelled" | "timeout"`). Absent when
+    /// `vec_degraded` is false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vec_degraded_reason: Option<String>,
     /// Total execution time in milliseconds from handler start to serialisation.
     pub elapsed_ms: u64,
 }
@@ -202,20 +212,33 @@ pub fn run(
     // limit, timeout, missing CLI), skip the KNN half of the RRF and serve
     // FTS5-only results. The RRF degenerates to a pure BM25 ranking and the
     // envelope surfaces `vec_degraded` + `vec_error` + `warning`.
-    let (embedding, vec_degraded, vec_error) = if args.fallback_fts_only {
-        (None, true, Some("fallback_fts_only requested".to_string()))
+    // v1.0.84 (ADR-0042): tuple de 4 elementos. `backend_invoked` carrega
+    // o discriminador do backend que efetivamente rodou (ou `None` quando
+    // o caller pediu `--fallback-fts-only` e nunca chamou o subprocesso).
+    let (embedding, vec_degraded, vec_error, backend_invoked) = if args.fallback_fts_only {
+        (
+            None,
+            true,
+            Some("fallback_fts_only requested".to_string()),
+            None,
+        )
     } else {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-        match crate::embedder::try_embed_query_with_choice(
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+        // v1.0.84 (ADR-0042): extrai o backend que efetivamente invocou o
+        // LLM para popular `backend_invoked` no envelope de resposta.
+        // v1.0.85 (G58 / ADR-0043): retry determinístico em OAuthQuota
+        // (codex ↔ claude) e backoff 750ms em SlotExhausted antes de
+        // aceitar a degradação para FTS5-puro.
+        match crate::embedder::try_embed_query_with_deterministic_fallback(
             &paths.models,
             &args.query,
             Some(llm_backend),
         ) {
-            Ok(v) => (Some(v), false, None),
+            Ok((v, backend)) => (Some(v), false, None, Some(backend.as_str())),
             Err(reason) => {
                 let msg = reason.to_string();
-                tracing::warn!(target: "hybrid_search", fallback_reason = %msg, "live embedding failed; falling back to FTS5");
-                (None, true, Some(msg))
+                tracing::warn!(target: "hybrid_search", fallback_reason = %msg, reason_code = %reason.reason_code(), "live embedding failed; falling back to FTS5");
+                (None, true, Some(msg), None)
             }
         }
     };
@@ -434,7 +457,7 @@ pub fn run(
         fts_error,
         fts_auto_rebuilt,
         vec_degraded,
-        vec_error,
+        vec_error: vec_error.clone(),
         warning: if vec_degraded {
             Some(
                 "live query embedding unavailable; results are FTS5 BM25 only (semantic relevance reduced)"
@@ -443,6 +466,8 @@ pub fn run(
         } else {
             None
         },
+        backend_invoked,
+        vec_degraded_reason: if vec_degraded { vec_error } else { None },
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 
@@ -495,6 +520,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
             elapsed_ms: 0,
         }
     }
@@ -677,6 +704,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
             elapsed_ms: 42,
         };
         let json = serde_json::to_value(&resp).unwrap();

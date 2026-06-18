@@ -23,6 +23,7 @@ use tempfile::TempDir;
 /// the test's own `TempDir` because the mock binaries must survive
 /// for the lifetime of the spawned `sqlite-graphrag` subprocess and
 /// Rust drops `TempDir` instances eagerly when they go out of scope.
+#[allow(dead_code)]
 pub fn mock_llm_path() -> PathBuf {
     let dir = TempDir::new()
         .expect("mock_llm_path: TempDir must be creatable")
@@ -56,6 +57,7 @@ pub fn mock_llm_path() -> PathBuf {
 /// The function does NOT set PATH globally. It returns the composite
 /// value for the caller to inject per-command, which keeps tests
 /// parallel-safe.
+#[allow(dead_code)]
 pub fn prepend_path(mock_dir: &std::path::Path) -> String {
     let current = std::env::var("PATH").unwrap_or_default();
     if current.is_empty() {

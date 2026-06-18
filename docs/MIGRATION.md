@@ -1,4 +1,4 @@
-# MIGRATING TO v1.0.83 — Custom Provider Credential Preservation (ADR-0041)
+# MIGRATING TO v1.0.85 — Five-Gap Remediation + Claude Split + Hotfixes (ADR-0042, ADR-0043, ADR-0044)
 
 > This guide is for operators on v1.0.82 who want to upgrade to v1.0.83 without losing data. This release is a PATCH bump with NO database migration. Schema stays at v15. Behaviour is ADDITIVE for default OAuth operators.
 
@@ -27,6 +27,28 @@
 - `ANTHROPIC_BASE_URL` — endpoint override for custom Anthropic-compatible providers, now PRESERVED
 
 The v1.0.69 mandate was correct in rejecting the paid-API vars; the env-clear whitelist was overly broad and accidentally stripped the legitimate custom-provider vars too. v1.0.83 corrects the implementation while preserving the OAuth-only invariant.
+
+## MIGRATING TO v1.0.84 — Claude Backend Split (ADR-0042, GAP-002)
+
+If you relied on `--llm-backend claude` in v1.0.83 to force the Claude entry point, that flag now actually works as documented. Previously it was a synonym for codex (GAP-002). The split goes through `LlmEmbeddingBuilder` (new in v1.0.84) and the new `embed_via_claude_local` function in `src/embedder.rs:190+`. Use `--dry-run-backend` to verify which backend will be invoked before any embedding call.
+
+## MIGRATING TO v1.0.85 — Five-Gap Remediation (ADR-0043)
+
+The `FallbackReason` enum now distinguishes 7 causes via `reason_code`: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`. Scripts parsing the `vec_degraded: bool` field of `recall` and `hybrid-search` envelopes should be updated to read `vec_degraded_reason: Option<String>` for fine-grained diagnostics. The `try_embed_query_with_deterministic_fallback` path retries on `OAuthQuota` and applies a 750ms ceiling on `SlotExhausted` before falling back to FTS5-only mode.
+
+The 12-14 `anthropic-ratelimit-*-remaining` HTTP headers returned by `claude -p` are now captured by `LlmEmbedding::invoke_claude` (G45-CR5). A value of `0` aborts the embed and triggers a codex fallback instead of waiting for circuit breaker activation.
+
+Default embedding dimensionality is locked at 64 (Matryoshka Representation Learning, arXiv 2205.13147). Existing 384-dim databases continue to work unchanged; new databases created under v1.0.85 consume 6x fewer OAuth tokens per call (G56).
+
+## HOTFIX v1.0.85.1 — `recall`/`hybrid-search` `--llm-backend none` Graceful Fallback (GAP-004)
+
+If you pass `--llm-backend none` to `recall` or `hybrid-search`, the response now correctly emits `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"` and exits 0. Before the hotfix, the failsafe from v1.0.80 was broken for this specific backend choice. The fix lives in `src/embedder.rs:351` as an intermediate arm `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)`.
+
+## HOTFIX v1.0.85.2 — `--dry-run-backend` Standalone + `embed_via_backend` Resolved Kind (ADR-0044)
+
+`--dry-run-backend` now works as a standalone flag without requiring a subcommand. The fix is `pub command: Option<Commands>` in `src/cli.rs:248`. Calling `sqlite-graphrag --llm-backend claude --dry-run-backend` exits 0 with JSON `{action, backend, binary, model, flavour, chain, strict_env_clear}`.
+
+`embed_via_backend` now returns `Result<(Vec<f32>, LlmBackendKind), AppError>` instead of just `Result<Vec<f32>, AppError>`. The `resolved_kind` propagates to 7 envelopes (edit, embedding-status, enrich-summary, hybrid-search, ingest-summary, recall, remember) which all now report `backend_invoked: "claude" | "codex" | "none"` consistently.
 
 ## How to Upgrade
 

@@ -1,14 +1,14 @@
-# sqlite-graphrag (v1.0.79 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.85.2 LLM-Only One-Shot)
 
 > Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 6 MB binary. Zero model download. sqlite-graphrag v1.0.79 gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 6 MB binary. Zero model download. sqlite-graphrag v1.0.85.2 (current; v1.0.85.1 hotfix restores FTS5 fallback for --llm-backend none via GAP-004, ADR-0043 hotfix; v1.0.85.2 fixes --dry-run-backend standalone via BUG-001/002/003, ADR-0044; v1.0.79 was the LLM-only foundation) gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Read this document in [Portuguese (pt-BR)](llms.pt-BR.txt).
 - Architecture rationale: [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) (LLM-only one-shot), [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) (pure-Rust cosine), [ADR-0021](docs/decisions/adr-0021-deprecate-daemon.md) (daemon deprecated), [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md) (BLOB-backed embeddings), [ADR-0023](docs/decisions/adr-0023-remove-tokenizers.md) (tokenizers removed), [ADR-0024](docs/decisions/adr-0024-fts5-coarse-cosine-refine.md) (FTS5 coarse + cosine refine), [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md) (OAuth-only LLM)
 
 
-## v1.0.79 Architecture (LLM-Only)
+## v1.0.85 Architecture (LLM-Only, supersedes v1.0.79)
 - The default build is LLM-only and one-shot. There is no daemon, no ONNX runtime, no `libonnxruntime.so` to ship, and no `multilingual-e5-small` model to download. The LLM subprocess IS the model.
 - Embedding generation: a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess is spawned per call. The CLI never holds an embedding model in memory.
 - Vector search: cosine similarity is computed in pure Rust over the BLOB embeddings stored in `memory_embeddings`, `entity_embeddings`, and `chunk_embeddings`. The `sqlite-vec` extension is gone.
@@ -176,7 +176,7 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Vali
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.79 with MSRV Rust 1.88 declared in `Cargo.toml`
+- Current version 1.0.85.2 (1.0.85 + 2 hotfixes: .1 = GAP-004 --llm-backend none FTS5 failsafe; .2 = BUG-001/002/003 --dry-run-backend standalone + embed_via_backend resolved_kind). v1.0.79 = LLM-only foundation. v1.0.82 = 5 subcommands + host-wide LLM slot semaphore. v1.0.83 = custom-provider env preservation (ADR-0041). v1.0.84 = Claude backend split (ADR-0042). v1.0.85 = deterministic fallback (ADR-0043). MSRV Rust 1.88.
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model: delegated to `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) headless subprocess per call; no in-process model
 - Storage layer: `rusqlite` with bundled SQLite and FTS5 module. `sqlite-vec` extension REMOVED in v1.0.76; vector similarity is pure-Rust cosine over BLOB embeddings

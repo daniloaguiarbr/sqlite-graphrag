@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description:Para memória persistente, GraphRAG, ou contexto de longo prazo em Claude Code, Codex, Cursor, Windsurf, agentes AI. Em: lembrar disso, salvar conversa, recuperar contexto, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, embedding-dim, llm-parallelism, embedding em lote, re-embed, force-reembed, gaps G28-G58, OAuth-only, aborto ANTHROPIC_API_KEY/OPENAI_API_KEY, endurecimento Claude/Codex, Mock LLM CI, sem daemon, A1/A2, ADR-0032/0033/0034, G45-G58, 5 gaps v1.0.82 (GAP-001..005), pending-embeddings, subcomandos slots/pending/embedding, migrações V014/V015, llm-max-host-concurrency, llm-slot-wait-secs, graceful-shutdown-secs, SHUTDOWN_EXIT_CODE, codex login, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, Minimax, OpenRouter, AWS Bedrock. KW: memória RAG GraphRAG SQLite one-shot OAuth offline persistente grafo entidade v1.0.82 v1.0.83.
+description:Para memória persistente, GraphRAG, ou contexto de longo prazo em Claude Code, Codex, Cursor, Windsurf, agentes AI. Em: lembrar disso, salvar conversa, recuperar contexto, busca híbrida, grafo de entidades, memória SQLite, RAG local, embedding LLM-only, fluxo OAuth, embedding BLOB-backed, migrate to-llm-only, migrate rehash, drop de vec tables, embedding-dim, llm-parallelism, embedding em lote, re-embed, force-reembed, gaps G28-G58, OAuth-only, aborto ANTHROPIC_API_KEY/OPENAI_API_KEY, endurecimento Claude/Codex, Mock LLM CI, sem daemon, A1/A2, ADR-0032/0033/0034, G45-G58, 5 gaps v1.0.82 (GAP-001..005), pending-embeddings, subcomandos slots/pending/embedding, migrações V014/V015, llm-max-host-concurrency, llm-slot-wait-secs, graceful-shutdown-secs, SHUTDOWN_EXIT_CODE, codex login, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, Minimax, OpenRouter, AWS Bedrock, --dry-run-backend, backend_invoked, vec_degraded_reason, embed_via_claude_local, LlmEmbeddingBuilder, GAP-003 circuit breaker de slots, G58 fallback determinístico OAuth, G45-CR5 headers anthropic-ratelimit, G55 NotFound bilíngue, v1.0.84, v1.0.85. KW: memória RAG GraphRAG SQLite one-shot OAuth offline persistente grafo entidade v1.0.82 v1.0.83 v1.0.84 v1.0.85.
 ---
 
 
@@ -51,7 +51,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - DEFINA `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` para modo compliance (ADR-0041)
 - DEFINA `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1` APENAS para harnesses de teste CI
 - VALORES válidos de `--type`: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
-- FLAGS globais: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend codex,claude`, `--graceful-shutdown-secs N`
+- FLAGS globais: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`
 
 
 ## Contrato de Arquitetura (OAuth/LLM/One-Shot)
@@ -130,6 +130,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - INVOKE `read --with-graph` para incluir entidades e relacionamentos vinculados
 - PARSEE campos `body`, `description`, `created_at_iso`, `updated_at_iso`
 - TRATE exit code 4 como memória não encontrada no namespace
+- ESPERE v1.0.85 G55 mensagem bilíngue: `--lang en` emite `Memory not found`, `--lang pt` emite `Memória não encontrada`
 - INVOKE `list --type <kind> --limit N` para filtrar por tipo de memória
 - USE `--offset N` para paginar datasets grandes
 - USE `--include-deleted` para incluir memórias soft-deleted
@@ -226,7 +227,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - PASSE `--rrf-k 60` para constante RRF padrão
 - PASSE `--weight-vec 1.0` e `--weight-fts 1.0` para fusão balanceada
 - USE `--with-graph --max-hops 2 --min-weight 0.3` para expansão de grafo
-- ESPERE resposta `hybrid-search`: `results[]`, `graph_matches[]`, `fts_degraded`, `elapsed_ms`
+- ESPERE resposta `hybrid-search` (v1.0.84+): `results[]`, `graph_matches[]`, `fts_degraded`, `vec_degraded_reason?`, `backend_invoked`, `elapsed_ms`
 - LEIA TANTO `results[]` QUANTO `graph_matches[]` quando `--with-graph` ativo
 - INVOKE `related <name> --hops N` para travessia multi-hop a partir de memória
 - PASSE `--relation <type>` para filtrar travessia por relação
@@ -268,6 +269,9 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - TOP campos `pending list`: `id`, `name`, `status`, `created_at`, `namespace`
 - TOP campos `slots status`: `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`
 - TOP campos `embedding status`: `pending`, `processing`, `done`, `failed`, `skipped`
+- TOP campos `recall` (v1.0.84+): adicionar `backend_invoked`, `vec_degraded_reason?`
+- TOP campos `hybrid-search` (v1.0.84+): adicionar `backend_invoked`, `vec_degraded_reason?`
+- Envelopes `remember`/`edit`/`ingest`/`enrich`/`read` (v1.0.84+): incluem `backend_invoked`
 - TODOS schemas usam `"additionalProperties": false` (API JSON versionada por SemVer)
 - SCHEMAS completos em `docs/schemas/*.schema.json` (nunca inline schema completo em skill)
 
@@ -291,6 +295,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - EXIT 20 significa erro interno ou falha de serialização JSON
 - EXIT 75 significa slots esgotados OU `JobSingletonLocked`
 - EXIT 75 de `enrich`/`ingest --mode claude-code|codex`: parsee `job '(\w+)'.*namespace '(\w+)'`
+- EXIT 75 v1.0.85 GAP-003 circuit breaker: respeite janela de cooldown por namespace; NÃO retente imediatamente
 - EXIT 77 significa pressão de RAM; aguarde memória livre
 - NUNCA ignore exit code não-zero como sucesso
 - NUNCA reprocesse batch inteiro após exit 13
@@ -316,7 +321,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - NUNCA rode `enrich` em paralelo contra mesmo banco
 
 
-## Superfície v1.0.82 (pending, slots, embedding, llm-backend, shutdown)
+## Superfície v1.0.82+ (pending, slots, embedding, llm-backend, shutdown, campos v1.0.84/85)
 - INVOKE `pending list --filter-status queued` para inspecionar fila de checkpoint de três estágios do remember
 - INVOKE `pending show <id>` para inspecionar linha única de checkpoint
 - INVOKE `pending cleanup --yes` para remover linhas em estado terminal
@@ -333,11 +338,24 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - PASSE `--llm-backend codex,claude,none` para fallback de embedding null
 - DEFAULT de `--llm-backend` é `codex`
 - PASSE `--llm-fallback-mode <claude|codex>` para trocar backend mid-job em rate-limit
+- ESPERE v1.0.85 G58 fallback determinístico quando backend alt listado em `--llm-backend codex,claude`
 - PASSE `--graceful-shutdown-secs N` para reservar orçamento de cleanup antes de SIGKILL
 - PASSE `--skip-embedding-on-failure` APENAS quando `--llm-backend …,none`
 - PASSE ADR-0041 `--strict-env-clear` para descartar credenciais de provider customizado em subprocesso
 - EXECUTE `codex login` após upgrade para refrescar refresh token OAuth (incidente 2026-06-14)
 - AÇÃO do operador para OAuth stale: `codex login` depois retry
+- v1.0.84: PASSE `--dry-run-backend` para planejar operação de backend sem executá-la (preview idempotente)
+- v1.0.84: PARSEE campo `backend_invoked` nos envelopes de recall, hybrid-search, remember, edit, ingest, enrich, read para confirmar backend efetivo
+- v1.0.84: LEIA `vec_degraded_reason` nos envelopes de recall/hybrid-search quando caminho vec estiver degradado
+- v1.0.84: SAIBA que backend claude divide-se em embedder local via `embed_via_claude_local` (zero-token, compatível com OAuth)
+- v1.0.84: USE `LlmEmbeddingBuilder` para compor pipeline de embedding: `with_backend(Codex).or_fallback(Claude).or_skip()`
+- v1.0.85 GAP-003: RESPEITE circuit breaker de exaustão de slots; em exit 75, faça backoff por cooldown de namespace antes de retentar
+- v1.0.85 G58: ESPERE fallback determinístico de cota OAuth quando backend alt declarado na lista `--llm-backend`
+- v1.0.85 G45-CR5: CAPTURE `anthropic-ratelimit-requests-remaining`, `anthropic-ratelimit-tokens-remaining`, `anthropic-ratelimit-input-tokens-reset`, `anthropic-ratelimit-output-tokens-reset` dos headers de resposta no envelope
+- v1.0.85 G55: ESPERE NotFound bilíngue de `read --name <missing>` baseado em `--lang`: EN emite `Memory not found`, PT emite `Memória não encontrada`
+- v1.0.85 G56: DIM de embedding default é 64 (MRL) quando `SQLITE_GRAPHRAG_EMBEDDING_DIM` não setado e `schema_meta.dim` ausente
+- v1.0.85.1: SAIBA que `recall --llm-backend none` e `hybrid-search --llm-backend none` retornam exit 0 com `vec_degraded_reason: "dim_zero"` (hotfix GAP-004)
+- v1.0.85.2: USE `--dry-run-backend` standalone sem subcomando (BUG-001); `setup_mock_path()` emite JSON para claude e JSONL para codex (BUG-002); o campo `backend_invoked` em 7 envelopes reflete o backend RESOLVIDO (BUG-003)
 
 
 ## Manutenção (fts, backup, vacuum, optimize, migrate, export, debug-schema, vec, completions)

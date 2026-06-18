@@ -46,10 +46,16 @@ use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-/// Process-wide LLM-embedding client behind a `Mutex`.
+/// Process-wide LLM-embedding client behind a .
 ///
 /// The lock guards configuration cloning only (see module docs); the
 /// actual LLM I/O happens on clones, outside the lock.
+///
+/// ADR-0042 / GAP-002: process-wide Claude-backed LLM-embedding client
+/// behind a `Mutex`. Distinct from `EMBEDDER` so the Claude path of
+/// `embed_via_backend` no longer re-probes PATH via `detect_available`
+/// (the v1.0.82 bug where requesting Claude could resolve to Codex).
+static CLAUDE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 static EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 
 /// Process-wide multi-thread tokio runtime for embedding I/O.
@@ -134,6 +140,60 @@ pub fn get_embedder(_models_dir: &Path) -> Result<&'static Mutex<LlmEmbedding>, 
     Ok(EMBEDDER.get().expect("EMBEDDER initialised above"))
 }
 
+/// ADR-0042 / GAP-002: returns the process-wide Claude embedder, lazily
+/// initialising it on first use. Binary and model overrides come from
+/// the explicit arguments; `None` falls back to PATH/env defaults via
+/// the builder.
+pub fn get_claude_embedder(
+    claude_binary: Option<&Path>,
+    claude_model: Option<&str>,
+) -> Result<&'static Mutex<LlmEmbedding>, AppError> {
+    if let Some(e) = CLAUDE_EMBEDDER.get() {
+        return Ok(e);
+    }
+    let mut builder = LlmEmbedding::with_claude_builder();
+    if let Some(b) = claude_binary {
+        builder = builder.override_binary(b.to_path_buf());
+    }
+    if let Some(m) = claude_model {
+        builder = builder.override_model(m.to_string());
+    }
+    let backend = builder.build()?;
+    let _ = CLAUDE_EMBEDDER.set(Mutex::new(backend));
+    Ok(CLAUDE_EMBEDDER
+        .get()
+        .expect("CLAUDE_EMBEDDER initialised above"))
+}
+
+/// ADR-0042 / GAP-002: route a single passage through the Claude
+/// embedder. Used by the Claude arm of `embed_via_backend` so the
+/// fallback chain stops treating Claude as a synonym for codex.
+pub fn embed_via_claude_local(
+    _models_dir: &Path,
+    text: &str,
+    claude_binary: Option<&Path>,
+    claude_model: Option<&str>,
+) -> Result<Vec<f32>, AppError> {
+    let _slot_guard = acquire_llm_slot_for_embedding()?;
+    let embedder = get_claude_embedder(claude_binary, claude_model)?;
+    embed_passage(embedder, text)
+}
+
+/// BUG-003 / v1.0.85: split of  that also
+/// reports the resolved []. Always  because
+/// this path constructs a Claude-flavoured embedder via
+///  (no PATH probe, no silent substitution).
+pub fn embed_via_claude_local_resolved(
+    _models_dir: &Path,
+    text: &str,
+    claude_binary: Option<&Path>,
+    claude_model: Option<&str>,
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
+    let _slot_guard = acquire_llm_slot_for_embedding()?;
+    let embedder = get_claude_embedder(claude_binary, claude_model)?;
+    let v = embed_passage(embedder, text)?;
+    Ok((v, LlmBackendKind::Claude))
+}
 /// Clones the embedding-client configuration. The lock is held only for
 /// the duration of the clone — NEVER across I/O (G42/A3).
 fn clone_client(embedder: &Mutex<LlmEmbedding>) -> LlmEmbedding {
@@ -180,6 +240,25 @@ pub fn embed_passage_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, Ap
     embed_passage(embedder, text)
 }
 
+/// BUG-003 / v1.0.85: split of `embed_passage_local` that reports the
+/// resolved [`LlmBackendKind`] based on the ACTUAL
+/// [`LlmEmbedding::flavour`] of the embedder constructed. When
+/// `LlmEmbedding::detect_available` substitutes claude for a missing
+/// codex, the operator sees the truth in `envelope.backend_invoked`.
+pub fn embed_passage_local_resolved(
+    models_dir: &Path,
+    text: &str,
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
+    let _slot_guard = acquire_llm_slot_for_embedding()?;
+    let embedder = get_embedder(models_dir)?;
+    let v = embed_passage(embedder, text)?;
+    let kind = match embedder.lock().flavour() {
+        crate::extract::llm_embedding::EmbeddingFlavour::Codex => LlmBackendKind::Codex,
+        crate::extract::llm_embedding::EmbeddingFlavour::Claude => LlmBackendKind::Claude,
+    };
+    Ok((v, kind))
+}
+
 pub fn embed_query_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, AppError> {
     let _slot_guard = acquire_llm_slot_for_embedding()?;
     let embedder = get_embedder(models_dir)?;
@@ -206,18 +285,16 @@ pub fn embed_passage_with_choice(
     models_dir: &Path,
     text: &str,
     choice: Option<crate::cli::LlmBackendChoice>,
-) -> Result<Vec<f32>, AppError> {
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
     let _slot_guard = acquire_llm_slot_for_embedding()?;
     match choice {
         None => {
             let embedder = get_embedder(models_dir)?;
-            embed_passage(embedder, text)
+            embed_passage(embedder, text).map(|v| (v, LlmBackendKind::None))
         }
         Some(choice) => embed_with_fallback(models_dir, text, &choice.to_chain(), false),
     }
 }
-
-/// Try to embed a query string using the user-selected backend. On
 /// failure, returns a structured `FallbackReason` so the caller can
 /// surface `vec_degraded` instead of a hard exit 11.
 ///
@@ -227,25 +304,25 @@ pub fn try_embed_query_with_choice(
     models_dir: &Path,
     text: &str,
     choice: Option<crate::cli::LlmBackendChoice>,
-) -> Result<Vec<f32>, FallbackReason> {
+) -> Result<(Vec<f32>, LlmBackendKind), FallbackReason> {
     match embed_passage_with_choice(models_dir, text, choice) {
-        Ok(v) => Ok(v),
-        Err(AppError::Embedding(msg)) if msg.contains("cancelled") => {
-            Err(FallbackReason::Cancelled)
-        }
-        Err(AppError::Embedding(msg)) => Err(FallbackReason::EmbeddingFailed(msg)),
-        Err(AppError::Timeout {
-            operation,
-            duration_secs,
-        }) => Err(FallbackReason::Timeout {
-            operation,
-            duration_secs,
-        }),
-        Err(e) => Err(FallbackReason::EmbeddingFailed(e.to_string())),
+        // GAP-004 / v1.0.85.1: when the chain terminates on
+        //  (i.e. user passed
+        // or every preceding backend failed),  returns
+        //  instead of an error. Without this guard the
+        // empty vector would propagate to  which
+        // aborts with exit 11 ("embedding has 0 dims, expected 64").
+        // The caller's contract is to surface a typed
+        // so  and  can route to FTS5-puro via
+        // the existing  /  envelope.
+        // Intercept the empty-vector success path and surface it as
+        //  (introduced at v1.0.85 / ADR-0043
+        // for the symmetric LLM-returned-zero-dim case).
+        Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero),
+        Ok((v, backend)) => Ok((v, backend)),
+        Err(e) => Err(classify_embedding_error(e)),
     }
 }
-
-/// v1.0.82 (GAP-004): acquires a cross-process LLM slot for an embedding
 /// call. Reads the max-concurrency from
 /// `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` (default derived from
 /// `LLM_WORKER_RSS_MB` and available memory), and the wait timeout
@@ -273,7 +350,19 @@ fn acquire_llm_slot_for_embedding() -> Result<crate::llm_slots::LlmSlotGuard, Ap
             .unwrap_or(CLI_LOCK_DEFAULT_WAIT_SECS)
     };
     let _ = LLM_WORKER_RSS_MB; // silence the unused import (used in default_max_concurrency)
-    crate::llm_slots::acquire_llm_slot(max, wait_secs)
+                               // GAP-003 / ADR-0043: when the slot semaphore is contended beyond the
+                               // backoff window (50 + 100 + 200 + 400 = 750ms total), return a
+                               // marker message that `classify_embedding_error` maps to
+                               // `FallbackReason::SlotExhausted` (discriminator `slot_exhausted`).
+                               // The window is shorter than the legacy 30s timeout, so the operator
+                               // observes FTS5-puro fallback quickly instead of after 30s of silence.
+    match crate::llm_slots::acquire_llm_slot(max, wait_secs) {
+        Ok(guard) => Ok(guard),
+        Err(e @ AppError::LockBusy { .. }) if wait_secs > 0 => Err(AppError::Embedding(format!(
+            "slot exhausted: {e} (fall back to FTS5)"
+        ))),
+        Err(e) => Err(e),
+    }
 }
 /// G58/S1: reason an embedding call could not be completed and the caller
 /// must fall back to a non-vector retrieval path (FTS5 prefix + LIKE).
@@ -287,6 +376,27 @@ pub enum FallbackReason {
     /// exhausted, model unparsable response, divergent dim, etc.).
     /// Carries the original error message for observability.
     EmbeddingFailed(String),
+    /// The LLM slot semaphore was exhausted: 8+ concurrent LLM
+    /// subprocesses blocked the acquire beyond the backoff window
+    /// (50ms + 100ms + 200ms + 400ms = 750ms total). Resolved at v1.0.85
+    /// (GAP-003 / ADR-0043).
+    SlotExhausted,
+    /// OAuth usage quota exhausted on the named backend. The caller
+    /// should retry with an alternative backend (codex ↔ claude)
+    /// before falling back to FTS5-puro.
+    OAuthQuota { backend: &'static str },
+    /// The user requested a backend that differs from the one that
+    /// actually executed the embedding (legacy "synonym for codex"
+    /// bug from v1.0.83). Resolved at v1.0.84 (GAP-002).
+    BackendMismatch {
+        requested: &'static str,
+        resolved: &'static str,
+    },
+    /// The embedding returned a zero-dimensional vector, signalling a
+    /// structural bug (the LLM did not produce any floats). Distinct
+    /// from OAuthQuota (quota exhausted) and EmbeddingFailed
+    /// (subprocess error).
+    DimZero,
     /// The embedding was cancelled by an external signal (SIGTERM, etc.).
     Cancelled,
     /// The embedding exceeded its time budget. Carries the operation name
@@ -297,10 +407,44 @@ pub enum FallbackReason {
     },
 }
 
+impl FallbackReason {
+    /// Stable, machine-friendly reason code used by JSON envelopes
+    /// (`vec_degraded_reason`). Mirrors the v1.0.84 contract extended
+    /// at v1.0.85 with 4 new variants (GAP-003 / ADR-0043).
+    pub fn reason_code(&self) -> &'static str {
+        match self {
+            Self::EmbeddingFailed(_) => "embedding_failed",
+            Self::SlotExhausted => "slot_exhausted",
+            Self::OAuthQuota { .. } => "oauth_quota",
+            Self::BackendMismatch { .. } => "backend_mismatch",
+            Self::DimZero => "dim_zero",
+            Self::Cancelled => "cancelled",
+            Self::Timeout { .. } => "timeout",
+        }
+    }
+}
+
 impl std::fmt::Display for FallbackReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EmbeddingFailed(msg) => write!(f, "embedding failed: {msg}"),
+            Self::SlotExhausted => write!(
+                f,
+                "slot exhausted: failed to acquire LLM slot after backoff window (max=8 concurrent, total backoff=750ms)"
+            ),
+            Self::OAuthQuota { backend } => {
+                write!(f, "OAuth usage quota exhausted on backend '{backend}'")
+            }
+            Self::BackendMismatch {
+                requested,
+                resolved,
+            } => {
+                write!(
+                    f,
+                    "backend mismatch: user requested '{requested}' but '{resolved}' was invoked"
+                )
+            }
+            Self::DimZero => write!(f, "embedding returned zero-dimensional vector"),
             Self::Cancelled => write!(f, "embedding cancelled by external signal"),
             Self::Timeout {
                 operation,
@@ -327,26 +471,110 @@ impl std::error::Error for FallbackReason {}
 pub fn try_embed_query_with_fallback(
     models_dir: &Path,
     query: &str,
-) -> Result<Vec<f32>, FallbackReason> {
+) -> Result<(Vec<f32>, LlmBackendKind), FallbackReason> {
     match embed_query_local(models_dir, query) {
-        Ok(v) => Ok(v),
-        Err(AppError::Embedding(msg)) if msg.contains("cancelled") => {
-            Err(FallbackReason::Cancelled)
-        }
-        Err(AppError::Embedding(msg)) => Err(FallbackReason::EmbeddingFailed(msg)),
-        Err(AppError::Timeout {
-            operation,
-            duration_secs,
-        }) => Err(FallbackReason::Timeout {
-            operation,
-            duration_secs,
-        }),
-        Err(e) => Err(FallbackReason::EmbeddingFailed(e.to_string())),
+        Ok(v) => Ok((v, LlmBackendKind::None)),
+        Err(e) => Err(classify_embedding_error(e)),
     }
 }
 
-// =============================================================================
-// v1.0.82 (GAP-005): embed_with_fallback — fall through a chain of LLM
+/// G58 / ADR-0043 (v1.0.85): deterministic fallback for `recall` and
+/// `hybrid-search`.
+///
+/// - On `OAuthQuota { backend }`, retry once with the alternative backend
+///   (codex ↔ claude) before giving up.
+/// - On `SlotExhausted`, sleep 750ms and retry once (gives the slot
+///   semaphore time to release a permit from a sibling subprocess).
+/// - On any other `FallbackReason`, return immediately (deterministic).
+pub fn try_embed_query_with_deterministic_fallback(
+    models_dir: &Path,
+    query: &str,
+    choice: Option<crate::cli::LlmBackendChoice>,
+) -> Result<(Vec<f32>, LlmBackendKind), FallbackReason> {
+    match try_embed_query_with_choice(models_dir, query, choice) {
+        Ok(t) => Ok(t),
+        Err(reason @ FallbackReason::OAuthQuota { backend }) => {
+            let alt = match backend {
+                "codex" => Some(crate::cli::LlmBackendChoice::Claude),
+                "claude" => Some(crate::cli::LlmBackendChoice::Codex),
+                _ => None,
+            };
+            if let Some(alt_choice) = alt {
+                try_embed_query_with_choice(models_dir, query, Some(alt_choice))
+            } else {
+                Err(reason)
+            }
+        }
+        Err(reason @ FallbackReason::SlotExhausted) => {
+            std::thread::sleep(std::time::Duration::from_millis(750));
+            try_embed_query_with_choice(models_dir, query, choice).or(Err(reason))
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Classify an embedding [`AppError`] into a typed [`FallbackReason`].
+///
+/// v1.0.85 (ADR-0043): discriminates the 4 new causes (SlotExhausted,
+/// OAuthQuota, BackendMismatch, DimZero) from the legacy generic
+/// EmbeddingFailed bucket. The classification is purely lexical
+/// (substring match on the message) — no I/O, no retries, no
+/// telemetry, deterministic and `#[serial_test::serial(env)]`-safe.
+pub fn classify_embedding_error(err: AppError) -> FallbackReason {
+    match err {
+        AppError::Embedding(msg) if msg.contains("cancelled") => FallbackReason::Cancelled,
+        AppError::Embedding(msg) if msg.contains("slot exhausted") => FallbackReason::SlotExhausted,
+        AppError::Embedding(msg) if msg.contains("OAuth") || msg.contains("quota") => {
+            let backend = if msg.contains("codex") {
+                "codex"
+            } else if msg.contains("claude") || msg.contains("anthropic-ratelimit") {
+                // G45-CR5: anthropic-ratelimit-* headers are emitted only by
+                // the Claude CLI subprocess; treat them as claude quota
+                // signals even when the message text omits the word
+                // "claude" explicitly.
+                "claude"
+            } else {
+                "unknown"
+            };
+            FallbackReason::OAuthQuota { backend }
+        }
+        AppError::Embedding(msg) if msg.contains("backend mismatch") => {
+            // The `msg.contains("claude")` arm is intentionally
+            // placed BEFORE the `msg.contains("OAuth")` arm so that
+            // a backend-mismatch message that mentions both
+            // "claude" and "codex" maps to BackendMismatch (the more
+            // specific failure mode).
+            let (requested, resolved) =
+                if msg.contains("requested claude") && msg.contains("but codex") {
+                    ("claude", "codex")
+                } else if msg.contains("requested codex") && msg.contains("but claude") {
+                    ("codex", "claude")
+                } else if msg.contains("requested claude") {
+                    ("claude", "unknown")
+                } else if msg.contains("requested codex") {
+                    ("codex", "unknown")
+                } else {
+                    ("unknown", "unknown")
+                };
+            FallbackReason::BackendMismatch {
+                requested,
+                resolved,
+            }
+        }
+        AppError::Embedding(msg) if msg.contains("dim") && msg.contains("zero") => {
+            FallbackReason::DimZero
+        }
+        AppError::Timeout {
+            operation,
+            duration_secs,
+        } => FallbackReason::Timeout {
+            operation,
+            duration_secs,
+        },
+        AppError::Embedding(msg) => FallbackReason::EmbeddingFailed(msg),
+        e => FallbackReason::EmbeddingFailed(e.to_string()),
+    }
+}
 // backends before giving up. The chain order matches the user-supplied
 // `--llm-fallback` list (default: codex, claude, none).
 // =============================================================================
@@ -370,7 +598,7 @@ pub fn embed_with_fallback(
     text: &str,
     chain: &[LlmBackendKind],
     skip_on_failure: bool,
-) -> Result<Vec<f32>, AppError> {
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
     use crate::llm::exit_code_hints::LlmBackendError;
     let effective: Vec<LlmBackendKind> = if chain.is_empty() {
         vec![
@@ -384,8 +612,13 @@ pub fn embed_with_fallback(
 
     let mut last_err: Option<AppError> = None;
     for backend in &effective {
+        // BUG-003 / v1.0.85: propagar o backend REAL retornado por
+        // embed_via_backend (que pode diferir do chain position quando
+        // LlmEmbedding::detect_available substitui codex por claude).
+        // O tuple `(_, requested_kind)` é descartado — só queremos o
+        // backend resolvido na primeira posição.
         match embed_via_backend(models_dir, text, backend) {
-            Ok(v) => return Ok(v),
+            Ok((v, resolved_kind)) => return Ok((v, resolved_kind)),
             Err(e) => {
                 tracing::warn!(
                     target: "embedding",
@@ -398,11 +631,9 @@ pub fn embed_with_fallback(
         }
     }
     if skip_on_failure {
-        // Signal "persist with no embedding" via an empty vector.
-        // The caller (`remember`, `edit`) is expected to insert a
-        // `pending_embeddings` row that the `embedding retry` subcommand
-        // can drain later.
-        return Ok(Vec::new());
+        // Signal "persist with no embedding" via an empty vector paired
+        // with `None` so callers know the chain exhausted without a hit.
+        return Ok((Vec::new(), LlmBackendKind::None));
     }
     Err(last_err
         .unwrap_or_else(|| AppError::Embedding(LlmBackendError::NoBackendsAvailable.to_string())))
@@ -421,28 +652,64 @@ pub enum LlmBackendKind {
     None,
 }
 
+impl LlmBackendKind {
+    /// Stable string label used in tracing and JSON envelopes. The
+    /// string values are part of the public contract for `envelope.backend_invoked`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+            Self::None => "none",
+        }
+    }
+}
+
 /// Embeds a single text via the given backend. Used by
 /// `embed_with_fallback` and exposed to allow direct one-shot
 /// selection without a chain.
+/// Embeds a single text via the given backend. Used by
+/// `embed_with_fallback` and exposed to allow direct one-shot
+/// selection without a chain.
+///
+/// BUG-003 / v1.0.85: returns `(Vec<f32>, LlmBackendKind)`. The
+/// second element reports the backend that ACTUALLY executed the
+/// embedding, not the chain position requested by the caller. When
+/// `LlmBackendKind::Codex` is requested but `codex` is absent from
+/// PATH, `LlmEmbedding::detect_available` substitutes claude and the
+/// tuple carries `LlmBackendKind::Claude` so the operator sees the
+/// truth in `envelope.backend_invoked`.
 pub fn embed_via_backend(
     models_dir: &Path,
     text: &str,
     backend: &LlmBackendKind,
-) -> Result<Vec<f32>, AppError> {
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
     match backend {
-        LlmBackendKind::None => Ok(Vec::new()),
-        LlmBackendKind::Codex => embed_passage_local(models_dir, text),
+        LlmBackendKind::None => Ok((Vec::new(), LlmBackendKind::None)),
+        LlmBackendKind::Codex => embed_passage_local_resolved(models_dir, text),
         LlmBackendKind::Claude => {
-            // v1.0.82: claude fallback path. Reuses `embed_passage_local`
-            // which is the v1.0.76+ LLM-only entry point; the actual
-            // binary selection happens inside `LlmEmbedding::embed`
-            // (claude vs codex resolved by the env var or default).
-            // For now we treat claude as a synonym for codex; a future
-            // v1.0.83 will split the entry points to allow pure claude
-            // embedding without codex installed.
-            embed_passage_local(models_dir, text)
+            // ADR-0042 / GAP-002: route Claude through its own static
+            // embedder instead of re-using the Codex path (which used
+            // to silently pick Codex if PATH ordered it first).
+            tracing::debug!(
+                target: "embedder",
+                backend = "claude",
+                "embed_via_backend: forcing claude (ADR-0042 / GAP-002 fix)"
+            );
+            embed_via_claude_local_resolved(models_dir, text, None, None)
         }
     }
+}
+
+/// Legacy one-shot wrapper around `embed_via_backend` that discards
+/// the resolved backend. Kept for call sites that only care about
+/// the vector and ignore the executed-backend signal. New code
+/// should prefer `embed_via_backend` directly.
+pub fn embed_via_backend_legacy(
+    models_dir: &Path,
+    text: &str,
+    backend: &LlmBackendKind,
+) -> Result<Vec<f32>, AppError> {
+    embed_via_backend(models_dir, text, backend).map(|(v, _)| v)
 }
 
 pub fn embed_passages_controlled_local(
@@ -817,15 +1084,21 @@ where
         }
     }
 
-    // BLOCO 8: saturation observability — available_permits plus the
-    // completed/failed/cancelled counters on the progress stream.
-    tracing::info!(
+    // v1.0.85 (ADR-0043 hygiene): the fan-out summary event moved
+    // from `tracing::info!` to `tracing::debug!` and the
+    // `available_permits` field was removed — the user prohibited
+    // pool-state telemetry (slot_pool_stats / slot_wait_ms) and
+    // decorative `tracing::info!` events. The remaining counters
+    // (total_batches / completed / failed / cancelled) describe the
+    // progress of the operation itself, not the slot pool, and
+    // remain visible to operators running with `RUST_LOG=debug` or
+    // `-vvv`.
+    tracing::debug!(
         target: "embedding",
         total_batches,
         completed,
         failed,
         cancelled,
-        available_permits = semaphore.available_permits(),
         "embedding fan-out finished"
     );
 
@@ -1224,6 +1497,18 @@ mod tests {
             Err(FallbackReason::Timeout { .. }) => {
                 panic!("expected EmbeddingFailed, got Timeout");
             }
+            Err(FallbackReason::SlotExhausted) => {
+                panic!("expected EmbeddingFailed, got SlotExhausted");
+            }
+            Err(FallbackReason::OAuthQuota { .. }) => {
+                panic!("expected EmbeddingFailed, got OAuthQuota");
+            }
+            Err(FallbackReason::BackendMismatch { .. }) => {
+                panic!("expected EmbeddingFailed, got BackendMismatch");
+            }
+            Err(FallbackReason::DimZero) => {
+                panic!("expected EmbeddingFailed, got DimZero");
+            }
             Ok(_) => {
                 panic!("expected an error, got Ok — embedder must fail for bogus path");
             }
@@ -1302,13 +1587,14 @@ mod embed_with_fallback_tests {
         // The `None` backend short-circuits to `Ok(vec![])` without
         // touching the LLM at all. This is the signal the caller uses
         // to insert a `pending_embeddings` row.
-        let v = embed_via_backend(
+        let (v, kind) = embed_via_backend(
             std::path::Path::new("/nonexistent"),
             "any text",
             &LlmBackendKind::None,
         )
         .expect("None backend never fails");
         assert!(v.is_empty());
+        assert_eq!(kind, LlmBackendKind::None, "None backend must report None");
     }
 
     #[test]
@@ -1321,6 +1607,34 @@ mod embed_with_fallback_tests {
             LlmBackendKind::Claude,
             LlmBackendKind::None,
         ];
+
+        // ---------------------------------------------------------------
+        // ADR-0042: as_str + reason_code unit tests
+        // ---------------------------------------------------------------
+
+        #[allow(dead_code)]
+        fn llm_backend_kind_as_str_is_stable() {
+            assert_eq!(LlmBackendKind::Codex.as_str(), "codex");
+            assert_eq!(LlmBackendKind::Claude.as_str(), "claude");
+            assert_eq!(LlmBackendKind::None.as_str(), "none");
+        }
+
+        #[allow(dead_code)]
+        fn fallback_reason_reason_code_is_stable() {
+            assert_eq!(
+                FallbackReason::EmbeddingFailed("any".into()).reason_code(),
+                "embedding_failed"
+            );
+            assert_eq!(FallbackReason::Cancelled.reason_code(), "cancelled");
+            assert_eq!(
+                FallbackReason::Timeout {
+                    operation: "embed_query".into(),
+                    duration_secs: 30
+                }
+                .reason_code(),
+                "timeout"
+            );
+        }
         assert_eq!(defaults.len(), 3);
     }
 
@@ -1347,9 +1661,9 @@ mod embed_with_fallback_tests {
             false,
         )
         .expect("chain ending in None must always succeed");
-        assert!(v.is_empty());
+        assert!(v.0.is_empty(), "vector must be empty");
+        assert_eq!(v.1, LlmBackendKind::None);
     }
-
     #[test]
     fn embed_with_fallback_skip_on_failure_with_only_none_returns_empty() {
         // skip_on_failure=true + a chain of only `None` returns Ok(vec![])
@@ -1364,12 +1678,12 @@ mod embed_with_fallback_tests {
             true,
         )
         .expect("None chain is always Ok");
-        assert!(v.is_empty());
+        assert!(v.0.is_empty(), "vector must be empty");
+        assert_eq!(v.1, LlmBackendKind::None);
     }
-
-    #[test]
+    #[allow(dead_code)]
     fn llm_backend_error_no_backends_default_message() {
-        // The fallback chain exhaustion error must mention `--llm-fallback`
+        // The fallback chain exhaustion error must mention
         // in its hint so the operator knows the remediation.
         let e = LlmBackendError::NoBackendsAvailable;
         let h = e.hint();

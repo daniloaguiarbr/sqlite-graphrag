@@ -659,6 +659,19 @@
 
 
 ## v1.0.82 Documentation Framework Additions
+## v1.0.85, v1.0.85.1, v1.0.85.2 — ADR-0042, ADR-0043, ADR-0044 Coverage
+
+Three new ADRs were added in this release cycle:
+
+- **ADR-0042 (v1.0.84)** — Claude Backend Split (GAP-002). Resolves the v1.0.83 synonym bug where `--llm-backend claude` silently fell through to codex. See `adr-0042-claude-backend-split.md` (EN) and `adr-0042-claude-backend-split.pt-BR.md` (PT-BR).
+- **ADR-0043 (v1.0.85)** — Five-Gap Remediation. Introduces the 7-variant `FallbackReason` enum, the `reason_code` discriminator, the `try_embed_query_with_deterministic_fallback` retry path, the `anthropic-ratelimit-*-remaining` header capture, the dim=64 lock, and the bilingual `MemoryNotFound` message. See `adr-0043-five-gap-remediation.md` (EN) and `adr-0043-five-gap-remediation.pt-BR.md` (PT-BR).
+- **ADR-0044 (v1.0.85.2)** — Hotfixes BUG-001/002/003. Documents `--dry-run-backend` standalone behavior, `embed_via_backend` returning `Result<(Vec<f32>, LlmBackendKind), AppError>`, and the `setup_mock_path()` JSON alignment in `tests/embedder.rs:37-77`. See `adr-0044-hotfixes-bug-001-002-003.md` (EN) and `adr-0044-hotfixes-bug-001-002-003.pt-BR.md` (PT-BR).
+
+All three ADRs follow the standard template (Status, Data, Versão, Autores, Contexto, Decisão, Consequências, Alternativas, Cross-refs). The Status field is "Aceito" (PT-BR) or "Accepted" (EN).
+
+### Schema Index Update
+
+The 7 envelope schemas in `docs/schemas/` (`edit`, `embedding-status`, `enrich-summary`, `hybrid-search`, `ingest-summary`, `recall`, `remember`) now include `backend_invoked: enum ["claude", "codex", "none"]` per ADR-0042. The `recall` and `hybrid-search` schemas additionally include `vec_degraded_reason: Option<String>` per ADR-0043. See `docs/schemas/README.md` for the full index.
 ### Five New Schemas (GAP-001/002/004/005)
 - `docs/schemas/pending-list.schema.json` — `sqlite-graphrag pending list` output (ADR-0036, GAP-001)
 - `docs/schemas/embedding-list.schema.json` — `sqlite-graphrag embedding list` and `pending-embeddings list` outputs (ADR-0040, GAP-005)

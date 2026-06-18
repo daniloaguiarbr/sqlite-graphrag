@@ -8,7 +8,7 @@
 - No new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
 - Resolves GAP-058 partially: custom-provider env vars route around OAuth quota contention; `recall`/`hybrid-search` stay deterministic under official OAuth fatigue
-# HOW TO USE sqlite-graphrag (v1.0.82 — Five Gaps Closed, Two Migrations)
+# HOW TO USE sqlite-graphrag (v1.0.85 — Five-Gap Remediation, Claude Split, Hotfixes 85.1/85.2)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
@@ -27,6 +27,66 @@ v1.0.82 is a **patch** bump that DOES carry two additive database migrations (`V
 - **GAP-003 (ADR-0038)**: `--llm-backend <codex|claude|none,codex,...>` global flag; first non-error backend wins. `--llm-backend codex,claude,none` paired with `--skip-embedding-on-failure` allows null embedding when both backends fail.
 - **GAP-004 (ADR-0039)**: Host-wide LLM slot semaphore via `fs4 = "0.9"` with `sync` feature (NOT `fs2`); `fcntl(F_SETLK)` on Linux/macOS, `LockFileEx` on Windows. Default `min(ncpus, oauth_tier_max)`. Inspect with `sqlite-graphrag slots status --json`; reap with `sqlite-graphrag slots release --slot-id <N> --yes`.
 - **GAP-005 (ADR-0040)**: `pending_embeddings` table (V015) holds rows that failed every backend; the stderr-capture chain detects `refresh_token_reused` (2026-06-14 codex incident) and routes to the next backend. Inspect with `sqlite-graphrag embedding status|list --json`; retry with `sqlite-graphrag pending-embeddings process`.
+## What Changed in v1.0.85, v1.0.85.1, v1.0.85.2 (ADR-0043, ADR-0044)
+
+Since v1.0.84 (GAP-002 Claude backend split, ADR-0042), three further releases tightened the embedder:
+
+### v1.0.85 — Five-Gap Remediation (ADR-0043)
+- `FallbackReason` enum extended from 3 to 7 variants: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
+- `reason_code` discriminator in `recall` and `hybrid-search` envelopes distinguishes quota vs mismatch vs timeout
+- `try_embed_query_with_deterministic_fallback` retries on `OAuthQuota` and applies 750ms ceiling on `SlotExhausted` before falling back to FTS5
+- 12-14 `anthropic-ratelimit-*-remaining` headers captured in `LlmEmbedding::invoke_claude` (G45-CR5); `0` aborts embed and triggers codex fallback
+- `dim 64` lock (Matryoshka Representation Learning, arXiv 2205.13147) reduces OAuth token spend by 6x (G56)
+- 5 regression tests in `tests/embedder.rs`: `slot_exhaustion_returns_typed_error`, `oauth_quota_fallback_deterministic`, `anthropic_ratelimit_headers_captured`, `read_notfound_preserves_identifier`, `embedding_dim_reduces_token_cost`
+
+### v1.0.85.1 — `recall`/`hybrid-search` `--llm-backend none` Graceful Fallback (GAP-004 hotfix)
+- `--llm-backend none` now returns exit 0 with `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`
+- Failsafe of v1.0.80 restored for the `--llm-backend none` case
+- Intermediate arm `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)` in `try_embed_query_with_choice`
+
+### v1.0.85.2 — `embed_via_backend` Resolved Kind, `--dry-run-backend` Standalone (BUG-001/002/003, ADR-0044)
+- `--dry-run-backend` works standalone (no subcommand required) thanks to `pub command: Option<Commands>` in `src/cli.rs:248`
+- `embed_via_backend` returns `Result<(Vec<f32>, LlmBackendKind), AppError>` propagating `resolved_kind`
+- 7 envelopes now report `backend_invoked: "claude" | "codex" | "none"` consistently
+- `setup_mock_path()` in `tests/embedder.rs:37-77` aligned to emit JSON (not JSONL)
+
+### v1.0.84 — Claude Backend Split (ADR-0042, GAP-002)
+- `--llm-backend claude` now forces `claude -p` invocation, no silent codex fallback
+- `LlmEmbeddingBuilder` in `src/extract/llm_embedding.rs` with `with_claude_builder`, `with_codex_builder`, `override_binary`, `override_model`
+- `embed_via_claude_local` in `src/embedder.rs:190+` is the real split entry point
+- `apply_env_whitelist_for_claude` in `src/spawn/env_whitelist.rs` (shared by `invoke_claude` and `embed_via_claude_local`)
+- 5 regression tests in `tests/embedder.rs`: `embed_via_backend_claude_does_not_invoke_codex`, `embed_via_backend_codex_does_not_invoke_claude`, `embed_via_backend_none_returns_empty_vector`, `cli_dry_run_backend_prints_resolved_path`, `claude_invocation_uses_isolated_config_dir`
+
+## What Changed in v1.0.85, v1.0.85.1, v1.0.85.2 (ADR-0043, ADR-0044)
+
+Since v1.0.84 (GAP-002 Claude backend split, ADR-0042), three further releases tightened the embedder:
+
+### v1.0.85 — Five-Gap Remediation (ADR-0043)
+- `FallbackReason` enum extended from 3 to 7 variants: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
+- `reason_code` discriminator in `recall` and `hybrid-search` envelopes distinguishes quota vs mismatch vs timeout
+- `try_embed_query_with_deterministic_fallback` retries on `OAuthQuota` and applies 750ms ceiling on `SlotExhausted` before falling back to FTS5
+- 12-14 `anthropic-ratelimit-*-remaining` headers captured in `LlmEmbedding::invoke_claude` (G45-CR5); `0` aborts embed and triggers codex fallback
+- `dim 64` lock (Matryoshka Representation Learning, arXiv 2205.13147) reduces OAuth token spend by 6x (G56)
+- 5 regression tests in `tests/embedder.rs`: `slot_exhaustion_returns_typed_error`, `oauth_quota_fallback_deterministic`, `anthropic_ratelimit_headers_captured`, `read_notfound_preserves_identifier`, `embedding_dim_reduces_token_cost`
+
+### v1.0.85.1 — `recall`/`hybrid-search` `--llm-backend none` Graceful Fallback (GAP-004 hotfix)
+- `--llm-backend none` now returns exit 0 with `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`
+- Failsafe of v1.0.80 restored for the `--llm-backend none` case
+- Intermediate arm `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)` in `try_embed_query_with_choice`
+
+### v1.0.85.2 — `embed_via_backend` Resolved Kind, `--dry-run-backend` Standalone (BUG-001/002/003, ADR-0044)
+- `--dry-run-backend` works standalone (no subcommand required) thanks to `pub command: Option<Commands>` in `src/cli.rs:248`
+- `embed_via_backend` returns `Result<(Vec<f32>, LlmBackendKind), AppError>` propagating `resolved_kind`
+- 7 envelopes now report `backend_invoked: "claude" | "codex" | "none"` consistently
+- `setup_mock_path()` in `tests/embedder.rs:37-77` aligned to emit JSON (not JSONL)
+
+### v1.0.84 — Claude Backend Split (ADR-0042, GAP-002)
+- `--llm-backend claude` now forces `claude -p` invocation, no silent codex fallback
+- `LlmEmbeddingBuilder` in `src/extract/llm_embedding.rs` with `with_claude_builder`, `with_codex_builder`, `override_binary`, `override_model`
+- `embed_via_claude_local` in `src/embedder.rs:190+` is the real split entry point
+- `apply_env_whitelist_for_claude` in `src/spawn/env_whitelist.rs` (shared by `invoke_claude` and `embed_via_claude_local`)
+- 5 regression tests in `tests/embedder.rs`: `embed_via_backend_claude_does_not_invoke_codex`, `embed_via_backend_codex_does_not_invoke_claude`, `embed_via_backend_none_returns_empty_vector`, `cli_dry_run_backend_prints_resolved_path`, `claude_invocation_uses_isolated_config_dir`
+
 
 ### Migration Procedure (Operators on v1.0.80 / v1.0.81)
 ```bash

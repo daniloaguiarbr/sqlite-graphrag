@@ -155,20 +155,33 @@ pub fn run(args: RecallArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
     // surface the degradation through `vec_degraded` + `vec_error` + `warning`
     // on the response envelope. The `--fallback-fts-only` flag forces the
     // skip without even attempting the embedding subprocess.
-    let (embedding, vec_degraded, vec_error) = if args.fallback_fts_only {
-        (None, true, Some("fallback_fts_only requested".to_string()))
+    // v1.0.84 (ADR-0042): tuple de 4 elementos. `backend_invoked` carrega
+    // o discriminador do backend que efetivamente invocou o LLM (ou `None`
+    // quando o caller pediu `--fallback-fts-only` e nunca chamou o subprocesso).
+    let (embedding, vec_degraded, vec_error, backend_invoked) = if args.fallback_fts_only {
+        (
+            None,
+            true,
+            Some("fallback_fts_only requested".to_string()),
+            None,
+        )
     } else {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback
-        match crate::embedder::try_embed_query_with_choice(
+        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
+        // v1.0.84 (ADR-0042): extrai o backend que efetivamente invocou o
+        // LLM para popular `backend_invoked` no envelope de resposta.
+        // v1.0.85 (G58 / ADR-0043): retry determinístico em OAuthQuota
+        // (codex ↔ claude) e backoff 750ms em SlotExhausted antes de
+        // aceitar a degradação para FTS5-puro.
+        match crate::embedder::try_embed_query_with_deterministic_fallback(
             &paths.models,
             &args.query,
             Some(llm_backend),
         ) {
-            Ok(v) => (Some(v), false, None),
+            Ok((v, backend)) => (Some(v), false, None, Some(backend.as_str())),
             Err(reason) => {
                 let msg = reason.to_string();
-                tracing::warn!(target: "recall", fallback_reason = %msg, "live embedding failed; falling back to FTS5");
-                (None, true, Some(msg))
+                tracing::warn!(target: "recall", fallback_reason = %msg, reason_code = %reason.reason_code(), "live embedding failed; falling back to FTS5");
+                (None, true, Some(msg), None)
             }
         }
     };
@@ -375,8 +388,10 @@ pub fn run(args: RecallArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
         results,
         elapsed_ms: start.elapsed().as_millis() as u64,
         vec_degraded,
-        vec_error,
+        vec_error: vec_error.clone(),
         warning,
+        backend_invoked,
+        vec_degraded_reason: if vec_degraded { vec_error } else { None },
     })?;
 
     Ok(())
@@ -437,6 +452,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -474,6 +491,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");
@@ -496,6 +515,8 @@ mod tests {
             vec_degraded: false,
             vec_error: None,
             warning: None,
+            backend_invoked: None,
+            vec_degraded_reason: None,
         };
 
         let json = serde_json::to_value(&resp).expect("serialization failed");

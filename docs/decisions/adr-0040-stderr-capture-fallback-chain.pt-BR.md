@@ -55,3 +55,6 @@ pub enum LlmBackendError {
 - `src/embedder.rs:embed_with_fallback`
 - `migrations/V015__pending_embeddings.sql`
 - `src/commands/embedding.rs` + `src/commands/pending_embeddings.rs`
+### Refinado por ADR-0043 (v1.0.85)
+
+ADR-0043 (`docs/decisions/adr-0043-five-gap-remediation.pt-BR.md`) estende a observabilidade introduzida aqui. O enum `LlmBackendError` do ADR-0040 é complementado pelo `FallbackReason` de 7 variantes com discriminador `reason_code`. O campo `vec_degraded_reason: Option<String>` nos envelopes `recall` e `hybrid-search` informa operadores se o embedding live falhou por quota (`"oauth_quota"`), mismatch de backend (`"backend_mismatch"`), exaustão de slot (`"slot_exhausted"`), ou uma das outras 4 razões. A captura de `anthropic-ratelimit-*-remaining=0` (G45-CR5) é o gatilho proativo que alimenta o reason code `oauth_quota`.

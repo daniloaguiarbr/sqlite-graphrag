@@ -45,3 +45,6 @@ Integração em `embedder.rs:acquire_llm_slot_for_embedding()` que lê
 - `src/commands/slots.rs`
 - `src/embedder.rs:acquire_llm_slot_for_embedding`
 - `src/reaper.rs:scan_and_kill_orphans`
+### Refinado por ADR-0043 (v1.0.85)
+
+ADR-0043 (`docs/decisions/adr-0043-five-gap-remediation.pt-BR.md`) refinou `acquire_llm_slot_for_embedding` em `src/embedder.rs:260-277`. O timeout de 300s foi substituído por um teto de backoff de 750ms através de tentativas [50ms, 100ms, 200ms, 400ms]. A nova variante `FallbackReason::SlotExhausted` (uma das 7 do enum ADR-0043) carrega `reason_code: "slot_exhausted"` para o chamador, distinguindo contenção de slot de exaustão de quota OAuth e mismatch de backend. O circuit breaker permanece como limite superior após 3 falhas consecutivas.

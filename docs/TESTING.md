@@ -1,4 +1,4 @@
-## v1.0.83 Test Suite Additions (ADR-0041)
+# TESTING — v1.0.85 Five-Gap Test Suite + Hotfixes (ADR-0043, ADR-0044)
 - 6 new regression tests in `tests/claude_runner_env.rs` cover the env whitelist fix
 - `claude_subprocess_inherits_custom_anthropic_provider_env` — documents the design decision that the equivalent integration path is covered by the codex variant below (the real `claude` install in CI collides with the mock PATH prefix trick); see ADR-0041 §Verification
 - `claude_subprocess_rejects_prohibited_anthropic_api_key` — confirms the OAuth-only guard still aborts the spawn with non-zero exit when `ANTHROPIC_API_KEY` is set; the mock script may or may not run depending on whether the guard fires first
@@ -48,6 +48,31 @@
 ### Unit Tests in `src/commands/migrate.rs`
 - `rehash_does_not_insert_missing_migrations` — verifies `run_rehash` no longer inserts phantom rows for unapplied migrations (UPDATED from `rehash_insert_includes_applied_on`)
 - `ensure_v013_tables_noop_when_no_history` — verifies no-op when `refinery_schema_history` does not exist
+## v1.0.85 — Five-Gap Test Suite (ADR-0043)
+
+Five new regression tests in `tests/embedder.rs` cover the FallbackReason 7-variant enum:
+
+- `slot_exhaustion_returns_typed_error` — GAP-003: `acquire_llm_slot_for_embedding` returns `AppError::Embedding` with `reason_code: "slot_exhausted"` after backoff ceiling of 750ms
+- `oauth_quota_fallback_deterministic` — G58: `try_embed_query_with_deterministic_fallback` retries on `OAuthQuota` and propagates `reason_code` to `vec_degraded_reason`
+- `anthropic_ratelimit_headers_captured` — G45-CR5: `LlmEmbedding::invoke_claude` parses 12-14 `anthropic-ratelimit-*-remaining` headers and aborts on `0`
+- `read_notfound_preserves_identifier` — G55 docs: `read NotFound` returns bilingual message with the identifier (name or id) and namespace preserved
+- `embedding_dim_reduces_token_cost` — G56: dim=64 produces ≤1/6 of the OAuth tokens consumed by dim=384
+
+All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollution between concurrent runs.
+
+## v1.0.85.1 — GAP-004 Regression Test
+
+`try_embed_query_with_none_returns_dim_zero_fallback` in `tests/embedder.rs`: `--llm-backend none` on `recall` and `hybrid-search` now exits 0 with `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`. Without this test, v1.0.85.0 broke the v1.0.80 failsafe silently.
+
+## v1.0.85.2 — BUG-001/002/003 Tests (ADR-0044)
+
+- `cli_dry_run_backend_works_standalone` — `--dry-run-backend` exits 0 without subcommand, prints `{action, backend, binary, model, flavour, chain, strict_env_clear}`
+- `embed_via_backend_returns_resolved_kind` — `embed_via_backend` returns `Result<(Vec<f32>, LlmBackendKind), AppError>` propagating `resolved_kind`
+- `setup_mock_path_emits_json` — `setup_mock_path()` in `tests/embedder.rs:37-77` aligned to emit JSON (not JSONL)
+
+## Current Test Suite Size
+
+945 tests passing via `cargo nextest -P ci` as of v1.0.85.2. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
 - `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists
 - `ensure_v013_tables_creates_when_phantom` — verifies repair when V013 is in history but tables are missing
 ### Coverage Rationale

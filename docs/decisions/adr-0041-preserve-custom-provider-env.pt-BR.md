@@ -106,3 +106,6 @@ O fix é silencioso. Nenhum `tracing::info!` adicionado para uso de provider cus
 - `codex-cli-0-137-mudancas-stdin-auth-approval` (codex CLI 0.137.0 lê `~/.codex/auth.json` filesystem, não env)
 - ADR-0011 (OAuth-only mandate v1.0.69), ADR-0025 (OAuth-only embedding v1.0.76)
 - ADR-0033 (Windows resilience)
+### Requerido por ADR-0042 (v1.0.84)
+
+ADR-0042 (`docs/decisions/adr-0042-claude-backend-split.pt-BR.md`) depende de `apply_env_whitelist_for_claude` (`src/spawn/env_whitelist.rs`), o helper introduzido aqui. O split do entry point Claude compartilha a mesma whitelist de env-clear entre `LlmEmbedding::invoke_claude` (caminho legado) e `embed_via_claude_local` (caminho novo). Sem as regras de preservação do ADR-0041, o novo caminho do split descartaria silenciosamente `ANTHROPIC_AUTH_TOKEN` e `ANTHROPIC_BASE_URL` para providers Anthropic-compatíveis customizados como OpenRouter e gateways AWS Bedrock.

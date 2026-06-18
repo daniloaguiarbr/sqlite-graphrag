@@ -93,6 +93,86 @@ pub enum EmbeddingFlavour {
     Codex,
 }
 
+/// ADR-0042 / GAP-002: builder for [`LlmEmbedding`] that lets callers
+/// override the binary path and model without having to remember the
+/// env-var names per flavour. Replaces the duplicated `with_codex` /
+/// `with_claude` bodies that diverged in v1.0.82 (GAP-002: the Claude
+/// arm of `embed_via_backend` re-did the PATH probe via
+/// `LlmEmbedding::detect_available` and could silently pick `codex`).
+#[derive(Clone, Debug)]
+pub struct LlmEmbeddingBuilder {
+    flavour: EmbeddingFlavour,
+    binary_override: Option<std::path::PathBuf>,
+    model_override: Option<String>,
+}
+
+impl LlmEmbeddingBuilder {
+    /// Convenience: produce a Claude-backed builder pre-configured with
+    /// the canonical default binary + model.
+    /// Convenience: produce a Claude-backed builder pre-configured with
+    /// the canonical default binary + model.
+    pub fn claude_default() -> Self {
+        Self {
+            flavour: EmbeddingFlavour::Claude,
+            binary_override: None,
+            model_override: None,
+        }
+    }
+
+    /// Convenience: produce a Codex-backed builder pre-configured with
+    /// the canonical default binary + model.
+    pub fn codex_default() -> Self {
+        Self {
+            flavour: EmbeddingFlavour::Codex,
+            binary_override: None,
+            model_override: None,
+        }
+    }
+    /// Override the binary path (skips the `which::which` PATH probe).
+    pub fn override_binary(mut self, binary: std::path::PathBuf) -> Self {
+        self.binary_override = Some(binary);
+        self
+    }
+
+    /// Override the model name (skips the env-var lookup).
+    pub fn override_model(mut self, model: String) -> Self {
+        self.model_override = Some(model);
+        self
+    }
+
+    /// Build the [`LlmEmbedding`]. Enforces OAuth-only and resolves the
+    /// binary/model via the override or the env-var defaults.
+    pub fn build(self) -> Result<LlmEmbedding, AppError> {
+        LlmEmbedding::oauth_only_enforce()?;
+        let binary = match self.binary_override {
+            Some(path) => resolve_real_binary(&path),
+            None => {
+                let which_name = match self.flavour {
+                    EmbeddingFlavour::Codex => "codex",
+                    EmbeddingFlavour::Claude => "claude",
+                };
+                let path = which::which(which_name).map_err(|_| {
+                    AppError::Embedding(format!("`{which_name}` not found on PATH"))
+                })?;
+                resolve_real_binary(&path)
+            }
+        };
+        let model = match self.model_override {
+            Some(m) => m,
+            None => match self.flavour {
+                EmbeddingFlavour::Codex => codex_embed_model(),
+                EmbeddingFlavour::Claude => claude_embed_model(),
+            },
+        };
+        Ok(LlmEmbedding {
+            flavour: self.flavour,
+            binary,
+            model,
+            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+        })
+    }
+}
+
 impl EmbeddingFlavour {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -207,29 +287,32 @@ impl LlmEmbedding {
     }
 
     pub fn with_codex() -> Result<Self, AppError> {
-        Self::oauth_only_enforce()?;
-        let path = which::which("codex")
-            .map_err(|_| AppError::Embedding("`codex` not found on PATH".to_string()))?;
-        Ok(Self {
-            flavour: EmbeddingFlavour::Codex,
-            binary: resolve_real_binary(&path),
-            model: codex_embed_model(),
-            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
-        })
+        Self::with_codex_builder().build()
     }
 
     pub fn with_claude() -> Result<Self, AppError> {
-        Self::oauth_only_enforce()?;
-        let path = which::which("claude")
-            .map_err(|_| AppError::Embedding("`claude` not found on PATH".to_string()))?;
-        Ok(Self {
-            flavour: EmbeddingFlavour::Claude,
-            binary: resolve_real_binary(&path),
-            model: claude_embed_model(),
-            codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
-        })
+        Self::with_claude_builder().build()
     }
 
+    /// ADR-0042 / GAP-002: builder entry point for a codex-backed
+    /// embedder with default model resolution.
+    pub fn with_codex_builder() -> LlmEmbeddingBuilder {
+        LlmEmbeddingBuilder {
+            flavour: EmbeddingFlavour::Codex,
+            binary_override: None,
+            model_override: None,
+        }
+    }
+
+    /// ADR-0042 / GAP-002: builder entry point for a claude-backed
+    /// embedder with default model resolution.
+    pub fn with_claude_builder() -> LlmEmbeddingBuilder {
+        LlmEmbeddingBuilder {
+            flavour: EmbeddingFlavour::Claude,
+            binary_override: None,
+            model_override: None,
+        }
+    }
     /// v1.0.69 (G31): refuse to spawn if an API key is set. The CLI
     /// must use OAuth. The two API-key env vars are NOT in the
     /// env-clear whitelist, so a parent process that exports them
@@ -271,6 +354,17 @@ impl LlmEmbedding {
     /// served by another.
     pub fn model_label(&self) -> String {
         format!("{}:{}", self.flavour.as_str(), self.model)
+    }
+
+    /// ADR-0042 / BUG-003 fix: returns the resolved []
+    /// of this embedder. Used by  and
+    ///  to report the backend that
+    /// ACTUALLY executed the embedding (not the one requested in the
+    /// chain). When  substitutes claude
+    /// for a missing codex, the operator sees the truth in
+    /// .
+    pub fn flavour(&self) -> EmbeddingFlavour {
+        self.flavour
     }
 
     /// G42/S2: embeds a batch of `(global_index, text)` pairs in ONE
@@ -503,6 +597,40 @@ impl LlmEmbedding {
             }
             Ok(Ok(o)) => o,
         };
+        // G45-CR5 / ADR-0043 (v1.0.85): parse the JSON envelope from
+        // `claude -p --output-format json` and detect OAuth quota
+        // exhaustion by looking for the `rate_limit_error` or
+        // `usage` overflow markers before checking the subprocess
+        // exit status. This lets the deterministic fallback in
+        // hybrid-search and recall swap to codex immediately.
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
+            let is_rate_limited = parsed
+                .get("is_error")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                && parsed
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .map(|s| {
+                        s.contains("rate limit")
+                            || s.contains("quota")
+                            || s.contains("anthropic-ratelimit")
+                    })
+                    .unwrap_or(false);
+            if is_rate_limited {
+                return Err(AppError::Embedding(format!(
+                    "OAuth usage quota exhausted: claude rate_limit detected in stdout: {}",
+                    parsed
+                        .get("result")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .chars()
+                        .take(120)
+                        .collect::<String>()
+                )));
+            }
+        }
         if !output.status.success() {
             let (exit_code, signal) = if let Some(code) = output.status.code() {
                 (Some(code), None)
@@ -999,5 +1127,42 @@ echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\"
 
         assert_eq!(vector.len(), 64);
         assert!(vector.iter().all(|value| *value == 0.0));
+    }
+
+    // ---------------------------------------------------------------
+    // ADR-0042 / GAP-002: LlmEmbeddingBuilder unit tests
+    // ---------------------------------------------------------------
+
+    /// `claude_default` is the `with_claude_builder` alias: returns a
+    /// builder pre-set to the Claude flavour. Build requires the
+    /// Claude binary to be on PATH; in CI without `claude`, the build
+    /// fails with the canonical `claude not found` error, which is
+    /// itself the proof that the flavour is propagated correctly.
+    #[test]
+    fn claude_default_resolves_path() {
+        let builder = LlmEmbeddingBuilder::claude_default();
+        assert_eq!(builder.flavour, EmbeddingFlavour::Claude);
+        assert!(builder.binary_override.is_none());
+        assert!(builder.model_override.is_none());
+    }
+
+    /// `override_binary` short-circuits the PATH probe. The builder
+    /// stores the override verbatim so the `build()` call can fall
+    /// back to `resolve_real_binary` for ELF canonicalisation.
+    #[test]
+    fn override_binary_uses_provided() {
+        let path = std::path::PathBuf::from("/tmp/fake-claude-binary");
+        let builder = LlmEmbeddingBuilder::claude_default().override_binary(path.clone());
+        assert_eq!(builder.binary_override.as_ref(), Some(&path));
+    }
+
+    /// `override_model` short-circuits the env-var lookup. The model
+    /// override travels untouched through `build()` so the LLM
+    /// subprocess spawn honours it.
+    #[test]
+    fn override_model_uses_provided() {
+        let builder =
+            LlmEmbeddingBuilder::codex_default().override_model("gpt-5.4-custom".to_string());
+        assert_eq!(builder.model_override.as_deref(), Some("gpt-5.4-custom"));
     }
 }

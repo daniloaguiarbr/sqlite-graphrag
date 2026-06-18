@@ -65,3 +65,6 @@ um guard antes de cada spawn LLM em `embed_passage_local` e `embed_query_local`.
 - `src/commands/slots.rs` (subcomando de inspeção)
 - `src/embedder.rs:acquire_llm_slot_for_embedding` (integração)
 - `src/reaper.rs:scan_and_kill_orphans` (cleanup de PIDs mortos)
+### Refined by ADR-0043 (v1.0.85)
+
+ADR-0043 (`docs/decisions/adr-0043-five-gap-remediation.md`) refined `acquire_llm_slot_for_embedding` in `src/embedder.rs:260-277`. The 300s timeout was replaced with a 750ms backoff ceiling across [50ms, 100ms, 200ms, 400ms] attempts. The new `FallbackReason::SlotExhausted` variant (one of 7 in the ADR-0043 enum) carries `reason_code: "slot_exhausted"` to the caller, distinguishing slot contention from OAuth quota exhaustion and backend mismatch. The circuit breaker remains as the upper bound after 3 consecutive failures.

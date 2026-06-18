@@ -1535,6 +1535,33 @@ cargo install --path . && sqlite-graphrag init
 - USAR `--llm-backend codex,claude` para fallback de codex para claude em erro
 - USAR `--llm-backend codex,claude,none` com `--skip-embedding-on-failure` para permitir embedding NULL
 - PADRÃO é `codex`; cadeia explícita apenas quando o operador quer comportamento de fallback
+### ADICIONADO v1.0.84 — Pré-voo `--dry-run-backend` (ADR-0042)
+- USAR `sqlite-graphrag --llm-backend claude --dry-run-backend --json` para resolver o backend Claude SEM spawnar o subprocesso
+- USAR `sqlite-graphrag --llm-backend codex --dry-run-backend --json` para resolver o backend codex sem invocar `codex exec`
+- SHAPE da resposta: `{action, backend, binary, model, flavour, chain, strict_env_clear}`
+- USAR como auditoria pré-voo em CI antes de sessões longas de ingest; exit 0 indica resolução bem-sucedida
+- USAR `SQLITE_GRAPHRAG_DRY_RUN_BACKEND=1` para definir a flag via env sem alterar linha de comando
+- COMBINAR com `--strict-env-clear` para validar o modo compliance antes de sessões em ambientes regulados
+- Desde a v1.0.84, `embed_via_backend` faz split real entre Claude e Codex via `LlmEmbeddingBuilder` (ver ADR-0042); `--llm-backend claude` agora invoca `claude` e nunca `codex`, resolvendo GAP-002
+- CAMPO `backend_invoked` está presente em 7 envelopes JSON desde a v1.0.84: `embedding status`, `remember`, `edit`, `recall`, `hybrid-search`, `ingest`, `enrich` — consumidores devem tolerar a presença opcional
+### ADICIONADO v1.0.85 — FallbackReason 7 Variantes (ADR-0043)
+- USAR `classify_embedding_error` em `src/embedder.rs` para mapear `AppError` em `FallbackReason` via match lexical
+- USAR `try_embed_query_with_deterministic_fallback` em `hybrid-search` e `recall` — re-tenta com backend alternativo (codex ↔ claude) em `OAuthQuota`, dorme 750ms antes de desistir em `SlotExhausted`
+- Enum `FallbackReason` estendido de 3 para 7 variantes: `EmbeddingFailed | SlotExhausted | OAuthQuota { backend } | BackendMismatch { requested, resolved } | DimZero | Cancelled | Timeout`
+- Discriminador `reason_code` em respostas `hybrid-search` e `recall` agora reporta um dos 7 códigos (ou null) para diagnóstico granular
+- `LlmEmbedding::invoke_claude` captura 12-14 headers `anthropic-ratelimit-*-remaining` ANTES de checar exit do subprocesso; quando `requests-remaining=0` ou `tokens-remaining=0`, retorna `OAuthQuota` para fallback imediato (G45-CR5)
+- `acquire_llm_slot_for_embedding` reescreve `LockBusy` como `Embedding("slot exhausted: ...")` para que `classify_embedding_error` possa discriminar (GAP-003)
+- 5 novos testes de regressão em `tests/embedder.rs` cobrindo GAP-003, G58, G45-CR5, G55, G56
+- `.github/workflows/embedder-ignore.yml` roda testes `#[ignore]` em env hermético (sem API keys)
+- ADR `adr-0043-five-gap-remediation.md` (EN + pt-BR)
+### ADICIONADO v1.0.85.1 — Hotfix GAP-004 (--llm-backend none FTS5 failsafe, ADR-0043 hotfix)
+- `recall --llm-backend none` e `hybrid-search --llm-backend none` retornam exit 0 com envelope `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`
+- Braço intermediário em `src/embedder.rs:351`; failsafe do v1.0.80 restaurado para o caso `--llm-backend none`
+
+### ADICIONADO v1.0.85.2 — Hotfixes BUG-001/002/003 (ADR-0044)
+- `--dry-run-backend` agora funciona standalone sem subcommand obrigatório (BUG-001, `pub command: Option<Commands>` em `src/cli.rs:248`)
+- `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind` (BUG-003); 7 envelopes populam `backend_invoked: "claude" | "codex" | "none"` consistentemente
+- `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado com JSON (BUG-002, era JSONL)
 ### OBRIGATÓRIO — Envelope JSON de Shutdown no Exit Code 19 (ADR-0037)
 - TRATAR exit code 19 como `SHUTDOWN_EXIT_CODE`; trabalho parcial foi descartado
 - ENVELOPE no stdout quando SIGTERM/SIGINT/SIGHUP chega durante subprocesso LLM

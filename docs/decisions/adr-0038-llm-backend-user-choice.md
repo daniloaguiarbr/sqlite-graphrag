@@ -76,3 +76,6 @@ implementação isoladamente (3 testes em `factory_tests`).
   o controle de qual backend usar; ADR-0041 garante que providers
   customizados funcionem quando o backend escolhido for roteado via
   env vars customizadas.
+### Refined by ADR-0042 (v1.0.84)
+
+ADR-0042 (`docs/decisions/adr-0042-claude-backend-split.md`) split the Claude entry point so that `LlmBackendChoice::to_chain()` no longer silently routes `Claude` through codex via `LlmEmbedding::detect_available`. The new `LlmEmbeddingBuilder` (`src/extract/llm_embedding.rs:232+`) and `embed_via_claude_local` (`src/embedder.rs:190+`) make the `--llm-backend claude` path observable via `backend_invoked: "claude"` in 7 envelopes (edit, embedding-status, enrich-summary, hybrid-search, ingest-summary, recall, remember). The `--dry-run-backend` pre-flight is the recommended way to verify which backend will be invoked before any embedding call.

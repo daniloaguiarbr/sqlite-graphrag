@@ -8,7 +8,7 @@
 - Sem telemetria nova: o fix é silencioso. Nenhum macro `tracing::info!` registra qual provider está em uso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
 - Resolve GAP-058 parcialmente: env vars de custom-provider roteiam em torno de contenção de quota OAuth; `recall`/`hybrid-search` permanecem determinísticos sob fadiga OAuth oficial
-# COMO USAR sqlite-graphrag (v1.0.80 — Apenas LLM)
+# COMO USAR sqlite-graphrag (v1.0.85 — Remediação de Cinco Gaps, Split do Claude, Hotfixes 85.1/85.2)
 
 > Entregue memória persistente a qualquer agente de IA com um binário local, um único arquivo SQLite, e a CLI de LLM que você já confia.
 
@@ -27,6 +27,36 @@ da lib é instável dentro de v1.x.y (ADR-0032).
 - **G45 singleton de embedding cross-process**: `acquire_embedding_singleton(namespace, db_path, wait_seconds, force)` serializa chamadas de embedding LLM por par `(namespace, db)` entre invocações CLI concorrentes. Uma segunda CLI tentando embedar contra o mesmo banco recebe `AppError::EmbeddingSingletonLocked { namespace }` (exit 75, retentável). Passe `--wait-embed-singleton <SEGUNDOS>` para fazer poll até a soltura do lock; bancos ou namespaces distintos adquirem locks independentes. Operacionalmente previne a patologia de "duas invocações de remember, dois subprocessos LLM, dois batches paralelos" que o cache em processo da v1.0.79 não conseguia endereçar.
 - **G53 política de estabilidade e gate de CI `semver-checks`**: o contrato público é a CLI; a API da biblioteca é instável em v1.x.y. Novo job de CI `semver-checks` roda `cargo semver-checks check-baseline --baseline-version 1.0.79` em modo informativo (vira bloqueante em v1.0.81 quando as 9 violações MAJOR pendentes forem resolvidas). README e CHANGELOG carregam a seção `Política de Estabilidade`. Fixe em `=1.0.80` para consumidores da lib; use `^1.0` para permanecer na trilha de estabilidade da CLI.
 - **G55 S2 `MemoryNotFound` estrutural**: o caminho legado `NotFound(String)` que mascarava qual alvo de lookup falhou é substituído por `AppError::MemoryNotFound { name, namespace }` e `AppError::MemoryNotFoundById { id }` dentro de `read` e `hybrid-search`. O identificador agora é parte da variante, eliminando a classe de bugs `not found: unknown`. As mensagens em pt-BR carregam nome e namespace explicitamente.
+## O Que Mudou em v1.0.85, v1.0.85.1, v1.0.85.2 (ADR-0043, ADR-0044)
+
+Desde v1.0.84 (GAP-002 split do backend Claude, ADR-0042), três releases adicionais apertaram o embedder:
+
+### v1.0.85 — Remediação de Cinco Gaps (ADR-0043)
+- Enum `FallbackReason` estendido de 3 para 7 variantes: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
+- Discriminador `reason_code` nos envelopes `recall` e `hybrid-search` distingue quota vs mismatch vs timeout
+- `try_embed_query_with_deterministic_fallback` retenta em `OAuthQuota` e aplica teto de 750ms em `SlotExhausted` antes de cair em FTS5
+- 12-14 headers `anthropic-ratelimit-*-remaining` capturados em `LlmEmbedding::invoke_claude` (G45-CR5); `0` aborta embed e dispara fallback codex
+- Lock de `dim 64` (Matryoshka Representation Learning, arXiv 2205.13147) reduz gasto de tokens OAuth em 6x (G56)
+- 5 testes de regressão em `tests/embedder.rs`
+
+### v1.0.85.1 — Fallback Gracioso `--llm-backend none` em `recall`/`hybrid-search` (hotfix GAP-004)
+- `--llm-backend none` agora retorna exit 0 com `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`
+- Failsafe do v1.0.80 restaurado para o caso `--llm-backend none`
+- Braço intermediário `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)` em `try_embed_query_with_choice`
+
+### v1.0.85.2 — `embed_via_backend` Resolved Kind, `--dry-run-backend` Standalone (BUG-001/002/003, ADR-0044)
+- `--dry-run-backend` funciona standalone (sem subcommand) graças a `pub command: Option<Commands>` em `src/cli.rs:248`
+- `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`
+- 7 envelopes agora reportam `backend_invoked: "claude" | "codex" | "none"` consistentemente
+- `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado para emitir JSON (não JSONL)
+
+### v1.0.84 — Split do Backend Claude (ADR-0042, GAP-002)
+- `--llm-backend claude` agora força invocação de `claude -p`, sem fallback silencioso para codex
+- `LlmEmbeddingBuilder` em `src/extract/llm_embedding.rs` com `with_claude_builder`, `with_codex_builder`, `override_binary`, `override_model`
+- `embed_via_claude_local` em `src/embedder.rs:190+` é o entry point do split real
+- `apply_env_whitelist_for_claude` em `src/spawn/env_whitelist.rs` (compartilhado por `invoke_claude` e `embed_via_claude_local`)
+- 5 testes de regressão em `tests/embedder.rs`
+
 - **G56 cache de entity-embed em processo**: `embed_entity_texts_cached` fica na frente de `embed_passages_parallel_local` para batches de nome de entidade. Chave do cache é `blake3(model || "\0" || text)`. Taxa de hit alta em `ingest` (entidades canônicas re-embedadas entre muitas memórias), modesta em `remember` e `remember-batch`. `remember.rs`, `ingest.rs` e `remember_batch.rs` roteiam embeddings de entidade pelo cache; embeddings de chunk continuam no caminho raw. Stats são emitidas via `tracing::debug!` (contagens hit / miss / request).
 - **G58 fallback FTS5 para `recall` e `hybrid-search`**: `recall --fallback-fts-only` e `hybrid-search --fallback-fts-only` roteiam a query via FTS5 BM25 quando o subprocesso LLM falha (rate limit, contenção OAuth, dim divergente). Os novos campos do envelope `vec_degraded` (bool), `vec_error` (string) e `warning` (string) são preenchidos simetricamente em ambos os comandos. Os testes de `recall` e `hybrid-search` ganharam cobertura para o caminho FTS5-only; 1 teste é `#[ignore]` porque o stub G58 S1 exige `PATH` sem `codex` ou `claude` para exercitar `EmbeddingFailed`.
 - **G53-WINDOWS-INFRA (ADR-0033)**: os jobs `clippy` e `test` da matrix windows-2025 ganharam 2 steps novos cada (gateados `if: matrix.os == 'windows-2025'`, no-op em ubuntu/macos): um pre-warm que baixa o toolchain rustup no cache do runner antes do build, e um verify step que re-checa `rustup show active-toolchain` após install. Os 2 modos históricos de falha de infra (download do rustup com erros transitórios de rede e `E0463 can't find crate for core` quando a stdlib do target está ausente) agora são recuperáveis na primeira re-run em vez de acumularem como CI vermelho. Validação local de cross-compile: `cargo check --target x86_64-pc-windows-msvc --lib --all-features` reproduzido e o `E0463` resolvido via `rustup target add x86_64-pc-windows-msvc --toolchain 1.88`; o build então atinge a fronteira `cc-rs: failed to find tool "lib.exe"`, que é o limite esperado de cross-compile MSVC a partir de host Linux.

@@ -1023,7 +1023,7 @@ mod tests {
             .expect("graph stats --format text must be accepted");
 
         match parsed.command {
-            Commands::Graph(args) => match args.subcommand {
+            Some(Commands::Graph(args)) => match args.subcommand {
                 Some(GraphSubcommand::Stats(stats)) => {
                     assert_eq!(stats.format, GraphStatsFormat::Text);
                 }
@@ -1110,7 +1110,7 @@ mod tests {
         ])
         .expect("graph entities --sort-by degree --order desc must parse");
         match parsed.command {
-            Commands::Graph(args) => match args.subcommand {
+            Some(Commands::Graph(args)) => match args.subcommand {
                 Some(GraphSubcommand::Entities(e)) => {
                     assert!(matches!(e.sort_by, Some(EntitySortField::Degree)));
                     assert!(matches!(e.order, SortOrder::Desc));
@@ -1132,7 +1132,7 @@ mod tests {
         ])
         .expect("graph entities --sort-by created-at must parse");
         match parsed.command {
-            Commands::Graph(args) => match args.subcommand {
+            Some(Commands::Graph(args)) => match args.subcommand {
                 Some(GraphSubcommand::Entities(e)) => {
                     assert!(matches!(e.sort_by, Some(EntitySortField::CreatedAt)));
                     assert!(matches!(e.order, SortOrder::Asc));
@@ -1148,7 +1148,7 @@ mod tests {
         let parsed = Cli::try_parse_from(["sqlite-graphrag", "graph", "entities"])
             .expect("graph entities must parse without sort flags");
         match parsed.command {
-            Commands::Graph(args) => match args.subcommand {
+            Some(Commands::Graph(args)) => match args.subcommand {
                 Some(GraphSubcommand::Entities(e)) => {
                     assert!(e.sort_by.is_none(), "sort_by must default to None");
                     assert!(

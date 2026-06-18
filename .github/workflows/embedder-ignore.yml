@@ -1,0 +1,54 @@
+name: embedder-ignored-tests
+
+# v1.0.85 (ADR-0043): run #[ignore] embedder tests in a hermetic env
+# (no API keys). These tests verify the five-gap remediation (GAP-003,
+# G58, G45-CR5, G55, G56) end-to-end without touching OAuth credentials.
+
+on:
+  pull_request:
+    paths:
+      - 'src/embedder.rs'
+      - 'src/extract/llm_embedding.rs'
+      - 'src/commands/hybrid_search.rs'
+      - 'src/commands/recall.rs'
+      - 'src/commands/read.rs'
+      - 'src/errors.rs'
+      - 'tests/embedder.rs'
+      - 'docs/decisions/adr-0043-*.md'
+      - 'gaps.md'
+      - '.github/workflows/embedder-ignore.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  ignored:
+    name: Hermetic embedder tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - run: cargo install cargo-llvm-cov --locked
+      - name: Run #[ignore] embedder tests with hermetic env
+        # v1.0.85: unset all OAuth credentials so classify_embedding_error
+        # and try_embed_query_with_deterministic_fallback exercise the
+        # SlotExhausted / OAuthQuota / BackendMismatch paths without
+        # touching real quota. The wait window matches the embedded
+        # test setup (LLM_SLOT_WAIT_SECS=10) so concurrent invocations
+        # of `acquire_llm_slot_for_embedding` have time to release a
+        # permit before the semaphore gives up.
+        run: |
+          unset ANTHROPIC_API_KEY
+          unset OPENAI_API_KEY
+          unset ANTHROPIC_AUTH_TOKEN
+          unset ANTHROPIC_BASE_URL
+          unset CLAUDE_CODE_ENTRYPOINT
+          cargo test --test embedder -- --ignored --nocapture
+        env:
+          PATH: /usr/bin:/bin
+          SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS: "10"
+          SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY: "1"
