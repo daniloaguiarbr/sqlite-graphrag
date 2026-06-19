@@ -302,11 +302,27 @@ fn extract_with_claude(
 
     // Canonical OAuth-only command line (gaps.md:201-208 + 211-213).
     // `--bare` is PROHIBITED (gaps.md:49) — never emitted.
+    //
+    // GAP-META-005 (v1.0.87, ADR-0045): `--mcp-config '{}'` inline is
+    // rejected by Claude Code 2.1.177. Substitute the literal for a
+    // tempfile path containing `{"mcpServers":{}}`.
+    let mcp_config_path = match crate::spawn::preflight::write_empty_mcp_config_tempfile() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                target: "ingest_claude",
+                error = %e,
+                "failed to create empty mcp-config tempfile; aborting spawn (exit 16)"
+            );
+            std::process::exit(16);
+        }
+    };
+
     cmd.arg("-p")
         .arg(EXTRACTION_PROMPT)
         .arg("--strict-mcp-config")
         .arg("--mcp-config")
-        .arg("{}")
+        .arg(mcp_config_path.as_os_str())
         .arg("--dangerously-skip-permissions")
         .arg("--settings")
         .arg(r#"{"hooks":{}}"#)
@@ -325,6 +341,29 @@ fn extract_with_claude(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // GAP-META-005 (v1.0.87, ADR-0045): pre-flight gate runs after argv
+    // is fully built. Validates binary, argv-size, walk-up of `.mcp.json`,
+    // and `CLAUDE_CONFIG_DIR` cleanliness.
+    let argv_refs: Vec<std::ffi::OsString> =
+        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let preflight_args = crate::spawn::preflight::PreFlightArgs {
+        binary_path: binary,
+        argv: &argv_refs,
+        workspace_root: std::path::Path::new("."),
+        mcp_config_inline_json: None,
+        expected_output_bytes: 65_536,
+        spawner_name: "ingest_claude",
+    };
+    if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
+        tracing::error!(
+            target: "ingest_claude",
+            spawner = "ingest_claude",
+            error = %e,
+            "preflight validation failed; aborting spawn (exit 16)"
+        );
+        std::process::exit(16);
+    }
 
     let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(

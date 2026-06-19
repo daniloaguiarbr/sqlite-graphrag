@@ -557,6 +557,12 @@ pub mod validation {
             )
         }
 
+        pub fn preflight_failed(detail: &str) -> String {
+            format!(
+                "validação pré-execução falhou (exit 16): {detail}; corrija a condição e tente novamente (definir SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 desabilita esta validação em emergências)"
+            )
+        }
+
         pub fn binary_not_found(name: &str) -> String {
             format!("binário não encontrado: {name} — instale e adicione ao PATH")
         }

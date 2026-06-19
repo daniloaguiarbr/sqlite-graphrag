@@ -175,6 +175,23 @@ pub enum AppError {
     /// single code for "cancelled by user".
     #[error("shutdown signal received: {signal}")]
     Shutdown { signal: String },
+
+    /// v1.0.87 (GAP-META-005, ADR-0045): pre-flight validation gate
+    /// rejected the spawn before fork. Maps to exit code `16`.
+    ///
+    /// The `detail` field carries the `Display` impl of the underlying
+    /// `PreFlightError` (one of: BinaryNotFound, ArgvExceedsArgMax,
+    /// McpConfigInlineJsonRejected, McpConfigPathMissing,
+    /// McpConfigPathInvalidJson, WalkUpMcpJsonInvalid,
+    /// OutputBufferTooSmall, ClaudeConfigDirNotEmpty).
+    ///
+    /// This variant is **permanent** — retrying the same argv will fail
+    /// identically. Operators must fix the underlying condition (install
+    /// the binary, shorten the body, override `CLAUDE_CONFIG_DIR`,
+    /// substitute the inline `--mcp-config '{}'` for a tempfile path,
+    /// etc.) before retrying.
+    #[error("preflight validation failed: {detail}")]
+    PreFlightFailed { detail: String },
 }
 
 impl AppError {
@@ -233,6 +250,7 @@ impl AppError {
             Self::EmbeddingSingletonLocked { .. } => crate::constants::CLI_LOCK_EXIT_CODE,
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
             Self::Shutdown { .. } => crate::constants::SHUTDOWN_EXIT_CODE,
+            Self::PreFlightFailed { .. } => 16,
         }
     }
 
@@ -313,6 +331,7 @@ impl AppError {
                 | Self::NamespaceError(_)
                 | Self::LimitExceeded(_)
                 | Self::VecExtension(_)
+                | Self::PreFlightFailed { .. }
         )
     }
 
@@ -389,6 +408,7 @@ impl AppError {
                 required_mb,
             } => pt::low_memory(*available_mb, *required_mb),
             Self::Shutdown { signal } => pt::shutdown(signal),
+            Self::PreFlightFailed { detail } => pt::preflight_failed(detail),
         }
     }
 }

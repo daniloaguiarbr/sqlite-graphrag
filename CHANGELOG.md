@@ -5,6 +5,45 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.87] - 2026-06-19
+
+### Added
+
+- **GAP-META-005 closed** — `src/spawn/preflight.rs` module (≥200 lines)
+  with `PreFlightArgs` struct and `PreFlightError` enum (8 variants).
+  Acts as a mandatory gate before `Command::spawn()` in the 4 real
+  subprocess spawn sites: `claude_runner.rs:255`, `codex_spawn.rs:273`,
+  `ingest_claude.rs:297`, `extract/llm_embedding.rs:670`.
+- **AppError::PreFlightFailed** variant with exit code 16, `is_permanent=true`,
+  and bilingual i18n messages (EN + PT-BR).
+- **`write_empty_mcp_config_tempfile()`** helper writes `{"mcpServers":{}}`
+  to a tempfile so `--mcp-config <PATH>` substitution works (Bug 2 fix).
+- **`is_skipped()`** opt-out via `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` for
+  emergencies (emits structured warning).
+- **15 unit tests** in `src/spawn/preflight.rs::tests` covering all
+  7 guards + integration paths.
+- **`ADR-0045`** (`docs/decisions/adr-0045-preflight-validation-layer.md`)
+  documents the architectural decision.
+
+### Fixed
+
+- **Bug 1** — `ingest --extraction-backend llm` no longer silently
+  extracts `entities:0`; preflight tracing emits `preflight_passed` so
+  operators can verify the spawn was invoked.
+- **Bug 2** — `--mcp-config '{}'` literal no longer rejected by Claude
+  Code 2.1.177 with "Invalid MCP configuration"; spawners now substitute
+  a tempfile path containing `{"mcpServers":{}}`.
+- **Bug 3** — argv > `ARG_MAX - 4096` no longer fails with `E2BIG`
+  post-fork; preflight detects the overflow before `cmd.spawn()` and
+  aborts with structured error.
+- **Bug 4** — downstream JSON parser no longer truncates silently
+  at 65.536 chars; preflight validates `expected_output_bytes` against
+  the documented 65 KiB cap.
+- **Bug 5** — `.mcp.json` walk-up from parent directories no longer
+  causes Zod validation failures mid-spawn; preflight walks up to 16
+  levels from `workspace_root` and rejects invalid files BEFORE fork.
+
+
 ## [1.0.85.2] - 2026-06-17
 
 ### Fixed

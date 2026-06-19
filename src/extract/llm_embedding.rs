@@ -667,18 +667,42 @@ impl LlmEmbedding {
         schema_path: &std::path::Path,
     ) -> Result<String, AppError> {
         let binary_str = self.binary.to_string_lossy().into_owned();
-        let mut child =
-            match build_codex_embedding_command(&self.binary, &self.model, schema_path).spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    return Err(crate::llm::exit_code_hints::into_legacy_embedding(
-                        &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
-                            binary: binary_str,
-                            source: e.to_string(),
-                        },
-                    ));
-                }
-            };
+        let mut cmd = build_codex_embedding_command(&self.binary, &self.model, schema_path);
+
+        // GAP-META-005 (v1.0.87, ADR-0045): pre-flight gate before spawn.
+        // `tokio::process::Command` does not expose `get_args()`, so we
+        // skip the argv-size check here and rely on binary + workspace
+        // root + output buffer guards. Embedding prompts are bounded by
+        // the schema validator so argv overflow is not a real risk here.
+        let argv_refs: [std::ffi::OsString; 0] = [];
+        let preflight_args = crate::spawn::preflight::PreFlightArgs {
+            binary_path: &self.binary,
+            argv: &argv_refs,
+            workspace_root: std::path::Path::new("."),
+            mcp_config_inline_json: None,
+            expected_output_bytes: 65_536,
+            spawner_name: "llm_embedding",
+        };
+        if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
+            return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                    binary: binary_str,
+                    source: format!("preflight validation failed: {e}"),
+                },
+            ));
+        }
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                        binary: binary_str,
+                        source: e.to_string(),
+                    },
+                ));
+            }
+        };
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(prompt.as_bytes())

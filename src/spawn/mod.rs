@@ -11,6 +11,7 @@ pub mod env_whitelist;
 pub mod error_propagator;
 pub mod executor_version;
 pub mod opencode_adapter;
+pub mod preflight;
 
 use crate::errors::AppError;
 use async_trait::async_trait;

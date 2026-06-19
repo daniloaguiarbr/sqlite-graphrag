@@ -282,11 +282,29 @@ pub fn build_claude_command(
 
     // Canonical OAuth-only command line (gaps.md:201-208). Every flag is
     // mandatory; do NOT pass `--bare` (PROHIBITED, gaps.md:49).
+    //
+    // GAP-META-005 (v1.0.87, ADR-0045): `--mcp-config '{}'` inline JSON is
+    // rejected by Claude Code 2.1.177 — the flag expects a filepath.
+    // Substitute the inline literal for a tempfile path containing
+    // `{"mcpServers":{}}`. The pre-flight check rejects the inline form
+    // when `mcp_config_inline_json: Some("{}")` is passed.
+    let mcp_config_path = match crate::spawn::preflight::write_empty_mcp_config_tempfile() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                target: "claude_runner",
+                error = %e,
+                "failed to create empty mcp-config tempfile; aborting spawn (exit 16)"
+            );
+            std::process::exit(16);
+        }
+    };
+
     cmd.arg("-p")
         .arg(prompt)
         .arg("--strict-mcp-config")
         .arg("--mcp-config")
-        .arg("{}")
+        .arg(mcp_config_path.as_os_str())
         .arg("--dangerously-skip-permissions")
         .arg("--settings")
         .arg(r#"{"hooks":{}}"#)
@@ -305,6 +323,36 @@ pub fn build_claude_command(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // GAP-META-005 (v1.0.87, ADR-0045): pre-flight validation gate runs
+    // AFTER argv is fully built so binary, argv-size, walk-up of
+    // `.mcp.json`, and `CLAUDE_CONFIG_DIR` cleanliness are all checked.
+    // Pre-flight failure is a configuration error — panic with a clear
+    // message rather than spawn a misconfigured subprocess.
+    let argv_refs: Vec<std::ffi::OsString> =
+        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let preflight_args = crate::spawn::preflight::PreFlightArgs {
+        binary_path: binary,
+        argv: &argv_refs,
+        workspace_root: std::path::Path::new("."),
+        mcp_config_inline_json: None,
+        expected_output_bytes: 65_536,
+        spawner_name: "claude_runner",
+    };
+    if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
+        tracing::error!(
+            target: "claude_runner",
+            spawner = "claude_runner",
+            error = %e,
+            "preflight validation failed; aborting spawn (exit 16)"
+        );
+        // Pre-flight failure aborts the spawn — write the diagnostic to
+        // stderr and exit non-zero. We cannot return AppError here
+        // because the function signature is `-> Command`; the caller
+        // (run_claude) will receive the diagnostic via the tracing log
+        // and via the panic message that follows.
+        std::process::exit(16);
+    }
 
     cmd
 }
@@ -547,6 +595,9 @@ mod tests {
         // SAFETY: this is a unit test, no concurrent env mutation
         unsafe {
             std::env::remove_var("ANTHROPIC_API_KEY");
+            // GAP-META-005 (v1.0.87): clear CLAUDE_CONFIG_DIR so the new
+            // pre-flight check does not exit 16 on the test host.
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
         let cmd = build_claude_command(
             std::path::Path::new("/usr/bin/false"),
@@ -607,6 +658,10 @@ mod tests {
         // SAFETY: unit test
         unsafe {
             std::env::set_var("ANTHROPIC_API_KEY", "sk-test-violation");
+            // GAP-META-005 (v1.0.87): clear CLAUDE_CONFIG_DIR so the
+            // pre-flight check (when it does run on the abort path)
+            // does not exit 16 prematurely.
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
         let cmd = build_claude_command(
             std::path::Path::new("/usr/bin/claude"),

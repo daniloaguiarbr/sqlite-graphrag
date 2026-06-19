@@ -328,6 +328,30 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
     // Keep the prompt alive for the stdin thread spawned in `spawn_codex`.
     let _ = full_prompt; // captured by closure below
 
+    // GAP-META-005 (v1.0.87, ADR-0045): pre-flight validation gate runs
+    // AFTER argv is fully built. Validates binary existence, argv size,
+    // walk-up of `.mcp.json`, and `CLAUDE_CONFIG_DIR` cleanliness.
+    // Pre-flight failure aborts the spawn with exit 16 — see ADR-0045.
+    let argv_refs: Vec<std::ffi::OsString> =
+        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let preflight_args = crate::spawn::preflight::PreFlightArgs {
+        binary_path: args.binary,
+        argv: &argv_refs,
+        workspace_root: std::path::Path::new("."),
+        mcp_config_inline_json: None, // Codex does not use --mcp-config flag
+        expected_output_bytes: 65_536,
+        spawner_name: "codex_spawn",
+    };
+    if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
+        tracing::error!(
+            target: "codex_spawn",
+            spawner = "codex_spawn",
+            error = %e,
+            "preflight validation failed; aborting spawn (exit 16)"
+        );
+        std::process::exit(16);
+    }
+
     cmd
 }
 
