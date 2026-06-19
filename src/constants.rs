@@ -436,12 +436,12 @@ pub const SHUTDOWN_EXIT_CODE: i32 = 19;
 
 /// Canonical value of `PRAGMA user_version` written after migrations.
 ///
-/// **Why 49 instead of `CURRENT_SCHEMA_VERSION` (9)?**
+/// **Why 50 instead of `CURRENT_SCHEMA_VERSION` (15)?**
 /// `user_version` is a 32-bit integer that SQLite reserves for application use.
-/// We deliberately set it to a project-specific marker (49 = decimal) so external
+/// We deliberately set it to a project-specific marker (50 = decimal) so external
 /// inspection tools (`sqlite3 db.sqlite "PRAGMA user_version"`, the `file` command,
 /// SQLite browser GUIs) can distinguish a sqlite-graphrag database from a generic
-/// SQLite file at a glance. The application-level schema version (9, matching
+/// SQLite file at a glance. The application-level schema version (15, matching
 /// `CURRENT_SCHEMA_VERSION`) is stored in the `schema_meta` table and exposed via
 /// `health --json`/`stats --json`. Bumping migrations does NOT change this constant.
 /// Refinery uses its own `refinery_schema_history` table for migration bookkeeping.

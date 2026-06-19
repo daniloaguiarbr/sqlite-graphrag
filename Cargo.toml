@@ -1,9 +1,9 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.87"
+version = "1.0.88"
 edition = "2021"
 rust-version = "1.88"
-description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 6 MB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
+description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 14.6 MiB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/daniloaguiarbr/sqlite-graphrag"
 homepage = "https://docs.rs/sqlite-graphrag"
@@ -125,6 +125,7 @@ ahash = "0.8"
 mimalloc = { version = "0.1", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled", "blob", "load_extension", "functions", "trace", "backup"] }
 # v1.0.76: sqlite-vec REMOVED. All vector search now runs in pure Rust over a
+# TODO v1.0.89: referência histórica a v1.0.76 — confirmar exatidão quando contexto permitir.
 # `memory_embeddings(memory_id, embedding BLOB, source)` table, with cosine
 # similarity computed on demand. This eliminates a heavy build-time dep and
 # the `load_extension` runtime cost. The `vec` command is now an alias for
@@ -137,6 +138,7 @@ tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt", "ansi", "registry", "tracing-log"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
 # v1.0.76: siphasher pinned to 1.x to compute migration checksums in
+# TODO v1.0.89: referência histórica a v1.0.76 — confirmar exatidão quando contexto permitir.
 # the `migrate --rehash` subcommand. Same algorithm and same version
 # that refinery-core 0.9.1 uses internally (SipHasher13 over
 # name | version | sql). Without this dep we would have to vendor the
@@ -157,6 +159,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+# TODO v1.0.89: referência histórica a v1.0.82 — confirmar exatidão quando contexto permitir.
 ctrlc = { version = "3.4", features = ["termination"] }
 # v1.0.82 GAP-002: SIGTERM + SIGHUP coverage that the ctrlc crate cannot
 # provide (it only handles SIGINT on Unix; SIGTERM/SIGHUP need their own
@@ -173,10 +176,12 @@ constant_time_eq = "=0.4.2"
 # parking_lot: faster Mutex + deadlock detection in debug builds (P09 parallelism gap)
 parking_lot = "0.12"
 libc = "0.2"
+# TODO v1.0.89: referência histórica a v1.0.76 — confirmar exatidão quando contexto permitir.
 rayon = "1.10"
 text-splitter = { version = "0.30.1", default-features = false, features = ["markdown"] }
 # v1.0.76: fastembed, ort, ndarray, tokenizers, hf-hub removed from the
 # default build. Embedding generation is now LLM headless only (claude
+# TODO v1.0.89: referência histórica a v1.0.79 — confirmar exatidão quando contexto permitir.
 # code / codex CLI OAuth). The default build is a small, fast Rust
 # binary that delegates generation to external processes.
 # v1.0.79: the optional legacy dependencies and the `embedding-legacy`,
@@ -187,6 +192,14 @@ tempfile = "3"
 sys-locale = "0.3"
 wait-timeout = "0.2"
 which = "7"
+
+# GAP-E2E-007 (v1.0.89): schemars 0.8 generates JSON Schema from Rust types
+# at compile time. Pinned to 0.8 because 1.0 introduced breaking API changes
+# (e.g. `schema_for!` macro signature). Must-Ignore (`additionalProperties: true`)
+# per docs_rules/rules_rust_json_e_ndjson.md line 537.
+# Lives in [dependencies] because the derive macro is used on the production
+# `HealthResponse` struct in src/commands/health.rs, not just in tests.
+schemars = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 # G29 (v1.0.68): pinned exact to 0.59.0 because HANDLE type changed
@@ -234,12 +247,14 @@ debug = 1
 # Opt-in for future heavy tests (stress/exhaustive property tests).
 slow-tests = []
 # Enable parking_lot deadlock detection thread (10s polling interval).
+# TODO v1.0.89: referência histórica a v1.0.76 — confirmar exatidão quando contexto permitir.
 deadlock-detection = ["parking_lot/deadlock_detection"]
 # v1.0.76 — Default LLM-only build
 # The default build (no features) is the LLM-only build: it does NOT pull in
 # fastembed / ort / ndarray / tokenizers / hf-hub. All embedding generation,
 # NER, and vector search run in pure Rust over the embeddings table, with
 # generation delegated to claude code / codex CLI headless (OAuth, no MCP,
+# TODO v1.0.89: referência histórica a v1.0.79 — confirmar exatidão quando contexto permitir.
 # no hooks). The CLI is one-shot; there is no daemon.
 llm-only = []
 # v1.0.79 (G42 follow-up): the legacy features `embedding-legacy`,

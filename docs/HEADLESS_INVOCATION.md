@@ -281,7 +281,56 @@ consistent (WAL, atomic commit, no partial writes), and `restore`
 or `enrich --operation re-embed --resume` can pick up from the
 last successful memory.
 
-X
+## Pre-flight Validation Layer (v1.0.87+ — ADR-0045)
+
+From v1.0.87 onwards, every LLM subprocess spawn passes through a
+mandatory pre-flight gate in `src/spawn/preflight.rs` (15 unit tests,
+7 guards). The gate aborts the spawn BEFORE the fork when the
+invocation would fail in runtime, returning
+`AppError::PreFlightFailed` (exit code 16, `EX_CONFIG`).
+
+### The 7 guards (in order)
+
+1. `check_argv_size` — rejects invocations whose argv total would
+   exceed `ARG_MAX` minus 4 KB safety margin
+2. `check_binary_exists` — confirms `claude` or `codex` is reachable
+   in `PATH` before invoking
+3. `check_mcp_config_inline` — replaces literal `--mcp-config {}`
+   with a tempfile holding `{"mcpServers":{}}` (fixes BUG-2)
+4. `check_mcp_config_path` — validates the JSON contents of
+   `--mcp-config <PATH>` if used
+5. `check_walkup_mcp_json` — walks the workspace root looking for
+   `.mcp.json` and validates the JSON
+6. `check_output_buffer` — raises the parser buffer above 64 KB
+   when expected output exceeds it (fixes BUG-4)
+7. `check_claude_config_dir` — validates `CLAUDE_CONFIG_DIR` is empty
+   or absent (avoids MCP bleed-through from user-level config)
+
+### Bypassing pre-flight in emergencies
+
+Set `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` to disable all 7 guards. This
+is a **last-resort opt-out** intended for production incident
+mitigation; it is not a normal mode of operation. When pre-flight
+is skipped, the spawner reverts to direct `Command::spawn()` and
+inherits all 5 BUG classes from GAP-META-005.
+
+### Related regressions (v1.0.88 hotfixes)
+
+Three BUGs were discovered and fixed in v1.0.88 after the pre-flight
+gate was introduced in v1.0.87:
+
+- **BUG-11**: preflight failure in `extract/llm_embedding.rs` did not
+  propagate to `remember`, which silently persisted the memory with
+  `backend_invoked: "none"` and no embedding. Fixed in v1.0.88 with
+  `embed_via_backend_strict` (2 tests in `bug11_preflight_regression.rs`).
+- **BUG-12**: OAuth-only enforcement emitted 2 identical stderr lines.
+  Fixed in v1.0.88 with single-line stderr (test:
+  `oauth_stderr_emits_single_line_v1088`).
+- **BUG-13**: `link --create-missing` bypassed entity-name validation
+  by normalizing the name BEFORE the validator ran. Fixed in v1.0.88
+  by validating BEFORE normalizing (8 tests in
+  `entity_validation_integration.rs`).
+
 ## Validated External References
 
 ### Claude Code

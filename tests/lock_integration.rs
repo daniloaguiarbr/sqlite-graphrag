@@ -153,6 +153,7 @@ fn wait_lock_zero_returns_75_when_slots_busy() {
 
 #[test]
 #[serial]
+// TODO v1.0.89: flaky subprocess timing — avaliar estabilização com mock clock quando CI suportar.
 #[ignore = "flaky — depende de timing de subprocessos — rodar manualmente com: cargo test -- --ignored"]
 fn slot_bloqueia_segunda_instancia_com_exit_75() {
     use fs4::fs_std::FileExt;
@@ -203,6 +204,7 @@ fn slot_bloqueia_segunda_instancia_com_exit_75() {
 //   cargo test -- --ignored wait_lock_espera_e_adquire_slot
 
 #[test]
+// TODO v1.0.89: flaky subprocess timing — avaliar estabilização com mock clock quando CI suportar.
 #[serial]
 #[ignore = "flaky — depende de timing de subprocessos — rodar manualmente com: cargo test -- --ignored"]
 fn wait_lock_espera_e_adquire_slot() {

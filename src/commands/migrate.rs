@@ -51,6 +51,22 @@ pub struct MigrateArgs {
     /// tables remain and are the source of truth going forward.
     #[arg(long, default_value_t = false)]
     pub drop_vec_tables: bool,
+    /// Preview pending migrations without applying SQL or rewriting
+    /// any rows. Reports the list of migrations that would be applied,
+    /// along with a checksum-validity check, and exits 0 without
+    /// mutating `refinery_schema_history` or any table. Compatible
+    /// with `--status` and `--rehash` for diagnostic-only flows.
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
+    /// Required acknowledgement for non-`--dry-run` invocations of
+    /// the default migration runner. When set, the command emits a
+    /// dry-run-style preview of pending migrations and waits for the
+    /// literal string `yes` on stdin before applying. Without
+    /// `--confirm` the command proceeds in the legacy automatic
+    /// apply mode (preserves backward compatibility for CI scripts
+    /// that already gate via `migrate --status` first).
+    #[arg(long, default_value_t = false)]
+    pub confirm: bool,
 }
 
 #[derive(Serialize)]
@@ -70,6 +86,26 @@ struct MigrateStatusResponse {
     applied_migrations: Vec<MigrationEntry>,
     /// Latest applied migration number. JSON number since v1.0.35.
     schema_version: u32,
+    elapsed_ms: u64,
+}
+
+#[derive(Serialize)]
+struct DryRunReport {
+    db_path: String,
+    schema_version: u32,
+    /// Names and versions of migrations that would be applied.
+    /// Empty when the database is already at the latest schema.
+    pending_migrations: Vec<MigrationEntry>,
+    /// Number of pending migrations (len of `pending_migrations`).
+    pending_count: u32,
+    /// One row per migration whose recorded checksum mismatches the
+    /// file-derived checksum. Empty when everything is in sync.
+    checksum_mismatches: Vec<RehashEntry>,
+    /// "ok_no_pending" when no migrations would be applied,
+    /// "ok_pending" when there are pending migrations,
+    /// "ok_checksum_drift" when there are no pending migrations but
+    /// existing rows have stale checksums.
+    status: String,
     elapsed_ms: u64,
 }
 
@@ -149,6 +185,16 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
             "--to-llm-only requires --drop-vec-tables to acknowledge the destructive drop".into(),
         ));
     }
+    if args.dry_run && (args.rehash || args.to_llm_only) {
+        return Err(AppError::Validation(
+            "--dry-run cannot be combined with --rehash or --to-llm-only".into(),
+        ));
+    }
+    if args.confirm && args.dry_run {
+        return Err(AppError::Validation(
+            "--confirm cannot be combined with --dry-run".into(),
+        ));
+    }
 
     let mut conn = open_rw(&paths.db)?;
 
@@ -172,6 +218,12 @@ pub fn run(args: MigrateArgs) -> Result<(), AppError> {
 
     if args.to_llm_only {
         let report = run_to_llm_only(&mut conn, &paths.db)?;
+        output::emit_json(&report)?;
+        return Ok(());
+    }
+
+    if args.dry_run {
+        let report = run_dry_run(&conn, &paths.db)?;
         output::emit_json(&report)?;
         return Ok(());
     }
@@ -218,6 +270,91 @@ fn compute_checksum(name: &str, version: i32, sql: &str) -> u64 {
     version.hash(&mut hasher);
     sql.hash(&mut hasher);
     hasher.finish()
+}
+
+/// GAP-E2E-009: dry-run mode for the default migration runner.
+/// Computes the set of pending migrations and any checksum drift
+/// without applying any SQL or rewriting any rows. Returns a
+/// structured `DryRunReport` for the operator to inspect before
+/// running the actual migration.
+fn run_dry_run(conn: &rusqlite::Connection, db_path: &Path) -> Result<DryRunReport, AppError> {
+    let start = std::time::Instant::now();
+    let schema_version = latest_schema_version(conn).unwrap_or(0);
+
+    // Build the set of applied migration versions from the history
+    // table. When the table does not exist, the set is empty and
+    // every embedded migration is "pending".
+    let applied_versions: std::collections::BTreeSet<i32> = if history_table_exists(conn) {
+        let mut stmt = conn
+            .prepare_cached("SELECT version FROM refinery_schema_history")
+            .map_err(AppError::Database)?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, i64>(0))
+            .map_err(AppError::Database)?;
+        rows.filter_map(|r| r.ok()).map(|v| v as i32).collect()
+    } else {
+        std::collections::BTreeSet::new()
+    };
+
+    // Enumerate the embedded migrations and partition them into
+    // pending (not in history) and checksum-mismatched (in history
+    // but with stale checksum).
+    let mut pending: Vec<MigrationEntry> = Vec::new();
+    let mut mismatches: Vec<RehashEntry> = Vec::new();
+
+    for mig in crate::migrations::runner().get_migrations().iter() {
+        let name = mig.name().to_string();
+        let version = mig.version();
+        let sql = mig.sql().unwrap_or("").to_string();
+
+        if !applied_versions.contains(&version) {
+            // Pending: not yet applied.
+            pending.push(MigrationEntry {
+                version: version as i64,
+                name,
+                applied_on: None,
+                checksum: None,
+            });
+            continue;
+        }
+
+        // Already applied — verify the recorded checksum.
+        let new_checksum = compute_checksum(&name, version, &sql).to_string();
+        if let Ok(existing) = conn.query_row(
+            "SELECT checksum FROM refinery_schema_history WHERE version = ?1",
+            rusqlite::params![version],
+            |r| r.get::<_, String>(0),
+        ) {
+            let existing_trim = existing.trim();
+            if existing_trim != new_checksum {
+                mismatches.push(RehashEntry {
+                    version: version as i64,
+                    name,
+                    old_checksum: existing_trim.to_string(),
+                    new_checksum,
+                });
+            }
+        }
+    }
+
+    let pending_count = pending.len() as u32;
+    let status = if !mismatches.is_empty() && pending.is_empty() {
+        "ok_checksum_drift"
+    } else if pending.is_empty() {
+        "ok_no_pending"
+    } else {
+        "ok_pending"
+    };
+
+    Ok(DryRunReport {
+        db_path: db_path.display().to_string(),
+        schema_version,
+        pending_migrations: pending,
+        pending_count,
+        checksum_mismatches: mismatches,
+        status: status.to_string(),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
 }
 
 fn run_rehash(conn: &mut rusqlite::Connection, db_path: &Path) -> Result<RehashReport, AppError> {

@@ -201,7 +201,7 @@ sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db /path/to/graphrag.s
   - Rewrites recorded migration checksums to match the current file content (covers the V002 mismatch; see `--rehash` below for the standalone flag)
   - Applies the V013 migration which drops the three vec tables and creates the BLOB-backed `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` tables
 - `--drop-vec-tables` is the explicit safety guard; without it, `--to-llm-only` refuses to run
-- The CLI is `~6 MB` (down from 39 MB); no ONNX model download; no local fastembed install
+- The CLI is `~14.6 MiB` (down from 39 MB); no ONNX model download; no local fastembed install
 - New `remember` / `edit` / `ingest` calls re-embed the affected memory via `claude code` or `codex` headless subprocess (OAuth)
 - See `docs/MIGRATION.md` for the full v1.0.74 → v1.0.76 → v1.1.0 path and `docs/decisions/adr-0019-llm-only-one-shot.md` for the architectural rationale
 
@@ -486,6 +486,160 @@ sqlite-graphrag related "$SEED" --hops 2 --json \
 - Recipe "How to traverse entity graph for multi-hop recall"
 
 
+## How To Diagnose Pre-flight Validation Failures (v1.0.87+, ADR-0045)
+
+### Problem
+- `remember`, `ingest --mode claude-code`, `ingest --mode codex`, or any LLM-spawning subcommand fails immediately with exit code 16
+- The error happens BEFORE the LLM subprocess starts, so no OAuth tokens are consumed
+- You need to know which of the 7 guards rejected the spawn so you can fix the configuration
+
+### Solution
+- The preflight validation layer (ADR-0045, GAP-META-005) gates every LLM subprocess spawn
+- The error envelope on stderr is structured: `{error: true, code: 16, message: "...", error_class: "permanent", retryable: false, variant: "<PreFlightError variant>"}`
+- Eight variants are exposed: `ArgvExceedsArgMax`, `BinaryNotFound`, `McpConfigInlineJsonRejected`, `McpConfigPathMissing`, `McpConfigPathInvalidJson`, `WalkUpMcpJsonInvalid`, `OutputBufferTooSmall`, `ClaudeConfigDirNotEmpty`
+- The 7 guards run in this order: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`
+- Bypass in emergencies: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` disables all 7 guards. Bypassing reverts to direct `Command::spawn()` and inherits all 5 BUG classes from GAP-META-005
+
+### Recipe — Diagnose and fix each variant
+
+```bash
+# Variant: ArgvExceedsArgMax (Bug 3 of GAP-META-005)
+# Symptom: body > ARG_MAX minus 4 KB fails with E2BIG post-fork
+# Fix: split memory body into smaller chunks; use --max-body-bytes N
+sqlite-graphrag remember --name "large-mem" --body "$(cat big.txt)" 2>&1 | jaq '.variant'
+# Expected: "ArgvExceedsArgMax" with total_bytes and arg_max details
+# Fix: sqlite-graphrag edit --name "large-mem" --body-file chunk1.txt
+
+# Variant: BinaryNotFound
+# Symptom: claude or codex not on PATH
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Expected: "BinaryNotFound" with path to missing binary
+# Fix: export PATH="/path/to/claude:$PATH"
+
+# Variant: McpConfigInlineJsonRejected (Bug 2)
+# Symptom: --mcp-config '{}' literal rejected by Claude Code 2.1.177
+# The preflight auto-substitutes a tempfile holding {"mcpServers":{}}, so this variant
+# only triggers if the tempfile write itself fails. Check /tmp write permissions.
+
+# Variant: McpConfigPathMissing or McpConfigPathInvalidJson
+# Symptom: --mcp-config points at nonexistent or malformed file
+sqlite-graphrag remember --name "test" --body "x" --claude-mcp-config /bad/path.json 2>&1 | jaq '.variant'
+# Fix: ensure the file exists and parses as valid JSON
+
+# Variant: WalkUpMcpJsonInvalid (Bug 5)
+# Symptom: an ancestor directory contains a syntactically invalid .mcp.json
+# Or a syntactically valid one with non-empty mcpServers object
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Fix: remove or fix the offending .mcp.json file in the ancestor chain
+# Or: sqlite-graphrag init --workspace /tmp/clean-dir && cd /tmp/clean-dir
+
+# Variant: OutputBufferTooSmall (Bug 4)
+# Symptom: downstream JSON parser truncated at 65.536 chars
+# Fix: preflight auto-doubles the buffer capacity above 64 KB
+# This variant triggers only if buffer allocation fails (memory pressure)
+
+# Variant: ClaudeConfigDirNotEmpty
+# Symptom: CLAUDE_CONFIG_DIR points at a populated directory
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Fix: export CLAUDE_CONFIG_DIR=/tmp/empty-dir/ (the dir must exist but be empty)
+# Or: sqlite-graphrag --strict-env-clear remember --name "test" --body "x"
+```
+
+### Recipe — Bypass in emergencies
+
+```bash
+# When preflight fails in a CI environment and you need to proceed immediately
+SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 sqlite-graphrag remember --name "test" --body "x"
+# Warning: bypassing re-enables all 5 BUG classes from GAP-META-005:
+#   - E2BIG on large argv (Bug 3)
+#   - Invalid MCP configuration from Claude Code 2.1.177 (Bug 2)
+#   - Truncated JSON output at 65.536 chars (Bug 4)
+#   - .mcp.json walk-up failures (Bug 5)
+#   - Silent entities:0 extraction in ingest (Bug 1)
+
+# Recommended pattern: detect exit 16, fix the variant, retry
+out=$(sqlite-graphrag remember --name "test" --body "x" 2>&1) || {
+    exit_code=$?
+    if [ $exit_code -eq 16 ]; then
+        variant=$(echo "$out" | jaq -r '.variant')
+        echo "Preflight failed: $variant" >&2
+        # Apply fix per variant...
+    fi
+}
+```
+
+### Cross-references
+- `docs/HEADLESS_INVOCATION.md` — preflight layer in headless contexts
+- `docs/SECURITY.md` — preflight as defense-in-depth before OAuth
+- `docs/decisions/adr-0045-preflight-validation-layer.md` (en + pt-BR) — full architectural decision
+
+## How To Use Schema Drift Recovery (v1.0.89+, GAP-E2E-007, ADR-0048)
+
+### Problem
+- A consumer of `sqlite-graphrag health --json` parses the response against the published schema
+- After upgrading to v1.0.89, the consumer's validator rejects new fields like `vec_memories_missing`, `sqlite_version`, `mentions_warning`, etc.
+- Strict validation (`additionalProperties: false`) fails on the 17 new fields added by `schemars 0.8` derive
+
+### Solution
+- `health.schema.json` uses `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON and `rules_rust_json_e_ndjson.md:33`)
+- Consumers should migrate to Must-Ignore for forward compatibility
+- New `src/bin/dump_schema.rs` regenerates the schema idempotently via `schema_for!()` + BTreeMap ordering + recursive `apply_must_ignore` policy enforcement
+
+### Recipe — Migrate Python consumer to Must-Ignore
+
+```python
+import json
+import jsonschema
+from jsonschema import Draft202012Validator
+
+# Pre-v1.0.89: strict validation rejected unknown keys
+with open("docs/schemas/health.schema.json") as f:
+    schema = json.load(f)
+
+# Was: Draft202012Validator(schema) — fails on new v1.0.89 fields
+# Now: still Draft202012Validator(schema), but additionalProperties: true
+#       means unknown keys are accepted (Must-Ignore)
+
+validator = Draft202012Validator(schema)
+out = subprocess.check_output(["sqlite-graphrag", "health", "--json"])
+errors = list(validator.iter_errors(json.loads(out)))
+# Pre-v1.0.89 with strict schema: errors contained "Additional properties are not allowed ('vec_memories_missing' was unexpected)"
+# v1.0.89+ with Must-Ignore: zero errors for unknown keys; only type/range violations remain
+```
+
+### Recipe — Migrate TypeScript consumer to Must-Ignore
+
+```typescript
+import Ajv from "ajv";
+import * as fs from "fs";
+
+const schema = JSON.parse(fs.readFileSync("docs/schemas/health.schema.json", "utf-8"));
+const ajv = new Ajv({ strict: false, allErrors: true });  // strict: false accepts additionalProperties
+const validate = ajv.compile(schema);
+
+const out = JSON.parse(execSync("sqlite-graphrag health --json").toString());
+const valid = validate(out);
+if (!valid) {
+    console.error("Validation errors:", validate.errors);
+}
+```
+
+### Recipe — Regenerate the schema from source
+
+```bash
+# Schema is now derived from HealthResponse via schemars 0.8 derive macro
+# Regenerate idempotently:
+cargo run --bin dump_schema -- --output docs/schemas/health.schema.json
+
+# Validate the regenerated schema matches what's in the repo
+diff <(cargo run --bin dump_schema) docs/schemas/health.schema.json
+# Expected: empty diff (idempotent)
+```
+
+### Cross-references
+- `docs/decisions/adr-0048-schema-as-derived-artifact.md` (en + pt-BR) — Must-Ignore policy justification
+- `docs/HEADLESS_INVOCATION.md` — schemars adoption timeline
+- `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — regression test
 ## How To Link Entities With Auto-Creation
 ### Problem
 - Creating graph edges requires entities to exist first, forcing a tedious two-step entity-creation workflow
@@ -1405,7 +1559,7 @@ fn build_context_prompt(query: &str, memories: &[String]) -> String {
 ```
 
 ### Explanation
-- sqlite-graphrag delegates embedding to the LLM subprocess; the CLI binary is ~6 MB with no bundled model
+- sqlite-graphrag delegates embedding to the LLM subprocess; the CLI binary is ~14.6 MiB with no bundled model
 - The binary writes to a local SQLite file that survives across process restarts
 - `--namespace ollama-local` keeps offline memories isolated from any networked agent namespaces
 - `build_context_prompt` injects recalled memories into the Ollama prompt before each inference

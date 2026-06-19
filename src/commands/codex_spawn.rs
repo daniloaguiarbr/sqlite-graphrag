@@ -251,7 +251,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
 ///
 /// **`OPENAI_API_KEY` is FORBIDDEN** in the spawned environment (gaps.md:48).
 /// OAuth flows via `~/.codex/auth.json` and `CODEX_ACCESS_TOKEN` only.
-pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
+pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Result<Command, crate::errors::AppError> {
     let full_prompt = format!("{}\n\n{}", args.prompt, args.input_text);
 
     // OAuth-only guard (gaps.md:48, ADR-0011). If `OPENAI_API_KEY` is set
@@ -263,7 +263,7 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         cmd.env("PATH", "/nonexistent");
         cmd.arg("--oauth-only-violation-openai-api-key-set");
         cmd.arg("--oauth-only-resolution-use-codex-auth-json-or-openai-base-url");
-        return cmd;
+        return Ok(cmd);
     }
 
     // Write the JSON schema to a path the caller controls. Callers should
@@ -332,8 +332,7 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
     // AFTER argv is fully built. Validates binary existence, argv size,
     // walk-up of `.mcp.json`, and `CLAUDE_CONFIG_DIR` cleanliness.
     // Pre-flight failure aborts the spawn with exit 16 — see ADR-0045.
-    let argv_refs: Vec<std::ffi::OsString> =
-        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let argv_refs: Vec<std::ffi::OsString> = cmd.get_args().map(|s| s.to_os_string()).collect();
     let preflight_args = crate::spawn::preflight::PreFlightArgs {
         binary_path: args.binary,
         argv: &argv_refs,
@@ -343,16 +342,15 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Command {
         spawner_name: "codex_spawn",
     };
     if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
-        tracing::error!(
-            target: "codex_spawn",
-            spawner = "codex_spawn",
-            error = %e,
-            "preflight validation failed; aborting spawn (exit 16)"
-        );
-        std::process::exit(16);
+        // v1.0.88 (BUG-6 fix, ADR-0046): propagate the structured
+        // `PreFlightError` via the `From` impl in `errors.rs` so callers
+        // receive `AppError::PreFlightFailed` (exit 16) instead of a
+        // bare `std::process::exit(16)` that discards the variant name,
+        // tracing context, and PT-BR i18n.
+        return Err(crate::errors::AppError::from(e));
     }
 
-    cmd
+    Ok(cmd)
 }
 
 /// Parses JSONL output from `codex exec --json`.
@@ -712,7 +710,7 @@ mod tests {
             timeout_secs: 60,
             schema_path: std::env::temp_dir().join("test-schema.json"),
         };
-        let cmd = build_codex_command(&args);
+        let cmd = build_codex_command(&args).expect("preflight gate accepts valid args");
         let collected: Vec<String> = cmd
             .get_args()
             .filter_map(|a| a.to_str().map(|s| s.to_string()))
@@ -858,7 +856,7 @@ mod tests {
             timeout_secs: 60,
             schema_path: schema.clone(),
         };
-        let cmd = build_codex_command(&args);
+        let cmd = build_codex_command(&args).expect("preflight gate accepts valid args");
         let argv: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
         // Mandatory flags from gaps.md lines 233-238.
         // -c mcp_servers='{}' was REMOVED in v1.0.76 — codex 0.134+ parses
@@ -924,7 +922,7 @@ mod tests {
             timeout_secs: 60,
             schema_path: schema.clone(),
         };
-        let cmd = build_codex_command(&args);
+        let cmd = build_codex_command(&args).expect("preflight gate accepts valid args");
         let program = cmd.get_program().to_string_lossy().to_string();
         let argv: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
         assert_eq!(

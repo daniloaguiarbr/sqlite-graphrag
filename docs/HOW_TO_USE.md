@@ -8,16 +8,54 @@
 - No new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
 - Resolves GAP-058 partially: custom-provider env vars route around OAuth quota contention; `recall`/`hybrid-search` stay deterministic under official OAuth fatigue
-# HOW TO USE sqlite-graphrag (v1.0.85 — Five-Gap Remediation, Claude Split, Hotfixes 85.1/85.2)
+# HOW TO USE sqlite-graphrag (v1.0.89 — Preflight Layer, Schema Drift, Flag Parity, 1877 tests)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
 
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
-X
 
+## What Changed in v1.0.86, v1.0.87, v1.0.88, v1.0.89 (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
+Since v1.0.85.2, four releases introduced the LLM-heavy surface, the pre-flight validation layer, three hotfixes and the schema-as-derived-artifact contract.
+
+### v1.0.86 — LLM-Heavy Surface and Host-Wide Slot Semaphore
+
+- Five new subcommands expose the LLM subprocess pipeline: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`
+- `pending` (V014 — `pending_memories` table) provides a 3-stage checkpoint for the `remember` pipeline. The checkpointer survives a crash; on restart, `pending list` inspects the queue and `pending show <id>` reads one entry
+- `embedding status --filter-status queued|processing|done|failed|skipped` and `--llm-backend codex,claude,none` expose the retry-fallback pipeline
+- `slots status` reports `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`; `slots release --slot-id N --yes` reaps orphan slots
+- New global flags: `--max-concurrency <N>`, `--wait-lock <SECONDS>`, `--llm-parallelism <N>` (default 4, clamp [1, 32]), `--ingest-parallelism <N>`, `--graceful-shutdown-secs <N>`, `--skip-embedding-on-failure` (only valid with `--llm-backend …,none`)
+- Lock contention handled by `fs4 = 0.9` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0039)
+
+### v1.0.87 — Pre-Flight Validation Layer (ADR-0045, GAP-META-005)
+
+- New module `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) gates every LLM subprocess spawn BEFORE the fork
+- New `AppError::PreFlightFailed(PreFlightError)` variant with `exit_code() == 16` and `is_permanent() == true`
+- New exit code 16 (`EX_CONFIG`) for pre-flight failures. Not documented in any pre-existing exit code table
+- The 7 guards in order: `check_argv_size` (argv would exceed ARG_MAX minus 4 KB), `check_binary_exists` (claude/codex reachable in PATH), `check_mcp_config_inline` (replaces literal `--mcp-config "{}"` with tempfile holding `{"mcpServers":{}}`), `check_mcp_config_path` (validates JSON contents), `check_walkup_mcp_json` (rejects invalid `.mcp.json` in workspace ancestor chain), `check_output_buffer` (raises parser buffer above 64 KB), `check_claude_config_dir` (avoids user-level MCP bleed-through)
+- Bypass in emergencies: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` disables all 7 guards. Bypassing reverts to direct `Command::spawn()` and inherits all 5 BUG classes from GAP-META-005
+- The 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) share this single module
+
+### v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+
+- **BUG-11 (CRITICAL)** fixed: pre-flight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict` instead of silent persistence with `backend_invoked: "none"`
+- **BUG-12 (MEDIUM)** fixed: OAuth-only enforcement now emits 1 stderr line (was 2) — duplicate `eprintln!` removed
+- **BUG-13 (MEDIUM)** fixed: `link --create-missing` now respects entity-name validation; previously rejected ALL_CAPS abbreviations were accepted via CLI
+- 11 new regression tests: `tests/bug11_preflight_regression.rs` (2), `oauth_stderr_emits_single_line_v1088` (1), `tests/entity_validation_integration.rs` (8)
+- Test rename `embed_with_fallback_succeeds_via_none_when_chain_exhausts` → `embed_with_fallback_chain_of_only_none_aborts_without_skip_on_failure_v1088` documents the corrected contract
+
+### v1.0.89 — Schema Drift, Flag Parity, Description Heuristic (ADR-0048, ADR-0049)
+
+- **GAP-E2E-007 (P1)**: `health.schema.json` regenerated via `schemars` derive macro. 17 new fields added; `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON). New bin: `cargo run --bin dump-schema` regenerates 70+ schemas
+- **GAP-E2E-008 (P3)**: `embedding status/list/abandon`, `pending list/show` now accept `--db <PATH>`. `clap::Arg::global = true` was REJECTED (invasive, pollutes help). 5 new tests in `tests/cli_db_flag_parity_regression.rs`
+- **GAP-E2E-009 (P3)**: `migrate --dry-run --json` now reports pending migrations without applying. 1 new test in `tests/migrate_dry_run_regression.rs`
+- **GAP-E2E-010 (P3)**: `codex-models --json` accepted as no-op; `pending list --db <PATH>` parity. Both with `#[arg(long, hide = true)]`. 1 new test in `tests/codex_models_json_regression.rs`
+- **GAP-E2E-011 (P2)**: `ingest --auto-describe` (default true) extracts description from first meaningful body line (>20 chars, not a header). `extract_heuristic_description(body, path_hint)` falls back to file stem. `--no-auto-describe` opt-out. 5 new tests in `tests/ingest_auto_describe_regression.rs`
+- **GAP-E2E-002 (P3)**: `health --namespace <NS> --json` filters counts to a single namespace. 1 new test in `tests/health_namespace_regression.rs`
+- **GAP-E2E-001 (P2)**: Binary size 14.6 MiB documented in `Cargo.toml:6` (was 6 MB since v1.0.76). 1 new test in `tests/binary_size_documented_regression.rs`
+- Total: 1877 tests passing (843 lib + 1013 integration + 21 doc). Binary 15.3 MB ELF stripped
 ## What v1.0.82 Changed (Five Gaps, Two Migrations, Four Subcommands)
 
 v1.0.82 is a **patch** bump that DOES carry two additive database migrations (`V014__pending_memories`, `V015__pending_embeddings`). The schema version advances from 13 to 15. Library consumers must pin to `=1.0.82` per the stability policy (ADR-0032). The 5 gaps closed: GAP-001 three-stage `remember` checkpoint queue (ADR-0036), GAP-002 shutdown JSON envelope at exit code 19 (ADR-0037), GAP-003 `--llm-backend` user-choice flag (ADR-0038), GAP-004 host-wide LLM slot semaphore via `fs4` (ADR-0039), GAP-005 stderr-capture fallback chain that mitigates the codex OAuth 401 incident of 2026-06-14 (ADR-0040).
@@ -56,37 +94,6 @@ Since v1.0.84 (GAP-002 Claude backend split, ADR-0042), three further releases t
 - `embed_via_claude_local` in `src/embedder.rs:190+` is the real split entry point
 - `apply_env_whitelist_for_claude` in `src/spawn/env_whitelist.rs` (shared by `invoke_claude` and `embed_via_claude_local`)
 - 5 regression tests in `tests/embedder.rs`: `embed_via_backend_claude_does_not_invoke_codex`, `embed_via_backend_codex_does_not_invoke_claude`, `embed_via_backend_none_returns_empty_vector`, `cli_dry_run_backend_prints_resolved_path`, `claude_invocation_uses_isolated_config_dir`
-
-## What Changed in v1.0.85, v1.0.85.1, v1.0.85.2 (ADR-0043, ADR-0044)
-
-Since v1.0.84 (GAP-002 Claude backend split, ADR-0042), three further releases tightened the embedder:
-
-### v1.0.85 — Five-Gap Remediation (ADR-0043)
-- `FallbackReason` enum extended from 3 to 7 variants: `embedding_failed | slot_exhausted | oauth_quota | backend_mismatch | dim_zero | cancelled | timeout`
-- `reason_code` discriminator in `recall` and `hybrid-search` envelopes distinguishes quota vs mismatch vs timeout
-- `try_embed_query_with_deterministic_fallback` retries on `OAuthQuota` and applies 750ms ceiling on `SlotExhausted` before falling back to FTS5
-- 12-14 `anthropic-ratelimit-*-remaining` headers captured in `LlmEmbedding::invoke_claude` (G45-CR5); `0` aborts embed and triggers codex fallback
-- `dim 64` lock (Matryoshka Representation Learning, arXiv 2205.13147) reduces OAuth token spend by 6x (G56)
-- 5 regression tests in `tests/embedder.rs`: `slot_exhaustion_returns_typed_error`, `oauth_quota_fallback_deterministic`, `anthropic_ratelimit_headers_captured`, `read_notfound_preserves_identifier`, `embedding_dim_reduces_token_cost`
-
-### v1.0.85.1 — `recall`/`hybrid-search` `--llm-backend none` Graceful Fallback (GAP-004 hotfix)
-- `--llm-backend none` now returns exit 0 with `vec_degraded: true` + `source: "fts_fallback"` + `vec_degraded_reason: "dim_zero"`
-- Failsafe of v1.0.80 restored for the `--llm-backend none` case
-- Intermediate arm `Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero)` in `try_embed_query_with_choice`
-
-### v1.0.85.2 — `embed_via_backend` Resolved Kind, `--dry-run-backend` Standalone (BUG-001/002/003, ADR-0044)
-- `--dry-run-backend` works standalone (no subcommand required) thanks to `pub command: Option<Commands>` in `src/cli.rs:248`
-- `embed_via_backend` returns `Result<(Vec<f32>, LlmBackendKind), AppError>` propagating `resolved_kind`
-- 7 envelopes now report `backend_invoked: "claude" | "codex" | "none"` consistently
-- `setup_mock_path()` in `tests/embedder.rs:37-77` aligned to emit JSON (not JSONL)
-
-### v1.0.84 — Claude Backend Split (ADR-0042, GAP-002)
-- `--llm-backend claude` now forces `claude -p` invocation, no silent codex fallback
-- `LlmEmbeddingBuilder` in `src/extract/llm_embedding.rs` with `with_claude_builder`, `with_codex_builder`, `override_binary`, `override_model`
-- `embed_via_claude_local` in `src/embedder.rs:190+` is the real split entry point
-- `apply_env_whitelist_for_claude` in `src/spawn/env_whitelist.rs` (shared by `invoke_claude` and `embed_via_claude_local`)
-- 5 regression tests in `tests/embedder.rs`: `embed_via_backend_claude_does_not_invoke_codex`, `embed_via_backend_codex_does_not_invoke_claude`, `embed_via_backend_none_returns_empty_vector`, `cli_dry_run_backend_prints_resolved_path`, `claude_invocation_uses_isolated_config_dir`
-
 
 ### Migration Procedure (Operators on v1.0.80 / v1.0.81)
 ```bash
@@ -163,7 +170,7 @@ spawns a headless LLM subprocess (claude code or codex CLI) that
 returns the embedding and (optionally) the extracted entities.
 
 The CLI is one-shot: there is no daemon, no model to keep in
-memory, no socket to clean up. The release binary is ~6 MB (was
+memory, no socket to clean up. The release binary is ~14.6 MiB (was
 39 MB) and the cold start is 1-3 s (was 30 s with the ONNX model
 load).
 

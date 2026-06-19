@@ -1,9 +1,9 @@
-# sqlite-graphrag (v1.0.79 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.89 LLM-Only One-Shot)
 
 
 > Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 6 MB binary. Zero model download. v1.0.79 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 14.6 MiB binary. Zero model download. v1.0.79 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 - Compact summary in [llms.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.txt); Portuguese variant in [llms.pt-BR.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.pt-BR.txt)
@@ -15,7 +15,7 @@ cargo install --locked sqlite-graphrag
 
 ## What is it?
 ### sqlite-graphrag delivers durable memory for AI agents
-- Stores memories, entities and relationships inside a single SQLite file (6 MB binary)
+- Stores memories, entities and relationships inside a single SQLite file (14.6 MiB binary)
 - Embeds content via headless `claude code` or `codex` LLM subprocess (OAuth, no API key); the LLM subprocess IS the model
 - Combines FTS5 full-text search with pure-Rust cosine KNN over BLOB embeddings into a hybrid Reciprocal Rank Fusion ranker
 - `sqlite-vec` extension REMOVED in v1.0.76; cosine similarity is computed in-process over `memory_embeddings` / `entity_embeddings` / `chunk_embeddings` BLOB tables
@@ -31,6 +31,14 @@ cargo install --locked sqlite-graphrag
 - Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite with V013 vec-table drop.
 - OAuth enforcement: the spawn of `claude -p` or `codex exec` ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. See [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md).
 - Cosine similarity is now pure Rust: see [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) for the algorithm. BLOB-backed embeddings replace vec0: see [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md).
+
+## v1.0.86 → v1.0.89 Architecture (Pre-flight, Schema Drift, Flag Parity)
+- The pre-flight validation layer (v1.0.87, ADR-0045, GAP-META-005) gates every LLM subprocess spawn BEFORE the fork. `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) runs `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir` before `Command::spawn()`. Failures return `AppError::PreFlightFailed` with `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`). Bypass: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1`. The 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) share this single module
+- v1.0.86 added 10 LLM-pipeline subcommands: `pending list|show|cleanup`, `embedding status|list|abandon`, `pending-embeddings list|process`, `slots status|release`. New global flags: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`. Host-wide slot semaphore via `fs4` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0036-0040)
+- v1.0.88 fixed 3 hotfixes: BUG-11 (CRITICAL) preflight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict`; BUG-12 (MEDIUM) OAuth-only enforcement emits 1 stderr line (was 2); BUG-13 (MEDIUM) `link --create-missing` respects entity-name validation. 11 new regression tests (ADR-0046, ADR-0047)
+- v1.0.89 closed 7 GAPs: GAP-E2E-007 `health.schema.json` regenerated via `schemars` derive macro with `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON, 17 new fields); GAP-E2E-008 `--db <PATH>` parity on `embedding status|list|abandon`, `pending list|show`; GAP-E2E-009 `migrate --dry-run --json` reports pending migrations without applying; GAP-E2E-010 `codex-models --json` accepted as no-op; GAP-E2E-011 `ingest --auto-describe` extracts description from first meaningful body line; GAP-E2E-002 `health --namespace <NS> --json` filters counts; GAP-E2E-001 binary size 14.6 MiB documented in `Cargo.toml:6` (ADR-0048, ADR-0049). 1877 tests passing (843 lib + 1013 integration + 21 doc)
+- Schema version stays at v15 throughout v1.0.86-89. No database migrations run in this 4-release cycle
+
 
 
 ## Why sqlite-graphrag?

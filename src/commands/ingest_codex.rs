@@ -294,7 +294,7 @@ fn extract_with_codex(
             timeout_secs,
             schema_path: schema_file.to_path_buf(),
         },
-    );
+    )?;
 
     // `build_codex_command` writes the JSON schema to `schema_path` and
     // appends `input_text` to the prompt via Paperclip stdin. For `ingest`

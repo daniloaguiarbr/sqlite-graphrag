@@ -58,7 +58,7 @@ in the environment cause the spawn to ABORT with `AppError::Validation`.
 
 ### Positive
 
-- Release binary drops from 39 MB to ~6 MB (rustc + rusqlite + clap only).
+- Release binary drops from 39 MB to ~14.6 MiB (rustc + rusqlite + clap only).
 - `cargo install sqlite-graphrag` no longer requires C build tools, ONNX
   runtime, or any system library beyond a C compiler.
 - The cold-start cost of the first `remember` is dominated by the LLM

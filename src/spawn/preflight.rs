@@ -64,7 +64,9 @@ const WALKUP_MAX_DEPTH: usize = 16;
 /// discouraged. Operators accept the 5-bug-class risk by setting this.
 pub fn is_skipped() -> bool {
     matches!(
-        std::env::var("SQLITE_GRAPHRAG_SKIP_PREFLIGHT").ok().as_deref(),
+        std::env::var("SQLITE_GRAPHRAG_SKIP_PREFLIGHT")
+            .ok()
+            .as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes")
     )
 }
@@ -136,11 +138,16 @@ pub enum PreFlightError {
     #[error("output buffer too small: expected={expected} bytes, configured_limit={configured} bytes; chunk the request or increase the buffer cap")]
     OutputBufferTooSmall { expected: usize, configured: usize },
 
-    /// `CLAUDE_CONFIG_DIR` is set but points to a non-empty directory.
-    /// Claude Code will load MCP servers and hooks from it, defeating
-    /// `--strict-mcp-config --mcp-config '{}'`. Override required.
-    #[error("CLAUDE_CONFIG_DIR={path} points to non-empty directory which would load MCPs; unset the env var or point it at an empty directory")]
-    ClaudeConfigDirNotEmpty { path: PathBuf },
+    /// `CLAUDE_CONFIG_DIR` is set and `settings.json` declares active
+    /// `mcpServers`. Claude Code would load them and defeat
+    /// `--strict-mcp-config --mcp-config <empty>`. Hooks are NOT
+    /// flagged here because the spawners pass
+    /// `--settings '{"hooks":{}}'` which overrides the user-level
+    /// hooks at the CLI invocation boundary; MCP servers are NOT
+    /// overridden by any flag we pass, so they are the only class of
+    /// `settings.json` entry that can leak into the subprocess.
+    #[error("CLAUDE_CONFIG_DIR={path} contains settings.json with active MCP servers ({reason}); unset the env var or remove the offending entries")]
+    ClaudeConfigDirNotEmpty { path: PathBuf, reason: &'static str },
 }
 
 /// Returns `Ok(())` when all checks pass, or the first failing variant.
@@ -212,9 +219,7 @@ pub fn write_empty_mcp_config_tempfile() -> Result<PathBuf, std::io::Error> {
 /// Sums byte sizes of each argv element plus 1 byte for the NUL separator
 /// in the kernel's `execve` argument buffer layout.
 fn compute_argv_bytes(argv: &[OsString]) -> usize {
-    argv.iter()
-        .map(|s| s.as_os_str().len() + 1)
-        .sum()
+    argv.iter().map(|s| s.as_os_str().len() + 1).sum()
 }
 
 fn arg_max_bytes() -> usize {
@@ -283,26 +288,41 @@ fn check_mcp_config_inline(inline: Option<&str>) -> Result<(), PreFlightError> {
 fn check_mcp_config_path(argv: &[OsString]) -> Result<(), PreFlightError> {
     let mut iter = argv.iter();
     while let Some(arg) = iter.next() {
-        if arg == "--mcp-config" {
-            if let Some(value) = iter.next() {
-                let path = PathBuf::from(value);
-                if !path.exists() {
-                    return Err(PreFlightError::McpConfigPathMissing { path });
-                }
-                let contents = std::fs::read_to_string(&path).map_err(|e| {
-                    PreFlightError::McpConfigPathInvalidJson {
-                        path: path.clone(),
-                        error: e.to_string(),
-                    }
-                })?;
-                if let Err(e) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    return Err(PreFlightError::McpConfigPathInvalidJson {
-                        path,
-                        error: e.to_string(),
-                    });
-                }
+        // BUG-5 fix (v1.0.88): accept the `--mcp-config=PATH` form
+        // (single argv slot) alongside the GNU `--mcp-config <PATH>`
+        // form. Without this, callers using clap's `--flag value`
+        // collapsing (or hand-rolled commands) bypass the guard.
+        let path = if arg == "--mcp-config" {
+            match iter.next() {
+                Some(value) => PathBuf::from(value),
+                None => continue,
             }
-        }
+        } else if let Some(stripped) = arg.to_str().and_then(|s| s.strip_prefix("--mcp-config=")) {
+            PathBuf::from(stripped)
+        } else {
+            continue;
+        };
+        validate_mcp_config_path(&path)?;
+    }
+    Ok(())
+}
+
+fn validate_mcp_config_path(path: &Path) -> Result<(), PreFlightError> {
+    if !path.exists() {
+        return Err(PreFlightError::McpConfigPathMissing {
+            path: path.to_path_buf(),
+        });
+    }
+    let contents =
+        std::fs::read_to_string(path).map_err(|e| PreFlightError::McpConfigPathInvalidJson {
+            path: path.to_path_buf(),
+            error: e.to_string(),
+        })?;
+    if let Err(e) = serde_json::from_str::<serde_json::Value>(&contents) {
+        return Err(PreFlightError::McpConfigPathInvalidJson {
+            path: path.to_path_buf(),
+            error: e.to_string(),
+        });
     }
     Ok(())
 }
@@ -318,13 +338,29 @@ fn check_walkup_mcp_json(workspace_root: &Path) -> Result<(), PreFlightError> {
                     error: e.to_string(),
                 }
             })?;
-            if let Err(e) = serde_json::from_str::<serde_json::Value>(&contents) {
+            // BUG-9 fix (v1.0.88): syntactic JSON validity is necessary
+            // but NOT sufficient — a valid `.mcp.json` can still declare
+            // MCP servers under `mcpServers`. Reject when the file is
+            // syntactically valid AND declares a non-empty `mcpServers`
+            // object. Keep the existing syntactic check for legacy
+            // callers that hand-roll untyped JSON.
+            let parsed: serde_json::Value = serde_json::from_str(&contents).map_err(|e| {
+                PreFlightError::WalkUpMcpJsonInvalid {
+                    path: candidate.clone(),
+                    error: e.to_string(),
+                }
+            })?;
+            let has_active_mcps = parsed
+                .get("mcpServers")
+                .and_then(|v| v.as_object())
+                .map(|o| !o.is_empty())
+                .unwrap_or(false);
+            if has_active_mcps {
                 return Err(PreFlightError::WalkUpMcpJsonInvalid {
                     path: candidate,
-                    error: e.to_string(),
+                    error: "mcpServers declares active entries; set CLAUDE_CONFIG_DIR to an empty directory or remove the file".to_string(),
                 });
             }
-            // Valid .mcp.json — caller may proceed; not a hard error.
             return Ok(());
         }
         match current.parent() {
@@ -336,16 +372,77 @@ fn check_walkup_mcp_json(workspace_root: &Path) -> Result<(), PreFlightError> {
 }
 
 fn check_claude_config_dir() -> Result<(), PreFlightError> {
-    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        let path = PathBuf::from(&dir);
-        if path.is_dir() {
-            let is_empty = std::fs::read_dir(&path)
-                .map(|mut i| i.next().is_none())
-                .unwrap_or(false);
-            if !is_empty {
-                return Err(PreFlightError::ClaudeConfigDirNotEmpty { path });
-            }
+    let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") else {
+        return Ok(());
+    };
+    let path = PathBuf::from(&dir);
+    if !path.is_dir() {
+        return Ok(());
+    }
+    // BUG-1 fix (v1.0.88): inspect `settings.json` semantically. A
+    // populated directory containing `CLAUDE.md`, custom `commands/`,
+    // or skills is harmless — Claude Code will not auto-load MCP
+    // servers or hooks unless `settings.json` declares them. The
+    // previous implementation rejected any non-empty directory, which
+    // broke every dev install that points `CLAUDE_CONFIG_DIR` at the
+    // real Claude Code configuration home.
+    let settings = path.join("settings.json");
+    if !settings.exists() {
+        // Directory populated with non-MCP files (CLAUDE.md,
+        // commands/, skills/, etc.) — emit a structured warning so
+        // operators can audit, but do NOT abort the spawn.
+        if std::fs::read_dir(&path)
+            .map(|mut i| i.next().is_some())
+            .unwrap_or(false)
+        {
+            tracing::warn!(
+                target: "preflight",
+                path = %path.display(),
+                "CLAUDE_CONFIG_DIR is populated but contains no settings.json; \
+                 MCP servers and hooks will not be auto-loaded"
+            );
         }
+        return Ok(());
+    }
+    let contents = match std::fs::read_to_string(&settings) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                target: "preflight",
+                path = %settings.display(),
+                error = %e,
+                "CLAUDE_CONFIG_DIR/settings.json exists but could not be read; \
+                 skipping semantic validation"
+            );
+            return Ok(());
+        }
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                target: "preflight",
+                path = %settings.display(),
+                error = %e,
+                "CLAUDE_CONFIG_DIR/settings.json is not valid JSON; \
+                 skipping semantic validation"
+            );
+            return Ok(());
+        }
+    };
+    // Reject when settings.json declares active MCP servers. Hooks are
+    // tolerated because the spawners pass `--settings '{"hooks":{}}'`
+    // which overrides the user-level hooks at the CLI boundary.
+    let has_mcp_servers = parsed
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .map(|o| !o.is_empty())
+        .unwrap_or(false);
+    if has_mcp_servers {
+        return Err(PreFlightError::ClaudeConfigDirNotEmpty {
+            path,
+            reason: "mcpServers",
+        });
     }
     Ok(())
 }
@@ -397,7 +494,11 @@ mod tests {
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
-        let binary = if cfg!(windows) { "C:\\Windows\\System32\\cmd.exe" } else { "/bin/sh" };
+        let binary = if cfg!(windows) {
+            "C:\\Windows\\System32\\cmd.exe"
+        } else {
+            "/bin/sh"
+        };
         let argv = dummy_argv();
         let args = dummy_args(Path::new(binary), &argv, None);
         let result = preflight_check(&args);
@@ -560,6 +661,61 @@ mod tests {
     }
 
     #[test]
+    fn check_walkup_mcp_json_fails_on_active_mcp_servers() {
+        // BUG-9 regression: a syntactically valid `.mcp.json` that
+        // declares MCP servers under `mcpServers` must be rejected.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bad = dir.path().join(".mcp.json");
+        std::fs::write(
+            &bad,
+            r#"{"mcpServers":{"github":{"command":"gh","args":["mcp"]}}}"#,
+        )
+        .expect("write bad mcp.json");
+        let argv = dummy_argv();
+        let args = PreFlightArgs {
+            workspace_root: dir.path(),
+            ..dummy_args(Path::new("/bin/sh"), &argv, None)
+        };
+        let err = preflight_check(&args).unwrap_err();
+        assert!(
+            matches!(err, PreFlightError::WalkUpMcpJsonInvalid { .. }),
+            "expected WalkUpMcpJsonInvalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn check_walkup_mcp_json_passes_with_empty_mcp_servers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ok = dir.path().join(".mcp.json");
+        std::fs::write(&ok, r#"{"mcpServers":{}}"#).expect("write");
+        let argv = dummy_argv();
+        let args = PreFlightArgs {
+            workspace_root: dir.path(),
+            ..dummy_args(Path::new("/bin/sh"), &argv, None)
+        };
+        let result = preflight_check(&args);
+        if let Err(PreFlightError::WalkUpMcpJsonInvalid { .. }) = &result {
+            panic!("empty mcpServers must pass walk-up: {result:?}");
+        }
+    }
+
+    #[test]
+    fn check_mcp_path_equals_form_detects_missing_file() {
+        // BUG-5 regression: --mcp-config=PATH single-slot form must be
+        // caught the same as the GNU --mcp-config <PATH> form.
+        let argv = vec![
+            OsString::from("/bin/sh"),
+            OsString::from("--mcp-config=/nonexistent/path/mcp.json"),
+        ];
+        let args = dummy_args(Path::new("/bin/sh"), &argv, None);
+        let err = preflight_check(&args).unwrap_err();
+        assert!(
+            matches!(err, PreFlightError::McpConfigPathMissing { .. }),
+            "expected McpConfigPathMissing, got {err:?}"
+        );
+    }
+
+    #[test]
     fn check_output_buffer_warns_when_oversized() {
         let argv = dummy_argv();
         let args = PreFlightArgs {
@@ -575,10 +731,17 @@ mod tests {
 
     #[test]
     #[serial_test::serial(env)]
-    fn check_claude_config_dir_fails_when_populated() {
+    fn check_claude_config_dir_fails_when_settings_has_active_mcps() {
         // SAFETY: serial_test::serial(env) ensures no parallel mutation.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let settings = dir.path().join("settings.json");
+        std::fs::write(
+            &settings,
+            r#"{"mcpServers":{"github":{"command":"gh","args":["mcp"]}}}"#,
+        )
+        .expect("write settings.json");
         unsafe {
-            std::env::set_var("CLAUDE_CONFIG_DIR", "/usr"); // /usr is non-empty
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir.path());
         }
         let argv = dummy_argv();
         let args = dummy_args(Path::new("/bin/sh"), &argv, None);
@@ -586,12 +749,73 @@ mod tests {
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
-        // /usr exists; if it is non-empty (always on Linux) we get the error.
-        if let Err(PreFlightError::ClaudeConfigDirNotEmpty { .. }) = err {
-            // expected
+        if let Err(PreFlightError::ClaudeConfigDirNotEmpty { reason, .. }) = err {
+            assert_eq!(reason, "mcpServers");
         } else {
-            panic!("expected ClaudeConfigDirNotEmpty, got {err:?}");
+            panic!("expected ClaudeConfigDirNotEmpty mcpServers, got {err:?}");
         }
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn check_claude_config_dir_passes_when_settings_empty() {
+        // SAFETY: serial_test::serial(env) ensures no parallel mutation.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let settings = dir.path().join("settings.json");
+        std::fs::write(&settings, r#"{"mcpServers":{},"hooks":{}}"#).expect("write");
+        unsafe {
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir.path());
+        }
+        let argv = dummy_argv();
+        let args = dummy_args(Path::new("/bin/sh"), &argv, None);
+        let result = preflight_check(&args);
+        unsafe {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+        }
+        assert!(result.is_ok(), "empty MCPs and hooks must pass: {result:?}");
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn check_claude_config_dir_passes_when_no_settings_json() {
+        // SAFETY: serial_test::serial(env) ensures no parallel mutation.
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Populate with non-MCP files only (CLAUDE.md, commands/, etc).
+        std::fs::write(dir.path().join("CLAUDE.md"), "# project notes").expect("write");
+        unsafe {
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir.path());
+        }
+        let argv = dummy_argv();
+        let args = dummy_args(Path::new("/bin/sh"), &argv, None);
+        let result = preflight_check(&args);
+        unsafe {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+        }
+        assert!(
+            result.is_ok(),
+            "populated dir without settings.json must pass: {result:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn check_claude_config_dir_passes_when_settings_has_only_hooks() {
+        // Hooks are tolerated because the spawners override
+        // `--settings '{"hooks":{}}'` at the CLI boundary; only MCP
+        // servers are flagged as a hard error.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let settings = dir.path().join("settings.json");
+        std::fs::write(&settings, r#"{"hooks":{"PreToolUse":[]}}"#).expect("write");
+        unsafe {
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir.path());
+        }
+        let argv = dummy_argv();
+        let args = dummy_args(Path::new("/bin/sh"), &argv, None);
+        let result = preflight_check(&args);
+        unsafe {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+        }
+        assert!(result.is_ok(), "hooks must be tolerated: {result:?}");
     }
 
     #[test]
@@ -612,11 +836,7 @@ mod tests {
         // first (cheap in-memory check) NOT the McpConfigInlineJsonRejected
         // (also cheap, but binary is checked earlier in the order).
         let argv = dummy_argv();
-        let args = dummy_args(
-            Path::new("/does/not/exist/at/all"),
-            &argv,
-            Some("{}"),
-        );
+        let args = dummy_args(Path::new("/does/not/exist/at/all"), &argv, Some("{}"));
         let err = preflight_check(&args).unwrap_err();
         assert!(
             matches!(err, PreFlightError::BinaryNotFound { .. }),
@@ -630,9 +850,10 @@ mod tests {
         // Cross-check the integration: AppError::PreFlightFailed maps to
         // exit code 16 (validated by this test, not by preflight itself).
         use crate::errors::AppError;
-        let err = AppError::PreFlightFailed {
-            detail: "test".to_string(),
-        };
+        let err: AppError = crate::spawn::preflight::PreFlightError::BinaryNotFound {
+            path: "/bin/test".into(),
+        }
+        .into();
         assert_eq!(err.exit_code(), 16);
         assert!(err.is_permanent());
         assert!(!err.is_retryable());

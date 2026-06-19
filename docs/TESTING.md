@@ -70,6 +70,35 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 - `embed_via_backend_returns_resolved_kind` — `embed_via_backend` returns `Result<(Vec<f32>, LlmBackendKind), AppError>` propagating `resolved_kind`
 - `setup_mock_path_emits_json` — `setup_mock_path()` in `tests/embedder.rs:37-77` aligned to emit JSON (not JSONL)
 
+
+## v1.0.87 — Pre-flight Validation Layer Tests (ADR-0045, GAP-META-005)
+
+- `tests/bug11_preflight_regression.rs` (2 tests) — reproducers for the 5 BUG classes that GAP-META-005 addresses. The 7 guards (`check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`) have 2 tests each: a positive case (passes) and a negative case (returns the specific `PreFlightError` variant)
+- `src/spawn/preflight.rs` (15 unit tests inline) — `check_argv_size_rejects_oversized_argv`, `check_argv_size_accepts_under_limit`, `check_binary_exists_returns_binary_not_found`, `check_mcp_config_inline_creates_tempfile_for_braces`, `check_mcp_config_inline_passes_when_already_tempfile`, `check_mcp_config_path_validates_json`, `check_mcp_config_path_rejects_missing_file`, `check_walkup_mcp_json_walks_to_root`, `check_walkup_mcp_json_accepts_absent`, `check_output_buffer_doubles_capacity_above_64k`, `check_output_buffer_passes_when_under_limit`, `check_claude_config_dir_rejects_non_empty`, `check_claude_config_dir_accepts_empty`, `is_skipped_returns_true_with_env_var`, `is_skipped_returns_false_without_env_var`
+- All 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) gain `#[test]` coverage of the pre-flight call site
+
+## v1.0.88 — Hotfixes BUG-11/12/13 Tests (ADR-0046, ADR-0047)
+
+- `tests/bug11_preflight_regression.rs::embed_via_backend_strict_returns_no_backends_error` — verifies that when pre-flight fails in `extract/llm_embedding.rs:563-565`, `remember` propagates the error via exit 11 instead of silently persisting with `backend_invoked: "none"`
+- `tests/bug11_preflight_regression.rs::remember_with_mcp_config_dir_in_legacy_path_aborts` — repro of BUG-11: `CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp` causes exit 11 with JSON error envelope
+- `tests/oauth_stderr_emits_single_line_v1088` — verifies BUG-12 fix: `ANTHROPIC_API_KEY=sk-test init` emits exactly 1 stderr line (was 2)
+- `tests/entity_validation_integration.rs` (8 tests) — verifies BUG-13 fix: `link --create-missing` now respects entity-name validation. 4-char boundary case (`API` is rejected, `claude` is accepted)
+- `embedder.rs:1704` test rename — `embed_with_fallback_succeeds_via_none_when_chain_exhausts` → `embed_with_fallback_chain_of_only_none_aborts_without_skip_on_failure_v1088` (now documents the corrected contract)
+
+## v1.0.89 — Seven Regression Tests for the Ten GAPs (ADR-0048, ADR-0049)
+
+- `tests/health_namespace_regression.rs::health_accepts_namespace_flag_v1089` — GAP-E2E-002. Verifies `health --namespace prod --json` returns 0 and filters counts to the namespace
+- `tests/migrate_dry_run_regression.rs::dry_run_does_not_mutate_schema_history_v1089` — GAP-E2E-009. Verifies `migrate --dry-run` exits 0 and `refinery_schema_history` is unchanged
+- `tests/codex_models_json_regression.rs::codex_models_json_flag_accepted_as_noop_v1089` — GAP-E2E-010a. Verifies `codex-models --json` exits 0 with JSON envelope
+- `tests/cli_db_flag_parity_regression.rs` (5 tests) — GAP-E2E-008 + GAP-E2E-010b. Verifies `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show` all accept `--db <PATH>` without clap error
+- `tests/ingest_auto_describe_regression.rs` (5 tests) — GAP-E2E-011. Verifies `extract_heuristic_description(body, path_hint)`:
+  - `auto_describe_uses_body_summary` — first meaningful line (>20 chars) wins
+  - `auto_describe_falls_back_on_headers_only` — markdown with only headers falls back to `"ingested document"` when no `path_hint`
+  - `auto_describe_falls_back_to_stem_when_only_headers` — with `path_hint`, falls back to file stem (e.g. `headers-only`)
+  - `auto_describe_truncates_long_line` — descriptions truncated to ≤100 chars
+  - `auto_describe_ignores_short_and_blank_lines` — short lines (<21 chars) and blank lines are skipped
+- `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` — GAP-E2E-001. Verifies `Cargo.toml:6` description matches the actual binary size within ±5%
+- `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
 ## Current Test Suite Size
 
 945 tests passing via `cargo nextest -P ci` as of v1.0.85.2. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.

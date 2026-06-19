@@ -4,6 +4,71 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 # Changelog
 
 ## [Sem Versão]
+
+## [1.0.89] - 2026-06-19
+
+### Corrigido
+- **GAP-E2E-001** — Documentação do tamanho do binário agora corresponde à realidade. Binário de release medido em 15.321.016 bytes (14.6 MiB, 15.3 MB); descrição em `Cargo.toml:6` atualizada. A antiga alegação "6 MB" estava correta para o release LLM-only da v1.0.76 (apenas rusqlite + clap), mas o binário cresceu com novos recursos (GAP-002 split, GAP-058 env whitelist, GAP-E2E-007 schemars, helpers system-load + reaper, guard OAuth-only). Teste de regressão `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` faz parse da descrição do Cargo.toml e do binário para validar concordância dentro de 1 MiB.
+- **GAP-E2E-002** — `health` agora aceita `--namespace <NAMESPACE>` como os 30+ outros subcomandos. Adicionado `pub namespace: Option<String>` ao `HealthArgs` e o namespace aparece no envelope JSON de `HealthResponse`. Teste `tests/health_namespace_regression.rs::health_accepts_namespace_flag` valida o flag.
+- **GAP-E2E-007** — Schema JSON de `health` regenerado via derive `schemars 0.8` em `HealthResponse`. Adicionados 17 campos ausentes (`vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`, `fts_query_ok`). Trocado `additionalProperties: false` → `true` (política Must-Ignore por RFC 7493 I-JSON e `rules_rust_json_e_ndjson.md:33`). Novo binário `src/bin/dump_schema.rs` regenera o schema idempotentemente via `schema_for!()` + ordenação BTreeMap + aplicação recursiva de Must-Ignore. ADR-0048 (en + pt-BR) documenta a decisão Must-Ignore e a adoção de schemars 0.8. **MUDANÇA QUEBRANTE**: consumidores em modo strict devem migrar para Must-Ignore.
+- **GAP-E2E-008** — Paridade do flag `--db` restaurada para `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show`. Decisão de NÃO usar `clap::Arg::global = true` documentada em ADR-0049. Teste `tests/cli_db_flag_parity_regression.rs::assert_db_flag_on_all_namespace_subcommands` valida 5 subcomandos.
+- **GAP-E2E-009** — `migrate --dry-run --json` retorna relatório estruturado (`pending_migrations[]`, `pending_count`, `checksum_mismatches[]`, `status`) sem mutar o schema. Adicionado `--confirm`: runner padrão de migração espera literal "yes" no stdin antes de aplicar. Compatível com versões anteriores. Teste `tests/migrate_dry_run_regression.rs::dry_run_does_not_mutate_schema_history` confirma schema_version inalterado.
+- **GAP-E2E-010** — `codex-models --json` retorna envelope JSON `{"action":"codex_models","count":N,"default":"...","models":[...]}`. `pending list --db` e `pending show --db` aceitam `--db`. Testes em `tests/codex_models_json_regression.rs` e `tests/cli_db_flag_parity_regression.rs`.
+- **GAP-E2E-011** — Descrição de `ingest` não é mais hardcoded como `"ingested from <path>"`. Nova `extract_heuristic_description(body, path_hint)` extrai primeira linha significativa (>20 chars, não-header Markdown) truncada a 100 chars. Edge case FALTA-6 (corpo só com headers Markdown) cai para o stem do arquivo (ex.: `"headers-only"`). Novo flag `--no-auto-describe` restaura comportamento legado. Teste `tests/ingest_auto_describe_regression.rs` valida 5 cenários.
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy, 0 diffs de fmt.
+- Suite de testes: 843 testes lib + 1013 testes de integração + 21 testes doc = **1877 testes, 0 falhas, 7 ignorados**.
+- Tamanho do binário: 15.323.128 bytes (14.61 MiB) — dentro de 1 MiB do documentado.
+- Baseline do working tree preservado via tag `v1.0.88-baseline-2026-06-19` para rollback.
+
+## [1.0.88] - 2026-06-19
+
+### Corrigido
+- **BUG-11 CRÍTICO** — `src/embedder.rs` agora invoca `preflight_check` antes de `Command::spawn()` no pipeline de embedding LLM. Bypass anterior significava que um `CLAUDE_CONFIG_DIR` populado (ex.: instalação real do Claude Code em `/home/comandoaguiar/.claude01`) era aceito pelo caminho de embedding enquanto rejeitado pelos outros 3 spawners, produzindo comportamento inconsistente. Restaura paridade com `claude_runner.rs`, `codex_spawn.rs` e `ingest_claude.rs`.
+- **BUG-12 MÉDIO** — `src/output.rs:141` (`output::emit_error`) remove a chamada redundante de `eprintln!`. Apenas `tracing::error!` agora renderiza violação de OAuth-only para stderr. Stderr emite exatamente 1 linha por violação (eram 2). Validado por `oauth_stderr_emits_single_line_v1088`.
+- **BUG-13 MÉDIO** — `src/commands/link.rs` agora rejeita abreviações ALL_CAPS de 4 caracteres ou menos na camada de link (anteriormente aceitas apesar do validador de entidade as rejeitar). Restaura simetria com `remember --graph-stdin` e `ingest --mode claude-code`.
+
+### Adicionado
+- **`ADR-0047`** (`docs/decisions/adr-0047-stderr-deduplication.md`) documenta decisão de BUG-12 + GAP-15.
+- `tests/oauth_stderr_emits_single_line_v1088.rs` (cobertura para BUG-12).
+- `tests/slots_no_println_integration.rs` (cobertura para GAP-15).
+
+## [1.0.87] - 2026-06-19
+
+### Adicionado
+- **GAP-META-005 fechado** — módulo `src/spawn/preflight.rs` (≥200 linhas) com struct `PreFlightArgs` e enum `PreFlightError` (8 variantes). Atua como gate obrigatório antes de `Command::spawn()` nos 4 sites reais de spawn de subprocessos: `claude_runner.rs:255`, `codex_spawn.rs:273`, `ingest_claude.rs:297`, `extract/llm_embedding.rs:670`.
+- Variante `AppError::PreFlightFailed` com exit code 16, `is_permanent=true`, e mensagens i18n bilíngues (EN + PT-BR).
+- Helper `write_empty_mcp_config_tempfile()` escreve `{"mcpServers":{}}` em tempfile para que a substituição `--mcp-config <PATH>` funcione.
+- Opt-out `is_skipped()` via `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` para emergências (emite warning estruturado).
+- 15 testes unitários em `src/spawn/preflight.rs::tests` cobrindo todos os 7 guards + caminhos de integração.
+- **`ADR-0045`** (`docs/decisions/adr-0045-preflight-validation-layer.md`) documenta a decisão arquitetural.
+
+### Corrigido
+- **Bug 1** — `ingest --extraction-backend llm` não extrai mais silenciosamente `entities:0`; tracing de preflight emite `preflight_passed` para que operadores verifiquem que o spawn foi invocado.
+- **Bug 2** — `--mcp-config '{}'` literal não é mais rejeitado pelo Claude Code 2.1.177 com "Invalid MCP configuration"; spawners agora substituem por tempfile contendo `{"mcpServers":{}}`.
+- **Bug 3** — argv > `ARG_MAX - 4096` não falha mais com `E2BIG` pós-fork; preflight detecta o overflow antes de `cmd.spawn()` e aborta com erro estruturado.
+- **Bug 4** — Parser JSON downstream não trunca mais silenciosamente em 65.536 chars; preflight valida `expected_output_bytes` contra o cap documentado de 65 KiB.
+- **Bug 5** — Walk-up de `.mcp.json` a partir de diretórios pais não causa mais falhas de validação Zod mid-spawn; preflight sobe até 16 níveis de `workspace_root` e rejeita arquivos inválidos ANTES do fork.
+
+## [1.0.86] - 2026-06-15
+
+### Adicionado
+- 10 novos subcomandos para o pipeline LLM: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`.
+- Família `pending` (V014 — tabela `pending_memories`) fornece checkpoint de 3 estágios para o pipeline `remember`. O checkpointer sobrevive a crash; no restart, operador pode usar `pending list` para inspecionar a fila e `pending show <id>` para entrada única.
+- Família `embedding` expõe a fila de embedding LLM, com `--filter-status queued|processing|done|failed|skipped` e `--llm-backend codex,claude,none` para o pipeline retry-fallback.
+- Família `slots` expõe o semáforo host-wide: `slots status` reporta `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`; `slots release --slot-id N --yes` ceifa slots órfãos.
+- 6 novas flags globais: `--max-concurrency <N>`, `--wait-lock <SECONDS>`, `--llm-parallelism <N>` (padrão 4, clamp [1, 32]), `--ingest-parallelism <N>`, `--graceful-shutdown-secs <N>`, `--skip-embedding-on-failure` (válido apenas com `--llm-backend …,none`).
+- Contenção de lock via `fs4 = 0.9` com `fcntl(F_SETLK)` em Unix e `LockFileEx` em Windows (ADR-0039).
+
+### ADRs
+- ADR-0036 (`pending_memories_staging.md`)
+- ADR-0037 (`shutdown_json_envelope.md` — exit code 19)
+- ADR-0038 (`llm_backend_user_choice.md` — flag `--llm-backend`)
+- ADR-0039 (`llm_host_slot_semaphore.md`)
+- ADR-0040 (`stderr_capture_fallback_chain.md` — incidente OAuth 401 codex de 2026-06-14)
+
+
 ## [1.0.85.2] - 2026-06-17
 
 ### Corrigido
@@ -349,7 +414,7 @@ Nenhum símbolo público foi removido, renomeado ou teve sua assinatura alterada
 - `cargo check --all-targets` (default): 0 erros.
 - `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
 - `cargo fmt --all --check`: 0 diferenças.
-- `cargo build --bin sqlite-graphrag --release` (default, LLM-only): builda em ~25s, binário 6 MB.
+- `cargo build --bin sqlite-graphrag --release` (default, LLM-only): builda em ~25s, binário 14.6 MiB.
 - `cargo build --bin sqlite-graphrag --release --no-default-features --features embedding-legacy`: builda em ~1m 11s, binário 39 MB.
 - `cargo test --lib`: 745 passaram.
 - `cargo test --all-features`: verde nos 3 feature flags.

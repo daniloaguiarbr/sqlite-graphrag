@@ -197,7 +197,7 @@ sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db /caminho/para/graph
   - Reescreve os checksums de migração registrados para casar com o conteúdo atual do arquivo (cobre o mismatch V002; veja `--rehash` abaixo para a flag standalone)
   - Aplica a migração V013 que dropa as três vec tables e cria as tabelas BLOB-backed `memory_embeddings`, `entity_embeddings`, `chunk_embeddings`
 - `--drop-vec-tables` é a guarda de segurança explícita; sem ela, `--to-llm-only` recusa rodar
-- A CLI é `~6 MB` (de 39 MB); sem download de modelo ONNX; sem instalação local do fastembed
+- A CLI é `~14.6 MiB` (de 39 MB); sem download de modelo ONNX; sem instalação local do fastembed
 - Novas chamadas de `remember`, `edit`, `ingest` re-embutem a memória afetada via subprocesso headless `claude code` ou `codex` (OAuth)
 - Veja `docs/MIGRATION.pt-BR.md` para o caminho completo v1.0.74 → v1.0.76 → v1.1.0 e `docs/decisions/adr-0019-llm-only-one-shot.pt-BR.md` para a justificativa arquitetural
 
@@ -1399,7 +1399,7 @@ fn construir_prompt_com_contexto(consulta: &str, memorias: &[String]) -> String 
 ```
 
 ### Explanation
-- sqlite-graphrag delega embedding ao subprocesso LLM; a binária CLI tem ~6 MB sem modelo local embutido
+- sqlite-graphrag delega embedding ao subprocesso LLM; a binária CLI tem ~14.6 MiB sem modelo local embutido
 - A binária grava em um arquivo SQLite local que sobrevive a reinicializações do processo
 - `--namespace ollama-local` mantém memórias offline isoladas de namespaces de agentes em rede
 - `construir_prompt_com_contexto` injeta memórias recuperadas no prompt Ollama antes de cada inferência

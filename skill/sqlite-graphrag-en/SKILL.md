@@ -1,7 +1,22 @@
 ---
 name: sqlite-graphrag
-description:For persistent memory, GraphRAG, or long-term context in Claude Code, Codex, Cursor, Windsurf, AI agents. On: remember this, save conversation, retrieve context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, vec tables drop, embedding-dim, llm-parallelism, batched embedding, re-embed, force-reembed, G28-G58 gaps, OAuth-only enforcement, ANTHROPIC_API_KEY/OPENAI_API_KEY abort, Claude/Codex hardening flags, Mock LLM CLI in CI, daemon removal, A1/A2 audits, ADR-0032/0033/0034, G45/G53/G55/G56/G58, v1.0.82 five-gap (GAP-001..005), pending-embeddings, slots/pending/embedding subcommands, V014/V015 migrations, llm-max-host-concurrency, llm-slot-wait-secs, graceful-shutdown-secs, SHUTDOWN_EXIT_CODE, codex login, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, Minimax, OpenRouter, AWS Bedrock, --dry-run-backend, backend_invoked, vec_degraded_reason, embed_via_claude_local, LlmEmbeddingBuilder, GAP-003 slot circuit breaker, G58 deterministic OAuth fallback, G45-CR5 anthropic-ratelimit headers, G55 bilingual NotFound, v1.0.84, v1.0.85. KW: memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity v1.0.82 v1.0.83 v1.0.84 v1.0.85.
+description:For persistent memory, GraphRAG, or long-term context in Claude Code, Codex, Cursor, Windsurf, AI agents. On: remember this, save conversation, retrieve context, hybrid search, entity graph, SQLite memory, local RAG, LLM-only embedding, OAuth flow, BLOB-backed embedding, migrate to-llm-only, migrate rehash, drop vec tables, embedding-dim, llm-parallelism, batched embedding, re-embed, force-reembed, OAuth-only enforcement, ANTHROPIC_API_KEY abort, claude codex hardening, mock LLM CI, daemon removed, ADR-0041 v1.0.83, ANTHROPIC_AUTH_TOKEN, OpenRouter, AWS Bedrock, --dry-run-backend, backend_invoked, vec_degraded_reason, LlmEmbeddingBuilder, preflight validation, exit code 16, BUG-11/12/13, schema drift, Must-Ignore, --db flag parity, health --namespace, migrate --dry-run, ingest --auto-describe, codex-models --json, v1.0.86 v1.0.87 v1.0.88 v1.0.89. KW: memory RAG GraphRAG SQLite one-shot OAuth offline persistent graph entity.
 ---
+
+
+## Current Version (v1.0.89)
+- Current binary version: v1.0.89 (released 2026-06-19)
+- Current schema version: v15 (after init or migrate on fresh database)
+- This skill documents v1.0.86 through v1.0.89 features
+- Earlier versions (v1.0.85.2 and below) are out of scope
+- For older versions, consult git history of this skill
+
+
+## When This Skill Activates
+- USE when the user asks to remember, save, recall, retrieve, search, or persist anything across sessions
+- USE for long-term context, knowledge graph, GraphRAG, RAG, entity linking, memory management
+- USE when sqlite, sqlite-graphrag, embedding, FTS5, hybrid-search, or LLM memory is mentioned
+- DO NOT USE for one-off ephemeral data, simple file I/O, or tasks unrelated to persistent context
 
 
 ## Fundamental Principles
@@ -10,7 +25,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - READ stderr for tracing logs and human messages
 - CHECK exit code BEFORE parsing stdout
 - TRUST JSON contracts as SemVer-versioned API
-- BUILD is LLM-only and one-shot; binary is ~6 MB
+- BUILD is LLM-only and one-shot; binary is 14.6 MiB stripped ELF (NOT 6 MB as in older docs)
 - BUILD has NO daemon, NO ONNX runtime, NO model cache
 - OAUTH-ONLY: spawn ABORTS exit 1 if `ANTHROPIC_API_KEY` is set
 - OAUTH-ONLY: spawn ABORTS exit 1 if `OPENAI_API_KEY` is set
@@ -21,15 +36,29 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER edit the `.sqlite` file from another tool
 
 
-## Initialization, Health and Global Config
+## Quick Reference Card
+- INIT first time: `sqlite-graphrag init --namespace <ns>`
+- VERIFY health: `sqlite-graphrag health --json | jaq '.integrity_ok'`
+- STORE memory: `sqlite-graphrag remember --name <kebab> --type note --description "x" --body "y"`
+- INGEST folder: `sqlite-graphrag ingest ./docs --recursive --pattern "*.md" --type document`
+- SEARCH semantic: `sqlite-graphrag recall "query" --k 5 --json`
+- SEARCH hybrid: `sqlite-graphrag hybrid-search "query" --k 10 --rrf-k 60 --json`
+- GRAPH traversal: `sqlite-graphrag graph traverse --from <entity> --depth 2`
+- DEEP RESEARCH: `sqlite-graphrag deep-research "question" --k 20 --max-hops 3 --json`
+- HARD DELETE: `sqlite-graphrag forget --name <n>` then `purge --retention-days 30 --yes`
+
+
+## Initialization, Health, and Global Config
 - RUN `sqlite-graphrag init --namespace <ns>` on first use
 - RUN `health --json` to verify `integrity_ok` and `schema_ok`
 - VERIFY `schema_version >= 15` after `init` or `migrate`
 - RUN `migrate --json` after each binary upgrade
 - USE `migrate --to-llm-only --drop-vec-tables --json` for v1.0.74 or v1.0.75 databases
 - USE `migrate --rehash --json` to repair V002 SipHasher13 checksum drift
+- USE `migrate --dry-run --json` to PREVIEW pending migrations without applying
 - TREAT exit code 10 as database error; run `vacuum` and `health`
 - TREAT exit code 15 as busy; widen `--wait-lock`
+- TREAT exit code 16 as preflight failure (v1.0.87+); fix MCP config or set `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1`
 - ABORT pipeline when `integrity_ok` returns `false`
 - RUN `optimize --json` to refresh planner stats; response includes `fts_rebuilt`
 - USE `optimize --skip-fts --json` when FTS5 was recently rebuilt
@@ -37,9 +66,9 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - INSPECT `wal_size_mb` in `health` for fragmentation
 - VERIFY `journal_mode` equals `wal` in production
 - USE `debug-schema --json` for troubleshooting schema drift
-- PASS `--db <PATH>` to override database location
+- PASS `--db <PATH>` to override database location (now accepted on `embedding status/list/abandon`, `pending list/show` since v1.0.89, ADR-0049)
+- PASS `--namespace <NS>` on `health` since v1.0.89 to filter counts to one namespace
 - SET `SQLITE_GRAPHRAG_DB_PATH` env for persistent config
-- PASS `--namespace <ns>` to isolate project data
 - SET `SQLITE_GRAPHRAG_NAMESPACE` env for persistent namespace
 - PASS `--lang en` or `--lang pt` to force stderr language
 - PASS `--tz America/Sao_Paulo` to localize timestamps
@@ -47,7 +76,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - SET `SQLITE_GRAPHRAG_LOG_FORMAT=json` for log aggregators
 - USE `-v` for info, `-vv` for debug, `-vvv` for trace
 - ENABLE `SQLITE_GRAPHRAG_LOW_MEMORY=1` in constrained containers
-- SET `SQLITE_GRAPHRAG_EMBEDDING_DIM` env in range `[8, 4096]`
+- SET `SQLITE_GRAPHRAG_EMBEDDING_DIM` env in range `[8, 4096]` (default 64 MRL)
 - SET `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` for compliance mode (ADR-0041)
 - SET `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1` ONLY for CI test harnesses
 - VALID `--type` values: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
@@ -112,6 +141,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - EXPECT summary line: `files_total`, `files_succeeded`, `files_failed`, `files_skipped`, `elapsed_ms`
 - USE `--llm-parallelism N` on `ingest` (default 2, clamp [1, 32])
 - DISTINGUISH `--max-concurrency N` (CLI fan-out) from `--ingest-parallelism N` (per-file extract+embed)
+- USE `--auto-describe` (default true since v1.0.89) to extract description from first significant body line; opt out via `--no-auto-describe`
 - INVOKE `ingest --mode claude-code` for LLM-curated entity extraction
 - INVOKE `ingest --mode codex` for OpenAI Codex-curated extraction
 - EXPECT claude-code events: `entities` count, `rels` count, `cost_usd` (Omit cost for OAuth)
@@ -206,7 +236,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - INVOKE `reclassify --from-type <old> --to-type <new> --batch` for bulk reclassification
 - INVOKE `reclassify-relation --from-relation <old> --to-relation <new> --batch`
 - INVOKE `normalize-entities --yes` to normalize all names to kebab-case ASCII
-- VALIDATE names: minimum 2 chars, no newlines, no short ALL_CAPS
+- VALIDATE names: minimum 2 chars, no newlines, no short ALL_CAPS (4 chars or less rejected since v1.0.88 BUG-13 fix)
 - NORMALIZE names via NFKD then ASCII then lowercase then hyphens
 - CANONICAL relations: `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`, `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
 - NON-CANONICAL mapping: `adds|creates → causes`, `implements → supports`, `blocks → contradicts`, `tested-by → related`, `part-of → applies-to`
@@ -227,7 +257,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - PASS `--rrf-k 60` for standard RRF fusion constant
 - PASS `--weight-vec 1.0` and `--weight-fts 1.0` for balanced fusion
 - USE `--with-graph --max-hops 2 --min-weight 0.3` for graph expansion
-- EXPECT `hybrid-search` response (v1.0.84+): `results[]`, `graph_matches[]`, `fts_degraded`, `vec_degraded_reason?`, `backend_invoked`, `elapsed_ms`
+- EXPECT `hybrid-search` response: `results[]`, `graph_matches[]`, `fts_degraded`, `vec_degraded_reason?`, `backend_invoked`, `elapsed_ms`
 - READ BOTH `results[]` AND `graph_matches[]` when `--with-graph` active
 - INVOKE `related <name> --hops N` for multi-hop traversal from memory
 - PASS `--relation <type>` to filter traversal by relation
@@ -254,6 +284,82 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER read only `.results[]` when `--with-graph` is active
 
 
+## v1.0.86+ Surface (pending, slots, embedding, llm-backend, shutdown)
+- INVOKE `pending list --filter-status queued` to inspect three-stage remember checkpoint queue
+- INVOKE `pending show <id>` to inspect single checkpoint row
+- INVOKE `pending cleanup --yes` to remove terminal-state rows
+- BACKED by `pending_memories` table created by migration V014 (ADR-0036)
+- PASS `--db <PATH>` on `pending list`/`pending show` (v1.0.89, ADR-0049)
+- INVOKE `pending-embeddings list` to inspect retry queue for failed embeddings
+- INVOKE `pending-embeddings process` to reprocess with next backend
+- BACKED by `pending_embeddings` table created by migration V015 (ADR-0040)
+- INVOKE `slots status` to inspect host-wide slot semaphore
+- INVOKE `slots release --slot-id <N> --yes` to reap orphan slots
+- LOCK via `fs4 = "0.9"` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0039)
+- INVOKE `embedding status` for aggregate per-status counts
+- INVOKE `embedding list` for per-entry inspection
+- PASS `--db <PATH>` on `embedding status`/`embedding list`/`embedding abandon` (v1.0.89, ADR-0049)
+- PASS `--llm-backend codex,claude` for codex-first with claude fallback (ADR-0038)
+- PASS `--llm-backend codex,claude,none` for null embedding fallback
+- DEFAULT `--llm-backend` is `codex`
+- PASS `--llm-fallback-mode <claude|codex>` to swap backend mid-job on rate-limit
+- PASS `--max-concurrency N` global flag to limit concurrent heavy CLI invocations
+- PASS `--wait-lock SECS` global flag to widen lock acquisition window
+- PASS `--llm-parallelism N` global flag to cap embedding subprocess fan-out (default 4, clamp [1, 32])
+- PASS `--ingest-parallelism N` to control per-file extract+embed parallelism in `ingest`
+- PASS `--graceful-shutdown-secs N` to reserve cleanup budget before SIGKILL
+- PASS `--skip-embedding-on-failure` only when `--llm-backend …,none`
+- PASS ADR-0041 `--strict-env-clear` to drop custom-provider credentials in subprocess
+- PASS `--dry-run-backend` to plan backend operation without executing it (idempotent preview)
+- PARSE `backend_invoked` field in recall, hybrid-search, remember, edit, ingest, enrich, read envelopes to confirm effective backend
+- READ `vec_degraded_reason` in recall/hybrid-search envelopes when vec path is degraded
+- KNOW claude backend splits into local embedder via `embed_via_claude_local` (zero-token, OAuth-compatible)
+- USE `LlmEmbeddingBuilder` to compose embedding pipeline: `with_backend(Codex).or_fallback(Claude).or_skip()`
+- INVOKE `codex-models --json` since v1.0.89 to emit JSON envelope `{"action":"codex_models","count":N,"default":"...","models":[...]}` (no-op alias)
+- RUN `codex login` after upgrade to refresh OAuth refresh token (2026-06-14 incident)
+- OPERATOR action for stale OAuth: `codex login` then retry
+
+
+## v1.0.87+ Pre-Flight Validation Layer (ADR-0045, GAP-META-005)
+- KNOW that `src/spawn/preflight.rs` ports every LLM subprocess spawn through 7 guards BEFORE fork
+- KNOW exit code 16 (`EX_CONFIG`) is the universal preflight failure exit code (added v1.0.87)
+- KNOW 7 guards run in order: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`
+- KNOW `check_argv_size` rejects argv exceeding `ARG_MAX - 4096` bytes (margin for kernel env vars)
+- KNOW `check_binary_exists` aborts when `claude` or `codex` is not in PATH
+- KNOW `check_mcp_config_inline` rewrites `--mcp-config '{}'` literal to a tempfile with `{"mcpServers":{}}` (Claude Code 2.1.177 rejects the literal form)
+- KNOW `check_mcp_config_path` validates JSON content of `--mcp-config <PATH>` files
+- KNOW `check_walkup_mcp_json` rejects invalid `.mcp.json` in CWD ancestor chain (up to 16 levels via `Path::ancestors()`)
+- KNOW `check_output_buffer` doubles parser buffer above 64 KB to handle large model outputs
+- KNOW `check_claude_config_dir` avoids MCP leak from user-level `~/.claude/`
+- SET `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` ONLY in emergencies; bypass reverts to direct `Command::spawn()` and inherits all 5 GAP-META-005 bug classes
+- READ `AppError::PreFlightFailed(PreFlightError)` envelope JSON for variant-specific remediation
+- KNOW v1.0.88 BUG-11 fix ensures preflight failure propagates via `embed_via_backend_strict`; NEVER expect silent success when preflight fails
+- NEVER proceed past exit code 16 without addressing the specific variant reported
+
+
+## v1.0.88+ Hotfixes (BUG-11, BUG-12, BUG-13)
+- KNOW BUG-11 (CRITICAL) FIXED: preflight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict` instead of silent persist with `backend_invoked: "none"` and zero chunks
+- REPRODUCE BUG-11 fix: `CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp sqlite-graphrag remember --name X --type note --description x --body y` returns exit 11 with JSON error envelope
+- KNOW BUG-12 (MEDIUM) FIXED: OAuth-only enforcement emits exactly 1 stderr line (was 2 — duplicate `eprintln!` removed in `src/output.rs`)
+- VERIFY BUG-12 fix: `ANTHROPIC_API_KEY=sk-test sqlite-graphrag init` emits 1 stderr line
+- KNOW BUG-13 (MEDIUM) FIXED: `link --create-missing` validates entity names BEFORE normalizing (was bypassing validation; ALL_CAPS 3-4 char abbreviations like `API`, `WAL`, `RUST` now correctly rejected via CLI matching the `remember --graph-stdin` path)
+- VERIFY BUG-13 fix: `sqlite-graphrag link --from api --to service --create-missing --relation uses` returns exit 1 with validation error
+- INVOKE `AppError::PreFlightFailed(PreFlightError)` variant in error handling; exit code 16, `is_permanent() == true`
+
+
+## v1.0.89+ Schema Drift and Flag Parity (ADR-0048, ADR-0049)
+- KNOW `health.schema.json` regenerated via `schemars` derive macro (ADR-0048); `additionalProperties: true` per Must-Ignore policy (RFC 7493 I-JSON)
+- KNOW 17 new fields added to `health` envelope since v1.0.88: `fts_query_ok`, `vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`
+- REGENERATE schemas via `cargo run --bin dump-schema` (idempotent BTreeMap ordering)
+- PASS `--namespace <NS>` on `health` to filter counts to one namespace
+- USE `migrate --dry-run --json` to PREVIEW pending migrations without applying; lists names+versions, validates checksums, checks preconditions
+- USE `codex-models --json` as no-op alias returning JSON envelope
+- USE `--auto-describe` (default true) on `ingest` to extract description from first significant body line; opt out via `--no-auto-describe`
+- PASS `--db <PATH>` on `embedding status`/`embedding list`/`embedding abandon`/`pending list`/`pending show` (ADR-0049)
+- KNOW `--db <PATH>` is NOT global; each subcommand accepts it independently (clap `Arg::global = true` was REJECTED as invasive)
+- TREAT binary size as 14.6 MiB stripped ELF (NOT 6 MB as in older docs); see `Cargo.toml:6` description
+
+
 ## JSON Contracts (Top-5 Fields per Command)
 - `recall` top fields: `results[].name`, `snippet`, `distance`, `score`, `source`
 - `hybrid-search` top fields: `results[].name`, `combined_score`, `vec_rank`, `fts_rank`, `source`
@@ -269,16 +375,14 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - `pending list` top fields: `id`, `name`, `status`, `created_at`, `namespace`
 - `slots status` top fields: `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`
 - `embedding status` top fields: `pending`, `processing`, `done`, `failed`, `skipped`
-- `recall` top fields (v1.0.84+): add `backend_invoked`, `vec_degraded_reason?`
-- `hybrid-search` top fields (v1.0.84+): add `backend_invoked`, `vec_degraded_reason?`
-- `remember`/`edit`/`ingest`/`enrich`/`read` envelopes (v1.0.84+): include `backend_invoked`
-- ALL schemas use `"additionalProperties": false` (SemVer-versioned JSON API)
+- `remember`/`edit`/`ingest`/`enrich`/`read` envelopes: include `backend_invoked` and `vec_degraded_reason?`
+- `health.schema.json` uses `"additionalProperties": true` per Must-Ignore policy (RFC 7493 I-JSON) since v1.0.89 (ADR-0048); the other 49 schemas in `docs/schemas/` still use `"additionalProperties": false` (Must-Validate) pending regeneration in v1.0.90+
 - FULL schemas in `docs/schemas/*.schema.json` (never inline full schema in skill)
 
 
 ## Exit Codes and Retry
 - EXIT 0 means success; parse stdout
-- EXIT 1 means validation error (invalid weight, self-link, max-files exceeded)
+- EXIT 1 means validation error (invalid weight, self-link, max-files exceeded, link ALL_CAPS bypass)
 - EXIT 2 means Clap argument parsing error
 - EXIT 3 means optimistic lock conflict; reload `read --json` and retry
 - EXIT 4 means entity, memory, or version not found
@@ -286,21 +390,23 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - EXIT 6 means payload above size limit
 - EXIT 9 means duplicate memory (use `--force-merge` to update or restore)
 - EXIT 10 means database error; run `vacuum` and `health`
-- EXIT 11 means embedding failure (LLM subprocess error)
+- EXIT 11 means embedding failure (LLM subprocess error, including preflight fail since BUG-11 fix)
 - EXIT 13 means partial batch failure; reprocess only failed
 - EXIT 14 means I/O error (permission, disk full)
 - EXIT 15 means database busy; widen `--wait-lock`
+- EXIT 16 means preflight validation failure (v1.0.87+, ADR-0045); check JSON envelope for variant
 - EXIT 19 means SHUTDOWN_EXIT_CODE (ADR-0037); partial work discarded; RETRY MANDATORY
 - EXIT 19 envelope: `{error:true, code:19, signal, graceful, message}`
 - EXIT 20 means internal error or JSON serialization failure
 - EXIT 75 means slots exhausted OR `JobSingletonLocked`
 - EXIT 75 from `enrich`/`ingest --mode claude-code|codex`: parse `job '(\w+)'.*namespace '(\w+)'`
-- EXIT 75 v1.0.85 GAP-003 circuit breaker: respect per-namespace cooldown window; do NOT retry immediately
+- EXIT 75 circuit breaker: respect per-namespace cooldown window; do NOT retry immediately
 - EXIT 77 means RAM pressure; wait for free memory
 - NEVER ignore non-zero exit code as success
 - NEVER reprocess entire batch after exit 13
 - NEVER increase concurrency after exit 75 or 77
 - NEVER confuse exit 1 (validation) with exit 9 (duplicate)
+- NEVER treat exit 16 as transient; fix the underlying preflight issue
 
 
 ## Concurrency, RAM, Parallelism, Slots
@@ -321,43 +427,6 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER run `enrich` in parallel against same database
 
 
-## v1.0.82+ Surface (pending, slots, embedding, llm-backend, shutdown, v1.0.84/85 fields)
-- INVOKE `pending list --filter-status queued` to inspect three-stage remember checkpoint queue
-- INVOKE `pending show <id>` to inspect single checkpoint row
-- INVOKE `pending cleanup --yes` to remove terminal-state rows
-- BACKED by `pending_memories` table created by migration V014 (ADR-0036)
-- INVOKE `pending-embeddings list` to inspect retry queue for failed embeddings
-- INVOKE `pending-embeddings process` to reprocess with next backend
-- BACKED by `pending_embeddings` table created by migration V015 (ADR-0040)
-- INVOKE `slots status` to inspect host-wide slot semaphore
-- INVOKE `slots release --slot-id <N> --yes` to reap orphan slots
-- LOCK via `fs4 = "0.9"` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0039)
-- INVOKE `embedding status` for aggregate per-status counts
-- INVOKE `embedding list` for per-entry inspection
-- PASS `--llm-backend codex,claude` for codex-first with claude fallback (ADR-0038)
-- PASS `--llm-backend codex,claude,none` for null embedding fallback
-- DEFAULT `--llm-backend` is `codex`
-- PASS `--llm-fallback-mode <claude|codex>` to swap backend mid-job on rate-limit
-- EXPECT v1.0.85 G58 deterministic fallback when alt backend listed in `--llm-backend codex,claude`
-- PASS `--graceful-shutdown-secs N` to reserve cleanup budget before SIGKILL
-- PASS `--skip-embedding-on-failure` only when `--llm-backend …,none`
-- PASS ADR-0041 `--strict-env-clear` to drop custom-provider credentials in subprocess
-- RUN `codex login` after upgrade to refresh OAuth refresh token (2026-06-14 incident)
-- OPERATOR action for stale OAuth: `codex login` then retry
-- v1.0.84: PASS `--dry-run-backend` to plan backend operation without executing it (idempotent preview)
-- v1.0.84: PARSE `backend_invoked` field in recall, hybrid-search, remember, edit, ingest, enrich, read envelopes to confirm effective backend
-- v1.0.84: READ `vec_degraded_reason` in recall/hybrid-search envelopes when vec path is degraded
-- v1.0.84: KNOW claude backend splits into local embedder via `embed_via_claude_local` (zero-token, OAuth-compatible)
-- v1.0.84: USE `LlmEmbeddingBuilder` to compose embedding pipeline: `with_backend(Codex).or_fallback(Claude).or_skip()`
-- v1.0.85 GAP-003: RESPECT slot exhaustion circuit breaker; on exit 75, backoff per-namespace cooldown before retry
-- v1.0.85 G58: EXPECT deterministic OAuth quota fallback when alt backend declared in `--llm-backend` list
-- v1.0.85 G45-CR5: CAPTURE `anthropic-ratelimit-requests-remaining`, `anthropic-ratelimit-tokens-remaining`, `anthropic-ratelimit-input-tokens-reset`, `anthropic-ratelimit-output-tokens-reset` from response headers in envelope
-- v1.0.85 G55: EXPECT bilingual NotFound from `read --name <missing>` based on `--lang`: EN emits `Memory not found`, PT emits `Memória não encontrada`
-- v1.0.85 G56: DEFAULT embedding dim is 64 (MRL) when `SQLITE_GRAPHRAG_EMBEDDING_DIM` unset and `schema_meta.dim` absent
-- v1.0.85.1: KNOW `recall --llm-backend none` and `hybrid-search --llm-backend none` return exit 0 with `vec_degraded_reason: "dim_zero"` (GAP-004 hotfix)
-- v1.0.85.2: USE `--dry-run-backend` standalone without a subcommand (BUG-001); `setup_mock_path()` test mock emits proper JSON for claude and JSONL for codex (BUG-002); the `backend_invoked` field in 7 envelopes reflects the RESOLVED backend (BUG-003)
-
-
 ## Maintenance (fts, backup, vacuum, optimize, migrate, export, debug-schema, vec, completions)
 - INVOKE `fts rebuild --json` to fully rebuild FTS5 full-text index
 - INVOKE `fts check --json` to run FTS5 integrity check
@@ -371,15 +440,173 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - INVOKE `vacuum --json` after large purge to reclaim space
 - INVOKE `migrate --rehash --json` to repair V002 checksum drift
 - INVOKE `migrate --to-llm-only --drop-vec-tables --json` for v1.0.74/75 upgrades
+- INVOKE `migrate --dry-run --json` to preview migrations (v1.0.89)
 - INVOKE `debug-schema --json` (hidden from `--help`) to inspect schema state
 - INVOKE `completions <bash|zsh|fish|elvish|powershell>` to generate shell completions
 - INVOKE `vec orphan-list --json` to list orphaned memory vectors
 - INVOKE `vec purge-orphan --yes --dry-run` to PREVIEW purge
 - INVOKE `vec purge-orphan --yes` to PERMANENTLY purge orphans
 - INVOKE `vec stats --json` to inspect vec table health
+- REGENERATE schemas via `cargo run --bin dump-schema` (v1.0.89, ADR-0048)
 - SCHEDULE weekly: `purge --retention-days 30 --yes` then `cleanup-orphans --yes` then `prune-relations --relation mentions --yes` then `vacuum --json` then `optimize --json` then `sync-safe-copy --dest ~/backups/`
 - SINCE v1.0.53 every write runs `PRAGMA wal_checkpoint(TRUNCATE)` after commit
 - IF corruption occurs despite checkpoint: `sqlite3 broken.sqlite ".recover" | sqlite3 repaired.sqlite`
+
+
+## Ready-Made Examples
+
+### Example 1 — Bootstrap a project namespace
+```bash
+sqlite-graphrag init --namespace myproject
+sqlite-graphrag health --json | jaq '.integrity_ok'
+sqlite-graphrag health --json | jaq '{schema_version, counts}'
+```
+- EXPECT: exit 0, `integrity_ok: true`, `schema_version >= 15`
+
+### Example 2 — Store and retrieve a memory
+```bash
+sqlite-graphrag remember --name auth-decision --type decision \
+  --description "JWT 15-min expiry with refresh flow" \
+  --body-stdin <<'EOF'
+We chose JWT with 15-minute expiry because:
+- Refresh tokens are HTTP-only cookies
+- 15min limit reduces blast radius of XSS
+- Refresh flow reissues tokens on user activity
+EOF
+
+sqlite-graphrag read --name auth-decision --json | jaq '{description, body_length}'
+```
+- EXPECT: memory persisted, body contains full text, `body_length` > 100
+
+### Example 3 — Search with hybrid ranking + graph expansion
+```bash
+sqlite-graphrag hybrid-search "JWT authentication" --k 5 --with-graph --max-hops 2 --json \
+  | jaq -r '(.results[] | .name), (.graph_matches[] | .name)' | sort -u
+```
+- EXPECT: top 5 KNN+FTS5 fused results plus 0-N multi-hop neighbors
+
+### Example 4 — Bulk ingest a docs directory
+```bash
+sqlite-graphrag ingest ./docs --recursive --type document \
+  --pattern "*.md" --max-files 1000 --auto-describe --json \
+  | jaq -c 'select(.status)' | jaq -s 'group_by(.status) | map({status: .[0].status, count: length})'
+```
+- EXPECT: NDJSON progress; summary shows `files_total`, `files_succeeded`, `files_failed`
+
+### Example 5 — Graph traversal from a known entity
+```bash
+sqlite-graphrag graph entities --json | jaq -r '.entities[].name' | head -10
+sqlite-graphrag graph traverse --from jwt --depth 2 --json | jaq -r '.hops[] | "\(.entity) \(.relation)"'
+```
+- EXPECT: list of entities; traversal shows 2-hop neighborhood via canonical relations
+
+### Example 6 — Deep research question
+```bash
+sqlite-graphrag deep-research "How does the binary authenticate to OAuth providers?" \
+  --k 20 --max-hops 3 --max-sub-queries 5 --json \
+  | jaq '{stats, evidence_chains: (.evidence_chains | length)}'
+```
+- EXPECT: decomposed sub-queries, evidence chains linking seed to target, graph_context populated
+
+### Example 7 — LLM-curated entity extraction from existing docs
+```bash
+sqlite-graphrag ingest ./corpus --mode claude-code --recursive --resume --json \
+  | jaq -c 'select(.status == "done") | {file, entities, rels}'
+```
+- EXPECT: per-file NDJSON with `entities` count, `rels` count; `--resume` continues after interruption
+
+### Example 8 — Diagnose a preflight failure (exit 16)
+```bash
+CLAUDE_CONFIG_DIR=/tmp/bad-mcp sqlite-graphrag remember --name test --type note --description x --body y 2>&1
+echo "exit=$?"
+sqlite-graphrag remember --name test --type note --description x --body y 2>&1 || echo "exit=$?"
+```
+- EXPECT: first invocation returns exit 16 with `AppError::PreFlightFailed` envelope
+- EXPECT: second invocation without bad MCP dir returns exit 0
+
+### Example 9 — Recovery from soft-delete
+```bash
+sqlite-graphrag forget --name auth-decision
+sqlite-graphrag history --name auth-decision --json | jaq '.versions[0].deleted'
+sqlite-graphrag restore --name auth-decision
+sqlite-graphrag recall "JWT" --k 3 --json | jaq '.results[].name'
+```
+- EXPECT: soft-delete hides from recall; restore brings it back; recall shows it again
+
+### Example 10 — Health check with namespace filter and vec tables
+```bash
+sqlite-graphrag health --namespace prod --json | jaq '{integrity_ok, schema_version, counts}'
+sqlite-graphrag vec stats --json | jaq '.'
+sqlite-graphrag embedding status --json | jaq '{pending, done, failed}'
+```
+- EXPECT: scoped counts for the `prod` namespace; vec table health; embedding queue status
+
+### Example 11 — Regenerate JSON schemas after type changes
+```bash
+cargo run --bin dump-schema -- --check
+git diff --stat docs/schemas/
+cargo run --bin dump-schema  # if --check failed
+```
+- EXPECT: `--check` exits 0 when schemas are in sync; regeneration produces idempotent output
+
+### Example 12 — Maintenance pipeline (weekly)
+```bash
+sqlite-graphrag purge --retention-days 30 --yes --dry-run
+sqlite-graphrag cleanup-orphans --yes --dry-run
+sqlite-graphrag prune-relations --relation mentions --yes --dry-run
+sqlite-graphrag vacuum --json
+sqlite-graphrag optimize --json
+sqlite-graphrag sync-safe-copy --dest ~/backups/graphrag-$(date +%Y%m%d).sqlite
+```
+- EXPECT: each dry-run reports counts; full pipeline reclaims space and snapshots safely
+
+
+### Example 13 — Inspect Codex models whitelist (v1.0.89, no-op alias, GAP-E2E-010a)
+```bash
+sqlite-graphrag codex-models --json | jaq '{count, default, models: .models[:3]}'
+sqlite-graphrag codex-models  # text mode for humans
+sqlite-graphrag codex-models --json | jaq '.models | length'
+```
+- EXPECT: JSON envelope `{"action":"codex_models","count":N,"default":"gpt-5.5","models":[...]}`
+- EXPECT: text mode emits human-readable list of supported models
+- USE when validating that current OAuth scope includes required codex model names
+
+### Example 14 — Health check scoped to one namespace (v1.0.89, GAP-E2E-002)
+```bash
+sqlite-graphrag health --namespace prod --json | jaq '{integrity_ok, schema_version, counts}'
+sqlite-graphrag health --namespace dev --json | jaq '.counts'  # different counts
+sqlite-graphrag health --json | jaq '.counts'  # global counts
+```
+- EXPECT: counts filtered to the specified namespace; integrity and schema_version fields unchanged
+- USE in multi-tenant environments to verify per-namespace isolation
+- OMISSION RULE: when `--namespace` is omitted, counts aggregate across all namespaces (global view)
+
+### Example 15 — Dry-run migration preview (v1.0.89, GAP-E2E-009)
+```bash
+sqlite-graphrag migrate --dry-run --json | jaq '.would_apply[]? | {name, version}'
+sqlite-graphrag migrate --to-llm-only --drop-vec-tables --dry-run --json | jaq '.'
+sqlite-graphrag migrate --dry-run --json  # always PREVIEW before destructive migrations
+```
+- EXPECT: list of pending migrations with name+version without applying them; database remains unchanged
+- EXPECT: `--to-llm-only --dry-run` reports vec table drop plan without executing
+- USE in CI pipelines and before any irreversible migration step
+
+
+## References to Extended Documentation
+
+For details beyond this skill's daily-use scope, the following project documents extend coverage:
+
+- `docs/HOW_TO_USE.md` — quickstart, installation, common workflows
+- `docs/COOKBOOK.md` — 50+ recipes for advanced patterns (preflight diagnostics, schema drift recovery, etc.)
+- `docs/MIGRATION.md` — version-to-version upgrade paths
+- `docs/CROSS_PLATFORM.md` — behavior across Linux, macOS, Windows ARM64
+- `docs/AGENTS.pt-BR.md` — extended PT-BR documentation for AI agents
+- `docs/schemas/*.schema.json` — full JSON Schema contracts (versioned per SemVer)
+- `docs/decisions/adr-*.md` — Architecture Decision Records (justifications for each design choice)
+- `llms-full.txt` — complete LLM-context dump with all rules
+- `gaps.md` — current open and closed gaps
+- `CHANGELOG.md` — version-by-version release notes
+- `Cargo.toml` — package metadata and binary size documentation (14.6 MiB)
 
 
 ## Active Rules and Anti-patterns Summary
@@ -391,6 +618,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER run `enrich` in parallel against same database (job singleton via `lock::acquire_job_singleton`)
 - NEVER write to `.sqlite` file outside the binary
 - NEVER ignore exit 19 (SHUTDOWN_EXIT_CODE envelope); partial work discarded, RETRY MANDATORY
+- NEVER ignore exit 16 (preflight failure); fix MCP config or `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1`
 - NEVER duplicate content already in `CHANGELOG.md`
 - NEVER use `mentions` as default graph relation
 - NEVER pass empty body via `--graph-stdin` (exit 1 since v1.0.54)
@@ -398,3 +626,4 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - NEVER call `migrate --to-llm-only` without `--drop-vec-tables` safety guard
 - NEVER ignore `--wait-lock` flag when contention is expected
 - NEVER assume exit 1 equals exit 9 (validation vs duplicate)
+- NEVER assume binary size is 6 MB; actual is 14.6 MiB stripped ELF

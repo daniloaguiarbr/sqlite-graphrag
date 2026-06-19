@@ -11,11 +11,44 @@
 - G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
 # sqlite-graphrag for AI Agents (v1.0.79)
 
-> Persistent memory for 27 AI agents in a single 6 MB Rust binary.
+> Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary.
 > v1.0.79 is **LLM-only and one-shot**: every `remember` / `ingest`
 > spawns a headless claude code or codex CLI subprocess (OAuth, no
 > MCP, no hooks). There is no daemon, no ONNX runtime, no local
 > embedding model.
+
+## New in v1.0.86 — LLM-Heavy Surface and Host-Wide Slot Semaphore
+- 5 new subcommands for the LLM-heavy workflow: pending list, pending show, pending cleanup, embedding status, embedding list, embedding abandon, pending-embeddings list, pending-embeddings process, slots status, slots release
+- New family pending (V014 — pending_memories table) provides 3-stage checkpoint for the remember pipeline
+- New family embedding exposes the LLM embedding queue, with --filter-status queued|processing|done|failed|skipped and --llm-backend codex,claude,none for the retry-fallback pipeline
+- New family slots exposes the host-wide semaphore: slots status reports max_concurrency, acquired, waiting, held_by_pid[]; slots release --slot-id N --yes reaps orphan slots
+- New global flag --max-concurrency <N> clamps CLI invocations of heavy commands; --wait-lock <SECONDS> widens the busy-wait window
+- New global flag --llm-parallelism <N> bounds the fan-out of embedding subprocesses (default 4, clamp [1, 32])
+- New global flag --graceful-shutdown-secs <N> reserves cleanup budget before SIGKILL
+- Lock contention handled by fs4 0.9 with fcntl(F_SETLK) on Unix and LockFileEx on Windows (ADR-0039)
+- See docs/decisions/adr-0036-pending-memories-staging.md and adr-0039-llm-host-slot-semaphore.md
+
+## New in v1.0.87 — Pre-flight Validation Layer (ADR-0045, GAP-META-005)
+- New module src/spawn/preflight.rs (≥200 lines, 7 guards, 15 unit tests) gates every LLM subprocess spawn BEFORE the fork. Failures return AppError::PreFlightFailed (exit code 16, EX_CONFIG)
+- The 7 guards in order: check_argv_size, check_binary_exists, check_mcp_config_inline (replaces literal --mcp-config {} with tempfile; fixes BUG-2), check_mcp_config_path, check_walkup_mcp_json (fixes BUG-5), check_output_buffer (fixes BUG-4), check_claude_config_dir
+- Bypass: SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 disables all 7 guards. Last-resort opt-out
+- See docs/decisions/adr-0045-preflight-validation-layer.md and gaps.md#gap-meta-005
+
+## New in v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046 + ADR-0047)
+- BUG-11 (CRITICAL): preflight failure in extract/llm_embedding.rs:563-565 did not propagate to remember. Fixed with embed_via_backend_strict (2 tests in tests/bug11_preflight_regression.rs)
+- BUG-12 (MEDIUM): OAuth-only enforcement emitted 2 identical stderr lines. Fixed with single-line stderr (test oauth_stderr_emits_single_line_v1088)
+- BUG-13 (MEDIUM): link --create-missing bypassed entity-name validation. Fixed by validating BEFORE normalizing in src/commands/link.rs (8 tests in tests/entity_validation_integration.rs)
+- See docs/decisions/adr-0046-preflight-remediation.md and adr-0047-stderr-deduplication.md
+
+## New in v1.0.89 — Schema Drift, Flag Parity, Description Heuristic
+- GAP-E2E-007 (P1): health.schema.json regenerated via schemars derive macro. additionalProperties: true (Must-Ignore policy per RFC 7493 I-JSON). 17 new fields added. See ADR-0048
+- GAP-E2E-008 (P3): embedding status/list/abandon, pending list/show now accept --db <PATH>. See ADR-0049
+- GAP-E2E-009 (P3): migrate --dry-run --json now reports pending migrations without applying
+- GAP-E2E-010 (P3): codex-models --json accepted as no-op; pending list --db <PATH> parity
+- GAP-E2E-011 (P2): ingest --auto-describe (default true) extracts description from first meaningful body line
+- GAP-E2E-002 (P3): health --namespace <NS> --json filters counts to a single namespace
+- GAP-E2E-001 (P2): Binary size 14.6 MiB (not 6 MB as documented since v1.0.76)
+- Total: 1877 tests passing (843 lib + 1013 integration + 21 doc). See ADR-0048, ADR-0049
 
 ## v1.0.79 Architecture (LLM-Only)
 
@@ -176,7 +209,7 @@ Agents that try to set them will see a clear validation error.
 
 ## New in v1.0.76
 ### REQUIRED — LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
-- The default build of v1.0.76 is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 6 MB.
+- The default build of v1.0.76 is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 14.6 MiB.
 - The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The v1.0.74 fastembed + ort + tokenizers pipeline no longer exists in any build.
 - See ADR-0019 (LLM-Only One-Shot), ADR-0020 (Pure-Rust Cosine), ADR-0021 (Daemon Deprecation), ADR-0022 (BLOB-Backed Embeddings), ADR-0023 (Tokenizer Removal), ADR-0024 (FTS5 Coarse Filter + Cosine Refinement), ADR-0025 (OAuth-Only LLM Credential Flow), ADR-0026 (V002 `vec_tables` Migration Drift).
 ### REQUIRED — `migrate` Subcommand Family

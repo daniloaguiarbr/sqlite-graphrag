@@ -209,10 +209,7 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     }
 
-    let embedding_heavy = cli
-        .command
-        .as_ref()
-        .is_some_and(|c| c.is_embedding_heavy());
+    let embedding_heavy = cli.command.as_ref().is_some_and(|c| c.is_embedding_heavy());
     let measured_available_mb = if embedding_heavy {
         let available_mb = if cli.skip_memory_guard {
             available_memory_mb()
@@ -291,6 +288,12 @@ fn main() -> std::process::ExitCode {
         requested_concurrency.min(MAX_CONCURRENT_CLI_INSTANCES)
     };
     let wait_secs = cli.wait_lock.unwrap_or(CLI_LOCK_DEFAULT_WAIT_SECS);
+    if wait_secs > 5 {
+        tracing::info!(
+            wait_secs,
+            "cli slot acquire — using extended wait (cold-start headroom)"
+        );
+    }
 
     // Acquire a slot in the counting semaphore. The handle is kept alive until end of main
     // so the flock is released automatically when the file descriptor is closed.
@@ -384,7 +387,10 @@ fn main() -> std::process::ExitCode {
             sqlite_graphrag::cli::Commands::Export(args) => commands::export::run(args),
             sqlite_graphrag::cli::Commands::Fts(args) => commands::fts::run(args),
             sqlite_graphrag::cli::Commands::Vec(args) => commands::vec::run(args),
-            sqlite_graphrag::cli::Commands::CodexModels => {
+            sqlite_graphrag::cli::Commands::CodexModels(_args) => {
+                // GAP-E2E-010 (v1.0.89): `_args.json` is accepted as a no-op
+                // so pipelines appending `--json` do not fail with "unexpected
+                // argument". The output is always JSON.
                 let models = commands::codex_spawn::list_codex_models();
                 let payload = serde_json::json!({
                     "action": "codex_models",

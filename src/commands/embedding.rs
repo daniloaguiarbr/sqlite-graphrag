@@ -47,10 +47,15 @@ pub enum EmbeddingCmd {
 }
 
 #[derive(Debug, Args)]
-pub struct EmbeddingStatusArgs {}
+pub struct EmbeddingStatusArgs {
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
+}
 
 #[derive(Debug, Args)]
 pub struct EmbeddingListArgs {
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
     /// Filter by status: pending | in_progress | done | abandoned. Default: pending.
     #[arg(long, value_enum, default_value_t = EmbeddingStatusFilter::Pending)]
     pub status: EmbeddingStatusFilter,
@@ -81,6 +86,8 @@ impl From<EmbeddingStatusFilter> for PendingEmbeddingStatus {
 
 #[derive(Debug, Args)]
 pub struct EmbeddingAbandonArgs {
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
     /// Pending id to abandon.
     pub pending_id: i64,
     /// Skip the interactive confirmation prompt.
@@ -167,15 +174,15 @@ pub fn run(args: EmbeddingArgs, llm_backend: LlmBackendChoice) -> Result<(), App
     }
 }
 
-fn open_conn() -> Result<(AppPaths, rusqlite::Connection), AppError> {
-    let paths = AppPaths::resolve(None)?;
+fn open_conn(db: Option<&str>) -> Result<(AppPaths, rusqlite::Connection), AppError> {
+    let paths = AppPaths::resolve(db)?;
     let conn = open_rw(&paths.db)?;
     Ok((paths, conn))
 }
 
-fn run_status(_args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Result<(), AppError> {
+fn run_status(args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
 
     let counts = EmbeddingStatusCounts {
         pending: pending_embeddings::list_by_status(
@@ -218,7 +225,7 @@ fn run_status(_args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Resu
 
 fn run_list(args: EmbeddingListArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
     let status: PendingEmbeddingStatus = args.status.into();
     let rows = pending_embeddings::list_by_status(&conn, status, args.limit)?;
     let count = rows.len();
@@ -235,7 +242,7 @@ fn run_list(args: EmbeddingListArgs) -> Result<(), AppError> {
 
 fn run_abandon(args: EmbeddingAbandonArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
     pending_embeddings::abandon(&conn, args.pending_id)?;
     let output = EmbeddingAbandonOutput {
         action: "embedding_abandon",

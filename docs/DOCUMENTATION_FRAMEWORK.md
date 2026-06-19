@@ -1,4 +1,81 @@
-# Documentation Framework — Prompt Rules for Replication
+
+## v1.0.86, v1.0.87, v1.0.88, v1.0.89 — Coverage Update
+
+This section updates the framework to cover the documentation generated for the four most recent releases. The framework was last updated at v1.0.85.2 (line 661); this update closes a 3-release gap.
+
+### v1.0.86 — LLM-Heavy Surface and Host-Wide Slot Semaphore
+- New subcommand families documented in `INTEGRATIONS.md` lines 50-75: `pending` (V014, `pending_memories` table), `embedding` (status/list/abandon), `pending-embeddings` (V015, retry queue), `slots` (host-wide semaphore)
+- New global flags documented in `AGENTS.md` lines 14-22: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`
+- New ADRs: ADR-0036 (pending-memories), ADR-0037 (shutdown-json-envelope), ADR-0038 (llm-backend), ADR-0039 (llm-host-slot-semaphore), ADR-0040 (stderr-capture-fallback-chain)
+- `llms.txt` is OUT OF DATE for v1.0.86 (still declares "Current version 1.0.85.2") — should be regenerated for v1.0.90
+
+### v1.0.87 — Pre-flight Validation Layer (ADR-0045, GAP-META-005)
+- New module `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) gates every LLM subprocess spawn BEFORE the fork
+- New `AppError::PreFlightFailed(PreFlightError)` variant with `exit_code() == 16` and `is_permanent() == true`
+- New exit code 16 (`EX_CONFIG`) for pre-flight failures — NOT documented in any existing exit code table
+- New env var: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` — opt-out for all 7 guards
+- New ADR: ADR-0045 (preflight-validation-layer) — created in EN only as of v1.0.87; PT-BR translated in v1.0.89
+- Documented in: `INTEGRATIONS.md` (added v1.0.89), `HEADLESS_INVOCATION.md` (added v1.0.89), `SECURITY.md` (added v1.0.89), `AGENTS.md` (added v1.0.89)
+- `llms.txt` is OUT OF DATE for v1.0.87
+
+### v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+- **BUG-11 (CRITICAL)** fixed: preflight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict` instead of silent persistence with `backend_invoked: "none"`
+- **BUG-12 (MEDIUM)** fixed: OAuth-only enforcement now emits 1 stderr line (was 2) — duplicate `eprintln!` removed
+- **BUG-13 (MEDIUM)** fixed: `link --create-missing` now respects entity-name validation (rejected ALL_CAPS abbreviations in CLI were previously accepted)
+- New ADRs: ADR-0046 (preflight-remediation), ADR-0047 (stderr-deduplication)
+- New regression tests: `tests/bug11_preflight_regression.rs` (2 tests), `oauth_stderr_emits_single_line_v1088` (1 test), `tests/entity_validation_integration.rs` (8 tests)
+- Documented in: `AGENTS.md` (added v1.0.89), `TESTING.md` (added v1.0.89)
+- `llms.txt` is OUT OF DATE for v1.0.88
+
+### v1.0.89 — Schema Drift, Flag Parity, Description Heuristic
+- **GAP-E2E-007 (P1)** closed: `health.schema.json` regenerated via `schemars` derive macro. `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON). 17 new fields added.
+- New bin: `cargo run --bin dump-schema` regenerates 70+ schemas
+- **GAP-E2E-008 (P3)** closed: `embedding status/list/abandon`, `pending list/show` now accept `--db <PATH>` (no `clap::Arg::global = true` — see ADR-0049)
+- **GAP-E2E-009 (P3)** closed: `migrate --dry-run --json` now reports pending migrations without applying
+- **GAP-E2E-010 (P3)** closed: `codex-models --json` accepted as no-op; `pending list --db <PATH>` parity
+- **GAP-E2E-011 (P2)** closed: `ingest --auto-describe` (default true) extracts description from first meaningful body line
+- **GAP-E2E-002 (P3)** closed: `health --namespace <NS> --json` filters counts to a single namespace
+- **GAP-E2E-001 (P2)** closed: Binary size 14.6 MiB documented in `Cargo.toml:6` (was 6 MB since v1.0.76)
+- New ADRs: ADR-0048 (schema-as-derived-artifact), ADR-0049 (db-flag-scope-per-subcommand)
+- New regression tests: 7 suites covering the 10 GAPs (see TESTING.md v1.0.89 section)
+- Documented in: `AGENTS.md` (added v1.0.89), `TESTING.md` (added v1.0.89), `docs/decisions/INDEX.md` (created v1.0.89)
+- `llms.txt` still needs update for v1.0.89
+
+### Documentation Drift Status (as of v1.0.89)
+
+| Document | EN Coverage | PT-BR Coverage | Drift |
+|---|---|---|---|
+| `README.md` / `README.pt-BR.md` | v1.0.85.2 (corrected binary size) | v1.0.85 (3 versions behind) | PT-BR outdated |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.89 (100%) | v1.0.85.2 (4 versions behind) | PT-BR outdated |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.89 (added in v1.0.89 cycle) | v1.0.85 (3 versions behind) | PT-BR outdated |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.85 (3 versions behind) | PT-BR outdated |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.85 (3 versions behind) | PT-BR outdated |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.85.2 (3 versions behind) | v1.0.85 (3 versions behind) | BOTH outdated |
+| `llms-full.txt` | v1.0.79 (9 versions behind) | N/A | EN outdated |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.82 (6 versions behind for new GAPs) | Same | EN outdated for new GAPs |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.82 (6 versions behind for new GAPs) | Same | EN outdated for new GAPs |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.85.2 (3 versions behind for preflight) | Same | EN outdated for preflight |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.89 (added in v1.0.89 cycle) | v1.0.85 (3 versions behind) | PT-BR outdated |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.85.2 (3 versions behind) | v1.0.82 (6 versions behind) | BOTH outdated |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.82 (6 versions behind) | PT-BR outdated |
+| `docs/decisions/` (43 ADRs) | 100% (43/43) | 77% (33/43) | 10 ADRs missing PT-BR |
+| `docs/schemas/` (70+ schemas) | 100% | N/A | N/A |
+
+### Framework Update — Mandatory Coverage of v1.0.86+
+
+To prevent future drift, the following is now MANDATORY for any release that introduces new CLI surface, new ADRs, or new exit codes:
+
+1. **README.md AND README.pt-BR.md** updated in the same release cycle
+2. **CHANGELOG.md AND CHANGELOG.pt-BR.md** updated in the same release cycle
+3. **AGENTS.md** updated with `## New in vX.Y.Z` section
+4. **TESTING.md** updated with `## vX.Y.Z — <summary>` section listing new tests
+5. **INTEGRATIONS.md** updated with new subcommand family documentation
+6. **SECURITY.md** updated if exit codes change or new env vars are introduced
+7. **llms.txt** updated if new subcommands or global flags are added
+8. **New ADR** created in EN, PT-BR translation added within 1 release cycle
+9. **docs/decisions/INDEX.md** updated to include new ADR with link
+
+A CI gate that checks all 9 items would prevent the 3-version drift observed in v1.0.86-88.# Documentation Framework — Prompt Rules for Replication
 
 > Regras imperativas invioláveis para replicar o framework de documentação deste projeto em qualquer outro projeto Rust CLI ou software open-source
 

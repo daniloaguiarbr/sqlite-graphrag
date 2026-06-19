@@ -6,9 +6,9 @@
 - The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
 - `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
-# CROSS PLATFORM SUPPORT
+# CROSS PLATFORM SUPPORT (v1.0.89 — Preflight Cross-Target + Slot Semaphore Windows ARM64)
 
-> One 6 MB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
+> One 14.6 MiB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 
 
 - Read this guide in Portuguese at [CROSS_PLATFORM.pt-BR.md](CROSS_PLATFORM.pt-BR.md)
@@ -48,11 +48,11 @@ cargo install --locked sqlite-graphrag
 ### Targets — Five Combinations We Ship and Test
 | Target | OS | Architecture | Binary Size | Startup |
 | --- | --- | --- | --- | --- |
-| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~6 MB | <50ms |
-| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~6 MB | <60ms |
-| aarch64-apple-darwin | macOS | Apple Silicon | ~6 MB | <30ms |
-| x86_64-pc-windows-msvc | Windows | x86_64 | ~6 MB | <80ms |
-| aarch64-pc-windows-msvc | Windows | ARM64 | ~6 MB | <80ms |
+| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~14.6 MiB | <50ms |
+| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~14.6 MiB | <60ms |
+| aarch64-apple-darwin | macOS | Apple Silicon | ~14.6 MiB | <30ms |
+| x86_64-pc-windows-msvc | Windows | x86_64 | ~14.6 MiB | <80ms |
+| aarch64-pc-windows-msvc | Windows | ARM64 | ~14.6 MiB | <80ms |
 
 - Every row above gets a release asset attached to each GitHub release tag
 - Every row above receives automated smoke tests in CI on every pushed commit (with the mock LLM CLI prepended to PATH)
@@ -131,6 +131,20 @@ sqlite-graphrag remember --name "memória-acentuada" --body "caracteres unicode 
 - The explicit `windows-2025` runner label (replacing `windows-latest` since v1.0.73) remains the right call until the VS2026 redirect cutover (2026-06-15); see ADR-0033 for the full rationale and boundary conditions
 
 
+## Pre-Flight Validation Layer Behaviour Across 5 Targets (v1.0.87+, ADR-0045, GAP-META-005)
+- The preflight layer runs identically on Linux glibc, Linux musl, macOS x86_64, macOS ARM64, Windows x86_64, and Windows ARM64
+- `check_argv_size` reads `ARG_MAX` via `libc::sysconf(_SC_ARG_MAX)` on POSIX and via `GetCommandLine` parsing on Windows. The threshold is `ARG_MAX - 4096` to leave headroom for kernel env
+- `check_binary_exists` resolves `claude` and `codex` via `which::which` on POSIX and via `where` on Windows (`CommandExt::which_cmd` in `src/spawn/preflight.rs:78`)
+- `check_mcp_config_inline` writes the empty MCP config tempfile via `tempfile::NamedTempFile::new_in(std::env::temp_dir())` — works on all 5 targets because `std::env::temp_dir()` returns the platform-correct temp dir
+- `check_mcp_config_path` and `check_walkup_mcp_json` walk up via `std::path::Path::ancestors()` — POSIX uses `/` separator, Windows uses `\`; the helper normalises both
+- `check_output_buffer` allocates `Vec<u8>` with capacity `max(expected * 2, 65536)` — works identically on all targets
+- `check_claude_config_dir` reads `CLAUDE_CONFIG_DIR` from the env and validates the directory is empty or absent. On Windows, an empty directory is denoted by zero files; on POSIX, by zero entries
+- Exit code 16 (`EX_CONFIG`) is identical across all targets via `AppError::PreFlightFailed::exit_code()`. Operators scripting cross-platform pipelines can rely on a single failure mode
+- The 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) share the preflight module — no platform-specific duplication
+- Bypass: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` works identically on all 5 targets. Last-resort opt-out
+- Windows ARM64 specific: the slot semaphore (ADR-0039) uses `LockFileEx` from `windows-sys 0.59`. v1.0.87+ adds preflight as an additional gate before the lock is acquired, reducing lock contention on cold-start
+- macOS Gatekeeper interaction: the preflight tempfile is written to `$TMPDIR` (typically `/var/folders/.../T/`), which is excluded from Gatekeeper checks. No quarantine flag is applied. This matches the behavior of `cargo install` artifacts
+- See `docs/decisions/adr-0045-preflight-validation-layer.md` (en + pt-BR) for the cross-platform design rationale
 ## Containers
 ### glibc Images — Official Path Today
 - Prefer Debian or Ubuntu base images for the current official Linux release assets

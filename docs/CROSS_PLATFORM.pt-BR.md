@@ -8,7 +8,7 @@
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
 # SUPORTE CROSS PLATFORM
 
-> Um binário de 6 MB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
+> Um binário de 14.6 MiB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 
 - Leia este guia em inglês em [CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 - Volte ao [README.md](../README.md) principal para referência completa de comandos
@@ -48,11 +48,11 @@ cargo install --path .
 ### Targets — Cinco Combinações Que Publicamos e Testamos
 | Target | Sistema Operacional | Arquitetura | Tamanho do Binário | Startup |
 | --- | --- | --- | --- | --- |
-| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~25 MB | <50ms |
-| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~24 MB | <60ms |
-| aarch64-apple-darwin | macOS | Apple Silicon | ~22 MB | <30ms |
-| x86_64-pc-windows-msvc | Windows | x86_64 | ~28 MB | <80ms |
-| aarch64-pc-windows-msvc | Windows | ARM64 | ~27 MB | <80ms |
+| x86_64-unknown-linux-gnu | Linux glibc | x86_64 | ~14.6 MiB | <50ms |
+| aarch64-unknown-linux-gnu | Linux glibc | aarch64 | ~14.6 MiB | <60ms |
+| aarch64-apple-darwin | macOS | Apple Silicon | ~14.6 MiB | <30ms |
+| x86_64-pc-windows-msvc | Windows | x86_64 | ~14.6 MiB | <80ms |
+| aarch64-pc-windows-msvc | Windows | ARM64 | ~14.6 MiB | <80ms |
 
 - Cada linha acima recebe asset de release vinculado a cada tag publicada no GitHub
 - Cada linha acima recebe smoke tests automatizados em CI a cada commit empurrado

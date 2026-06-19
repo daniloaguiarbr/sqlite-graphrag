@@ -21,6 +21,7 @@ pub mod hybrid_search;
 pub mod ingest;
 pub mod ingest_claude;
 pub mod ingest_codex;
+pub mod ingest_heuristics;
 pub mod init;
 pub mod link;
 pub mod list;

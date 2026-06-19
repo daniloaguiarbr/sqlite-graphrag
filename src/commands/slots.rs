@@ -131,15 +131,29 @@ fn run_status(args: SlotsStatusArgs) -> Result<(), AppError> {
 
     if matches!(args.format, OutputFormat::Json) {
         let json = serde_json::to_string_pretty(&output).map_err(AppError::Json)?;
+        // JSON output stays on stdout (this IS the data payload, not a log line).
         println!("{json}");
     } else {
-        println!("max_concurrency: {}", output.max_concurrency);
-        println!("active: {} / free: {}", output.active, output.free);
+        // GAP-007 (v1.0.88): text-mode output now flows through the
+        // `tracing` pipeline (target: "slots") instead of `println!` so
+        // operators can filter slot events independently and so the
+        // output is captured by the structured-log sinks in CI.
+        tracing::info!(target: "slots", max_concurrency = output.max_concurrency, "slot status");
+        tracing::info!(
+            target: "slots",
+            active = output.active,
+            free = output.free,
+            "slot occupancy"
+        );
         for s in &output.slots {
             let pid = s.pid_hint.map(|p| p.to_string()).unwrap_or_default();
-            println!(
-                "  slot {} — age={}s pid={} {}",
-                s.slot_id, s.age_secs, pid, s.path
+            tracing::info!(
+                target: "slots",
+                slot_id = s.slot_id,
+                age_secs = s.age_secs,
+                pid = %pid,
+                path = %s.path,
+                "slot entry"
             );
         }
     }

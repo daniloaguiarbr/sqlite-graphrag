@@ -117,6 +117,23 @@ pub struct IngestArgs {
         help = "Enable automatic URL-regex extraction (the GLiNER NER pipeline was removed in v1.0.79)"
     )]
     pub enable_ner: bool,
+
+    /// GAP-E2E-011: gera description heurística a partir da primeira linha
+    /// significativa do body, em vez de "ingested from <path>". Quando
+    /// `--no-auto-describe` é passado, mantém o comportamento legado.
+    #[arg(
+        long,
+        default_value_t = true,
+        overrides_with = "no_auto_describe",
+        help = "Derive memory description from the first meaningful body line instead of the legacy `ingested from <path>` placeholder."
+    )]
+    pub auto_describe: bool,
+    #[arg(
+        long = "no-auto-describe",
+        default_value_t = false,
+        help = "Disable `--auto-describe` and fall back to the legacy `ingested from <path>` description placeholder."
+    )]
+    pub no_auto_describe: bool,
     #[arg(
         long,
         env = "SQLITE_GRAPHRAG_GLINER_VARIANT",
@@ -466,6 +483,7 @@ fn stage_file(
     max_rss_mb: u64,
     llm_parallelism: usize,
     llm_backend: crate::cli::LlmBackendChoice,
+    auto_describe: bool,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
 
@@ -504,7 +522,14 @@ fn stage_file(
         return Err(AppError::Validation(crate::i18n::validation::empty_body()));
     }
 
-    let description = format!("ingested from {}", path.display());
+    let description = if auto_describe {
+        crate::commands::ingest_heuristics::extract_heuristic_description(
+            &raw_body,
+            Some(&path.display().to_string()),
+        )
+    } else {
+        format!("ingested from {}", path.display())
+    };
     if description.len() > MAX_MEMORY_DESCRIPTION_LEN {
         return Err(AppError::Validation(
             crate::i18n::validation::description_exceeds(MAX_MEMORY_DESCRIPTION_LEN),
@@ -1253,6 +1278,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
         );
     }
     let enable_ner = args.enable_ner;
+    let auto_describe = args.auto_describe && !args.no_auto_describe;
     let max_rss_mb = args.max_rss_mb;
     let llm_parallelism = args.llm_parallelism as usize;
     // v1.0.79: `--mode gliner` and `--gliner-variant` are no-ops kept for
@@ -1311,6 +1337,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     max_rss_mb,
                     llm_parallelism,
                     llm_backend_owned,
+                    auto_describe,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
 

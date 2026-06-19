@@ -6,7 +6,7 @@
 - As 7 flags de endurecimento para `claude -p` (`--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema` mais model e prompt) e o conjunto canônico para `codex exec` permanecem inalterados. A mudança no whitelist de env é puramente aditiva no passo de whitelist entre `env_clear()` e a construção das flags canônicas
 - Sem telemetria nova: o fix é silencioso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` para a justificativa arquitetural completa
-# Invocação Headless — Claude Code, Codex, OpenCode sem MCP e sem Hooks
+# Invocação Headless — Claude Code, Codex, OpenCode sem MCP e sem Hooks (v1.0.89 — Camada Pre-flight + Hotfixes)
 
 > Como invocar LLMs headless neste projeto sem herdar MCPs ou hooks do ambiente, mantendo o login OAuth de assinatura.
 
@@ -283,6 +283,38 @@ Se a execução for interrompida entre as camadas, o arquivo SQLite
 permanece consistente (WAL, commit atômico, sem escritas
 parciais), e `restore` ou `enrich --operation re-embed --resume`
 podem retomar a partir da última memória bem-sucedida.
+
+## Camada de Validação Pre-Flight em Invocação Headless (v1.0.87, ADR-0045, GAP-META-005)
+- O módulo `src/spawn/preflight.rs` (≥200 linhas, 7 guards, 15 testes unitários) porta todo spawn de subprocesso LLM ANTES do fork
+- Os 7 guards em ordem: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`
+- Falhas retornam `AppError::PreFlightFailed(PreFlightError)` com `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`)
+- A variante `McpConfigInlineJsonRejected` (Bug 2 do GAP-META-005) é crítica em invocação headless: Claude Code 2.1.177 rejeita `--mcp-config '{}'` literal. O preflight substitui automaticamente por tempfile com `{"mcpServers":{}}`
+- A variante `WalkUpMcpJsonInvalid` (Bug 5) detecta `.mcp.json` inválido em diretórios ancestrais do CWD — walk-up de até 16 níveis via `std::path::Path::ancestors()`
+- A variante `ArgvExceedsArgMax` (Bug 3) protege contra `E2BIG` pós-fork para corpos de memória grandes. Threshold: `ARG_MAX - 4096` bytes (margem de 4 KB para env vars do kernel)
+- A variante `BinaryNotFound` verifica que `claude` ou `codex` está em PATH antes do fork. Usa `which::which` em POSIX e `where` em Windows
+- Bypass em emergências: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` desabilita todos os 7 guards. Bypass reverte para `Command::spawn()` direto e herda todas as 5 classes BUG do GAP-META-005
+- O preflight compartilha o helper `apply_env_whitelist` (ADR-0041) — ordem de execução: env_clear primeiro, depois preflight
+- Cada spawner adiciona uma única linha antes de `cmd.spawn()`: `preflight_check(&PreFlightArgs { ... }).map_err(|e| AppError::PreFlightFailed(e))?`
+- Telemetria: `tracing::info!(event = "preflight_passed", spawner = %name, argv_bytes = total)` em sucesso; `tracing::warn!(event = "preflight_failed", spawner = %name, error = %e)` em falha
+- Veja `docs/decisions/adr-0045-preflight-validation-layer.md` (en + pt-BR) para a justificativa arquitetural completa
+
+## Hotfixes BUG-11/12/13 em Invocação Headless (v1.0.88, ADR-0046, ADR-0047)
+- **BUG-11 (CRÍTICO)**: falha pre-flight em `extract/llm_embedding.rs:563-565` não propagava para `remember`, que silenciosamente persistia a memória com `backend_invoked: "none"` e zero chunks. Corrigido com `embed_via_backend_strict`. Repro: `CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp remember --name X --type note --description x --body y` retorna exit 11 + envelope JSON de erro
+- **BUG-12 (MÉDIO)**: enforço OAuth-only emitia 2 linhas stderr idênticas (uma de `tracing::error!`, uma de `eprintln!`). Corrigido removendo `eprintln!` duplicado em `src/output.rs`. Teste: `oauth_stderr_emits_single_line_v1088`. Repro: `ANTHROPIC_API_KEY=sk-test /path/bin/sqlite-graphrag init` agora emite 1 linha stderr (eram 2)
+- **BUG-13 (MÉDIO)**: `link --create-missing` bypassava validação de nome de entidade. Corrigido validando ANTES de normalizar em `src/commands/link.rs`. 8 testes em `tests/entity_validation_integration.rs`
+- Nova variante `AppError::PreFlightFailed(PreFlightError)` com `exit_code() == 16` e `is_permanent() == true`. Substitui os 3 spawners chamando `std::process::exit(16)` diretamente
+- Veja `docs/decisions/adr-0046-preflight-remediation.md` e `adr-0047-stderr-deduplication.md` (en + pt-BR)
+
+## Schema Drift e Flag Parity para Agentes Headless (v1.0.89, ADR-0048, ADR-0049)
+- `health.schema.json` regenerado via `schemars 0.8` derive macro. 17 novos campos adicionados. `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON)
+- Agentes que validam resposta de `health --json` devem migrar de `additionalProperties: false` (strict) para Must-Ignore para receber benefícios de evolução de schema
+- `--db <PATH>` agora aceito em `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show` — operadores headless podem apontar para múltiplos bancos sem flag global
+- `codex-models --json` retorna envelope JSON `{"action":"codex_models","count":N,"default":"...","models":[...]}`
+- `migrate --dry-run --json` reporta migrações pendentes sem aplicar. Adicionado `--confirm` para exigir confirmação literal antes de apply
+- `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo. Substitui a antiga `"ingested from <path>"` genérica
+- `health --namespace <NS> --json` filtra contagens para um único namespace — útil em ambientes multi-tenant
+- Binário medido em 15.323.128 bytes (14.6 MiB), dentro de 1 MiB do documentado em `Cargo.toml:6`. Drift viral "6 MB" eliminado
+- 1877 testes passando (843 lib + 1013 integração + 21 doc)
 
 ## Referências Externas Validadas
 

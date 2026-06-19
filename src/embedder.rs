@@ -364,6 +364,78 @@ fn acquire_llm_slot_for_embedding() -> Result<crate::llm_slots::LlmSlotGuard, Ap
         Err(e) => Err(e),
     }
 }
+/// GAP-004 (v1.0.88): typed classifier for embedding error messages.
+///
+/// Decomposes the legacy `AppError::Embedding(String)` payload into a
+/// small enum so the call sites can branch on the cause instead of
+/// repeating `msg.contains(...)` literals. The classification is purely
+/// lexical (case-insensitive substring match on the error message) — no
+/// I/O, no retries, no telemetry, deterministic and safe under
+/// `#[serial_test::serial(env)]`.
+///
+/// 6 variants cover the 5 known discriminators from v1.0.85 (ADR-0043)
+/// plus an `Unknown` fallback for messages that do not match any marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingErrorKind {
+    /// OAuth token expired or absent; no backend can authenticate.
+    OAuth,
+    /// OAuth usage quota exhausted on the named backend.
+    Quota,
+    /// LLM slot semaphore exhausted after the backoff window.
+    SlotExhausted,
+    /// User-requested backend differs from the one that actually executed.
+    BackendMismatch,
+    /// Embedding returned a zero-dimensional vector (structural bug).
+    ZeroDimension,
+    /// Message did not match any of the 5 markers above.
+    Unknown,
+}
+
+impl EmbeddingErrorKind {
+    /// Classify an embedding error message into a typed kind.
+    ///
+    /// Order of checks matters: `OAuth` is matched before `Quota` because
+    /// both substrings can co-occur in the same message. `SlotExhausted`
+    /// is checked before `Quota` because the slot-sema path is more
+    /// specific (the LLM never even tried to authenticate). The checks
+    /// are case-insensitive so `OAuth` and `oauth` both classify to
+    /// `EmbeddingErrorKind::OAuth`.
+    pub fn classify(msg: &str) -> Self {
+        let m = msg.to_lowercase();
+        if m.contains("oauth") {
+            Self::OAuth
+        } else if m.contains("quota") {
+            Self::Quota
+        } else if m.contains("slot exhausted") {
+            Self::SlotExhausted
+        } else if m.contains("backend mismatch") {
+            Self::BackendMismatch
+        } else if m.contains("dim") && m.contains("zero") {
+            Self::ZeroDimension
+        } else {
+            Self::Unknown
+        }
+    }
+
+    /// Stable, machine-friendly discriminator code (lowercase, kebab-safe).
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::OAuth => "oauth",
+            Self::Quota => "quota",
+            Self::SlotExhausted => "slot-exhausted",
+            Self::BackendMismatch => "backend-mismatch",
+            Self::ZeroDimension => "zero-dimension",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for EmbeddingErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
 /// G58/S1: reason an embedding call could not be completed and the caller
 /// must fall back to a non-vector retrieval path (FTS5 prefix + LIKE).
 ///
@@ -522,48 +594,6 @@ pub fn try_embed_query_with_deterministic_fallback(
 /// telemetry, deterministic and `#[serial_test::serial(env)]`-safe.
 pub fn classify_embedding_error(err: AppError) -> FallbackReason {
     match err {
-        AppError::Embedding(msg) if msg.contains("cancelled") => FallbackReason::Cancelled,
-        AppError::Embedding(msg) if msg.contains("slot exhausted") => FallbackReason::SlotExhausted,
-        AppError::Embedding(msg) if msg.contains("OAuth") || msg.contains("quota") => {
-            let backend = if msg.contains("codex") {
-                "codex"
-            } else if msg.contains("claude") || msg.contains("anthropic-ratelimit") {
-                // G45-CR5: anthropic-ratelimit-* headers are emitted only by
-                // the Claude CLI subprocess; treat them as claude quota
-                // signals even when the message text omits the word
-                // "claude" explicitly.
-                "claude"
-            } else {
-                "unknown"
-            };
-            FallbackReason::OAuthQuota { backend }
-        }
-        AppError::Embedding(msg) if msg.contains("backend mismatch") => {
-            // The `msg.contains("claude")` arm is intentionally
-            // placed BEFORE the `msg.contains("OAuth")` arm so that
-            // a backend-mismatch message that mentions both
-            // "claude" and "codex" maps to BackendMismatch (the more
-            // specific failure mode).
-            let (requested, resolved) =
-                if msg.contains("requested claude") && msg.contains("but codex") {
-                    ("claude", "codex")
-                } else if msg.contains("requested codex") && msg.contains("but claude") {
-                    ("codex", "claude")
-                } else if msg.contains("requested claude") {
-                    ("claude", "unknown")
-                } else if msg.contains("requested codex") {
-                    ("codex", "unknown")
-                } else {
-                    ("unknown", "unknown")
-                };
-            FallbackReason::BackendMismatch {
-                requested,
-                resolved,
-            }
-        }
-        AppError::Embedding(msg) if msg.contains("dim") && msg.contains("zero") => {
-            FallbackReason::DimZero
-        }
         AppError::Timeout {
             operation,
             duration_secs,
@@ -571,7 +601,71 @@ pub fn classify_embedding_error(err: AppError) -> FallbackReason {
             operation,
             duration_secs,
         },
-        AppError::Embedding(msg) => FallbackReason::EmbeddingFailed(msg),
+        AppError::Embedding(msg) => match EmbeddingErrorKind::classify(&msg) {
+            // GAP-004 (v1.0.88): typed-discriminator dispatch.
+            // The lexical classifier picks the discriminator; the arms below
+            // enrich the result with the backend name and the
+            // requested/resolved pair that the JSON envelope needs.
+            //
+            // Note: `Cancelled` and `EmbeddingFailed(msg)` are not in the
+            // 6-variant enum (they have no lexical marker) so we keep them
+            // as explicit guards at the head of the match.
+            EmbeddingErrorKind::SlotExhausted => FallbackReason::SlotExhausted,
+            EmbeddingErrorKind::OAuth => {
+                let backend = if msg.contains("codex") {
+                    "codex"
+                } else if msg.contains("claude") || msg.contains("anthropic-ratelimit") {
+                    // G45-CR5: anthropic-ratelimit-* headers are emitted only by
+                    // the Claude CLI subprocess; treat them as claude quota
+                    // signals even when the message text omits the word
+                    // "claude" explicitly.
+                    "claude"
+                } else {
+                    "unknown"
+                };
+                FallbackReason::OAuthQuota { backend }
+            }
+            EmbeddingErrorKind::Quota => {
+                let backend = if msg.contains("codex") {
+                    "codex"
+                } else if msg.contains("claude") || msg.contains("anthropic-ratelimit") {
+                    "claude"
+                } else {
+                    "unknown"
+                };
+                FallbackReason::OAuthQuota { backend }
+            }
+            EmbeddingErrorKind::BackendMismatch => {
+                // The `msg.contains("claude")` arm is intentionally
+                // placed BEFORE the OAuth arm so that a backend-mismatch
+                // message that mentions both "claude" and "codex" maps to
+                // BackendMismatch (the more specific failure mode).
+                let (requested, resolved) =
+                    if msg.contains("requested claude") && msg.contains("but codex") {
+                        ("claude", "codex")
+                    } else if msg.contains("requested codex") && msg.contains("but claude") {
+                        ("codex", "claude")
+                    } else if msg.contains("requested claude") {
+                        ("claude", "unknown")
+                    } else if msg.contains("requested codex") {
+                        ("codex", "unknown")
+                    } else {
+                        ("unknown", "unknown")
+                    };
+                FallbackReason::BackendMismatch {
+                    requested,
+                    resolved,
+                }
+            }
+            EmbeddingErrorKind::ZeroDimension => FallbackReason::DimZero,
+            EmbeddingErrorKind::Unknown => {
+                if msg.contains("cancelled") {
+                    FallbackReason::Cancelled
+                } else {
+                    FallbackReason::EmbeddingFailed(msg)
+                }
+            }
+        },
         e => FallbackReason::EmbeddingFailed(e.to_string()),
     }
 }
@@ -617,7 +711,18 @@ pub fn embed_with_fallback(
         // LlmEmbedding::detect_available substitui codex por claude).
         // O tuple `(_, requested_kind)` é descartado — só queremos o
         // backend resolvido na primeira posição.
-        match embed_via_backend(models_dir, text, backend) {
+        // ADR-0046 / BUG-11 v1.0.88: use `embed_via_backend_strict` so the
+        // sentinel `None` backend propagates the last real error instead
+        // of silently degrading to `Ok((Vec::new(), None))`. This is the
+        // path that caused preflight rejections to be swallowed by the
+        // chain's default trailing `None`.
+        match embed_via_backend_strict(
+            models_dir,
+            text,
+            backend,
+            last_err.as_ref(),
+            skip_on_failure,
+        ) {
             Ok((v, resolved_kind)) => return Ok((v, resolved_kind)),
             Err(e) => {
                 tracing::warn!(
@@ -633,6 +738,8 @@ pub fn embed_with_fallback(
     if skip_on_failure {
         // Signal "persist with no embedding" via an empty vector paired
         // with `None` so callers know the chain exhausted without a hit.
+        // Caller is responsible for writing a `pending_embeddings` row
+        // that can be retried later by the `embedding retry` subcommand.
         return Ok((Vec::new(), LlmBackendKind::None));
     }
     Err(last_err
@@ -694,6 +801,61 @@ pub fn embed_via_backend(
                 target: "embedder",
                 backend = "claude",
                 "embed_via_backend: forcing claude (ADR-0042 / GAP-002 fix)"
+            );
+            embed_via_claude_local_resolved(models_dir, text, None, None)
+        }
+    }
+}
+
+// ADR-0046 / BUG-11 v1.0.88: specialisation of `embed_via_backend` that
+// refuses to SILENTLY DEGRADE to `LlmBackendKind::None` after all real
+// backends (Codex, Claude) have failed. The previous behaviour
+// (`Ok((Vec::new(), None))`) caused the `remember` write path to persist
+// memories with zero-dimensional embeddings — breaking `recall` and
+// `hybrid-search` while returning exit 0 (BUG-11 CRITICAL).
+//
+// When `--llm-backend none` is explicitly requested (i.e. `last_err` is
+// None AND the chain was a single-element `[None]`), pass
+// `skip_on_failure = true` to `embed_with_fallback` to consume the empty
+// vector via the pending-embeddings retry queue instead of persisting
+// directly. This helper is the right hook for `remember`/`edit`/`ingest`.
+pub fn embed_via_backend_strict(
+    models_dir: &Path,
+    text: &str,
+    backend: &LlmBackendKind,
+    last_err: Option<&AppError>,
+    skip_on_failure: bool,
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
+    use crate::llm::exit_code_hints::LlmBackendError;
+    match backend {
+        LlmBackendKind::None => {
+            // If the caller opted into skip_on_failure AND no prior
+            // backend has recorded an error, the empty vector is
+            // intentional (chain of only [None]).
+            if skip_on_failure && last_err.is_none() {
+                Ok((Vec::new(), LlmBackendKind::None))
+            } else if last_err.is_some() {
+                // The chain reached `None` after Codex/Claude failed.
+                // Propagate the most recent error so `remember` aborts
+                // instead of persisting a memory without an embedding.
+                Err(match last_err {
+                    Some(e) => AppError::Embedding(format!("{e}")),
+                    None => AppError::Embedding(LlmBackendError::NoBackendsAvailable.to_string()),
+                })
+            } else {
+                // Empty chain with no skip_on_failure — treat as a
+                // configuration error (no backends available).
+                Err(AppError::Embedding(
+                    LlmBackendError::NoBackendsAvailable.to_string(),
+                ))
+            }
+        }
+        LlmBackendKind::Codex => embed_passage_local_resolved(models_dir, text),
+        LlmBackendKind::Claude => {
+            tracing::debug!(
+                target: "embedder",
+                backend = "claude",
+                "embed_via_backend_strict: forcing claude (ADR-0042 / GAP-002 fix)"
             );
             embed_via_claude_local_resolved(models_dir, text, None, None)
         }
@@ -1420,6 +1582,87 @@ mod tests {
     // G58/S1: FallbackReason + try_embed_query_with_fallback tests
     // ---------------------------------------------------------------
 
+    /// GAP-004 (v1.0.88): EmbeddingErrorKind::classify maps an OAuth
+    /// error message to the OAuth variant regardless of case or
+    /// surrounding text.
+    #[test]
+    fn embedding_error_kind_classify_oauth_message() {
+        assert_eq!(
+            EmbeddingErrorKind::classify("OAuth token expired for claude"),
+            EmbeddingErrorKind::OAuth,
+        );
+        assert_eq!(
+            EmbeddingErrorKind::classify("oauth authentication failed"),
+            EmbeddingErrorKind::OAuth,
+        );
+    }
+
+    /// GAP-004 (v1.0.88): EmbeddingErrorKind::classify maps a quota
+    /// message to the Quota variant (without "OAuth" substring).
+    #[test]
+    fn embedding_error_kind_classify_quota_message() {
+        assert_eq!(
+            EmbeddingErrorKind::classify("quota exhausted on backend"),
+            EmbeddingErrorKind::Quota,
+        );
+        assert_eq!(
+            EmbeddingErrorKind::classify("Usage quota limit reached"),
+            EmbeddingErrorKind::Quota,
+        );
+    }
+
+    /// GAP-004 (v1.0.88): EmbeddingErrorKind::classify maps a slot-sema
+    /// message to the SlotExhausted variant (matched BEFORE Quota so
+    /// the more specific LLM-never-tried path wins).
+    #[test]
+    fn embedding_error_kind_classify_slot_exhausted_message() {
+        assert_eq!(
+            EmbeddingErrorKind::classify(
+                "slot exhausted: failed to acquire LLM slot after backoff"
+            ),
+            EmbeddingErrorKind::SlotExhausted,
+        );
+    }
+
+    /// GAP-004 (v1.0.88): EmbeddingErrorKind::classify maps a
+    /// zero-dimensional vector error to the ZeroDimension variant.
+    #[test]
+    fn embedding_error_kind_classify_zero_dimension_message() {
+        assert_eq!(
+            EmbeddingErrorKind::classify("embedding returned dim=zero"),
+            EmbeddingErrorKind::ZeroDimension,
+        );
+        assert_eq!(
+            EmbeddingErrorKind::classify("got zero-dim vector from LLM"),
+            EmbeddingErrorKind::ZeroDimension,
+        );
+    }
+
+    /// GAP-004 (v1.0.88): EmbeddingErrorKind::classify falls back to
+    /// the Unknown variant when no marker matches, and the code()
+    /// accessor returns the kebab-safe discriminator string.
+    #[test]
+    fn embedding_error_kind_classify_unknown_fallback() {
+        assert_eq!(
+            EmbeddingErrorKind::classify("unrelated subprocess error"),
+            EmbeddingErrorKind::Unknown,
+        );
+        assert_eq!(
+            EmbeddingErrorKind::classify("rate limit hit"),
+            EmbeddingErrorKind::Unknown,
+        );
+        // code() returns the stable discriminator string.
+        assert_eq!(EmbeddingErrorKind::OAuth.code(), "oauth");
+        assert_eq!(EmbeddingErrorKind::Quota.code(), "quota");
+        assert_eq!(EmbeddingErrorKind::SlotExhausted.code(), "slot-exhausted");
+        assert_eq!(
+            EmbeddingErrorKind::BackendMismatch.code(),
+            "backend-mismatch"
+        );
+        assert_eq!(EmbeddingErrorKind::ZeroDimension.code(), "zero-dimension");
+        assert_eq!(EmbeddingErrorKind::Unknown.code(), "unknown");
+    }
+
     /// Display impl covers all three variants without panicking.
     #[test]
     fn fallback_reason_display_does_not_panic() {
@@ -1639,30 +1882,31 @@ mod embed_with_fallback_tests {
     }
 
     #[test]
-    fn embed_with_fallback_succeeds_via_none_when_chain_exhausts() {
-        // The chain [codex, claude, none] always succeeds via the
-        // `None` graceful-degradation tail: when codex+claude fail,
-        // None returns Ok(vec![]) so the caller can persist with a
-        // pending_embeddings row. This is the v1.0.81-implicit
-        // behaviour and the default for `--llm-fallback` chains.
+    fn embed_with_fallback_chain_of_only_none_aborts_without_skip_on_failure_v1088() {
+        // ADR-0046 / BUG-11 v1.0.88: a fallback chain of only `[None]`
+        // without `skip_on_failure=true` MUST abort with
+        // `AppError::Embedding("no LLM backends available; fallback chain exhausted")`.
         //
-        // The test cannot easily simulate "codex and claude both fail"
-        // because `embed_passage_local` succeeds in the CI environment
-        // (mock LLM is on PATH). Instead we verify the chain-exhaustion
-        // contract: when the chain reaches `None`, the function
-        // returns Ok(empty). This is exercised in production by the
-        // `embedding` retry subcommand and by the
-        // `--skip-embedding-on-failure` flag.
+        // Before BUG-11, the `None` tail returned `Ok((vec![], None))`
+        // silently, which let `remember` persist a memory with a
+        // zero-dimensional embedding (invisible to recall). The fix
+        // routes the chain exhaustion through `embed_via_backend_strict`
+        // so the caller can distinguish between "chain intentionally
+        // degrades to skip" (skip_on_failure=true) and "chain has no
+        // viable backend at all" (this test).
         let chain = vec![LlmBackendKind::None];
-        let v = embed_with_fallback(
+        let err = embed_with_fallback(
             std::path::Path::new("/nonexistent-models-dir-for-gap005-test"),
             "hello",
             &chain,
             false,
         )
-        .expect("chain ending in None must always succeed");
-        assert!(v.0.is_empty(), "vector must be empty");
-        assert_eq!(v.1, LlmBackendKind::None);
+        .expect_err("chain of only [None] without skip_on_failure MUST abort");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("no LLM backends available"),
+            "error must mention exhausted chain, got: {msg}"
+        );
     }
     #[test]
     fn embed_with_fallback_skip_on_failure_with_only_none_returns_empty() {

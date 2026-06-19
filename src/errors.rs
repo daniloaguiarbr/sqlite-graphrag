@@ -6,6 +6,7 @@
 //! failure. See the README for the full exit code contract.
 
 use crate::i18n::{current, Language};
+use crate::spawn::preflight::PreFlightError;
 use thiserror::Error;
 
 /// Unified error type for all CLI and library operations.
@@ -179,19 +180,35 @@ pub enum AppError {
     /// v1.0.87 (GAP-META-005, ADR-0045): pre-flight validation gate
     /// rejected the spawn before fork. Maps to exit code `16`.
     ///
-    /// The `detail` field carries the `Display` impl of the underlying
-    /// `PreFlightError` (one of: BinaryNotFound, ArgvExceedsArgMax,
+    /// The `source` field carries the structured [`PreFlightError`]
+    /// variant so callers and operators can route on the specific
+    /// failure class (BinaryNotFound, ArgvExceedsArgMax,
     /// McpConfigInlineJsonRejected, McpConfigPathMissing,
     /// McpConfigPathInvalidJson, WalkUpMcpJsonInvalid,
-    /// OutputBufferTooSmall, ClaudeConfigDirNotEmpty).
+    /// OutputBufferTooSmall, ClaudeConfigDirNotEmpty) instead of
+    /// parsing the legacy `detail: String` representation.
     ///
     /// This variant is **permanent** — retrying the same argv will fail
     /// identically. Operators must fix the underlying condition (install
     /// the binary, shorten the body, override `CLAUDE_CONFIG_DIR`,
     /// substitute the inline `--mcp-config '{}'` for a tempfile path,
     /// etc.) before retrying.
-    #[error("preflight validation failed: {detail}")]
-    PreFlightFailed { detail: String },
+    #[error("preflight validation failed: {source}")]
+    PreFlightFailed { source: Box<PreFlightError> },
+}
+
+/// Bridges the structured [`PreFlightError`] produced by the
+/// pre-flight validation gate (v1.0.87, ADR-0045) into the unified
+/// [`AppError`] envelope. Lets spawners use the `?` operator instead
+/// of hand-rolling `AppError::PreFlightFailed { source: ... }` at every
+/// call site, and keeps the variant alive as the canonical exit code 16
+/// path rather than the dead code it was at v1.0.87.
+impl From<PreFlightError> for AppError {
+    fn from(source: PreFlightError) -> Self {
+        AppError::PreFlightFailed {
+            source: Box::new(source),
+        }
+    }
 }
 
 impl AppError {
@@ -408,7 +425,7 @@ impl AppError {
                 required_mb,
             } => pt::low_memory(*available_mb, *required_mb),
             Self::Shutdown { signal } => pt::shutdown(signal),
-            Self::PreFlightFailed { detail } => pt::preflight_failed(detail),
+            Self::PreFlightFailed { source } => pt::preflight_failed(&source.to_string()),
         }
     }
 }

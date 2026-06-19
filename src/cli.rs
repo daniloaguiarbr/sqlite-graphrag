@@ -415,6 +415,17 @@ impl Commands {
     }
 }
 
+/// GAP-E2E-010 (v1.0.89): `codex-models` accepts `--json` as a no-op so
+/// agents that append `--json` to every subcommand never see clap errors.
+/// The handler in `main.rs` always emits JSON on stdout; this flag is
+/// accepted and ignored for parity with the rest of the CLI surface.
+#[derive(Debug, clap::Args)]
+pub struct CodexModelsArgs {
+    /// No-op; JSON is always emitted on stdout by `codex-models`.
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize database and download embedding model
@@ -517,8 +528,12 @@ pub enum Commands {
     /// Vector index maintenance (orphan detection, purge, stats) — G39
     Vec(vec::VecArgs),
     /// List codex OAuth models accepted by ChatGPT Pro (G33).
+    ///
+    /// GAP-E2E-010 (v1.0.89): accepts `--json` as a no-op (JSON is always
+    /// emitted on stdout) so the flag never breaks agent pipelines that
+    /// append `--json` to every invocation.
     #[command(name = "codex-models")]
-    CodexModels,
+    CodexModels(CodexModelsArgs),
     /// Bulk-delete all relationships of a given type (e.g. mentions)
     PruneRelations(prune_relations::PruneRelationsArgs),
     /// Remove NER bindings (memory_entities rows) for an entity or all entities
@@ -562,6 +577,67 @@ pub enum Commands {
     Completions(completions::CompletionsArgs),
     #[command(name = "debug-schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
+}
+// FIX-1 (v1.0.89): manual `Debug` impl so test panic messages that print
+// `{:?}` on a captured `Commands` variant compile without requiring every
+// contained subcommand arg struct to derive `Debug`. The Debug output is
+// only used in test assertions for diagnostic messages; we emit the variant
+// name only — arg payload is intentionally omitted.
+impl std::fmt::Debug for Commands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Init(_) => "Init",
+            Self::Health(_) => "Health",
+            Self::Stats(_) => "Stats",
+            Self::List(_) => "List",
+            Self::Read(_) => "Read",
+            Self::Edit(_) => "Edit",
+            Self::Rename(_) => "Rename",
+            Self::Restore(_) => "Restore",
+            Self::History(_) => "History",
+            Self::Forget(_) => "Forget",
+            Self::Purge(_) => "Purge",
+            Self::Remember(_) => "Remember",
+            Self::RememberBatch(_) => "RememberBatch",
+            Self::Recall(_) => "Recall",
+            Self::HybridSearch(_) => "HybridSearch",
+            Self::Enrich(_) => "Enrich",
+            Self::Ingest(_) => "Ingest",
+            Self::Optimize(_) => "Optimize",
+            Self::Migrate(_) => "Migrate",
+            Self::SyncSafeCopy(_) => "SyncSafeCopy",
+            Self::Backup(_) => "Backup",
+            Self::Vacuum(_) => "Vacuum",
+            Self::Link(_) => "Link",
+            Self::Unlink(_) => "Unlink",
+            Self::DeepResearch(_) => "DeepResearch",
+            Self::Related(_) => "Related",
+            Self::Graph(_) => "Graph",
+            Self::Export(_) => "Export",
+            Self::Fts(_) => "Fts",
+            Self::Vec(_) => "Vec",
+            Self::CodexModels(_) => "CodexModels",
+            Self::PruneRelations(_) => "PruneRelations",
+            Self::PruneNer(_) => "PruneNer",
+            Self::Slots(_) => "Slots",
+            Self::Pending(_) => "Pending",
+            Self::Embedding(_) => "Embedding",
+            Self::PendingEmbeddings(_) => "PendingEmbeddings",
+            Self::CleanupOrphans(_) => "CleanupOrphans",
+            Self::MemoryEntities(_) => "MemoryEntities",
+            Self::Cache(_) => "Cache",
+            Self::DeleteEntity(_) => "DeleteEntity",
+            Self::Reclassify(_) => "Reclassify",
+            Self::RenameEntity(_) => "RenameEntity",
+            Self::ReclassifyRelation(_) => "ReclassifyRelation",
+            Self::NormalizeEntities(_) => "NormalizeEntities",
+            Self::MergeEntities(_) => "MergeEntities",
+            Self::NamespaceDetect(_) => "NamespaceDetect",
+            Self::Completions(_) => "Completions",
+            Self::DebugSchema(_) => "DebugSchema",
+        };
+        f.write_str(name)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, clap::ValueEnum)]

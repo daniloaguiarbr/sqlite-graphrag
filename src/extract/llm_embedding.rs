@@ -539,7 +539,7 @@ impl LlmEmbedding {
     }
 
     async fn invoke_claude(&self, prompt: &str, schema: &str) -> Result<String, AppError> {
-        // v1.0.69 hardening: --strict-mcp-config --mcp-config '{}' --settings
+        // v1.0.69 hardening: --strict-mcp-config --mcp-config <PATH> --settings
         // '{"hooks":{}}' --dangerously-skip-permissions.
         //
         // v1.0.76 hardening: Claude Code 2.1+ renamed --output-schema to
@@ -551,6 +551,24 @@ impl LlmEmbedding {
         // directory BY DEFAULT — the MCP-isolation flags above are
         // silently ignored upstream (anthropics/claude-code#10787) and a
         // populated ~/.claude costs ~223k cache-creation tokens per call.
+        //
+        // v1.0.88 (BUG-2 fix, ADR-0046): the inline `--mcp-config '{}'`
+        // form was rejected by Claude Code 2.1.177 (ADR-0045 Bug 2).
+        // Substitute a tempfile path produced by
+        // `write_empty_mcp_config_tempfile()` and run the full
+        // preflight gate BEFORE `Command::spawn()`, mirroring what
+        // `invoke_codex` already does for the codex backend.
+        let mcp_config_path = crate::spawn::preflight::write_empty_mcp_config_tempfile()?;
+        let argv_refs: [std::ffi::OsString; 0] = [];
+        let preflight_args = crate::spawn::preflight::PreFlightArgs {
+            binary_path: &self.binary,
+            argv: &argv_refs,
+            workspace_root: std::path::Path::new("."),
+            mcp_config_inline_json: None,
+            expected_output_bytes: 65_536,
+            spawner_name: "llm_embedding",
+        };
+        crate::spawn::preflight::preflight_check(&preflight_args)?;
         let mut cmd = Command::new(&self.binary);
         cmd.arg("-p")
             .arg(prompt)
@@ -562,7 +580,7 @@ impl LlmEmbedding {
             .arg("json")
             .arg("--strict-mcp-config")
             .arg("--mcp-config")
-            .arg(r#"{"mcpServers":{}}"#)
+            .arg(mcp_config_path.as_os_str())
             .arg("--settings")
             .arg(r#"{"hooks":{}}"#)
             .arg("--dangerously-skip-permissions")
@@ -674,6 +692,14 @@ impl LlmEmbedding {
         // skip the argv-size check here and rely on binary + workspace
         // root + output buffer guards. Embedding prompts are bounded by
         // the schema validator so argv overflow is not a real risk here.
+        //
+        // v1.0.88 (BUG-7 fix, ADR-0046): propagate the preflight error
+        // directly via `AppError::PreFlightFailed` (via the `From`
+        // impl added in `errors.rs`) so callers and operators see the
+        // structured `PreFlightError` variant and the canonical exit
+        // code 16. The previous implementation wrapped the error in
+        // `LlmBackendError::SpawnFailed`, which mapped to a different
+        // exit code and masked the preflight signal.
         let argv_refs: [std::ffi::OsString; 0] = [];
         let preflight_args = crate::spawn::preflight::PreFlightArgs {
             binary_path: &self.binary,
@@ -683,14 +709,8 @@ impl LlmEmbedding {
             expected_output_bytes: 65_536,
             spawner_name: "llm_embedding",
         };
-        if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
-            return Err(crate::llm::exit_code_hints::into_legacy_embedding(
-                &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
-                    binary: binary_str,
-                    source: format!("preflight validation failed: {e}"),
-                },
-            ));
-        }
+        crate::spawn::preflight::preflight_check(&preflight_args)?;
+        let _ = binary_str; // silenced: preflight does not need it
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,

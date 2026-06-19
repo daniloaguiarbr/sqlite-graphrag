@@ -306,17 +306,7 @@ fn extract_with_claude(
     // GAP-META-005 (v1.0.87, ADR-0045): `--mcp-config '{}'` inline is
     // rejected by Claude Code 2.1.177. Substitute the literal for a
     // tempfile path containing `{"mcpServers":{}}`.
-    let mcp_config_path = match crate::spawn::preflight::write_empty_mcp_config_tempfile() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(
-                target: "ingest_claude",
-                error = %e,
-                "failed to create empty mcp-config tempfile; aborting spawn (exit 16)"
-            );
-            std::process::exit(16);
-        }
-    };
+    let mcp_config_path = crate::spawn::preflight::write_empty_mcp_config_tempfile()?;
 
     cmd.arg("-p")
         .arg(EXTRACTION_PROMPT)
@@ -345,8 +335,7 @@ fn extract_with_claude(
     // GAP-META-005 (v1.0.87, ADR-0045): pre-flight gate runs after argv
     // is fully built. Validates binary, argv-size, walk-up of `.mcp.json`,
     // and `CLAUDE_CONFIG_DIR` cleanliness.
-    let argv_refs: Vec<std::ffi::OsString> =
-        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let argv_refs: Vec<std::ffi::OsString> = cmd.get_args().map(|s| s.to_os_string()).collect();
     let preflight_args = crate::spawn::preflight::PreFlightArgs {
         binary_path: binary,
         argv: &argv_refs,
@@ -356,13 +345,12 @@ fn extract_with_claude(
         spawner_name: "ingest_claude",
     };
     if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
-        tracing::error!(
-            target: "ingest_claude",
-            spawner = "ingest_claude",
-            error = %e,
-            "preflight validation failed; aborting spawn (exit 16)"
-        );
-        std::process::exit(16);
+        // v1.0.88 (BUG-6 fix, ADR-0046): propagate the structured
+        // `PreFlightError` via the `From` impl in `errors.rs` so callers
+        // receive `AppError::PreFlightFailed` (exit 16) instead of a
+        // bare `std::process::exit(16)` that discards the variant name,
+        // tracing context, and PT-BR i18n.
+        return Err(crate::errors::AppError::from(e));
     }
 
     let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {

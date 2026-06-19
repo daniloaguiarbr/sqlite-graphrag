@@ -71,12 +71,15 @@ fn entity_name_too_short_rejected_via_link() {
 
 #[test]
 #[serial]
-fn entity_name_all_caps_short_normalized_via_link() {
+fn entity_name_all_caps_short_rejected_via_link_v1088() {
     let tmp = TempDir::new().unwrap();
     init_db(&tmp);
 
-    // Since v1.0.65, link normalizes ALL_CAPS to kebab-case ("RAM" -> "ram")
-    // before validation, so short ALL_CAPS names are accepted after normalization.
+    // ADR-0046 / BUG-13 v1.0.88: link --create-missing now validates the
+    // ORIGINAL args.from BEFORE normalization, so short ALL_CAPS names
+    // (≤4 chars, all uppercase) are rejected even though normalize would
+    // produce "ram". This restores parity with rename-entity and remember
+    // --graph-stdin which already validated the original.
     cmd_base(&tmp)
         .args([
             "link",
@@ -89,7 +92,7 @@ fn entity_name_all_caps_short_normalized_via_link() {
             "--create-missing",
         ])
         .assert()
-        .success();
+        .failure();
 }
 
 #[test]
@@ -149,4 +152,71 @@ fn rename_entity_rejects_all_caps_short_new_name() {
         ])
         .assert()
         .failure();
+}
+
+#[test]
+#[serial]
+fn link_rejects_all_caps_short_to_arg_v1088() {
+    // ADR-0046 / BUG-13 v1.0.88: --to side must also validate the original
+    // before normalize, otherwise "--to API" would silently create entity "api".
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd_base(&tmp)
+        .args([
+            "link",
+            "--from",
+            "valid-source",
+            "--to",
+            "API",
+            "--relation",
+            "uses",
+            "--create-missing",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+#[serial]
+fn link_rejects_four_char_all_caps_v1088() {
+    // ADR-0046 / BUG-13 v1.0.88: 4-char ALL_CAPS ("RUST") must also be rejected.
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd_base(&tmp)
+        .args([
+            "link",
+            "--from",
+            "RUST",
+            "--to",
+            "valid-target",
+            "--relation",
+            "uses",
+            "--create-missing",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+#[serial]
+fn link_accepts_five_char_all_caps_v1088() {
+    // ADR-0046 / BUG-13 v1.0.88: 5+ char ALL_CAPS passes (e.g. "RUSTC", "LLMDS").
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    cmd_base(&tmp)
+        .args([
+            "link",
+            "--from",
+            "RUSTC",
+            "--to",
+            "valid-target",
+            "--relation",
+            "uses",
+            "--create-missing",
+        ])
+        .assert()
+        .success();
 }

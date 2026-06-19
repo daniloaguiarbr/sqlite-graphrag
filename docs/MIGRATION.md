@@ -1,7 +1,150 @@
-# MIGRATING TO v1.0.85 — Five-Gap Remediation + Claude Split + Hotfixes (ADR-0042, ADR-0043, ADR-0044)
+# MIGRATING TO v1.0.89 — Preflight Layer, BUG-11/12/13 Hotfixes, Schema Drift (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
 > This guide is for operators on v1.0.82 who want to upgrade to v1.0.83 without losing data. This release is a PATCH bump with NO database migration. Schema stays at v15. Behaviour is ADDITIVE for default OAuth operators.
 
+# MIGRATING TO v1.0.86 → v1.0.87 → v1.0.88 → v1.0.89 — Preflight + Hotfixes + Schema Drift
+
+> This section guides operators on v1.0.85.2 who want to upgrade to v1.0.89 across four releases. No database migration runs in this cycle. The schema stays at v15.
+
+## v1.0.86 — LLM-Heavy Surface
+
+- Adds 10 subcommands: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`
+- Adds global flags: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`
+- No schema change. No migration runs
+
+```bash
+# Smoke test the new subcommands
+sqlite-graphrag pending list --json
+sqlite-graphrag slots status --json
+sqlite-graphrag embedding status --json
+```
+
+## v1.0.87 — Pre-Flight Validation Layer (ADR-0045)
+
+- Introduces `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) gating every LLM subprocess spawn BEFORE the fork
+- New `AppError::PreFlightFailed` variant. Exit code 16 (`EX_CONFIG`) is now permanent for pre-flight failures
+- Bypass: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` disables all 7 guards (emergency only)
+- The 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) share this single module
+- No schema change. No migration runs
+
+```bash
+# Diagnose a pre-flight failure (exit 16) — the JSON envelope carries the PreFlightError variant
+sqlite-graphrag remember --name test --type note --description x --body y 2>&1
+# Expected: exit 16, JSON envelope with code "PreFlightFailed" and variant details
+
+# Bypass in emergencies
+SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 sqlite-graphrag remember --name test --body y
+```
+
+## v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+
+- BUG-11 (CRITICAL): pre-flight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict`
+- BUG-12 (MEDIUM): OAuth-only enforcement emits 1 stderr line (was 2)
+- BUG-13 (MEDIUM): `link --create-missing` now respects entity-name validation
+- No schema change. No migration runs
+
+```bash
+# BUG-11 repro
+CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp sqlite-graphrag remember --name test --body y
+# Pre-v1.0.88: silent persistence with backend_invoked: "none"
+# v1.0.88+: exit 11 with JSON error envelope
+
+# BUG-12 verification
+ANTHROPIC_API_KEY=sk-test sqlite-graphrag init
+# Pre-v1.0.88: 2 stderr lines
+# v1.0.88+: 1 stderr line
+```
+
+## v1.0.89 — Schema Drift + Flag Parity (ADR-0048, ADR-0049)
+
+- `health.schema.json` regenerated via `schemars` derive macro. `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON). 17 new fields added
+- New subcommand acceptors for `--db <PATH>`: `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show`
+- `migrate --dry-run --json` reports pending migrations without applying
+- `codex-models --json` accepted as no-op; `pending list --db <PATH>` parity
+- `ingest --auto-describe` (default true) extracts description from first meaningful body line
+- `health --namespace <NS> --json` filters counts to a single namespace
+- Binary size 14.6 MiB documented in `Cargo.toml:6`
+- No schema change. No migration runs
+
+```bash
+# Health namespace filter (GAP-E2E-002)
+sqlite-graphrag health --namespace prod --json
+
+# Dry-run migration report (GAP-E2E-009)
+sqlite-graphrag migrate --dry-run --json
+
+# Auto-describe from first body line (GAP-E2E-011)
+sqlite-graphrag ingest ./docs --auto-describe --json
+
+# --db parity on pending/embedding (GAP-E2E-008)
+sqlite-graphrag pending list --db /tmp/test.sqlite --json
+sqlite-graphrag embedding status --db /tmp/test.sqlite --json
+```
+
+## Library API Pinning Across v1.0.86-89
+
+The lib API remains unstable within v1.x.y (ADR-0032). Pin exactly:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.89"
+```
+
+The `^1.0` shorthand keeps you on the CLI-stability track. CLI consumers who follow the JSON envelope contract in `docs/schemas/` are unaffected.
+
+## What Breaks Across v1.0.86-89
+
+- **NONE for default OAuth operators** — behaviour is additive at every step
+- **Library consumers who enumerate `AppError` variants**: `PreFlightFailed` (exit 16) added in v1.0.87
+- **Consumers validating `health` JSON against strict schemas**: `additionalProperties: true` (Must-Ignore) means strict validators using `additionalProperties: false` will now accept unknown keys. Update your validator or migrate to the schemars-derived schema
+
+## Rollback Across v1.0.86-89
+
+If any release breaks your pipeline, rollback to v1.0.85.2:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.85.2 --force
+```
+
+Your database is unchanged. v1.0.86-89 made no schema modifications; v1.0.85.2 reads the same SQLite file.
+
+## Verification Scenarios
+
+### Scenario A — Preflight rejection
+
+```bash
+unset ANTHROPIC_API_KEY OPENAI_API_KEY
+sqlite-graphrag remember --name test-preflight --body "x" 2>&1
+# Expected: exit 0 in clean env; exit 16 with PreFlightError variant in dirty env
+```
+
+### Scenario B — Schema drift validation
+
+```bash
+sqlite-graphrag health --json | jaq '.schema_version, .fts_query_ok, .vec_memories_missing'
+# Expected: integer schema_version, boolean fts_query_ok, integer vec_memories_missing (Must-Ignore accepts extra fields)
+```
+
+### Scenario C — Flag parity
+
+```bash
+sqlite-graphrag pending list --db /tmp/x.sqlite --json
+sqlite-graphrag embedding status --db /tmp/x.sqlite --json
+sqlite-graphrag codex-models --json
+# Expected: all three exit 0
+```
+
+### Scenario D — Description heuristic
+
+```bash
+echo "# Header only" > /tmp/headers.md
+sqlite-graphrag ingest /tmp/headers.md --auto-describe --json
+# Expected: description derives from file stem "headers" (since >20-char body line absent)
+
+echo "This is a meaningful first sentence for auto-describe" > /tmp/full.md
+sqlite-graphrag ingest /tmp/full.md --auto-describe --json
+# Expected: description is "This is a meaningful first sentence for auto-describe" truncated to ≤100 chars
+```
 ## What Changed in v1.0.83
 
 - **GAP-058 partial resolution (ADR-0041)** — six custom-provider env vars are now preserved when spawning `claude -p` or `codex exec` subprocesses. Enables Anthropic-compatible providers (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, corporate gateways) without altering the OAuth-only mandate that continues to reject `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. The preserved vars are `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT`.
@@ -424,7 +567,7 @@ cargo install sqlite-graphrag --version 1.0.79 --force
 Install v1.0.79 (not 1.0.76): it carries the G40/G41 migration
 repairs and the G42/G43 embedding fixes the upgrade path relies on.
 
-This installs the LLM-only default build (~6 MB binary, no
+This installs the LLM-only default build (~14.6 MiB binary, no
 ONNX runtime, no model download). If you want the legacy
 fastembed pipeline for the transition window:
 

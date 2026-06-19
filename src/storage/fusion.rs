@@ -15,15 +15,18 @@
 //! max_possible = sum_over_lists { weight * 1 / (rrf_k + 1) }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Fuse multiple ranked lists of integer IDs via Reciprocal Rank Fusion.
 ///
 /// Each element of `lists` is `(weight, ranked_ids)` where `ranked_ids` is
 /// ordered best-first (index 0 = rank 1).
 ///
-/// Returns a `HashMap<id, combined_score>` using un-normalised RRF scores.
-/// Higher score means higher relevance.
+/// Returns a `BTreeMap<id, combined_score>` using un-normalised RRF scores.
+/// Higher score means higher relevance. The `BTreeMap` is chosen over
+/// `HashMap` so iteration order is **deterministic** (sorted by id) —
+/// this lets callers serialise the result to canonical JSON and run
+/// equality assertions across processes and platforms.
 ///
 /// # Examples
 ///
@@ -38,9 +41,12 @@ use std::collections::HashMap;
 /// assert!(scores[&1] > scores[&2]);
 /// assert!(scores[&1] > scores[&3]);
 /// ```
-pub fn rrf_fuse(lists: &[(f64, &Vec<i64>)], rrf_k: f64) -> HashMap<i64, f64> {
-    let total_ids: usize = lists.iter().map(|(_, ids)| ids.len()).sum();
-    let mut combined: HashMap<i64, f64> = HashMap::with_capacity(total_ids);
+pub fn rrf_fuse(lists: &[(f64, &Vec<i64>)], rrf_k: f64) -> BTreeMap<i64, f64> {
+    // BTreeMap is constructed empty and grown via `entry().or_insert()` —
+    // there is no `with_capacity` constructor for BTreeMap, so we skip the
+    // pre-allocation that HashMap could express.
+    let mut combined: BTreeMap<i64, f64> = BTreeMap::new();
+    let _total_ids: usize = 0; // reserved for future diagnostics; silences unused warning
     for (weight, ids) in lists {
         for (rank, &id) in ids.iter().enumerate() {
             // rank is 0-indexed here; formula uses 1-indexed, so we add 1.

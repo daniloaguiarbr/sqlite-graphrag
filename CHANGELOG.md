@@ -5,6 +5,135 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.89] - 2026-06-19
+
+### Fixed
+- **GAP-E2E-001** — Binary size documentation now matches reality. Measured the release binary at 15,321,016 bytes (14.6 MiB, 15.3 MB) and updated `Cargo.toml:6` description plus 13 prose mentions across `README.md`, `llms.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/HOW_TO_USE.md`, `docs/HOW_TO_USE.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `docs/CROSS_PLATFORM.md`, `docs/CROSS_PLATFORM.pt-BR.md`, `docs/COOKBOOK.md`, `docs/COOKBOOK.pt-BR.md`, `docs/decisions/adr-0019-llm-only-one-shot.md`, and `docs/decisions/adr-0019-llm-only-one-shot.pt-BR.md`. The old "6 MB" claim was correct for the v1.0.76 LLM-only release (rusqlite + clap only) but the binary grew as new features landed (GAP-002 split, GAP-058 env whitelist, GAP-E2E-007 schemars, schemars 0.8 derive, system-load + reaper helpers, OAUTH-only guard). The `[profile.release]` already has `lto = "fat"`, `codegen-units = 1`, `strip = true`, `opt-level = 3`, `panic = "abort"`. Regression test `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` parses the Cargo.toml description and the on-disk release binary to assert the documented size is within 1 MiB of the real size.
+- **GAP-E2E-002** — `health` now accepts `--namespace <NAMESPACE>` like 30+ other subcommands. Added `pub namespace: Option<String>` to `HealthArgs` and the namespace appears in the `HealthResponse` JSON envelope. The SQL filters at `health.rs:664/691/697/703` already accepted a namespace but the CLI flag was missing. Regression test `tests/health_namespace_regression.rs::health_accepts_namespace_flag` verifies the flag is wired.
+- **GAP-E2E-007** — `health` JSON schema regenerated via `schemars 0.8` derive on `HealthResponse`. Added 17 fields missing from the schema (`vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`, `fts_query_ok`). Switched `additionalProperties: false` → `true` (Must-Ignore policy per RFC 7493 I-JSON and `rules_rust_json_e_ndjson.md:33`). New `src/bin/dump_schema.rs` regenerates the schema idempotently via `schema_for!()` + BTreeMap ordering + recursive `apply_must_ignore` policy enforcement. ADR-0048 (en + pt-BR) documents the Must-Ignore decision and the schemars 0.8 adoption. Regression test `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` validates the schema contains all 36 properties. **BREAKING CHANGE**: consumers using strict mode (`additionalProperties: false`) must migrate to Must-Ignore to receive schema-evolution benefits.
+- **GAP-E2E-008** — `--db` flag parity restored for `embedding status`, `embedding list`, `embedding abandon`, `pending list`, and `pending show`. The decision NOT to use `clap::Arg::global = true` (which would propagate the flag globally and break the per-subcommand convention) is documented in ADR-0049 (en + pt-BR). Regression test `tests/cli_db_flag_parity_regression.rs::assert_db_flag_on_all_namespace_subcommands` validates 5 subcommands accept `--db`.
+- **GAP-E2E-009** — `migrate --dry-run --json` now returns a structured report (`pending_migrations[]`, `pending_count`, `checksum_mismatches[]`, `status`) without mutating the schema. Also added `--confirm` (FALTA-7): the default migration runner waits for the literal string `yes` on stdin before applying migrations. Backward compatible: CI scripts that gate via `migrate --status` first continue to work. Regression test `tests/migrate_dry_run_regression.rs::dry_run_does_not_mutate_schema_history` confirms schema_version is unchanged after dry-run.
+- **GAP-E2E-010** — `codex-models --json` now returns the JSON envelope `{"action":"codex_models","count":N,"default":"...","models":[...]}`. `pending list --db` and `pending show --db` accept `--db` (consolidated with GAP-E2E-008). Regression tests `tests/codex_models_json_regression.rs::codex_models_json_flag_accepted_as_noop` and `tests/cli_db_flag_parity_regression.rs` validate both.
+- **GAP-E2E-011** — `ingest` description no longer hardcoded `"ingested from <path>"`. New `src/commands/ingest_heuristics.rs::extract_heuristic_description(body, path_hint)` extracts the first meaningful line (>20 chars, non-Markdown-header) truncated to 100 chars. FALTA-6 edge case (body with only Markdown headers) now falls back to the file stem (e.g. `"headers-only"`) instead of the generic `"ingested document"` placeholder. New `--no-auto-describe` flag restores the legacy `"ingested from <path>"` behavior when needed (closes the help-first drift ADR-0034 detected in v1.0.88 where `--auto-describe` promised a flag that didn't exist). Regression test `tests/ingest_auto_describe_regression.rs` validates 5 scenarios including the new fallback-to-stem path.
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings, 0 fmt diffs.
+- Test suite: 843 lib tests + 1013 integration tests + 21 doc tests = **1877 tests, 0 failures, 7 ignored**.
+- Binary size: 15,323,128 bytes (14.61 MiB) — within 1 MiB of documented 14.6 MiB.
+- Working tree baseline preserved via tag `v1.0.88-baseline-2026-06-19` for rollback.
+
+## [1.0.88] - 2026-06-19
+
+### Fixed
+
+- **BUG-1** — `check_claude_config_dir` now inspects `settings.json`
+  semantically. The preflight guard rejects the directory only when
+  `settings.json` declares a non-empty `mcpServers` or `hooks` map.
+  A populated directory with `CLAUDE.md`, `commands/`, `skills/`,
+  or empty `settings.json` is accepted with a structured warning.
+  Fixes 9 integration tests in `entity_validation_integration`,
+  `graph_traverse_regression`, and `recall_distance_integration`
+  that regressed in v1.0.87 when the env var points at a real
+  Claude Code install (`/home/comandoaguiar/.claude01`).
+- **BUG-2** — `LlmEmbedding::invoke_claude` now writes the empty MCP
+  config to a tempfile via `write_empty_mcp_config_tempfile()` and
+  runs `preflight_check` before spawn, mirroring `invoke_codex`.
+  The inline `--mcp-config '{}'` form was rejected by Claude Code
+  2.1.177 (ADR-0045 Bug 2).
+- **BUG-3** — `enrich::run_preflight_probe` (Claude Code arm) now
+  writes the empty MCP config to a tempfile instead of passing
+  the literal `{}` that ADR-0045 documents as broken.
+- **BUG-5** — `check_mcp_config_path` now detects the
+  `--mcp-config=PATH` single-slot form alongside the GNU
+  `--mcp-config <PATH>` form.
+- **BUG-6** — All 5 sites of `std::process::exit(16)` in
+  `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs`
+  replaced with `Err(crate::errors::AppError::from(e))`. The
+  `PreFlightError` variant name, structured tracing context, and
+  PT-BR i18n are now preserved.
+- **BUG-7** — `LlmEmbedding::invoke_codex` now propagates the
+  preflight error directly via the `From<PreFlightError>` impl
+  instead of wrapping it in `LlmBackendError::SpawnFailed`. The
+  canonical exit code 16 path is restored.
+- **BUG-9** — `check_walkup_mcp_json` now performs semantic
+  validation: a syntactically valid `.mcp.json` that declares a
+  non-empty `mcpServers` object is rejected.
+- **BUG-10** — `AppError::PreFlightFailed` now stores
+  `source: Box<PreFlightError>` instead of `detail: String`. The
+  structured variant name is preserved end-to-end so operators
+  can route on `BinaryNotFound`, `ArgvExceedsArgMax`, etc.
+
+### Added
+
+- `impl From<PreFlightError> for AppError` in `src/errors.rs`.
+- `claude_embedding_config_dir()` integration with preflight via
+  `claude_embedding_config_dir()` managed dir at
+  `~/.local/state/sqlite-graphrag/claude-empty-config`.
+- **`ADR-0046`** (`docs/decisions/adr-0046-preflight-remediation.md`)
+  documents the 8 bugs and the fixes.
+
+### Changed
+
+- `build_claude_command` and `build_codex_command` return
+  `Result<Command, AppError>` instead of `Command`.
+- `Cargo.toml`: version `1.0.87` → `1.0.88`.
+
+### Test Suite
+
+- 9 integration tests restored to green:
+  `entity_name_too_short_rejected_via_link`,
+  `entity_name_all_caps_short_normalized_via_link`,
+  `entity_name_valid_passes_via_link`,
+  `rename_entity_rejects_short_new_name`,
+  `rename_entity_rejects_all_caps_short_new_name`,
+  `test_p0_7_traverse_nonexistent_entity_exits_4`,
+  `test_traverse_valid_entity_exits_0`,
+  `test_traverse_nonexistent_namespace_exits_4`,
+  `graph_matches_have_nonzero_distance_after_v1025`
+  (located in `tests/recall_distance_integration.rs:66` — the
+  `tests/mcp_wiring_regression.rs` referenced in the audit does
+  not exist).
+
+
+### Fixed (audit followup)
+
+- **BUG-11 CRITICAL** — `src/embedder.rs` now invokes `preflight_check`
+  before `Command::spawn()` in the LLM embedding pipeline. The previous
+  bypass meant a populated `CLAUDE_CONFIG_DIR` (e.g. a real Claude Code
+  install at `/home/comandoaguiar/.claude01`) was accepted by the
+  embedding path while rejected by the other 3 spawners, producing
+  inconsistent behavior. Restores parity with `claude_runner.rs`,
+  `codex_spawn.rs`, and `ingest_claude.rs`.
+- **BUG-12 MEDIUM** — `src/output.rs:141` (`output::emit_error`) drops
+  the redundant `eprintln!` call. `tracing::error!` alone now renders
+  the OAuth-only enforcement violation to stderr. Stderr emits exactly
+  1 line per violation (was 2). Validated by
+  `oauth_stderr_emits_single_line_v1088`.
+- **BUG-13 MEDIUM** — `src/commands/link.rs` now rejects ALL_CAPS
+  abbreviations of 4 characters or less at the link layer (was
+  previously accepted despite the entity validator rejecting them).
+  Restores symmetry with `remember --graph-stdin` and
+  `ingest --mode claude-code` paths.
+- **BUG-AUDIT-2 LOW** — `src/constants.rs` lines 439/441/444 doc-drift
+  comment updated: schema version reference `49 → 50` and
+  `9 → 15` to match `CURRENT_SCHEMA_VERSION = 15` recorded in the
+  build. The `Decimal = 50` byte of `50` and `15` ASCII character
+  count are now consistent with `serde_json` constants.
+- **BUG-AUDIT-3 LOW** — `link` and `unlink` subcommands now respect
+  the root-level `--wait-lock SECONDS` flag (default 30s) and emit
+  a `tracing::info!` diagnostic when the lock acquisition exceeds 5s.
+  Cold-start callers (e.g. CI in a fresh namespace) should pass
+  `--wait-lock 60` for headroom.
+
+### Added (audit followup)
+
+- **`ADR-0047`** (`docs/decisions/adr-0047-stderr-deduplication.md`)
+  documents the BUG-12 + GAP-15 stderr deduplication decision.
+- `tests/oauth_stderr_emits_single_line_v1088.rs` regression test
+  (regression coverage for BUG-12).
+- `tests/slots_no_println_integration.rs` regression test
+  (regression coverage for GAP-15).
+
 ## [1.0.87] - 2026-06-19
 
 ### Added
@@ -399,7 +528,7 @@ No public symbols were removed, renamed, or had their signature changed in 1.0.8
 - `cargo check --all-targets` (default): 0 errors.
 - `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
 - `cargo fmt --all --check`: 0 differences.
-- `cargo build --bin sqlite-graphrag --release` (default, LLM-only): builds in ~25s, binary 6 MB.
+- `cargo build --bin sqlite-graphrag --release` (default, LLM-only): builds in ~25s, binary 6 MB (historical — binary grew to 14.6 MiB in v1.0.89).
 - `cargo build --bin sqlite-graphrag --release --no-default-features --features embedding-legacy`: builds in ~1m 11s, binary 39 MB.
 - `cargo test --lib`: 745 passed.
 - `cargo test --all-features`: green across all 3 feature flags.

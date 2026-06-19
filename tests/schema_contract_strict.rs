@@ -842,6 +842,7 @@ fn schema_24_namespace_detect() {
 
 #[test]
 #[serial]
+// TODO v1.0.89: schema drift — subcomando renomeado em v1.0.74; avaliar correção do teste para usar __debug_schema ou restauração do nome antigo.
 #[ignore = "debug-schema subcommand renamed __debug_schema in v1.0.74; test asserts old name"]
 fn schema_25_debug_schema() {
     let env = Env::new();
@@ -1148,6 +1149,7 @@ fn schema_34_prune_ner() {
 // ---------------------------------------------------------------------------
 
 #[test]
+// TODO v1.0.89: setup bug pré-existente — avaliar fixture que cria entidade antes de invocar rename-entity.
 #[serial]
 #[ignore = "test seeds a memory but rename-entity requires an entity; pre-existing v1.0.74 setup bug"]
 fn schema_35_rename_entity() {

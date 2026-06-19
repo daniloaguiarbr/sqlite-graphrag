@@ -1,3 +1,6 @@
+// TODO v1.0.89: este arquivo tem 4116 linhas — modularização planejada.
+// Ver ADR-0046 seção "Known Tech Debt (v1.0.89+)".
+
 //! Handler for the `enrich` CLI subcommand (GAP-14 + GAP-18).
 //!
 //! Enriches the knowledge graph by running LLM-powered analysis over memories
@@ -703,6 +706,16 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
                 Ok(b) => b,
                 Err(e) => return PreflightOutcome::Error(e),
             };
+            // v1.0.88 (BUG-3 fix, ADR-0046): write the empty MCP config to a
+            // tempfile (Claude Code 2.1.177 rejects the inline `{}`
+            // form) and run the preflight gate before spawn, mirroring
+            // the canonical pattern in `claude_runner::build_claude_command`.
+            let mcp_config_path = match crate::spawn::preflight::write_empty_mcp_config_tempfile() {
+                Ok(p) => p,
+                Err(e) => {
+                    return PreflightOutcome::Error(AppError::Io(e));
+                }
+            };
             let mut cmd = std::process::Command::new(&bin);
             cmd.env_clear();
             for var in &["PATH", "HOME", "USER"] {
@@ -716,7 +729,7 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
                 .arg("1")
                 .arg("--strict-mcp-config")
                 .arg("--mcp-config")
-                .arg("{}")
+                .arg(mcp_config_path.as_os_str())
                 .arg("--dangerously-skip-permissions")
                 .arg("--settings")
                 .arg("{\"hooks\":{}}")
@@ -777,7 +790,10 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
                 timeout_secs: args.rate_limit_buffer.max(60),
                 schema_path: schema_path.clone(),
             };
-            let mut cmd = super::codex_spawn::build_codex_command(&spawn_args);
+            let mut cmd = match super::codex_spawn::build_codex_command(&spawn_args) {
+                Ok(c) => c,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
             let child = match super::claude_runner::spawn_with_memory_limit(&mut cmd) {
                 Ok(c) => c,
                 Err(e) => return PreflightOutcome::Error(AppError::Io(e)),
@@ -3611,7 +3627,7 @@ fn call_codex(
         timeout_secs,
         schema_path: schema_file.clone(),
     };
-    let mut cmd = super::codex_spawn::build_codex_command(&args);
+    let mut cmd = super::codex_spawn::build_codex_command(&args)?;
 
     let mut child = super::claude_runner::spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(

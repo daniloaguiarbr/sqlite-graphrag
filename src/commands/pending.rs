@@ -52,6 +52,11 @@ pub struct PendingListArgs {
     /// Maximum number of entries to return. Default: 100.
     #[arg(long, default_value_t = 100)]
     pub limit: usize,
+    /// GAP-E2E-010b (v1.0.89): explicit database path override. Defaults to
+    /// the path resolved by `AppPaths::resolve(None)` when omitted. Honors
+    /// env var `SQLITE_GRAPHRAG_DB_PATH`.
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -82,6 +87,11 @@ impl From<PendingStatusArg> for PendingStatus {
 pub struct PendingShowArgs {
     /// Pending id returned by `remember --stage-only`.
     pub pending_id: i64,
+    /// GAP-E2E-010b (v1.0.89): explicit database path override. Defaults to
+    /// the path resolved by `AppPaths::resolve(None)` when omitted. Honors
+    /// env var `SQLITE_GRAPHRAG_DB_PATH`.
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -163,15 +173,19 @@ pub fn run(args: PendingArgs) -> Result<(), AppError> {
     }
 }
 
-fn open_conn() -> Result<(AppPaths, rusqlite::Connection), AppError> {
-    let paths = AppPaths::resolve(None)?;
+fn open_conn(db_override: Option<&str>) -> Result<(AppPaths, rusqlite::Connection), AppError> {
+    // GAP-E2E-010b (v1.0.89): honor `--db <PATH>` for parity with the
+    // rest of the CLI surface. `AppPaths::resolve` accepts the same value
+    // passed by callers of other subcommands, keeping path semantics
+    // consistent across the entire command surface.
+    let paths = AppPaths::resolve(db_override)?;
     let conn = open_rw(&paths.db)?;
     Ok((paths, conn))
 }
 
 fn run_list(args: PendingListArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
 
     // If a status filter was provided, query that single status. Otherwise return
     // all six buckets so the operator can see the full staging landscape.
@@ -217,7 +231,7 @@ fn run_list(args: PendingListArgs) -> Result<(), AppError> {
 
 fn run_show(args: PendingShowArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
     let entry = pending_memories::find_by_id(&conn, args.pending_id)?.ok_or_else(|| {
         AppError::NotFound(format!(
             "pending_id {} not found in pending_memories",
@@ -234,7 +248,7 @@ fn run_show(args: PendingShowArgs) -> Result<(), AppError> {
 
 fn run_cleanup(args: PendingCleanupArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(None)?;
 
     // Count candidates first so dry-run is non-mutating.
     let candidates = pending_memories::list_by_status(&conn, PendingStatus::Abandoned, 100_000)?

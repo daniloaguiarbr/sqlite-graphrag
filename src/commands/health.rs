@@ -29,10 +29,15 @@ pub struct HealthArgs {
     /// Output format: `json` or `text`. JSON is always emitted on stdout regardless of the value.
     #[arg(long, value_parser = ["json", "text"], hide = true)]
     pub format: Option<String>,
+    /// Filter health report counts to a specific namespace.
+    /// When omitted, counts are global (sum across all namespaces).
+    /// Global checks (integrity, schema_version, journal_mode) are always reported.
+    #[arg(long)]
+    pub namespace: Option<String>,
 }
 
-#[derive(Serialize)]
-struct HealthCounts {
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct HealthCounts {
     memories: i64,
     /// Alias of `memories` for the documented contract in SKILL.md.
     memories_total: i64,
@@ -41,17 +46,20 @@ struct HealthCounts {
     vec_memories: i64,
 }
 
-#[derive(Serialize)]
-struct HealthCheck {
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct HealthCheck {
     name: String,
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct HealthResponse {
     status: String,
+    /// Namespace filter applied to the counts. None means global (sum across all namespaces).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<String>,
     integrity: String,
     integrity_ok: bool,
     schema_ok: bool,
@@ -199,8 +207,32 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let _ = args.json; // --json is a no-op because output is already JSON by default
     let _ = args.format; // --format is a no-op; JSON is always emitted on stdout
     let paths = AppPaths::resolve(args.db.as_deref())?;
+    // GAP-E2E-002: resolve --namespace for counts filtering.
+    // Global checks (integrity, schema_version, journal_mode) remain namespace-agnostic.
+    let namespace_filter = match args.namespace.as_deref() {
+        Some(ns) => Some(crate::namespace::resolve_namespace(Some(ns))?),
+        None => None,
+    };
 
-    crate::storage::connection::ensure_db_ready(&paths)?;
+    // BUG-AUDIT-1 (v1.0.88): refuse to silently bootstrap an empty database
+    // when the operator passes a typo'd or non-existent path. `health` must
+    // observe the database as-is, never mutate it.
+    if !paths.db.exists() {
+        let msg = format!(
+            "database not found at {}; `health` does not auto-create the database — \
+             run `sqlite-graphrag init --db {}` first or pass an existing path",
+            paths.db.display(),
+            paths.db.display(),
+        );
+        tracing::warn!(target: "health", db_path = %paths.db.display(), "database path does not exist; refusing to bootstrap");
+        output::emit_json(&serde_json::json!({
+            "error": true,
+            "code": 4,
+            "message": msg,
+            "db_path": paths.db.display().to_string(),
+        }))?;
+        return Err(AppError::NotFound(msg));
+    }
 
     let conn = open_ro(&paths.db)?;
 
@@ -212,6 +244,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         let db_size_bytes = fs::metadata(&paths.db).map(|m| m.len()).unwrap_or(0);
         output::emit_json(&HealthResponse {
             status: "degraded".to_string(),
+            namespace: None,
             integrity: integrity.clone(),
             integrity_ok: false,
             schema_ok: false,
@@ -263,11 +296,19 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         )));
     }
 
-    let memories_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
-        [],
-        |r| r.get(0),
-    )?;
+    // GAP-E2E-002: filter memory count by namespace when --namespace is set.
+    let memories_count: i64 = match &namespace_filter {
+        Some(ns) => conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL AND namespace = ?1",
+            rusqlite::params![ns],
+            |r| r.get(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
+            [],
+            |r| r.get(0),
+        )?,
+    };
     let entities_count: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
     let relationships_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))?;
@@ -582,6 +623,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 
     let response = HealthResponse {
         status: status.to_string(),
+        namespace: namespace_filter.clone(),
         integrity,
         integrity_ok,
         schema_ok,
@@ -720,6 +762,7 @@ mod tests {
     fn health_check_serializes_all_new_fields() {
         let response = HealthResponse {
             status: "ok".to_string(),
+            namespace: None,
             integrity: "ok".to_string(),
             integrity_ok: true,
             schema_ok: true,
@@ -833,6 +876,7 @@ mod tests {
         // with the expected keys and values.
         let response = HealthResponse {
             status: "ok".to_string(),
+            namespace: Some("test-ns".to_string()),
             integrity: "ok".to_string(),
             integrity_ok: true,
             schema_ok: true,
@@ -912,6 +956,7 @@ mod tests {
     ) -> HealthResponse {
         HealthResponse {
             status: "ok".to_string(),
+            namespace: None,
             integrity: "ok".to_string(),
             integrity_ok: true,
             schema_ok: true,

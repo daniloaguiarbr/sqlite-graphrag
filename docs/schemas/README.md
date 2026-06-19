@@ -7,7 +7,10 @@
 - Output schemas describe the exact stdout contract of every `sqlite-graphrag` subcommand
 - Input schemas describe the accepted JSON payloads for file-driven graph ingestion
 - Agents and parsers MUST validate responses against these schemas before processing
-- All schemas use `"additionalProperties": false` — unexpected keys are contract violations
+- Most schemas use `"additionalProperties": false` — unexpected keys are contract violations
+- `health.schema.json` (v1.0.89, GAP-E2E-007, ADR-0048) uses `"additionalProperties": true` (Must-Ignore policy per RFC 7493 I-JSON and `rules_rust_json_e_ndjson.md:33`) — unknown keys are accepted to enable schema evolution
+- The 17 new fields added in v1.0.89: `vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`, `fts_query_ok`
+- New exit code 16 (`EX_CONFIG`) emitted by `AppError::PreFlightFailed` is documented in v1.0.87 (ADR-0045, GAP-META-005) — see `error-envelope.schema.json` for the structured `PreFlightError` variant details
 ### Schema Files
 | Subcommand | Schema file |
 |---|---|
@@ -141,13 +144,35 @@
 - The `debug-schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`debug-schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
 
 
+### Schema Evolution in v1.0.86 → v1.0.89 (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
+- v1.0.86 added 6 schemas for new LLM-pipeline subcommands: `slots-status.schema.json`, `pending-list.schema.json`, `embedding-status.schema.json` (updated v1.0.84 ADR-0042), `embedding-list.schema.json`, `shutdown-envelope.schema.json` (exit 19 envelope). `pending-embeddings process` reuses `pending-list.schema.json`
+- v1.0.87 added `AppError::PreFlightFailed` (exit 16 `EX_CONFIG`) documented in `error-envelope.schema.json` with 8 variants: `ArgvExceedsArgMax`, `BinaryNotFound`, `McpConfigInlineJsonRejected`, `McpConfigPathMissing`, `McpConfigPathInvalidJson`, `WalkUpMcpJsonInvalid`, `OutputBufferTooSmall`, `ClaudeConfigDirNotEmpty`
+- v1.0.88 fixed: `oauth_stderr_emits_single_line_v1088` regression test validates exit-19 envelope now emits 1 stderr line (was 2). All other schemas unchanged
+- v1.0.89 (GAP-E2E-007) regenerated `health.schema.json` via `schemars 0.8` derive macro. Switched from `additionalProperties: false` to `true` (Must-Ignore). 17 new fields added. New `src/bin/dump_schema.rs` regenerates the schema idempotently via `schema_for!()` + BTreeMap ordering + recursive `apply_must_ignore` policy enforcement
+- v1.0.89 (GAP-E2E-008, GAP-E2E-010) added `--db <PATH>` flag parity on 5 subcommands: `embedding-status`, `embedding-list`, `pending-list`, `codex-models`. No schema changes (the flag affects input parsing, not output envelope)
+- v1.0.89 (GAP-E2E-009) added `--dry-run` and `--confirm` flags to `migrate`. New `migrate-dry-run.schema.json` describes the structured dry-run report (pending_migrations[], pending_count, checksum_mismatches[], status)
+- v1.0.89 (GAP-E2E-011) added `--auto-describe` (default true) to `ingest`. No schema changes; affects how `description` field is populated in `ingest-file-event.schema.json` and `ingest-summary.schema.json` envelopes
+
+### Input Payload Schemas (Reference)
+- `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
+- `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`
+
+### Usage
+- Inspect a `recall` response shape quickly: `sqlite-graphrag recall "query" | jaq '.'`
+- Validate with a real JSON Schema validator: `jsonschema --instance <(sqlite-graphrag stats) docs/schemas/stats.schema.json`
+- The `debug-schema` subcommand is hidden and intended for diagnostic tooling only — the binary exposes it with a double-underscore prefix (`debug-schema`) while the schema file uses the kebab-case name `debug-schema.schema.json` following the directory convention
+
+
 ## Português Brasileiro
 ### Propósito
 - Cada arquivo neste diretório é um documento JSON Schema Draft 2020-12
 - Schemas de saída descrevem o contrato exato de stdout de cada subcomando `sqlite-graphrag`
 - Schemas de entrada descrevem os payloads JSON aceitos para ingestão de grafo orientada a arquivo
 - Agentes e parsers DEVEM validar respostas contra estes schemas antes de processar
-- Todos os schemas usam `"additionalProperties": false` — chaves inesperadas são violações de contrato
+- A maioria dos schemas usa `"additionalProperties": false` — chaves inesperadas são violações de contrato
+- `health.schema.json` (v1.0.89, GAP-E2E-007, ADR-0048) usa `"additionalProperties": true` (política Must-Ignore por RFC 7493 I-JSON e `rules_rust_json_e_ndjson.md:33`) — chaves desconhecidas são aceitas para permitir evolução do schema
+- Os 17 novos campos adicionados em v1.0.89: `vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`, `fts_query_ok`
+- Novo exit code 16 (`EX_CONFIG`) emitido por `AppError::PreFlightFailed` é documentado em v1.0.87 (ADR-0045, GAP-META-005) — veja `error-envelope.schema.json` para detalhes estruturados da variante `PreFlightError`
 ### Arquivos de Schema
 | Subcomando | Arquivo de schema |
 |---|---|

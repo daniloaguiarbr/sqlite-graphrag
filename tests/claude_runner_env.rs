@@ -309,3 +309,62 @@ fn audit_no_token_leak_in_subprocess_stderr() {
         "token leaked to stderr: {stderr}"
     );
 }
+
+#[test]
+#[serial(env)]
+fn oauth_stderr_emits_single_line_v1088() {
+    // ADR-0047 / BUG-12 v1.0.88: `output::emit_error` previously emitted
+    // BOTH `tracing::error!` AND `eprintln!` for the same message, producing
+    // 2 stderr lines on every OAuth-only violation. After the fix, stderr
+    // must contain EXACTLY 1 line referencing the OAuth message.
+
+    // SAFETY: serial_test::serial(env) serialises env mutations.
+    unsafe {
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-bug12-stderr-dup-test");
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    let tmp = TempDir::new().expect("TempDir::new");
+    let output = AssertCmd::new(assert_cmd::cargo::cargo_bin!("sqlite-graphrag"))
+        .args(["init", "--db"])
+        .arg(tmp.path().join("test.sqlite"))
+        .env("ANTHROPIC_API_KEY", "sk-bug12-stderr-dup-test")
+        .env("HOME", tmp.path())
+        .timeout(std::time::Duration::from_secs(30))
+        .output()
+        .expect("spawn sqlite-graphrag");
+
+    // Cleanup
+    unsafe {
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Stdout: JSON envelope with code 1
+    assert!(
+        stdout.contains("\"error\": true"),
+        "stdout should contain JSON error envelope, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"code\": 1"),
+        "stdout should contain exit code 1, got: {stdout}"
+    );
+
+    // Stderr: count lines mentioning the OAuth key — must be exactly 1
+    let oauth_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("ANTHROPIC_API_KEY"))
+        .collect();
+    assert_eq!(
+        oauth_lines.len(),
+        1,
+        "BUG-12: stderr should contain EXACTLY 1 line mentioning ANTHROPIC_API_KEY, got {} lines:\n{stderr}",
+        oauth_lines.len()
+    );
+    assert!(
+        !output.status.success(),
+        "BUG-12: exit code must be non-zero on OAuth-only violation"
+    );
+}

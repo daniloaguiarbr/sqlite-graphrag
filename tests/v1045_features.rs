@@ -146,6 +146,7 @@ fn hybrid_search_finds_dotted_version() {
 
 #[test]
 #[serial]
+// TODO v1.0.89: aguardando decisão arquitetural — NER removido em v1.0.76 (ADR-0025); avaliar se deve ser restaurado via glue de subprocesso LLM (similar ao embedding G42).
 #[ignore = "NER removed in v1.0.76; see ADR-0025"]
 fn enable_ner_env_var_accepts_1() {
     let tmp = TempDir::new().unwrap();
@@ -170,6 +171,7 @@ fn enable_ner_env_var_accepts_1() {
 }
 
 #[test]
+// TODO v1.0.89: aguardando decisão arquitetural — NER removido em v1.0.76 (ADR-0025); avaliar se deve ser restaurado via glue de subprocesso LLM (similar ao embedding G42).
 #[serial]
 #[ignore = "NER removed in v1.0.76; see ADR-0025"]
 fn enable_ner_env_var_accepts_true() {

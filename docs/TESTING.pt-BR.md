@@ -9,7 +9,7 @@
 - Todos os testes carregam `#[serial_test::serial(env)]` para serializar mutações de env no runner de testes paralelo
 - Contagem total de testes: 818 (de 812 na v1.0.82; os 6 novos testes estão divididos entre 3 testes unitários em `env_whitelist.rs` e 3 testes de integração em `claude_runner_env.rs` mais os 2 testes estilo auditoria)
 - Testes OAuth-only pré-existentes em `claude_runner.rs:574-666` e `codex_spawn.rs:684-758` permanecem verdes; a extensão do env whitelist NÃO enfraquece o guard
-# Guia de Testes — v1.0.85 Suite de Testes de Cinco Gaps + Hotfixes (ADR-0043, ADR-0044)
+# Guia de Testes — v1.0.89 Suite de Testes Preflight + BUG-11/12/13 + Schema Drift (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
 
 - Leia a versão em inglês em [TESTING.md](TESTING.md)
@@ -48,6 +48,37 @@
 ### Testes Unitários em `src/commands/migrate.rs`
 - `rehash_does_not_insert_missing_migrations` — verifica que `run_rehash` não insere mais linhas fantasma para migrações não aplicadas (ATUALIZADO de `rehash_insert_includes_applied_on`)
 - `ensure_v013_tables_noop_when_no_history` — verifica no-op quando `refinery_schema_history` não existe
+## v1.0.87 — Testes da Camada de Validação Pre-Flight (ADR-0045, GAP-META-005)
+
+- `tests/bug11_preflight_regression.rs` (2 testes) — reprodutores para as 5 classes BUG que o GAP-META-005 endereça. Os 7 guards (`check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`) têm 2 testes cada: caso positivo (passa) e caso negativo (retorna a variante específica `PreFlightError`)
+- `src/spawn/preflight.rs` (15 testes unitários inline) — `check_argv_size_rejects_oversized_argv`, `check_argv_size_accepts_under_limit`, `check_binary_exists_returns_binary_not_found`, `check_mcp_config_inline_creates_tempfile_for_braces`, `check_mcp_config_inline_passes_when_already_tempfile`, `check_mcp_config_path_validates_json`, `check_mcp_config_path_rejects_missing_file`, `check_walkup_mcp_json_walks_to_root`, `check_walkup_mcp_json_accepts_absent`, `check_output_buffer_doubles_capacity_above_64k`, `check_output_buffer_passes_when_under_limit`, `check_claude_config_dir_rejects_non_empty`, `check_claude_config_dir_accepts_empty`, `is_skipped_returns_true_with_env_var`, `is_skipped_returns_false_without_env_var`
+- Todos os 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) ganham cobertura `#[test]` do site de chamada pre-flight
+
+## v1.0.88 — Testes dos Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+
+- `tests/bug11_preflight_regression.rs::embed_via_backend_strict_returns_no_backends_error` — verifica que quando pre-flight falha em `extract/llm_embedding.rs:563-565`, `remember` propaga o erro via exit 11 em vez de persistir silenciosamente com `backend_invoked: "none"`
+- `tests/bug11_preflight_regression.rs::remember_with_mcp_config_dir_in_legacy_path_aborts` — repro do BUG-11: `CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp` causa exit 11 com envelope JSON de erro
+- `tests/oauth_stderr_emits_single_line_v1088` — verifica fix do BUG-12: `ANTHROPIC_API_KEY=sk-test init` emite exatamente 1 linha stderr (eram 2)
+- `tests/entity_validation_integration.rs` (8 testes) — verifica fix do BUG-13: `link --create-missing` agora respeita validação de nome de entidade. Caso de borda de 4 chars (`API` é rejeitado, `claude` é aceito)
+- Renomeação de teste em `embedder.rs:1704` — `embed_with_fallback_succeeds_via_none_when_chain_exhausts` → `embed_with_fallback_chain_of_only_none_aborts_without_skip_on_failure_v1088` (agora documenta o contrato corrigido)
+
+## v1.0.89 — Sete Testes de Regressão para os Dez GAPs (ADR-0048, ADR-0049)
+
+- `tests/health_namespace_regression.rs::health_accepts_namespace_flag_v1089` — GAP-E2E-002. Verifica que `health --namespace prod --json` retorna 0 e filtra contagens para o namespace
+- `tests/migrate_dry_run_regression.rs::dry_run_does_not_mutate_schema_history_v1089` — GAP-E2E-009. Verifica que `migrate --dry-run` sai com 0 e `refinery_schema_history` permanece inalterado
+- `tests/codex_models_json_regression.rs::codex_models_json_flag_accepted_as_noop_v1089` — GAP-E2E-010a. Verifica que `codex-models --json` sai com 0 com envelope JSON
+- `tests/cli_db_flag_parity_regression.rs` (5 testes) — GAP-E2E-008 + GAP-E2E-010b. Verifica que `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show` todos aceitam `--db <PATH>` sem erro de clap
+- `tests/ingest_auto_describe_regression.rs` (5 testes) — GAP-E2E-011. Verifica `extract_heuristic_description(body, path_hint)`:
+  - `auto_describe_uses_body_summary` — primeira linha significativa (>20 chars) vence
+  - `auto_describe_falls_back_on_headers_only` — markdown apenas com headers cai para `"ingested document"` quando não há `path_hint`
+  - `auto_describe_falls_back_to_stem_when_only_headers` — com `path_hint`, cai para o stem do arquivo (ex.: `headers-only`)
+  - `auto_describe_truncates_long_line` — descrições truncadas a ≤100 chars
+  - `auto_describe_ignores_short_and_blank_lines` — linhas curtas (<21 chars) e linhas em branco são puladas
+- `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` — GAP-E2E-001. Verifica que a descrição em `Cargo.toml:6` confere com o tamanho real do binário dentro de ±5%
+- `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifica que todos os 17 novos campos estão presentes no `health.schema.json` regenerado e que `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON) é respeitada
+
+## Tamanho Atual da Suite de Testes
+
 ## v1.0.85 — Suite de Testes de Cinco Gaps (ADR-0043)
 
 Cinco novos testes de regressão em `tests/embedder.rs` cobrem o enum FallbackReason com 7 variantes:

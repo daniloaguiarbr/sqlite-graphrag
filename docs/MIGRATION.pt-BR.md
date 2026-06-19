@@ -1,7 +1,112 @@
-# MIGRANDO PARA v1.0.85 — Remediação de Cinco Gaps + Split do Claude + Hotfixes (ADR-0042, ADR-0043, ADR-0044)
+# MIGRANDO PARA v1.0.89 — Camada Pre-flight + Hotfixes BUG-11/12/13 + Schema Drift (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
 > Este guia é para operadores na v1.0.82 que querem atualizar para a v1.0.83 sem perder dados. Esta release é bump PATCH sem NENHUMA migração de banco. O schema permanece em v15. O comportamento é ADITIVO para operadores OAuth padrão.
 
+# MIGRANDO PARA v1.0.86 → v1.0.87 → v1.0.88 → v1.0.89 — Pre-flight + Hotfixes + Schema Drift
+
+> Esta seção guia operadores na v1.0.85.2 que querem atualizar para v1.0.89 através de quatro releases. Nenhuma migração de banco roda neste ciclo. O schema permanece em v15.
+
+## v1.0.86 — Superfície LLM-Heavy
+
+- Adiciona 10 subcomandos: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`
+- Adiciona flags globais: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`
+- Nenhuma mudança de schema. Nenhuma migração roda
+
+```bash
+# Smoke test dos novos subcomandos
+sqlite-graphrag pending list --json
+sqlite-graphrag slots status --json
+sqlite-graphrag embedding status --json
+```
+
+## v1.0.87 — Camada de Validação Pre-Flight (ADR-0045)
+
+- Introduz `src/spawn/preflight.rs` (≥200 linhas, 7 guards, 15 testes unitários) portando todo spawn de subprocesso LLM ANTES do fork
+- Nova variante `AppError::PreFlightFailed`. Exit code 16 (`EX_CONFIG`) agora é permanente para falhas pre-flight
+- Bypass: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` desabilita todos os 7 guards (emergência apenas)
+- Os 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) compartilham este módulo único
+- Nenhuma mudança de schema. Nenhuma migração roda
+
+```bash
+# Diagnosticar uma falha pre-flight (exit 16) — envelope JSON carrega variante PreFlightError
+sqlite-graphrag remember --name test --type note --description x --body y 2>&1
+# Esperado: exit 16, envelope JSON com code "PreFlightFailed" e detalhes da variante
+
+# Bypass em emergências
+SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 sqlite-graphrag remember --name test --body y
+```
+
+## v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+
+- BUG-11 (CRÍTICO): falha pre-flight em `extract/llm_embedding.rs:563-565` agora propaga para `remember` via `embed_via_backend_strict`
+- BUG-12 (MÉDIO): enforço OAuth-only emite 1 linha stderr (eram 2)
+- BUG-13 (MÉDIO): `link --create-missing` agora respeita validação de nome de entidade
+- Nenhuma mudança de schema. Nenhuma migração roda
+
+```bash
+# Repro BUG-11
+CLAUDE_CONFIG_DIR=/tmp/bad-config-with-mcp sqlite-graphrag remember --name test --body y
+# Pré-v1.0.88: persistência silenciosa com backend_invoked: "none"
+# v1.0.88+: exit 11 com envelope JSON de erro
+
+# Verificação BUG-12
+ANTHROPIC_API_KEY=sk-test sqlite-graphrag init
+# Pré-v1.0.88: 2 linhas stderr
+# v1.0.88+: 1 linha stderr
+```
+
+## v1.0.89 — Schema Drift + Flag Parity (ADR-0048, ADR-0049)
+
+- `health.schema.json` regenerado via `schemars` derive macro. `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON). 17 novos campos adicionados
+- Novos subcomandos que aceitam `--db <PATH>`: `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show`
+- `migrate --dry-run --json` reporta migrações pendentes sem aplicar
+- `codex-models --json` aceito como no-op; paridade de `pending list --db <PATH>`
+- `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo
+- `health --namespace <NS> --json` filtra contagens para um único namespace
+- Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6`
+- Nenhuma mudança de schema. Nenhuma migração roda
+
+```bash
+# Filtro de namespace em health (GAP-E2E-002)
+sqlite-graphrag health --namespace prod --json
+
+# Relatório de migração em dry-run (GAP-E2E-009)
+sqlite-graphrag migrate --dry-run --json
+
+# Auto-describe da primeira linha do corpo (GAP-E2E-011)
+sqlite-graphrag ingest ./docs --auto-describe --json
+
+# Paridade de --db em pending/embedding (GAP-E2E-008)
+sqlite-graphrag pending list --db /tmp/test.sqlite --json
+sqlite-graphrag embedding status --db /tmp/test.sqlite --json
+```
+
+## Pinning de API de Biblioteca Através de v1.0.86-89
+
+A API de biblioteca permanece instável dentro de v1.x.y (ADR-0032). Faça pin exato:
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.0.89"
+```
+
+A forma reduzida `^1.0` te mantém no track CLI-estável. Consumidores CLI que seguem o contrato JSON em `docs/schemas/` não são afetados.
+
+## O Que Quebra Através de v1.0.86-89
+
+- **NENHUM para operadores OAuth padrão** — comportamento é aditivo a cada passo
+- **Consumidores de biblioteca que enumeram variantes `AppError`**: `PreFlightFailed` (exit 16) adicionado na v1.0.87
+- **Consumidores validando JSON de `health` contra schemas estritos**: `additionalProperties: true` (Must-Ignore) significa que validadores estritos usando `additionalProperties: false` agora aceitarão chaves desconhecidas. Atualize seu validador ou migre para o schema derivado via schemars
+
+## Rollback Através de v1.0.86-89
+
+Se qualquer release quebrar seu pipeline, faça rollback para v1.0.85.2:
+
+```bash
+cargo install sqlite-graphrag --version 1.0.85.2 --force
+```
+
+Seu banco permanece inalterado. v1.0.86-89 não fez modificações de schema; v1.0.85.2 lê o mesmo arquivo SQLite.
 ## O Que Mudou na v1.0.83
 
 - **GAP-058 resolução parcial (ADR-0041)** — seis variáveis de ambiente de provider customizado agora são preservadas ao spawnar subprocessos `claude -p` ou `codex exec`. Habilita providers compatíveis com Anthropic (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, gateways corporativos) sem alterar o mandato OAuth-only que continua rejeitando `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. As vars preservadas são `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY` e `OTEL_EXPORTER_OTLP_ENDPOINT`.
@@ -416,7 +521,7 @@ Instale a v1.0.79 (não a 1.0.76): ela carrega os reparos de
 migração G40/G41 e os fixes de embedding G42/G43 dos quais o
 caminho de upgrade depende.
 
-Isso instala o build padrão LLM-only (binário de ~6 MB, sem runtime ONNX, sem download de modelo). Se você quer o pipeline legado fastembed para a janela de transição:
+Isso instala o build padrão LLM-only (binário de ~14.6 MiB, sem runtime ONNX, sem download de modelo). Se você quer o pipeline legado fastembed para a janela de transição:
 
 ```bash
 cargo install sqlite-graphrag --version 1.0.76 --features embedding-legacy --force

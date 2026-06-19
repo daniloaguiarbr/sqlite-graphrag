@@ -1,3 +1,6 @@
+// TODO v1.0.89: este arquivo tem 2367 linhas — divisão em suites específicas planejada.
+// Ver ADR-0046 seção "Known Tech Debt (v1.0.89+)".
+
 #![cfg(feature = "slow-tests")]
 
 use assert_cmd::Command;

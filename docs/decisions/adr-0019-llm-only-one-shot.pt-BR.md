@@ -40,7 +40,7 @@ As flags de endurecimento do LLM da v1.0.69 são herdadas sem mudanças: 7 flags
 
 ### Positivas
 
-- O binário release cai de 39 MB para ~6 MB (apenas rustc + rusqlite + clap).
+- O binário release cai de 39 MB para ~14.6 MiB (apenas rustc + rusqlite + clap).
 - `cargo install sqlite-graphrag` não exige mais ferramentas de build C, runtime ONNX, nem biblioteca de sistema além de um compilador C.
 - O custo de cold-start do primeiro `remember` é dominado pelo spawn do subprocesso LLM (~1-3 s) em vez da carga do modelo ONNX (~30 s em cache fria).
 - A CLI agora é one-shot. Não há daemon para vazar memória, nem socket para deixar para trás em crash, nem estado para inspecionar com `daemon --ping`.

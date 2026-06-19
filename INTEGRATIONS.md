@@ -73,6 +73,12 @@
 ### Orphan Reaper (G28-C)
 - `src/reaper.rs` walks `/proc` at startup, kills any `claude`/`codex` orphan with `PPID=1` and age greater than 60s.  Invoked from `main` BEFORE any work.  4-test suite: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
 
+### Pre-flight Validation Layer (v1.0.87+ — ADR-0045)
+- Every LLM subprocess spawn passes through `src/spawn/preflight.rs` (15 unit tests, 7 guards) BEFORE the fork.  Failures return `AppError::PreFlightFailed` (exit code 16, `EX_CONFIG`) without spawning the subprocess.
+- The 7 guards in order: `check_argv_size` (rejects invocations that would exceed `ARG_MAX` minus 4 KB), `check_binary_exists` (confirms `claude`/`codex` reachable in `PATH`), `check_mcp_config_inline` (replaces literal `--mcp-config {}` with tempfile holding `{"mcpServers":{}}` — fixes BUG-2), `check_mcp_config_path` (validates JSON contents of `--mcp-config <PATH>`), `check_walkup_mcp_json` (validates `.mcp.json` walk-up from workspace root), `check_output_buffer` (raises parser buffer above 64 KB when needed — fixes BUG-4), `check_claude_config_dir` (validates `CLAUDE_CONFIG_DIR` is empty/absent to avoid MCP bleed-through).
+- Bypass in emergencies: set `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` to disable all 7 guards.  Last-resort opt-out for production incident mitigation; bypassing reverts to direct `Command::spawn()` and inherits all 5 BUG classes from GAP-META-005.
+- Related v1.0.88 hotfixes: BUG-11 (preflight failure in `extract/llm_embedding.rs` did not propagate to `remember`; fixed with `embed_via_backend_strict` in `bug11_preflight_regression.rs`); BUG-12 (OAuth-only enforcement emitted 2 identical stderr lines; fixed with single-line stderr in `oauth_stderr_emits_single_line_v1088`); BUG-13 (`link --create-missing` bypassed entity-name validation; fixed by validating BEFORE normalizing in `entity_validation_integration.rs`).
+
 ## New Commands and Flags (since v1.0.76)
 ### LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
 - The default build of v1.0.76 is LLM-Only and one-shot.  No daemon, no ONNX runtime, no `multilingual-e5-small` model download.  Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks).  Release binary is approximately 6 MB.

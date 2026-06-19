@@ -1,76 +1,281 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/health.schema.json",
-  "title": "HealthResponse",
-  "description": "Response emitted by `sqlite-graphrag health` on stdout as a single JSON line. Accepts `--format json`, legacy `--format text`, or `--json` as no-op compatibility flags; JSON is always emitted. Exit codes: 0 success, 1 runtime error, 2 CLI usage error, 4 database not found.",
-  "$defs": {
+  "additionalProperties": true,
+  "definitions": {
     "HealthCheck": {
-      "type": "object",
-      "required": ["name", "ok"],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
-        "name":   { "type": "string" },
-        "ok":     { "type": "boolean" },
-        "detail": { "type": "string", "description": "Present only when ok=false." }
-      }
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "ok"
+      ],
+      "type": "object"
     },
     "HealthCounts": {
-      "type": "object",
-      "required": ["memories", "entities", "relationships", "vec_memories"],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
-        "memories":       { "type": "integer", "minimum": 0 },
-        "memories_total": { "type": "integer", "minimum": 0, "description": "Including soft-deleted memories." },
-        "entities":       { "type": "integer", "minimum": 0 },
-        "relationships":  { "type": "integer", "minimum": 0 },
-        "vec_memories":   { "type": "integer", "minimum": 0 }
-      }
+        "entities": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "memories": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "memories_total": {
+          "description": "Alias of `memories` for the documented contract in SKILL.md.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "relationships": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "vec_memories": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entities",
+        "memories",
+        "memories_total",
+        "relationships",
+        "vec_memories"
+      ],
+      "type": "object"
     }
   },
-  "type": "object",
-  "required": [
-    "status", "integrity", "integrity_ok", "schema_ok",
-    "vec_memories_ok", "vec_entities_ok", "vec_chunks_ok",
-    "fts_ok", "model_ok", "counts", "db_path", "db_size_bytes",
-    "schema_version", "missing_entities", "wal_size_mb",
-    "journal_mode", "checks", "elapsed_ms"
-  ],
-  "additionalProperties": false,
   "properties": {
-    "status":          { "type": "string", "enum": ["ok", "degraded"] },
-    "integrity":       { "type": "string" },
-    "integrity_ok":    { "type": "boolean" },
-    "schema_ok":       { "type": "boolean" },
-    "vec_memories_ok": { "type": "boolean" },
-    "vec_memories_missing":  { "type": "integer", "minimum": 0, "description": "Active memories without a corresponding vector embedding." },
-    "vec_memories_orphaned": { "type": "integer", "minimum": 0, "description": "Vector embeddings without a corresponding memory row." },
-    "vec_entities_ok": { "type": "boolean" },
-    "vec_chunks_ok":   { "type": "boolean" },
-    "fts_ok":          { "type": "boolean" },
-    "model_ok":        { "type": "boolean" },
-    "counts":          { "$ref": "#/$defs/HealthCounts" },
-    "db_path":         { "type": "string" },
-    "db_size_bytes":   { "type": "integer", "minimum": 0 },
-    "schema_version":  { "type": "integer", "minimum": 0, "description": "MAX(version) from refinery_schema_history." },
-    "missing_entities":{ "type": "array", "items": { "type": "string" } },
-    "wal_size_mb":     { "type": "number", "minimum": 0 },
-    "journal_mode":    { "type": "string" },
-    "checks":            { "type": "array", "items": { "$ref": "#/$defs/HealthCheck" } },
-    "mentions_ratio":                { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all relationships that are of type 'mentions'. Present when mentions dominate the graph above 50%." },
-    "mentions_warning":              { "type": "string",  "description": "Human-readable warning when mentions_ratio exceeds threshold. Present alongside mentions_ratio." },
-    "fts_query_ok":                  { "type": "boolean", "description": "True when FTS5 MATCH query succeeds (not just table existence)" },
-    "sqlite_version":                { "type": "string",  "description": "Bundled SQLite version from SELECT sqlite_version()" },
-    "top_relation":                  { "type": "string",  "description": "Relation type with the highest edge count. Present when relation concentration analysis is available." },
-    "top_relation_ratio":            { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges occupied by top_relation (0.0-1.0). Present alongside top_relation." },
-    "applies_to_ratio":              { "type": "number",  "minimum": 0.0, "maximum": 1.0, "description": "Fraction of all edges that are of type 'applies-to'. Present when relation concentration analysis is available." },
-    "relation_concentration_warning":{ "type": "string",  "description": "Human-readable warning when a single relation type dominates the graph. Present when concentration threshold is exceeded." },
-    "super_hub_count":    { "type": "integer", "minimum": 0, "description": "Number of entities with degree > 50. Present when super-hub analysis is available." },
-    "super_hub_warning":  { "type": "string", "description": "Human-readable warning when super-hub entities are detected. Present when super_hub_count > 0." },
-    "top_hub_entity":     { "type": "string", "description": "Name of the entity with the highest degree. Present when graph has entities." },
-    "top_hub_degree":     { "type": "integer", "minimum": 0, "description": "Degree of the top hub entity. Present alongside top_hub_entity." },
-    "hub_warning":        { "type": "string", "description": "Warning when top hub degree exceeds threshold. Present alongside top_hub_entity." },
-    "non_normalized_count": { "type": "integer", "minimum": 0, "description": "Number of entities whose names do not match kebab-case normalization." },
-    "normalization_warning": { "type": "string", "description": "Warning when non-normalized entities are detected." },
-    "elapsed_ms":                    { "type": "integer", "minimum": 0 }
-  }
+    "applies_to_ratio": {
+      "description": "Fraction of relationships that use the `applies_to` relation type (0.0–1.0). Omitted when there are no relationships or when `applies_to` is absent.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/definitions/HealthCheck"
+      },
+      "type": "array"
+    },
+    "counts": {
+      "$ref": "#/definitions/HealthCounts"
+    },
+    "db_path": {
+      "type": "string"
+    },
+    "db_size_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "elapsed_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "fts_ok": {
+      "type": "boolean"
+    },
+    "fts_query_ok": {
+      "description": "Whether a live FTS5 MATCH query against fts_memories succeeded.",
+      "type": "boolean"
+    },
+    "hub_warning": {
+      "description": "Human-readable warning when `top_hub_entity` exceeds 50 connections. Omitted when degree is within acceptable bounds or there are no entities.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "integrity": {
+      "type": "string"
+    },
+    "integrity_ok": {
+      "type": "boolean"
+    },
+    "journal_mode": {
+      "description": "SQLite journaling mode (wal, delete, truncate, persist, memory, off).",
+      "type": "string"
+    },
+    "mentions_ratio": {
+      "description": "Fraction of relationships that use the `mentions` relation type (0.0–1.0). Omitted when there are no relationships in the database.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "mentions_warning": {
+      "description": "Human-readable warning when `mentions` relationships dominate the graph (ratio > 0.5). Omitted when the ratio is within acceptable bounds or there are no relationships.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "missing_entities": {
+      "description": "List of entities referenced by memories but absent from the entities table. Empty in a healthy DB. Per the contract documented in SKILL.md.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "model_ok": {
+      "type": "boolean"
+    },
+    "namespace": {
+      "description": "Namespace filter applied to the counts. None means global (sum across all namespaces).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "non_normalized_count": {
+      "description": "Number of entities whose name differs from its normalized kebab-case form.",
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "normalization_warning": {
+      "description": "Warning when non-normalized entities are detected.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "relation_concentration_warning": {
+      "description": "Human-readable warning when a single relation type occupies more than 40 % of edges. Omitted when concentration is within acceptable bounds or there are no relationships.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_ok": {
+      "type": "boolean"
+    },
+    "schema_version": {
+      "description": "MAX(version) from refinery_schema_history — number of the last applied migration. Distinct from PRAGMA schema_version (SQLite DDL counter) and PRAGMA user_version (canonical SCHEMA_USER_VERSION from __debug_schema).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "sqlite_version": {
+      "description": "SQLite version string, e.g. `\"3.46.0\"`.",
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "super_hub_count": {
+      "description": "Number of entities with degree exceeding the super-hub threshold (default 50).",
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "super_hub_warning": {
+      "description": "Warning listing top super-hub entity names.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "top_hub_degree": {
+      "description": "Number of connections (degree) of `top_hub_entity`. Omitted when there are no entities in the database.",
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "top_hub_entity": {
+      "description": "Name of the entity with the highest connection count in the namespace. Omitted when there are no entities in the database.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "top_relation": {
+      "description": "The relation type with the highest edge count in the namespace. Omitted when there are no relationships in the database.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "top_relation_ratio": {
+      "description": "Fraction of all edges occupied by `top_relation` (0.0–1.0). Omitted when there are no relationships in the database.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "vec_chunks_ok": {
+      "type": "boolean"
+    },
+    "vec_entities_ok": {
+      "type": "boolean"
+    },
+    "vec_memories_missing": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "vec_memories_ok": {
+      "type": "boolean"
+    },
+    "vec_memories_orphaned": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "wal_size_mb": {
+      "description": "WAL file size in MB (0.0 if WAL does not exist or journal_mode != wal).",
+      "format": "double",
+      "type": "number"
+    }
+  },
+  "required": [
+    "checks",
+    "counts",
+    "db_path",
+    "db_size_bytes",
+    "elapsed_ms",
+    "fts_ok",
+    "fts_query_ok",
+    "integrity",
+    "integrity_ok",
+    "journal_mode",
+    "missing_entities",
+    "model_ok",
+    "schema_ok",
+    "schema_version",
+    "sqlite_version",
+    "status",
+    "vec_chunks_ok",
+    "vec_entities_ok",
+    "vec_memories_missing",
+    "vec_memories_ok",
+    "vec_memories_orphaned",
+    "wal_size_mb"
+  ],
+  "title": "HealthResponse",
+  "type": "object"
 }

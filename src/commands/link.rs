@@ -26,6 +26,14 @@ use serde::Serialize;
     # To list current entity names:\n  \
     sqlite-graphrag graph entities | jaq '.entities[].name'\n\n  \
 NOTE:\n  \
+LOCK WAITING:\n  \
+    The root-level --wait-lock SECONDS flag (default 30s) controls how long\n  \
+    the link/unlink subcommands wait for the global CLI lock before failing\n  \
+    with exit 15. In a cold start (first call in a new namespace), the lock\n  \
+    acquisition may exceed the default wait. CI pipelines should pass\n  \
+    --wait-lock 60 for headroom. The link command emits a tracing::info!\n  \
+    diagnostic when the wait exceeds 5 seconds so operators can correlate\n  \
+    cold-start latency with this CLI invocation.\n\n  \
     --from and --to expect ENTITY names (graph nodes), not memory names.\n  \
     Memory names are managed via remember/read/edit/forget; entities are auto-extracted\n  \
     by GLiNER NER from memory bodies or auto-created via --create-missing.")]
@@ -101,6 +109,18 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     tracing::debug!(target: "link", from = %args.from, to = %args.to, relation = %args.relation, "creating relationship");
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
+
+    // BUG-13 (v1.0.88): validate the ORIGINAL entity names BEFORE
+    // normalization. Normalizing "RUST" to "rust" would silently bypass
+    // the ALL_CAPS short-name guard (>=2 chars, no newlines, no ALL_CAPS
+    // <=4 chars). The test `link_rejects_four_char_all_caps_v1088`
+    // guards against the bypass.
+    if let Err(msg) = crate::storage::entities::validate_entity_name(&args.from) {
+        return Err(AppError::Validation(msg.to_string()));
+    }
+    if let Err(msg) = crate::storage::entities::validate_entity_name(&args.to) {
+        return Err(AppError::Validation(msg.to_string()));
+    }
 
     let norm_from = crate::parsers::normalize_entity_name(&args.from);
     let norm_to = crate::parsers::normalize_entity_name(&args.to);

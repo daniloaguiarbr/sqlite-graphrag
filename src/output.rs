@@ -136,16 +136,24 @@ pub fn emit_error_json(code: i32, message: &str) {
     }
 }
 
-/// Emits a localised error message to stderr with the `Error:`/`Erro:` prefix.
+/// Emits a localised error message to stderr via the `tracing` subscriber.
 ///
-/// Centralises human-readable error output following Pattern 5 (`output.rs` is the
-/// SOLE I/O point of the CLI). Does not log via `tracing` — call `tracing::error!`
-/// explicitly before this function when structured observability is desired.
+/// ADR-0047 / BUG-12 v1.0.88: prior implementation also called `eprintln!`
+/// which produced a SECOND stderr line (Error:/Erro: prefix) for the same
+/// error, on top of the structured `tracing::error!` line. Operators and
+/// log parsers observed duplicated stderr lines.
+///
+/// The tracing subscriber is configured for stderr at `main.rs:115`, so a
+/// single `tracing::error!` call already produces the human-readable line.
+/// Callers that want a plain stderr line without tracing (e.g. one-shot
+/// scripts) should use `eprintln!` directly instead of this helper.
+///
+/// Centralises human-readable error output following Pattern 5 (`output.rs` is
+/// the SOLE I/O point of the CLI).
 #[cold]
 #[inline(never)]
 pub fn emit_error(localized_msg: &str) {
     tracing::error!(target: "output", message = localized_msg);
-    eprintln!("{}: {}", crate::i18n::error_prefix(), localized_msg);
 }
 
 /// Emits a bilingual error to stderr honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
@@ -192,6 +200,7 @@ pub fn emit_error_i18n(en: &str, pt: &str) {
 ///     elapsed_ms: 42,
 ///     name_was_normalized: false,
 ///     original_name: None,
+///     backend_invoked: None,
 /// };
 ///
 /// let json = serde_json::to_string(&resp).unwrap();

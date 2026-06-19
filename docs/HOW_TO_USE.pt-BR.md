@@ -8,7 +8,7 @@
 - Sem telemetria nova: o fix é silencioso. Nenhum macro `tracing::info!` registra qual provider está em uso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
 - Resolve GAP-058 parcialmente: env vars de custom-provider roteiam em torno de contenção de quota OAuth; `recall`/`hybrid-search` permanecem determinísticos sob fadiga OAuth oficial
-# COMO USAR sqlite-graphrag (v1.0.85 — Remediação de Cinco Gaps, Split do Claude, Hotfixes 85.1/85.2)
+# COMO USAR sqlite-graphrag (v1.0.89 — Camada Pre-flight, Drift de Schema, Flag Parity, 1877 testes)
 
 > Entregue memória persistente a qualquer agente de IA com um binário local, um único arquivo SQLite, e a CLI de LLM que você já confia.
 
@@ -16,6 +16,46 @@
 - Voltar ao [README.md](../README.md) para referência de comandos
 
 
+## O Que Mudou na v1.0.86, v1.0.87, v1.0.88, v1.0.89 (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
+
+Desde a v1.0.85.2, quatro releases introduziram a superfície LLM-heavy, a camada de validação pre-flight, três hotfixes e o contrato de schema como artefato derivado.
+
+### v1.0.86 — Superfície LLM-Heavy e Semáforo de Slots Host-Wide
+
+- Cinco novos subcomandos expõem o pipeline de subprocessos LLM: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`
+- `pending` (V014 — tabela `pending_memories`) fornece checkpoint de 3 estágios para o pipeline `remember`. O checkpointer sobrevive a crash; no restart, `pending list` inspeciona a fila e `pending show <id>` lê uma entrada
+- `embedding status --filter-status queued|processing|done|failed|skipped` e `--llm-backend codex,claude,none` expõem o pipeline retry-fallback
+- `slots status` reporta `max_concurrency`, `acquired`, `waiting`, `held_by_pid[]`; `slots release --slot-id N --yes` ceifa slots órfãos
+- Novas flags globais: `--max-concurrency <N>`, `--wait-lock <SECONDS>`, `--llm-parallelism <N>` (padrão 4, clamp [1, 32]), `--ingest-parallelism <N>`, `--graceful-shutdown-secs <N>`, `--skip-embedding-on-failure` (válido apenas com `--llm-backend …,none`)
+- Contenção de lock via `fs4 = 0.9` com `fcntl(F_SETLK)` em Unix e `LockFileEx` em Windows (ADR-0039)
+
+### v1.0.87 — Camada de Validação Pre-Flight (ADR-0045, GAP-META-005)
+
+- Novo módulo `src/spawn/preflight.rs` (≥200 linhas, 7 guards, 15 testes unitários) porta todo spawn de subprocesso LLM ANTES do fork
+- Nova variante `AppError::PreFlightFailed(PreFlightError)` com `exit_code() == 16` e `is_permanent() == true`
+- Novo exit code 16 (`EX_CONFIG`) para falhas pre-flight. Não documentado em nenhuma tabela de exit code pré-existente
+- Os 7 guards em ordem: `check_argv_size` (argv excederia ARG_MAX menos 4 KB), `check_binary_exists` (claude/codex alcançável em PATH), `check_mcp_config_inline` (substitui `--mcp-config "{}"` literal por tempfile com `{"mcpServers":{}}`), `check_mcp_config_path` (valida conteúdo JSON), `check_walkup_mcp_json` (rejeita `.mcp.json` inválido em cadeia ancestral do workspace), `check_output_buffer` (eleva buffer do parser acima de 64 KB), `check_claude_config_dir` (evita vazamento MCP user-level)
+- Bypass em emergências: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` desabilita todos os 7 guards. Bypassing reverte para `Command::spawn()` direto e herda todas as 5 classes BUG do GAP-META-005
+- Os 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) compartilham este módulo único
+
+### v1.0.88 — Hotfixes BUG-11/12/13 (ADR-0046, ADR-0047)
+
+- **BUG-11 (CRÍTICO)** corrigido: falha pre-flight em `extract/llm_embedding.rs:563-565` agora propaga para `remember` via `embed_via_backend_strict` em vez de persistência silenciosa com `backend_invoked: "none"`
+- **BUG-12 (MÉDIO)** corrigido: enforço OAuth-only agora emite 1 linha stderr (eram 2) — `eprintln!` duplicado removido
+- **BUG-13 (MÉDIO)** corrigido: `link --create-missing` agora respeita validação de nome de entidade; abreviações ALL_CAPS rejeitadas eram aceitas via CLI
+- 11 novos regression tests: `tests/bug11_preflight_regression.rs` (2), `oauth_stderr_emits_single_line_v1088` (1), `tests/entity_validation_integration.rs` (8)
+- Renomeação de teste `embed_with_fallback_succeeds_via_none_when_chain_exhausts` → `embed_with_fallback_chain_of_only_none_aborts_without_skip_on_failure_v1088` documenta o contrato corrigido
+
+### v1.0.89 — Schema Drift, Flag Parity, Description Heuristic (ADR-0048, ADR-0049)
+
+- **GAP-E2E-007 (P1)**: `health.schema.json` regenerado via `schemars` derive macro. 17 novos campos adicionados; `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON). Novo binário: `cargo run --bin dump-schema` regenera 70+ schemas
+- **GAP-E2E-008 (P3)**: `embedding status/list/abandon`, `pending list/show` agora aceitam `--db <PATH>`. `clap::Arg::global = true` foi REJEITADO (invasivo, polui help). 5 novos testes em `tests/cli_db_flag_parity_regression.rs`
+- **GAP-E2E-009 (P3)**: `migrate --dry-run --json` agora reporta migrações pendentes sem aplicar. 1 novo teste em `tests/migrate_dry_run_regression.rs`
+- **GAP-E2E-010 (P3)**: `codex-models --json` aceito como no-op; paridade de `pending list --db <PATH>`. Ambos com `#[arg(long, hide = true)]`. 1 novo teste em `tests/codex_models_json_regression.rs`
+- **GAP-E2E-011 (P2)**: `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo (>20 chars, não header). `extract_heuristic_description(body, path_hint)` cai para o stem do arquivo. Opt-out via `--no-auto-describe`. 5 novos testes em `tests/ingest_auto_describe_regression.rs`
+- **GAP-E2E-002 (P3)**: `health --namespace <NS> --json` filtra contagens para um único namespace. 1 novo teste em `tests/health_namespace_regression.rs`
+- **GAP-E2E-001 (P2)**: Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6` (era 6 MB desde v1.0.76). 1 novo teste em `tests/binary_size_documented_regression.rs`
+- Total: 1877 testes passando (843 lib + 1013 integração + 21 doc). Binário 15.3 MB ELF stripped
 ## O Que Mudou na v1.0.80 (G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034)
 
 A v1.0.80 é bump **patch** SEM migração de banco. O schema continua
@@ -77,7 +117,7 @@ O trabalho do G42 tornou o pipeline de embedding rápido, paralelo e em lote; o 
 
 O build padrão agora é **apenas LLM e one-shot**. Não há modelo local de embedding, não há NER GLiNER, não há runtime ONNX, não há extensão C do `sqlite-vec`. Cada `remember`, `ingest`, `edit` spawna um subprocesso headless de LLM (CLI do claude code ou codex) que devolve o embedding e, opcionalmente, as entidades extraídas.
 
-A CLI é one-shot: não há daemon, não há modelo a manter em memória, não há socket a limpar. O binário de release tem ~6 MB (era 39 MB) e o cold start é 1-3 s (era 30 s com a carga do modelo ONNX).
+A CLI é one-shot: não há daemon, não há modelo a manter em memória, não há socket a limpar. O binário de release tem ~14.6 MiB (era 39 MB) e o cold start é 1-3 s (era 30 s com a carga do modelo ONNX).
 
 
 ## Pré-Requisitos

@@ -76,6 +76,13 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - Threat model: credential values for custom providers flow from the orchestrator process to the LLM subprocess over the process boundary. The audit-of-no-leak test prevents future regressions where a `tracing` macro might print the raw token to stderr. Operators on shared hosts should prefer `--strict-env-clear` to avoid forwarding secrets
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` (EN) and `.pt-BR.md` for the full architectural decision and the alternatives considered
 
+## v1.0.87+ Pre-flight Validation Layer (ADR-0045)
+- Every LLM subprocess spawn passes through src/spawn/preflight.rs (15 unit tests, 7 guards) BEFORE the fork.  Failures return AppError::PreFlightFailed (exit code 16, EX_CONFIG).
+- 7 guards: check_argv_size, check_binary_exists, check_mcp_config_inline (replaces literal --mcp-config '{}' with tempfile, fixes BUG-2), check_mcp_config_path, check_walkup_mcp_json (validates .mcp.json walk-up, fixes BUG-5), check_output_buffer (fixes BUG-4), check_claude_config_dir (avoids MCP bleed-through).
+- Bypass: SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 disables all 7 guards.  Last-resort opt-out; bypassing reverts to direct Command::spawn() and inherits all 5 BUG classes.
+- v1.0.88 hotfixes: BUG-11 (preflight failure in extract/llm_embedding.rs did not propagate to remember; fixed with embed_via_backend_strict), BUG-12 (OAuth-only emitted 2 identical stderr lines; fixed with single-line stderr), BUG-13 (link --create-missing bypassed entity-name validation; fixed by validating BEFORE normalizing in entity_validation_integration.rs, 8 tests, 4-char boundary).
+- See docs/decisions/adr-0045-preflight-validation-layer.md and adr-0046-preflight-remediation.md for the full architectural decision.
+
 ## Hall of Fame
 - We publicly acknowledge researchers who report vulnerabilities responsibly
 - This section is open to contributions: your name will be added after coordinated disclosure

@@ -109,6 +109,7 @@ fn cinco_instancias_quinta_exit_75() {
 
 #[test]
 #[serial]
+// TODO v1.0.89: flaky timing — avaliar estabilização quando ambiente CI oferecer sleep determinístico.
 #[ignore = "flaky — depende de timing de threads — rodar manualmente com: cargo test -- --ignored"]
 fn wait_lock_3s_respeitado() {
     let tmp = TempDir::new().expect("TempDir deve ser criado");

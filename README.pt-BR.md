@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.85 — Split real do backend Claude (GAP-002) e remediação dos cinco gaps (GAP-003, G58, G45-CR5, G55, G56).** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~6 MB. A v1.0.85 entrega a cadeia de fallback determinístico (G58, `try_embed_query_with_deterministic_fallback` re-tenta com backend alternativo em `OAuthQuota` e dorme 750ms em `SlotExhausted` antes de cair em FTS5-puro), 12-14 headers `anthropic-ratelimit-*-remaining` capturados ANTES do exit do subprocesso (G45-CR5), o enum `FallbackReason` estendido de 3 para 7 variantes com discriminador `reason_code` em envelopes `hybrid-search` e `recall`, mais o job `.github/workflows/embedder-ignore.yml` que roda testes `#[ignore]` em env hermético (sem API keys). A v1.0.84 (ADR-0042) adicionou o split real do backend Claude (GAP-002, `embed_via_claude_local` que não delega mais para `codex` via `LlmEmbedding::detect_available`), o `LlmEmbeddingBuilder` com overrides de binary/model, o campo `backend_invoked` em 7 envelopes JSON, o campo `vec_degraded_reason` em `hybrid-search` e `recall`, a flag global `--dry-run-backend`, o helper `apply_env_whitelist_for_claude` e `LlmBackendKind::as_str` mais `FallbackReason::reason_code`. Consumidores da biblioteca devem fixar em `=1.0.85`; veja a `Política de Estabilidade` abaixo.
+> **Release atual: v1.0.85 — Split real do backend Claude (GAP-002) e remediação dos cinco gaps (GAP-003, G58, G45-CR5, G55, G56).** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~14.6 MiB. A v1.0.85 entrega a cadeia de fallback determinístico (G58, `try_embed_query_with_deterministic_fallback` re-tenta com backend alternativo em `OAuthQuota` e dorme 750ms em `SlotExhausted` antes de cair em FTS5-puro), 12-14 headers `anthropic-ratelimit-*-remaining` capturados ANTES do exit do subprocesso (G45-CR5), o enum `FallbackReason` estendido de 3 para 7 variantes com discriminador `reason_code` em envelopes `hybrid-search` e `recall`, mais o job `.github/workflows/embedder-ignore.yml` que roda testes `#[ignore]` em env hermético (sem API keys). A v1.0.84 (ADR-0042) adicionou o split real do backend Claude (GAP-002, `embed_via_claude_local` que não delega mais para `codex` via `LlmEmbedding::detect_available`), o `LlmEmbeddingBuilder` com overrides de binary/model, o campo `backend_invoked` em 7 envelopes JSON, o campo `vec_degraded_reason` em `hybrid-search` e `recall`, a flag global `--dry-run-backend`, o helper `apply_env_whitelist_for_claude` e `LlmBackendKind::as_str` mais `FallbackReason::reason_code`. Consumidores da biblioteca devem fixar em `=1.0.85`; veja a `Política de Estabilidade` abaixo.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -33,7 +33,7 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- **Build (v1.0.79):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~6 MB
+- **Build (v1.0.79):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~14.6 MiB
 - **Build legado:** REMOVIDO na v1.0.79 — a feature `embedding-legacy` e o caminho local fastembed/ONNX não existem mais
 - Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
 - Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
@@ -592,7 +592,7 @@ RUN cargo install --path .
 
 ## Requisitos de Memória
 ### Dimensionando RAM para cargas de ingest e recall
-- A CLI em si é leve (binário de ~6 MB); a RAM é dominada pelos subprocessos LLM com aproximadamente 350 MB de RSS por worker (`LLM_WORKER_RSS_MB`)
+- A CLI em si é leve (binário de ~14.6 MiB); a RAM é dominada pelos subprocessos LLM com aproximadamente 350 MB de RSS por worker (`LLM_WORKER_RSS_MB`)
 - Orçamento de workers: o paralelismo efetivo é `min(--llm-parallelism, cpus, ram_livre × 0.5 / 350 MB, 32)` — o portão de concorrência se adapta automaticamente à memória disponível
 - O paralelismo padrão aumenta o RSS de forma quase linear por worker (`--llm-parallelism 4` ≈ 4 × 350 MB de RSS de subprocessos além da CLI)
 - Modo de baixa memória: passe `--low-memory` (ou defina `SQLITE_GRAPHRAG_LOW_MEMORY=1`) para forçar ingest single-threaded. Equivale a `--ingest-parallelism 1` e sobrescreve qualquer valor explícito, ao custo de 3-4x mais tempo de relógio.

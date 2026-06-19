@@ -235,7 +235,7 @@ pub fn build_claude_command(
     json_schema: &str,
     model: Option<&str>,
     max_turns: u32,
-) -> Command {
+) -> Result<Command, crate::errors::AppError> {
     // OAuth-only guard (gaps.md:47, ADR-0011). If `ANTHROPIC_API_KEY` is
     // set in the environment we MUST abort — that is the API-key path
     // which is explicitly PROHIBITED. Use the OAuth flow exclusively.
@@ -249,7 +249,7 @@ pub fn build_claude_command(
         cmd.env("PATH", "/nonexistent");
         cmd.arg("--oauth-only-violation-anthropic-api-key-set");
         cmd.arg("--oauth-only-resolution-use-anthropic-auth-token");
-        return cmd;
+        return Ok(cmd);
     }
 
     let mut cmd = Command::new(binary);
@@ -288,17 +288,7 @@ pub fn build_claude_command(
     // Substitute the inline literal for a tempfile path containing
     // `{"mcpServers":{}}`. The pre-flight check rejects the inline form
     // when `mcp_config_inline_json: Some("{}")` is passed.
-    let mcp_config_path = match crate::spawn::preflight::write_empty_mcp_config_tempfile() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(
-                target: "claude_runner",
-                error = %e,
-                "failed to create empty mcp-config tempfile; aborting spawn (exit 16)"
-            );
-            std::process::exit(16);
-        }
-    };
+    let mcp_config_path = crate::spawn::preflight::write_empty_mcp_config_tempfile()?;
 
     cmd.arg("-p")
         .arg(prompt)
@@ -329,8 +319,7 @@ pub fn build_claude_command(
     // `.mcp.json`, and `CLAUDE_CONFIG_DIR` cleanliness are all checked.
     // Pre-flight failure is a configuration error — panic with a clear
     // message rather than spawn a misconfigured subprocess.
-    let argv_refs: Vec<std::ffi::OsString> =
-        cmd.get_args().map(|s| s.to_os_string()).collect();
+    let argv_refs: Vec<std::ffi::OsString> = cmd.get_args().map(|s| s.to_os_string()).collect();
     let preflight_args = crate::spawn::preflight::PreFlightArgs {
         binary_path: binary,
         argv: &argv_refs,
@@ -340,21 +329,15 @@ pub fn build_claude_command(
         spawner_name: "claude_runner",
     };
     if let Err(e) = crate::spawn::preflight::preflight_check(&preflight_args) {
-        tracing::error!(
-            target: "claude_runner",
-            spawner = "claude_runner",
-            error = %e,
-            "preflight validation failed; aborting spawn (exit 16)"
-        );
-        // Pre-flight failure aborts the spawn — write the diagnostic to
-        // stderr and exit non-zero. We cannot return AppError here
-        // because the function signature is `-> Command`; the caller
-        // (run_claude) will receive the diagnostic via the tracing log
-        // and via the panic message that follows.
-        std::process::exit(16);
+        // v1.0.88 (BUG-6 fix, ADR-0046): propagate the structured
+        // `PreFlightError` via the `From` impl in `errors.rs` so callers
+        // receive `AppError::PreFlightFailed` (exit 16) instead of a
+        // bare `std::process::exit(16)` that discards the variant name,
+        // tracing context, and PT-BR i18n.
+        return Err(crate::errors::AppError::from(e));
     }
 
-    cmd
+    Ok(cmd)
 }
 
 /// Parses `claude -p --output-format json` output array.
@@ -450,7 +433,7 @@ pub fn run_claude(
     use wait_timeout::ChildExt;
 
     let full_prompt = format!("{prompt}\n\n{input_text}");
-    let mut cmd = build_claude_command(binary, &full_prompt, json_schema, model, max_turns);
+    let mut cmd = build_claude_command(binary, &full_prompt, json_schema, model, max_turns)?;
 
     let mut child = spawn_with_memory_limit(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(
@@ -605,7 +588,8 @@ mod tests {
             "{}",
             Some("sonnet"),
             4,
-        );
+        )
+        .expect("preflight gate accepts valid args");
         let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
         // Mandatory OAuth-only flags from gaps.md lines 201-208
         assert!(args.contains(&"-p"), "must have -p");
@@ -669,7 +653,8 @@ mod tests {
             "{}",
             Some("sonnet"),
             4,
-        );
+        )
+        .expect("preflight gate accepts valid args");
         let program = cmd.get_program().to_string_lossy().to_string();
         let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
         assert_eq!(
