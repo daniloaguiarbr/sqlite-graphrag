@@ -19,12 +19,12 @@
 ## Test Infrastructure — Feature CI Matrix (2 features since v1.0.79)
 - The CI workflow runs `clippy` and `test` jobs across a 2-feature matrix since v1.0.79: `default` and `llm-only` (`embedding-legacy` was removed together with the feature).
 - The `default` and `llm-only` jobs install a stub `mock-llm` CLI on `PATH` so the embedding round-trip tests can run without a real LLM subscription.
-- 26 test files were wired to consume the mock LLM CLI as a drop-in replacement for `claude -p` and `codex exec`. This unblocks CI from requiring real OAuth credentials.
+- 26 test files were wired to consume the mock LLM CLI as a drop-in replacement for `claude -p`, `codex exec`, and `opencode run`. This unblocks CI from requiring real OAuth credentials.
 - 107 of 115 previously-slow tests were fixed in commit `bd0a3f5` (mock LLM unblocks tests that depended on a real OAuth turn).
 - See the GitHub Actions workflow file `.github/workflows/ci.yml` for the matrix definition.
 
 ### Mock LLM CLI Contract
-- The mocks are two shell scripts in `tests/mock-llm/` (`claude` and `codex`) that return deterministic JSON for any prompt; integration tests copy them into a temp dir and prepend it to `PATH`.
+- The mocks are shell scripts in `tests/mock-llm/` (`claude`, `codex`, and `opencode`) that return deterministic JSON for any prompt; integration tests copy them into a temp dir and prepend it to `PATH`.
 - For embedding requests: returns 64-dim `f32` zero vectors (the active default dimensionality since v1.0.79, G42/S1).
 - Both response shapes are spoken since the G43 fix: single (`{"embedding":[...]}`) and batch (`{"items":[{"i":N,"v":[...]}]}` when the prompt asks for EXACTLY N items, G42/S2).
 - Entity extraction tests must mock at a higher level or call the library API; the scripts are dedicated to the embedding path.

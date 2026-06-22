@@ -52,6 +52,8 @@ pub struct PendingEmbeddingsListArgs {
     pub limit: usize,
     #[arg(long, hide = true)]
     pub json: bool,
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -67,6 +69,8 @@ pub struct PendingEmbeddingsAbandonArgs {
     pub dry_run: bool,
     #[arg(long, hide = true)]
     pub json: bool,
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -141,15 +145,15 @@ fn parse_status(s: &str) -> Result<PendingEmbeddingStatus, AppError> {
     }
 }
 
-fn open_conn() -> Result<(AppPaths, rusqlite::Connection), AppError> {
-    let paths = AppPaths::resolve(None)?;
+fn open_conn(db: Option<&str>) -> Result<(AppPaths, rusqlite::Connection), AppError> {
+    let paths = AppPaths::resolve(db)?;
     let conn = open_rw(&paths.db)?;
     Ok((paths, conn))
 }
 
 fn run_list(args: PendingEmbeddingsListArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
     let status = parse_status(&args.status)?;
     let rows = pending_embeddings::list_by_status(&conn, status, args.limit)?;
     let count = rows.len();
@@ -167,7 +171,7 @@ fn run_list(args: PendingEmbeddingsListArgs) -> Result<(), AppError> {
 
 fn run_abandon(args: PendingEmbeddingsAbandonArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn()?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
     let status = parse_status(&args.status)?;
     let rows = pending_embeddings::list_by_status(&conn, status, 100_000)?;
     let candidates = rows.len();

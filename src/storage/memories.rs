@@ -469,6 +469,45 @@ pub fn list(
     }
 }
 
+pub fn count(
+    conn: &Connection,
+    namespace: &str,
+    memory_type: Option<&str>,
+    include_deleted: bool,
+) -> Result<usize, AppError> {
+    let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match (
+        memory_type,
+        include_deleted,
+    ) {
+        (Some(mt), true) => (
+            "SELECT COUNT(*) FROM memories WHERE namespace=?1 AND type=?2",
+            vec![
+                Box::new(namespace.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                Box::new(mt.to_string()),
+            ],
+        ),
+        (Some(mt), false) => (
+            "SELECT COUNT(*) FROM memories WHERE namespace=?1 AND type=?2 AND deleted_at IS NULL",
+            vec![
+                Box::new(namespace.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                Box::new(mt.to_string()),
+            ],
+        ),
+        (None, true) => (
+            "SELECT COUNT(*) FROM memories WHERE namespace=?1",
+            vec![Box::new(namespace.to_string()) as Box<dyn rusqlite::types::ToSql>],
+        ),
+        (None, false) => (
+            "SELECT COUNT(*) FROM memories WHERE namespace=?1 AND deleted_at IS NULL",
+            vec![Box::new(namespace.to_string()) as Box<dyn rusqlite::types::ToSql>],
+        ),
+    };
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params_vec.iter().map(|b| b.as_ref()).collect();
+    let n: i64 = conn.query_row(sql, params_refs.as_slice(), |r| r.get(0))?;
+    Ok(n as usize)
+}
+
 /// Runs a KNN search over `memory_embeddings`, optionally restricted to namespaces.
 ///
 /// # Arguments

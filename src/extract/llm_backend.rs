@@ -27,8 +27,11 @@ impl Default for LlmExtractorConfig {
     /// `detect_available_backend()` instead of hardcoding "codex".
     fn default() -> Self {
         let backend = match detect_available_backend() {
-            Ok(LlmBackendKindFactory::Codex) | Ok(LlmBackendKindFactory::Auto) => "codex".to_string(),
+            Ok(LlmBackendKindFactory::Codex) | Ok(LlmBackendKindFactory::Auto) => {
+                "codex".to_string()
+            }
             Ok(LlmBackendKindFactory::Claude) => "claude".to_string(),
+            Ok(LlmBackendKindFactory::Opencode) => "opencode".to_string(),
             Ok(LlmBackendKindFactory::None) | Err(_) => "none".to_string(),
         };
         Self {
@@ -53,7 +56,10 @@ impl LlmBackend {
     /// resolves the backend at runtime via `detect_available_backend()`.
     /// Callers should use `LlmBackend::new(LlmExtractorConfig::default())`
     /// or the factory pattern in `factory_for_choice()` instead.
-    #[deprecated(since = "1.0.89", note = "use LlmBackend::new(LlmExtractorConfig::default()) or factory_for_choice()")]
+    #[deprecated(
+        since = "1.0.89",
+        note = "use LlmBackend::new(LlmExtractorConfig::default()) or factory_for_choice()"
+    )]
     pub fn with_default_codex() -> Self {
         Self::new(LlmExtractorConfig::default())
     }
@@ -205,6 +211,8 @@ pub enum LlmBackendKindFactory {
     Codex,
     /// `claude -p` headless OAuth (Claude Pro/Max).
     Claude,
+    /// `opencode run` headless (v1.0.90).
+    Opencode,
     /// No embedding — every `embed()` call returns `Ok(vec![])`.
     None,
 }
@@ -338,6 +346,29 @@ impl LlmBackendFactory for NullFactory {
     }
 }
 
+/// OpenCode CLI factory — builds a `LlmBackend` configured for `opencode run`.
+pub struct OpencodeFactory;
+
+impl LlmBackendFactory for OpencodeFactory {
+    fn build_extraction_backend(
+        &self,
+        config: &LlmExtractorConfig,
+    ) -> Result<Box<dyn ExtractionBackend>, AppError> {
+        let mut cfg = config.clone();
+        cfg.backend = "opencode".into();
+        Ok(Box::new(LlmBackend::new(cfg)))
+    }
+    fn build_embedder(
+        &self,
+        _config: &LlmExtractorConfig,
+    ) -> Result<Box<dyn std::any::Any + Send + Sync>, AppError> {
+        Ok(Box::new(()))
+    }
+    fn kind(&self) -> LlmBackendKindFactory {
+        LlmBackendKindFactory::Opencode
+    }
+}
+
 /// Auto-detect factory — picks CodexFactory when `codex` is on PATH,
 /// ClaudeFactory when `claude` is on PATH, NullFactory when neither
 /// is reachable. This is the v1.0.81 behaviour (implicit preference
@@ -355,6 +386,7 @@ impl LlmBackendFactory for AutoFactory {
                 CodexFactory.build_extraction_backend(config)
             }
             LlmBackendKindFactory::Claude => ClaudeFactory.build_extraction_backend(config),
+            LlmBackendKindFactory::Opencode => OpencodeFactory.build_extraction_backend(config),
             LlmBackendKindFactory::None => NullFactory.build_extraction_backend(config),
         }
     }
@@ -368,6 +400,7 @@ impl LlmBackendFactory for AutoFactory {
                 CodexFactory.build_embedder(config)
             }
             LlmBackendKindFactory::Claude => ClaudeFactory.build_embedder(config),
+            LlmBackendKindFactory::Opencode => OpencodeFactory.build_embedder(config),
             LlmBackendKindFactory::None => NullFactory.build_embedder(config),
         }
     }
@@ -404,8 +437,10 @@ pub fn detect_available_backend() -> Result<LlmBackendKindFactory, AppError> {
         Ok(LlmBackendKindFactory::Codex)
     } else if has_in_path("claude") {
         Ok(LlmBackendKindFactory::Claude)
+    } else if has_in_path("opencode") {
+        Ok(LlmBackendKindFactory::Opencode)
     } else {
-        // Neither found — degrade gracefully to None.
+        // None found — degrade gracefully to None.
         Ok(LlmBackendKindFactory::None)
     }
 }
@@ -421,6 +456,7 @@ pub fn factory_for_choice(
         LlmBackendKindFactory::Auto => Ok(Box::new(AutoFactory)),
         LlmBackendKindFactory::Codex => Ok(Box::new(CodexFactory)),
         LlmBackendKindFactory::Claude => Ok(Box::new(ClaudeFactory)),
+        LlmBackendKindFactory::Opencode => Ok(Box::new(OpencodeFactory)),
         LlmBackendKindFactory::None => Ok(Box::new(NullFactory)),
     }
 }
@@ -443,6 +479,12 @@ mod factory_tests {
         assert_eq!(f.kind(), LlmBackendKindFactory::Codex);
         let f = factory_for_choice(LlmBackendKindFactory::None).expect("Null factory");
         assert_eq!(f.kind(), LlmBackendKindFactory::None);
+    }
+
+    #[test]
+    fn opencode_factory_returns_correct_kind() {
+        let f = factory_for_choice(LlmBackendKindFactory::Opencode).expect("Opencode factory");
+        assert_eq!(f.kind(), LlmBackendKindFactory::Opencode);
     }
 
     #[test]

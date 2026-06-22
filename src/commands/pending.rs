@@ -111,6 +111,11 @@ pub struct PendingCleanupArgs {
     /// Dry-run: list what would be removed without touching the database.
     #[arg(long)]
     pub dry_run: bool,
+    /// Explicit database path override. Defaults to the path resolved by
+    /// `AppPaths::resolve(None)` when omitted. Honors env var
+    /// `SQLITE_GRAPHRAG_DB_PATH`.
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
     /// JSON output (always on; accepted for CLI consistency).
     #[arg(long, hide = true)]
     pub json: bool,
@@ -257,7 +262,7 @@ fn run_show(args: PendingShowArgs) -> Result<(), AppError> {
 
 fn run_cleanup(args: PendingCleanupArgs) -> Result<(), AppError> {
     let start = std::time::Instant::now();
-    let (_paths, conn) = open_conn(None)?;
+    let (_paths, conn) = open_conn(args.db.as_deref())?;
 
     // Count candidates first so dry-run is non-mutating.
     let candidates = pending_memories::list_by_status(&conn, PendingStatus::Abandoned, 100_000)?

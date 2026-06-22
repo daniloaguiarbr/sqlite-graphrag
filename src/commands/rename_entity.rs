@@ -47,7 +47,10 @@ struct RenameEntityResponse {
     elapsed_ms: u64,
 }
 
-pub fn run(args: RenameEntityArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: RenameEntityArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -92,7 +95,11 @@ pub fn run(args: RenameEntityArgs, llm_backend: crate::cli::LlmBackendChoice) ->
     }
 
     let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(&paths.models, &new_name, Some(llm_backend)) {
+    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(
+        &paths.models,
+        &new_name,
+        Some(llm_backend),
+    ) {
         Ok((emb, _backend)) => Some(emb),
         Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
         Err(e) if skip_embed => {
@@ -112,14 +119,7 @@ pub fn run(args: RenameEntityArgs, llm_backend: crate::cli::LlmBackendChoice) ->
     // hardcoded dim=384 and a removed local model name; `upsert_entity_vec`
     // records the real vector length and the CLI version as `model`.
     if let Some(ref emb) = embedding {
-        entities::upsert_entity_vec(
-            &tx,
-            entity_id,
-            &namespace,
-            entity_type,
-            emb,
-            &new_name,
-        )?;
+        entities::upsert_entity_vec(&tx, entity_id, &namespace, entity_type, emb, &new_name)?;
     }
     tx.commit()?;
 

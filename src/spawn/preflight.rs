@@ -81,7 +81,7 @@ pub fn is_skipped() -> bool {
 pub struct PreFlightArgs<'a> {
     /// Resolved path to the binary that will be spawned.
     pub binary_path: &'a Path,
-    /// argv after `build_argv` finished. Includes binary path as argv[0].
+    /// argv after `build_argv` finished. Includes binary path as argv\[0\].
     pub argv: &'a [OsString],
     /// CWD-style anchor for walk-up detection of `.mcp.json`.
     pub workspace_root: &'a Path,

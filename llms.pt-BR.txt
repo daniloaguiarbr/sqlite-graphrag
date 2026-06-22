@@ -1,8 +1,8 @@
-# sqlite-graphrag (v1.0.89 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.90 LLM-Only One-Shot)
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 14.6 MiB
 
-27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.89 (atual; v1.0.85.2 → v1.0.86 adicionou 10 subcomandos para o pipeline LLM + semáforo de slots host-wide; v1.0.87 adicionou a camada de validação pre-flight com 7 guards e exit code 16 EX_CONFIG, ADR-0045, GAP-META-005; v1.0.88 corrigiu hotfixes BUG-11/12/13, ADR-0046 + ADR-0047; v1.0.89 regenerou health.schema.json via schemars e adicionou paridade --db em 5 subcomandos, ADR-0048 + ADR-0049; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code` ou `codex` (OAuth) para gerar embeddings. Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines. 1877 testes passando (843 lib + 1013 integração + 21 doc).
+27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.90 (atual; v1.0.90 adicionou OpenCode como terceiro backend LLM ao lado de codex e claude, remediação de 24 bugs, correção de compilação Windows, correção de timeout de embedding, correção de paginação do list; v1.0.89 regenerou health.schema.json via schemars e adicionou paridade --db em 5 subcomandos; v1.0.88 corrigiu hotfixes BUG-11/12/13; v1.0.87 adicionou a camada de validação pre-flight; v1.0.86 adicionou 10 subcomandos para o pipeline LLM; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) para gerar embeddings. Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
 
 ## Arquitetura v1.0.85 (apenas LLM, substitui v1.0.79)
 ### Build one-shot sem modelo local
@@ -16,7 +16,7 @@
 - Leia este documento em [inglês (EN)](llms.txt).
 
 
-## Arquitetura v1.0.86 → v1.0.89 (Pre-flight, Schema Drift, Flag Parity)
+## Arquitetura v1.0.86 → v1.0.90 (Pre-flight, Schema Drift, Flag Parity, Backend OpenCode)
 - v1.0.86 adicionou 10 subcomandos do pipeline LLM: `pending list|show|cleanup`, `embedding status|list|abandon`, `pending-embeddings list|process`, `slots status|release`. Novas flags globais: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`. Semáforo de slots host-wide via `fs4` com `fcntl(F_SETLK)` em Unix e `LockFileEx` em Windows (ADR-0036, 0037, 0038, 0039, 0040)
 - v1.0.87 adicionou a camada de validação pre-flight: `src/spawn/preflight.rs` (≥200 linhas, 7 guards, 15 testes unitários) porta todo spawn de subprocesso LLM ANTES do fork. Nova variante `AppError::PreFlightFailed(PreFlightError)` com `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`). Os 7 guards em ordem: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`. Bypass via `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` (ADR-0045, GAP-META-005)
 - v1.0.88 hotfixes: BUG-11 (CRÍTICO) falha de pre-flight em `extract/llm_embedding.rs:563-565` agora propaga para `remember` via `embed_via_backend_strict`; BUG-12 (MÉDIO) enforço OAuth-only emite 1 linha stderr (era 2); BUG-13 (MÉDIO) `link --create-missing` respeita validação de nome de entidade. 11 novos regression tests (ADR-0046, ADR-0047)

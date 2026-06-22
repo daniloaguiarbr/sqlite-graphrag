@@ -9,11 +9,24 @@
 - Distinção semântica que o fix resolve: `ANTHROPIC_API_KEY` (chave de API paga, PROIBIDA pelo ADR-0011), `ANTHROPIC_AUTH_TOKEN` (token OAuth para custom provider, PRESERVADO), `OPENAI_API_KEY` (PROIBIDA), `OPENAI_BASE_URL` (PRESERVADO), `ANTHROPIC_BASE_URL` (PRESERVADO). O mandato da v1.0.69 estava correto; o whitelist env-clear da v1.0.69 era amplo demais
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` para a justificativa arquitetural completa e `docs/MIGRATION.pt-BR.md#migrando-para-v1083` para os passos de upgrade do operador
 - Resolução parcial do G58: env vars de custom-provider roteiam em torno de contenção de quota OAuth, fornecendo fallback determinístico para `recall`/`hybrid-search` sob fadiga OAuth oficial
-# sqlite-graphrag para Agentes de IA (v1.0.89 — Camada Pre-flight, Drift de Schema, Flag Parity)
+# sqlite-graphrag para Agentes de IA (v1.0.90 — OpenCode Backend, 24 Correções)
 
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 14.6 MiB.
-> A v1.0.79 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code ou do codex CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
+> A v1.0.90 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code, codex ou opencode CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
+
+## Novo na v1.0.90 — Integração do Backend OpenCode (ADR-0051)
+- OpenCode adicionado como terceiro backend LLM ao lado de codex e claude para pipelines de embedding, ingestão e enriquecimento
+- Prioridade de auto-detect: `codex > claude > opencode > none`; cadeia de fallback padrão: `codex,claude,opencode,none`
+- Novo `--llm-backend opencode` / `--mode opencode` aceito em `ingest` e `enrich`
+- Novas variáveis de ambiente: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`
+- Novas flags CLI: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`
+- Novos arquivos: `src/commands/ingest_opencode.rs`, `src/commands/opencode_runner.rs`
+- Interface headless do OpenCode: `opencode run --format json -m <provider/model> --dangerously-skip-permissions`
+- 24 bugs/gaps fechados incluindo BUG-AUDIT-001 a 011, BUG-WINDOWS-001, BUG-LIST-TOTAL-COUNT-001
+- BUG-WINDOWS-001: uso de `ExitStatusExt` protegido com `#[cfg(unix)]` — compilação cross-platform restaurada
+- BUG-LIST-TOTAL-COUNT-001: `list` retorna `total_count` global correto via query `COUNT(*)` separada
+- 875 testes passando, 0 falhas. Veja ADR-0051 e `gaps.md`
 
 ## Novo na v1.0.86 — Superfície LLM-Heavy e Semáforo de Slots Host-Wide
 - 5 novos subcomandos para o workflow LLM-pesado: `pending list`, `pending show`, `pending cleanup`, `embedding status`, `embedding list`, `embedding abandon`, `pending-embeddings list`, `pending-embeddings process`, `slots status`, `slots release`
@@ -67,12 +80,12 @@
 - GAP-BACKEND-PROPAGATION: `deep-research` e `remember-batch` honram `--llm-backend`
 - GAP-ADAPTIVE-TIMEOUT: Timeout de embedding em batch escala com tamanho do batch (60s + 15s por item)
 - USAR `--llm-model gpt-5.5` ou `--llm-model claude-sonnet-4-6` para selecionar modelo de embedding explicitamente
-- USAR `--llm-backend claude` para forçar backend Claude (padrão `auto` sonda PATH: codex primeiro)
+- USAR `--llm-backend claude` para forçar backend Claude (padrão `auto` sonda PATH: codex primeiro, depois claude, depois opencode)
 - USAR `--skip-embedding-on-failure` para persistir memória sem vetor quando LLM indisponível
 
 ## Arquitetura v1.0.79 (Apenas LLM)
 
-A CLI é um orquestrador fino. Cada chamada de embedding spawna um subprocesso do claude code ou do codex que devolve um vetor `f32` da dimensionalidade ATIVA em JSON — default 64 desde a v1.0.79 (G42/S1), configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos pré-existentes mantêm a `schema_meta.dim` registrada (ex.: 384). Desde a v1.0.79 as chamadas são EM LOTE (`{items:[{i,v}]}`, chunks em 8, nomes de entidade em 25 em dim 64, adaptativos à dim — G44) e rodam sob fan-out bounded com `Semaphore` (`--llm-parallelism`). Cada chamada de extração de entidades faz o mesmo com um schema de saída diferente. A CLI nunca mantém um modelo de embedding em memória; o subprocesso LLM é o modelo.
+A CLI é um orquestrador fino. Cada chamada de embedding spawna um subprocesso do claude code, codex ou opencode que devolve um vetor `f32` da dimensionalidade ATIVA em JSON — default 64 desde a v1.0.79 (G42/S1), configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos pré-existentes mantêm a `schema_meta.dim` registrada (ex.: 384). Desde a v1.0.79 as chamadas são EM LOTE (`{items:[{i,v}]}`, chunks em 8, nomes de entidade em 25 em dim 64, adaptativos à dim — G44) e rodam sob fan-out bounded com `Semaphore` (`--llm-parallelism`). Cada chamada de extração de entidades faz o mesmo com um schema de saída diferente. A CLI nunca mantém um modelo de embedding em memória; o subprocesso LLM é o modelo.
 
 A infraestrutura do daemon foi removida na v1.0.76 e o código restante do daemon foi deletado na v1.0.79.
 A CLI é 100% one-shot: cada chamada de embedding spawna e
@@ -111,7 +124,15 @@ Para `codex`:
 --model <claude-sonnet-4-6 | gpt-5.4>
 ```
 
-Estas flags são o conjunto canônico de endurecimento. São testadas em `src/commands/claude_runner.rs::tests` e `src/commands/codex_spawn.rs::tests` e não devem ser removidas sem um ADR.
+Para `opencode`:
+
+```
+--format json
+-m <provider/model>
+--dangerously-skip-permissions
+```
+
+Estas flags são o conjunto canônico de endurecimento. São testadas em `src/commands/claude_runner.rs::tests`, `src/commands/codex_spawn.rs::tests` e `src/commands/opencode_runner.rs::tests` e não devem ser removidas sem um ADR.
 
 ## Validação OAuth
 
@@ -119,7 +140,7 @@ A CLI ABORTA com `AppError::Validation` se `ANTHROPIC_API_KEY` ou `OPENAI_API_KE
 
 ```bash
 # Primeira vez
-claude login   # ou: codex login
+claude login   # ou: codex login, ou: opencode auth login
 
 # Depois do login, verifique
 claude --version

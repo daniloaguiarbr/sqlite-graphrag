@@ -9,13 +9,26 @@
 - Semantic distinction the fix resolves: `ANTHROPIC_API_KEY` (paid API key, PROHIBITED by ADR-0011), `ANTHROPIC_AUTH_TOKEN` (OAuth token for custom provider, PRESERVED), `OPENAI_API_KEY` (PROHIBITED), `OPENAI_BASE_URL` (PRESERVED), `ANTHROPIC_BASE_URL` (PRESERVED). The v1.0.69 mandate was correct; the v1.0.69 env-clear whitelist was overly broad
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale and `docs/MIGRATION.md#migrating-to-v1083` for operator upgrade steps
 - G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
-# sqlite-graphrag for AI Agents (v1.0.79)
+# sqlite-graphrag for AI Agents (v1.0.90)
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary.
-> v1.0.79 is **LLM-only and one-shot**: every `remember` / `ingest`
-> spawns a headless claude code or codex CLI subprocess (OAuth, no
-> MCP, no hooks). There is no daemon, no ONNX runtime, no local
-> embedding model.
+> v1.0.90 is **LLM-only and one-shot**: every `remember` / `ingest`
+> spawns a headless claude code, codex, or opencode CLI subprocess
+> (OAuth, no MCP, no hooks). There is no daemon, no ONNX runtime,
+> no local embedding model.
+
+## New in v1.0.90 — OpenCode Backend Integration (ADR-0051)
+- OpenCode added as third LLM backend alongside codex and claude for embedding, ingest, and enrich pipelines
+- Auto-detect priority: `codex > claude > opencode > none`; fallback chain default: `codex,claude,opencode,none`
+- New `--llm-backend opencode` / `--mode opencode` accepted in `ingest` and `enrich`
+- New env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`
+- New CLI flags: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`
+- New files: `src/commands/ingest_opencode.rs`, `src/commands/opencode_runner.rs`
+- OpenCode headless interface: `opencode run --format json -m <provider/model> --dangerously-skip-permissions`
+- 24 bugs/gaps closed including BUG-AUDIT-001 through 011, BUG-WINDOWS-001, BUG-LIST-TOTAL-COUNT-001
+- BUG-WINDOWS-001: `ExitStatusExt` usage guarded with `#[cfg(unix)]` — cross-platform compilation restored
+- BUG-LIST-TOTAL-COUNT-001: `list` returns correct global `total_count` via separate `COUNT(*)` query
+- 875 tests passing, 0 failures. See ADR-0051 and `gaps.md`
 
 ## New in v1.0.86 — LLM-Heavy Surface and Host-Wide Slot Semaphore
 - 5 new subcommands for the LLM-heavy workflow: pending list, pending show, pending cleanup, embedding status, embedding list, embedding abandon, pending-embeddings list, pending-embeddings process, slots status, slots release
@@ -66,13 +79,13 @@
 - GAP-BACKEND-PROPAGATION: `deep-research` and `remember-batch` honor `--llm-backend`
 - GAP-ADAPTIVE-TIMEOUT: Batch embedding timeout scales with batch size (60s + 15s per item)
 - USE `--llm-model gpt-5.5` or `--llm-model claude-sonnet-4-6` to select embedding model explicitly
-- USE `--llm-backend claude` to force Claude backend (default `auto` probes PATH: codex first)
+- USE `--llm-backend claude` to force Claude backend (default `auto` probes PATH: codex first, then claude, then opencode)
 - USE `--skip-embedding-on-failure` to persist memory without vector when LLM is unavailable
 
 ## v1.0.79 Architecture (LLM-Only)
 
 The CLI is a thin orchestrator. Every embedding call spawns a
-claude code or codex subprocess that returns an f32 vector of
+claude code, codex, or opencode subprocess that returns an f32 vector of
 the ACTIVE dimensionality in JSON — default 64 since v1.0.79
 (G42/S1), configurable via `SQLITE_GRAPHRAG_EMBEDDING_DIM`
 (range [8, 4096]); pre-existing databases keep their recorded
@@ -121,9 +134,18 @@ For `codex`:
 --model <claude-sonnet-4-6 | gpt-5.4>
 ```
 
+For `opencode`:
+
+```
+--format json
+-m <provider/model>
+--dangerously-skip-permissions
+```
+
 These flags are the canonical hardening set. They are tested
-in `src/commands/claude_runner.rs::tests` and
-`src/commands/codex_spawn.rs::tests` and must not be removed
+in `src/commands/claude_runner.rs::tests`,
+`src/commands/codex_spawn.rs::tests`, and
+`src/commands/opencode_runner.rs::tests` and must not be removed
 without an ADR.
 
 ## OAuth Enforcement
@@ -134,7 +156,7 @@ use the OAuth flow:
 
 ```bash
 # First time
-claude login   # or: codex login
+claude login   # or: codex login, or: opencode auth login
 
 # After login, verify
 claude --version

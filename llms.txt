@@ -1,8 +1,8 @@
-# sqlite-graphrag (v1.0.89 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.90 LLM-Only One-Shot)
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 14.6 MiB binary. Zero model download. sqlite-graphrag v1.0.89 (current; v1.0.85.2 → v1.0.86 added 10 subcommands for the LLM pipeline + host-wide slot semaphore, ADR-0036-0040; v1.0.87 added the preflight validation layer with 7 guards and exit code 16 EX_CONFIG, ADR-0045, GAP-META-005; v1.0.88 fixed BUG-11/12/13 hotfixes, ADR-0046 + ADR-0047; v1.0.89 regenerated health.schema.json via schemars and added --db parity on 5 subcommands, ADR-0048 + ADR-0049; v1.0.79 was the LLM-only foundation) gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` or `codex` subprocess (OAuth) for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 14.6 MiB binary. Zero model download. sqlite-graphrag v1.0.90 (current; v1.0.90 added OpenCode as third LLM backend alongside codex and claude, 24-bug remediation, Windows compilation fix, embedding timeout fix, list pagination fix; v1.0.89 regenerated health.schema.json via schemars and added --db parity on 5 subcommands; v1.0.88 fixed BUG-11/12/13 hotfixes; v1.0.87 added the preflight validation layer; v1.0.86 added 10 subcommands for the LLM pipeline; v1.0.79 was the LLM-only foundation) gives every AI coding assistant a local, fast, private memory layer backed by a single SQLite file. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code`, `codex` or `opencode` subprocess (OAuth) for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Read this document in [Portuguese (pt-BR)](llms.pt-BR.txt).
 - Architecture rationale: [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) (LLM-only one-shot), [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) (pure-Rust cosine), [ADR-0021](docs/decisions/adr-0021-deprecate-daemon.md) (daemon deprecated), [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md) (BLOB-backed embeddings), [ADR-0023](docs/decisions/adr-0023-remove-tokenizers.md) (tokenizers removed), [ADR-0024](docs/decisions/adr-0024-fts5-coarse-cosine-refine.md) (FTS5 coarse + cosine refine), [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md) (OAuth-only LLM)
@@ -19,7 +19,7 @@
 - Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite (--rehash) with V013 vec-table drop. The BLOB-backed embedding tables stay empty until the next `remember` / `edit` / `ingest` re-embeds via the LLM.
 
 
-## v1.0.86 → v1.0.89 Architecture (Pre-flight, Schema Drift, Flag Parity)
+## v1.0.86 → v1.0.90 Architecture (Pre-flight, Schema Drift, Flag Parity, OpenCode Backend)
 - v1.0.86 added 10 LLM-pipeline subcommands: `pending list|show|cleanup`, `embedding status|list|abandon`, `pending-embeddings list|process`, `slots status|release`. New global flags: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`. Host-wide slot semaphore via `fs4` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0036, 0037, 0038, 0039, 0040)
 - v1.0.87 added the pre-flight validation layer: `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) gates every LLM subprocess spawn BEFORE the fork. New `AppError::PreFlightFailed(PreFlightError)` with `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`). The 7 guards in order: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`. Bypass via `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` (ADR-0045, GAP-META-005)
 - v1.0.88 hotfixes: BUG-11 (CRITICAL) preflight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict`; BUG-12 (MEDIUM) OAuth-only enforcement emits 1 stderr line (was 2); BUG-13 (MEDIUM) `link --create-missing` respects entity-name validation. 11 new regression tests (ADR-0046, ADR-0047)
@@ -41,7 +41,7 @@
 
 ## Core Commands
 ### Subcommands grouped by lifecycle
-- `init` initializes the SQLite database and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download.
+- `init` initializes the SQLite database and validates that an LLM CLI (`claude`, `codex` or `opencode`) is reachable on `PATH`. No model download.
 - `remember` saves a memory with name, type, description, body and optional entity graph; spawning an LLM subprocess per call for embedding generation
 - `recall` performs pure-Rust cosine KNN similarity search over stored BLOB embeddings
 - `hybrid-search` fuses FTS5 full-text and pure-Rust cosine KNN via Reciprocal Rank Fusion
@@ -182,7 +182,7 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Vali
 ## Stable Facts
 ### Identity and version metadata
 - Package name `sqlite-graphrag` published on crates.io under MIT OR Apache-2.0
-- Current version 1.0.89. v1.0.79 = LLM-only foundation. v1.0.80 = stability policy + SHUTDOWN resilience. v1.0.82 = 5 subcommands + host-wide LLM slot semaphore + 2 migrations (V014/V015). v1.0.83 = custom-provider env preservation (ADR-0041). v1.0.84 = Claude backend split (ADR-0042). v1.0.85 = deterministic fallback (ADR-0043). v1.0.85.1/85.2 = hotfixes (ADR-0044). v1.0.86 = 10 LLM-pipeline subcommands + host-wide slot semaphore (ADR-0036-0040). v1.0.87 = pre-flight validation layer with 7 guards and exit code 16 EX_CONFIG (ADR-0045, GAP-META-005). v1.0.88 = BUG-11/12/13 hotfixes (ADR-0046, ADR-0047). v1.0.89 = schema drift via schemars + flag parity (ADR-0048, ADR-0049). MSRV Rust 1.88. 1877 tests passing (843 lib + 1013 integration + 21 doc). Binary 14.6 MiB.
+- Current version 1.0.90. v1.0.90 = OpenCode backend (third LLM backend), 24-bug remediation, Windows fix, timeout fix, list pagination fix. v1.0.79 = LLM-only foundation. v1.0.80 = stability policy + SHUTDOWN resilience. v1.0.82 = 5 subcommands + host-wide LLM slot semaphore + 2 migrations (V014/V015). v1.0.83 = custom-provider env preservation (ADR-0041). v1.0.84 = Claude backend split (ADR-0042). v1.0.85 = deterministic fallback (ADR-0043). v1.0.85.1/85.2 = hotfixes (ADR-0044). v1.0.86 = 10 LLM-pipeline subcommands + host-wide slot semaphore (ADR-0036-0040). v1.0.87 = pre-flight validation layer with 7 guards and exit code 16 EX_CONFIG (ADR-0045, GAP-META-005). v1.0.88 = BUG-11/12/13 hotfixes (ADR-0046, ADR-0047). v1.0.89 = schema drift via schemars + flag parity (ADR-0048, ADR-0049). MSRV Rust 1.88. 1877 tests passing (843 lib + 1013 integration + 21 doc). Binary 14.6 MiB.
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - Embedding model: delegated to `claude code` (Anthropic OAuth) or `codex` (ChatGPT Pro OAuth) headless subprocess per call; no in-process model
 - Storage layer: `rusqlite` with bundled SQLite and FTS5 module. `sqlite-vec` extension REMOVED in v1.0.76; vector similarity is pure-Rust cosine over BLOB embeddings

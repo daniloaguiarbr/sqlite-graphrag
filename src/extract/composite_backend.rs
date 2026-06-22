@@ -131,18 +131,24 @@ pub fn default_backend() -> SharedBackend {
     let config = super::llm_backend::LlmExtractorConfig::default();
     match kind {
         super::llm_backend::LlmBackendKindFactory::Codex
-        | super::llm_backend::LlmBackendKindFactory::Auto => {
-            Arc::new(super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
+        | super::llm_backend::LlmBackendKindFactory::Auto => Arc::new(
+            super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
                 backend: "codex".to_string(),
                 ..config
-            }))
-        }
-        super::llm_backend::LlmBackendKindFactory::Claude => {
-            Arc::new(super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
+            }),
+        ),
+        super::llm_backend::LlmBackendKindFactory::Claude => Arc::new(
+            super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
                 backend: "claude".to_string(),
                 ..config
-            }))
-        }
+            }),
+        ),
+        super::llm_backend::LlmBackendKindFactory::Opencode => Arc::new(
+            super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
+                backend: "opencode".to_string(),
+                ..config
+            }),
+        ),
         super::llm_backend::LlmBackendKindFactory::None => {
             Arc::new(super::none_backend::NoneBackend::new())
         }

@@ -56,6 +56,7 @@ use tokio_util::sync::CancellationToken;
 /// `embed_via_backend` no longer re-probes PATH via `detect_available`
 /// (the v1.0.82 bug where requesting Claude could resolve to Codex).
 static CLAUDE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
+static OPENCODE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 static EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 
 /// Process-wide multi-thread tokio runtime for embedding I/O.
@@ -165,6 +166,31 @@ pub fn get_claude_embedder(
         .expect("CLAUDE_EMBEDDER initialised above"))
 }
 
+/// GAP-OPENCODE-001 / v1.0.90: returns the process-wide OpenCode embedder,
+/// lazily initialising it on first use. Binary and model overrides come
+/// from the explicit arguments; `None` falls back to PATH/env defaults via
+/// the builder.
+pub fn get_opencode_embedder(
+    opencode_binary: Option<&Path>,
+    opencode_model: Option<&str>,
+) -> Result<&'static Mutex<LlmEmbedding>, AppError> {
+    if let Some(e) = OPENCODE_EMBEDDER.get() {
+        return Ok(e);
+    }
+    let mut builder = LlmEmbedding::with_opencode_builder();
+    if let Some(b) = opencode_binary {
+        builder = builder.override_binary(b.to_path_buf());
+    }
+    if let Some(m) = opencode_model {
+        builder = builder.override_model(m.to_string());
+    }
+    let backend = builder.build()?;
+    let _ = OPENCODE_EMBEDDER.set(Mutex::new(backend));
+    Ok(OPENCODE_EMBEDDER
+        .get()
+        .expect("OPENCODE_EMBEDDER initialised above"))
+}
+
 /// ADR-0042 / GAP-002: route a single passage through the Claude
 /// embedder. Used by the Claude arm of `embed_via_backend` so the
 /// fallback chain stops treating Claude as a synonym for codex.
@@ -193,6 +219,22 @@ pub fn embed_via_claude_local_resolved(
     let embedder = get_claude_embedder(claude_binary, claude_model)?;
     let v = embed_passage(embedder, text)?;
     Ok((v, LlmBackendKind::Claude))
+}
+
+/// GAP-OPENCODE-001 / v1.0.90: route a single passage through the OpenCode
+/// embedder, reporting the resolved [`LlmBackendKind::Opencode`]. Constructs
+/// an OpenCode-flavoured embedder via `with_opencode_builder` (no PATH probe,
+/// no silent substitution).
+pub fn embed_via_opencode_local_resolved(
+    _models_dir: &Path,
+    text: &str,
+    opencode_binary: Option<&Path>,
+    opencode_model: Option<&str>,
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
+    let _slot_guard = acquire_llm_slot_for_embedding()?;
+    let embedder = get_opencode_embedder(opencode_binary, opencode_model)?;
+    let v = embed_passage(embedder, text)?;
+    Ok((v, LlmBackendKind::Opencode))
 }
 /// Clones the embedding-client configuration. The lock is held only for
 /// the duration of the clone — NEVER across I/O (G42/A3).
@@ -293,6 +335,7 @@ pub fn embed_passage_local_resolved(
     let kind = match embedder.lock().flavour() {
         crate::extract::llm_embedding::EmbeddingFlavour::Codex => LlmBackendKind::Codex,
         crate::extract::llm_embedding::EmbeddingFlavour::Claude => LlmBackendKind::Claude,
+        crate::extract::llm_embedding::EmbeddingFlavour::Opencode => LlmBackendKind::Opencode,
     };
     Ok((v, kind))
 }
@@ -607,6 +650,7 @@ pub fn try_embed_query_with_deterministic_fallback(
             let alt = match backend {
                 "codex" => Some(crate::cli::LlmBackendChoice::Claude),
                 "claude" => Some(crate::cli::LlmBackendChoice::Codex),
+                "opencode" => Some(crate::cli::LlmBackendChoice::Codex),
                 _ => None,
             };
             if let Some(alt_choice) = alt {
@@ -658,6 +702,8 @@ pub fn classify_embedding_error(err: AppError) -> FallbackReason {
                     // signals even when the message text omits the word
                     // "claude" explicitly.
                     "claude"
+                } else if msg.contains("opencode") {
+                    "opencode"
                 } else {
                     "unknown"
                 };
@@ -668,6 +714,8 @@ pub fn classify_embedding_error(err: AppError) -> FallbackReason {
                     "codex"
                 } else if msg.contains("claude") || msg.contains("anthropic-ratelimit") {
                     "claude"
+                } else if msg.contains("opencode") {
+                    "opencode"
                 } else {
                     "unknown"
                 };
@@ -736,6 +784,7 @@ pub fn embed_with_fallback(
         vec![
             LlmBackendKind::Codex,
             LlmBackendKind::Claude,
+            LlmBackendKind::Opencode,
             LlmBackendKind::None,
         ]
     } else {
@@ -793,6 +842,8 @@ pub enum LlmBackendKind {
     Codex,
     /// `claude -p` (fallback for ChatGPT Pro OAuth unavailability).
     Claude,
+    /// `opencode run` (v1.0.90).
+    Opencode,
     /// No embedding — empty vector returned.
     None,
 }
@@ -804,6 +855,7 @@ impl LlmBackendKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::Opencode => "opencode",
             Self::None => "none",
         }
     }
@@ -841,6 +893,14 @@ pub fn embed_via_backend(
                 "embed_via_backend: forcing claude (ADR-0042 / GAP-002 fix)"
             );
             embed_via_claude_local_resolved(models_dir, text, None, None)
+        }
+        LlmBackendKind::Opencode => {
+            tracing::debug!(
+                target: "embedder",
+                backend = "opencode",
+                "embed_via_backend: forcing opencode (GAP-OPENCODE-001)"
+            );
+            embed_via_opencode_local_resolved(models_dir, text, None, None)
         }
     }
 }
@@ -896,6 +956,14 @@ pub fn embed_via_backend_strict(
                 "embed_via_backend_strict: forcing claude (ADR-0042 / GAP-002 fix)"
             );
             embed_via_claude_local_resolved(models_dir, text, None, None)
+        }
+        LlmBackendKind::Opencode => {
+            tracing::debug!(
+                target: "embedder",
+                backend = "opencode",
+                "embed_via_backend_strict: forcing opencode (GAP-OPENCODE-001)"
+            );
+            embed_via_opencode_local_resolved(models_dir, text, None, None)
         }
     }
 }

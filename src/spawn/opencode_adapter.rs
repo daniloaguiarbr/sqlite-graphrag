@@ -43,7 +43,13 @@ impl VersionAdapter for OpencodeAdapter {
         _caps: &super::ExecutorCapabilities,
         _compat_mode: CompatMode,
     ) -> Vec<String> {
-        vec!["headless".to_string(), prompt.to_string()]
+        vec![
+            "run".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            prompt.to_string(),
+        ]
     }
 
     fn parse_output(&self, raw_stdout: &str, raw_stderr: &str, exit_code: i32) -> ParsedOutput {

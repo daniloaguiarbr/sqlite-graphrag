@@ -271,9 +271,33 @@ pub fn run(args: GraphArgs) -> Result<(), AppError> {
             args.json,
             args.output.as_deref(),
         ),
-        Some(GraphSubcommand::Traverse(a)) => run_traverse(a),
-        Some(GraphSubcommand::Stats(a)) => run_stats(a),
-        Some(GraphSubcommand::Entities(a)) => run_entities(a),
+        Some(GraphSubcommand::Traverse(mut a)) => {
+            if a.db.is_none() {
+                a.db = args.db;
+            }
+            if a.namespace.is_none() {
+                a.namespace = args.namespace;
+            }
+            run_traverse(a)
+        }
+        Some(GraphSubcommand::Stats(mut a)) => {
+            if a.db.is_none() {
+                a.db = args.db;
+            }
+            if a.namespace.is_none() {
+                a.namespace = args.namespace;
+            }
+            run_stats(a)
+        }
+        Some(GraphSubcommand::Entities(mut a)) => {
+            if a.db.is_none() {
+                a.db = args.db;
+            }
+            if a.namespace.is_none() {
+                a.namespace = args.namespace;
+            }
+            run_entities(a)
+        }
     }
 }
 

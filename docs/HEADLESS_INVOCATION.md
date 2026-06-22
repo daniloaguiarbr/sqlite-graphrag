@@ -332,6 +332,35 @@ gate was introduced in v1.0.87:
   by validating BEFORE normalizing (8 tests in
   `entity_validation_integration.rs`).
 
+## v1.0.90 Update — OpenCode as Third LLM Backend (ADR-0051)
+
+v1.0.90 adds OpenCode as the third LLM backend for embedding,
+ingest, and enrich pipelines. The auto-detect priority is now
+`codex > claude > opencode > none`. The fallback chain default
+is `codex,claude,opencode,none`.
+
+### sqlite-graphrag with opencode backend
+
+```bash
+# Force opencode backend with specific model
+sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle \
+  remember --name example --type note --body "text" --json
+
+# Ingest with opencode extraction
+sqlite-graphrag ingest ./docs --mode opencode --recursive --json
+
+# Enrich with opencode
+sqlite-graphrag enrich --operation memory-bindings --mode opencode --json
+```
+
+### New env vars for opencode
+
+- `SQLITE_GRAPHRAG_OPENCODE_BINARY` — override the opencode binary path
+- `SQLITE_GRAPHRAG_OPENCODE_MODEL` — select the opencode model for extraction
+- `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL` — select the opencode model for embedding
+- Precedence: `OPENCODE_EMBED_MODEL > OPENCODE_MODEL > default opencode/big-pickle`
+- Cross-contamination fix (BUG-AUDIT-001): opencode model resolution does NOT fall back to `SQLITE_GRAPHRAG_LLM_MODEL`
+
 ## v1.0.89 Update — LLM Flag Propagation and Model Selection (ADR-0050)
 
 v1.0.89 fixes a critical class of dead-flag bugs: 7 global CLI flags

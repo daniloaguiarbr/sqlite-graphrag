@@ -100,7 +100,7 @@
 - The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
 
 ### Schema Changes in v1.0.84 (ADR-0042 / GAP-002)
-- Seven response schemas gained an OPTIONAL `backend_invoked: enum [claude, codex, none]` field that reports which LLM backend the live embedding path actually invoked
+- Seven response schemas gained an OPTIONAL `backend_invoked: enum [claude, codex, opencode, none]` field that reports which LLM backend the live embedding path actually invoked (opencode added in v1.0.90)
 - Affected envelopes: `embedding-status`, `remember`, `edit`, `recall`, `hybrid-search`, `ingest-summary`, `enrich-summary`
 - The field is omitted (not `null`) when no backend was invoked, keeping happy-path envelopes clean
 - Agents SHOULD treat `backend_invoked` as the ground truth for which CLI binary ran during the call

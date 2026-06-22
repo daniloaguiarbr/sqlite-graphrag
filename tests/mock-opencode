@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# mock-opencode: test double for `opencode` CLI v1.17.7
+# Emits NDJSON in the real opencode output format (step_start, text, step_finish).
+# Used by integration tests via PATH prepend.
+set -euo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+    echo "1.17.7"
+    exit 0
+fi
+
+if [[ "${1:-}" == "models" ]]; then
+    echo "opencode/big-pickle"
+    echo "opencode/deepseek-v4-flash-free"
+    echo "opencode/mimo-v2.5-free"
+    exit 0
+fi
+
+# Parse `run --format json -m <model> --dangerously-skip-permissions <prompt>`
+prompt=""
+model="opencode/big-pickle"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        run|--format|json|--dangerously-skip-permissions) shift ;;
+        -m) shift; model="${1:-}"; shift ;;
+        *) prompt="$1"; shift ;;
+    esac
+done
+
+# Generate embedding or extraction response based on prompt content
+dim=64
+if echo "$prompt" | grep -qi "embedding\|embed\|vector\|dimensional"; then
+    # Embedding response
+    vals="0.01"
+    for _ in $(seq 2 "$dim"); do
+        vals="$vals,0.01"
+    done
+    payload="{\"embedding\":[$vals]}"
+elif echo "$prompt" | grep -qi "batch\|items.*array"; then
+    # Batch embedding response
+    payload='{"items":[{"i":1,"v":[0.01,0.01]},{"i":2,"v":[0.02,0.02]}]}'
+else
+    # Entity extraction response
+    payload='{"entities":[{"name":"mock-entity","entity_type":"concept"}],"relationships":[]}'
+fi
+
+ts=$(date +%s%3N 2>/dev/null || echo "1234567890000")
+sid="ses_mock_$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
+echo "{\"type\":\"step_start\",\"timestamp\":${ts},\"sessionID\":\"${sid}\",\"part\":{\"type\":\"step-start\"}}"
+echo "{\"type\":\"text\",\"timestamp\":$((ts+1)),\"sessionID\":\"${sid}\",\"part\":{\"type\":\"text\",\"text\":$(echo "$payload" | sed 's/"/\\"/g' | sed 's/.*/\"&\"/')}}"
+echo "{\"type\":\"step_finish\",\"timestamp\":$((ts+2)),\"sessionID\":\"${sid}\",\"part\":{\"type\":\"step-finish\",\"tokens\":{\"total\":100,\"input\":90,\"output\":10,\"reasoning\":0},\"cost\":0}}"

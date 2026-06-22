@@ -29,6 +29,9 @@ pub struct RememberBatchArgs {
     /// Apply force-merge to all memories (update existing by name).
     #[arg(long)]
     pub force_merge: bool,
+    /// Validate inputs and emit preview events without persisting or embedding.
+    #[arg(long)]
+    pub dry_run: bool,
     /// Namespace override for all memories.
     #[arg(long, env = "SQLITE_GRAPHRAG_NAMESPACE")]
     pub namespace: Option<String>,
@@ -79,7 +82,10 @@ struct BatchSummary {
     elapsed_ms: u64,
 }
 
-pub fn run(args: RememberBatchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: RememberBatchArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -99,10 +105,76 @@ pub fn run(args: RememberBatchArgs, llm_backend: crate::cli::LlmBackendChoice) -
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
+    if args.dry_run {
+        for (idx, line) in lines.iter().enumerate() {
+            match serde_json::from_str::<BatchInputLine>(line) {
+                Ok(input) => {
+                    let normalized_name = crate::parsers::normalize_entity_name(&input.name);
+                    if normalized_name.is_empty() {
+                        failed += 1;
+                        output::emit_json(&BatchItemEvent {
+                            name: String::new(),
+                            status: "failed".to_string(),
+                            memory_id: None,
+                            error: Some(format!("line {idx}: name normalizes to empty string")),
+                            index: idx,
+                        })?;
+                        continue;
+                    }
+                    let existing = memories::find_by_name(&conn, &namespace, &normalized_name)?;
+                    let action = if existing.is_some() {
+                        if args.force_merge {
+                            "would_update"
+                        } else {
+                            "would_fail_duplicate"
+                        }
+                    } else {
+                        "would_create"
+                    };
+                    succeeded += 1;
+                    output::emit_json(&BatchItemEvent {
+                        name: normalized_name,
+                        status: action.to_string(),
+                        memory_id: existing.map(|(id, _, _)| id),
+                        error: None,
+                        index: idx,
+                    })?;
+                }
+                Err(e) => {
+                    failed += 1;
+                    output::emit_json(&BatchItemEvent {
+                        name: String::new(),
+                        status: "failed".to_string(),
+                        memory_id: None,
+                        error: Some(format!("line {idx}: invalid JSON: {e}")),
+                        index: idx,
+                    })?;
+                }
+            }
+        }
+
+        output::emit_json(&BatchSummary {
+            summary: true,
+            total,
+            succeeded,
+            failed,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        })?;
+        return Ok(());
+    }
+
     if args.transaction {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for (idx, line) in lines.iter().enumerate() {
-            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths, llm_backend) {
+            match process_line(
+                &tx,
+                &namespace,
+                line,
+                idx,
+                args.force_merge,
+                &paths,
+                llm_backend,
+            ) {
                 Ok(event) => {
                     output::emit_json(&event)?;
                     succeeded += 1;
@@ -128,7 +200,15 @@ pub fn run(args: RememberBatchArgs, llm_backend: crate::cli::LlmBackendChoice) -
     } else {
         for (idx, line) in lines.iter().enumerate() {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths, llm_backend) {
+            match process_line(
+                &tx,
+                &namespace,
+                line,
+                idx,
+                args.force_merge,
+                &paths,
+                llm_backend,
+            ) {
                 Ok(event) => {
                     tx.commit()?;
                     output::emit_json(&event)?;
@@ -195,12 +275,11 @@ fn process_line(
         let snippet: String = input.body.chars().take(200).collect();
         // Capture old FTS values BEFORE the UPDATE for sync_fts_after_update
         // (trg_fts_au trigger is absent by design due to sqlite-vec conflict).
-        let (old_fts_name, old_fts_desc, old_fts_body): (String, String, String) = tx
-            .query_row(
-                "SELECT name, description, body FROM memories WHERE id = ?1",
-                rusqlite::params![existing_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?;
+        let (old_fts_name, old_fts_desc, old_fts_body): (String, String, String) = tx.query_row(
+            "SELECT name, description, body FROM memories WHERE id = ?1",
+            rusqlite::params![existing_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
         memories::update(
             tx,
             existing_id,
@@ -242,9 +321,21 @@ fn process_line(
         )?;
 
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-        match crate::embedder::embed_passage_with_choice(&paths.models, &input.body, Some(llm_backend)) {
+        match crate::embedder::embed_passage_with_choice(
+            &paths.models,
+            &input.body,
+            Some(llm_backend),
+        ) {
             Ok((embedding, _backend)) => {
-                memories::upsert_vec(tx, existing_id, namespace, &input.r#type, &embedding, &normalized_name, &snippet)?;
+                memories::upsert_vec(
+                    tx,
+                    existing_id,
+                    namespace,
+                    &input.r#type,
+                    &embedding,
+                    &normalized_name,
+                    &snippet,
+                )?;
             }
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
             Err(e) if skip_embed => {
@@ -281,9 +372,21 @@ fn process_line(
 
         let snippet: String = input.body.chars().take(200).collect();
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-        match crate::embedder::embed_passage_with_choice(&paths.models, &input.body, Some(llm_backend)) {
+        match crate::embedder::embed_passage_with_choice(
+            &paths.models,
+            &input.body,
+            Some(llm_backend),
+        ) {
             Ok((embedding, _backend)) => {
-                memories::upsert_vec(tx, id, namespace, &input.r#type, &embedding, &normalized_name, &snippet)?;
+                memories::upsert_vec(
+                    tx,
+                    id,
+                    namespace,
+                    &input.r#type,
+                    &embedding,
+                    &normalized_name,
+                    &snippet,
+                )?;
             }
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
             Err(e) if skip_embed => {
@@ -310,7 +413,12 @@ fn process_line(
             Ok((entity_embedding_vec, _stats)) => {
                 if let Some(entity_embedding) = entity_embedding_vec.into_iter().next() {
                     entities::upsert_entity_vec(
-                        tx, entity_id, namespace, entity.entity_type, &entity_embedding, &entity.name,
+                        tx,
+                        entity_id,
+                        namespace,
+                        entity.entity_type,
+                        &entity_embedding,
+                        &entity.name,
                     )?;
                 }
             }

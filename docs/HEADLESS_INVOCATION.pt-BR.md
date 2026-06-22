@@ -317,6 +317,35 @@ podem retomar a partir da última memória bem-sucedida.
 - Binário medido em 15.323.128 bytes (14.6 MiB), dentro de 1 MiB do documentado em `Cargo.toml:6`. Drift viral "6 MB" eliminado
 - 1877 testes passando (843 lib + 1013 integração + 21 doc)
 
+## Atualização v1.0.90 — OpenCode como Terceiro Backend LLM (ADR-0051)
+
+A v1.0.90 adiciona o OpenCode como terceiro backend LLM para pipelines
+de embedding, ingestão e enriquecimento. A prioridade de auto-detect
+agora é `codex > claude > opencode > none`. A cadeia de fallback
+padrão é `codex,claude,opencode,none`.
+
+### sqlite-graphrag com backend opencode
+
+```bash
+# Forçar backend opencode com modelo específico
+sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle \
+  remember --name example --type note --body "text" --json
+
+# Ingestão com extração opencode
+sqlite-graphrag ingest ./docs --mode opencode --recursive --json
+
+# Enriquecimento com opencode
+sqlite-graphrag enrich --operation memory-bindings --mode opencode --json
+```
+
+### Novas variáveis de ambiente para opencode
+
+- `SQLITE_GRAPHRAG_OPENCODE_BINARY` — sobrescreve o caminho do binário opencode
+- `SQLITE_GRAPHRAG_OPENCODE_MODEL` — seleciona o modelo opencode para extração
+- `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL` — seleciona o modelo opencode para embedding
+- Precedência: `OPENCODE_EMBED_MODEL > OPENCODE_MODEL > default opencode/big-pickle`
+- Correção de contaminação cruzada (BUG-AUDIT-001): resolução de modelo opencode NÃO faz fallback para `SQLITE_GRAPHRAG_LLM_MODEL`
+
 ## Atualização v1.0.89 — Propagação de Flags LLM e Seleção de Modelo (ADR-0050)
 
 A v1.0.89 corrige uma classe crítica de bugs de flag morta: 7 flags

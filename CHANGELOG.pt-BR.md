@@ -3,6 +3,44 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.90] - 2026-06-22
+
+### Adicionado
+- **GAP-OPENCODE-001** — Integração do backend OpenCode na pipeline de embedding e extração. Adicionada variante `Opencode` aos enums `EmbeddingFlavour`, `LlmBackendKindFactory` e `LlmBackendKind`. Novos `LlmEmbeddingBuilder::opencode_default()`, `invoke_opencode_async()`, `build_opencode_embedding_command()` e `opencode_embed_model()`. Auto-detecção via `which::which("opencode")`. Env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`. Cadeia de fallback estendida para `codex → claude → opencode → none`.
+- **GAP-OPENCODE-002** — Integração do backend OpenCode nas pipelines de ingestão, enriquecimento e cadeia de fallback. Novo `--mode opencode` para `ingest` e `enrich`. Novos módulos `src/commands/ingest_opencode.rs` e `src/commands/opencode_runner.rs`. Novos flags CLI: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`. Atualizado `parse_fallback_chain()` para reconhecer token `"opencode"`. Atualizado `dry_run_backend` para detectar opencode no PATH.
+- **GAP-SKILL-OPENCODE-001** — Skills EN/PT atualizadas com documentação do backend OpenCode, env vars, flags CLI e exemplos de uso.
+
+### Corrigido
+- **BUG-AUDIT-001** — Contaminação cruzada de modelo opencode: `opencode_embed_model()` e `resolve_opencode_model()` não fazem mais fallback para `SQLITE_GRAPHRAG_LLM_MODEL` (que poderia conter um modelo codex). Precedência agora: `OPENCODE_EMBED_MODEL` > `OPENCODE_MODEL` > default `opencode/big-pickle`.
+- **BUG-AUDIT-002** — Prompt de embedding reescrito com role-setting "You are an embedding function" para produzir vetores reais de 64 dimensões em vez de ser recusado pelo modelo.
+- **BUG-AUDIT-003** — `env_clear()` no invoke do opencode agora preserva credenciais de provider (`OPENROUTER_API_KEY`, etc.) e configuração (`XDG_CONFIG_HOME`) via novo helper `propagate_opencode_env()`.
+- **BUG-AUDIT-004** — `ingest_opencode` era um stub retornando `Err(Validation("under development"))`. Implementado completamente com loop de extração por arquivo, persistência de entidades/relações e stream de eventos NDJSON.
+- **BUG-AUDIT-005** — Schema incorreto no `persist_memory_with_graph`: INSERT usava `entity_type` em vez da coluna `type`; faltava campo `body_hash` NOT NULL. Corrigido para corresponder ao schema SQLite.
+- **GAP-ENRICH-OPENCODE-001** — `enrich --mode opencode` delegava silenciosamente para codex headless (13 match arms). Criado `call_opencode()` dedicado usando `opencode_runner`.
+- **BUG-AUDIT-006** — Flag CLI `--opencode-binary` era declarada no clap mas ignorada. Criada `find_opencode_binary_with_override()` que respeita o caminho explícito.
+- **BUG-AUDIT-007** — `spawn_with_memory_limit()` (RLIMIT_AS 4GB) crashava o runtime Bun usado pelo opencode. Criada `spawn_opencode()` com setsid mas sem RLIMIT_AS.
+- **BUG-AUDIT-008** — `call_opencode()` no enrich ignorava o parâmetro `json_schema`. Schema agora é injetado no prompt quando não vazio para saída JSON estruturada.
+- **BUG-AUDIT-009** — Preflight probe para opencode usava `spawn_with_memory_limit()` (mesmo crash RLIMIT_AS do BUG-007). Substituído por `spawn_opencode()`.
+- **BUG-AUDIT-010** — `dry_run_backend` com mensagem de erro enganosa quando opencode era eclipsado pelo codex no PATH. Diferenciada mensagem para explicar prioridade vs ausência.
+- **BUG-AUDIT-011** — Filtro `--names` ignorado silenciosamente em operações `entity-descriptions` e `body-enrich`. Adicionado parâmetro `name_filter` a `scan_entities_without_description()` e `scan_short_body_memories()` com SQL `WHERE name IN (...)`.
+- **BUG-SLOT-TEST-001** — Teste `slot_enforces_max_concurrency` vazava `XDG_RUNTIME_DIR` causando colisão com slots reais do host. Criados helpers `isolate_slots_env()` / `restore_slots_env()`.
+- **DOC-WARNING-001** — Warning de `cargo doc` "unresolved link to 0" em `preflight.rs:84`. Escapados colchetes: `argv\[0\]`.
+- **DOC-WARNING-002** — Warning de `cargo doc` "unclosed HTML tag path" em `ingest.rs:122`. Convertido para código inline: `` `<path>` ``.
+- **FMT-001** — Diferença de `cargo fmt --check` em `cli.rs:74`. Aplicado `cargo fmt`.
+- **BUG-TIMEOUT-HARDCODE-001** — Timeout de embedding hardcoded em 60s causava exit 11 em corpos grandes. Adicionado campo `timeout_override: Option<Duration>` ao `LlmEmbedding` e `LlmEmbeddingBuilder`. Novos métodos `instance_embed_timeout()` e `instance_embed_timeout_for_batch()`. Removido `std::env::set_var` unsafe de `embed_batch_async()`.
+- **BUG-WINDOWS-001** — Compilação no Windows falhava: 3 usos de `std::os::unix::process::ExitStatusExt` sem guard `#[cfg(unix)]`. Criado helper `extract_exit_info()` com branches `#[cfg(unix)]` e `#[cfg(not(unix))]`, substituindo 3 blocos inline (DRY + cross-platform).
+- **BUG-PENDING-CLEANUP-DB-001** — `pending cleanup` não aceitava flag `--db`. Adicionado `db: Option<String>` ao `PendingCleanupArgs` e parametrizado `open_conn()`.
+- **BUG-REMEMBER-BATCH-DRYRUN-001** — `remember-batch --dry-run` não era implementado (exit 2). Adicionado campo `dry_run` ao `RememberBatchArgs` com eventos de preview (`would_create`, `would_update`, `would_fail_duplicate`).
+- **BUG-INGEST-SKIP-EMBED-001** — `ingest` ignorava `--skip-embedding-on-failure`. Alterado `StagedFile.embedding` de `Vec<f32>` para `Option<Vec<f32>>`, adicionados guards de skip nos 3 call sites de embedding.
+- **BUG-GRAPH-DB-PROPAGATION-001** — `graph --db X stats|traverse|entities` ignorava flags do pai. Propagados `args.db` e `args.namespace` para subcomandos quando seus campos são `None`.
+- **BUG-PENDING-EMBEDDINGS-DB-001** — `pending-embeddings list|abandon` não aceitava `--db`. Adicionado campo `db` às duas structs e parametrizado `open_conn()`.
+- **BUG-LIST-TOTAL-COUNT-001** — `list` retornava `total_count` igual ao tamanho da página em vez do total global. Criada `memories::count()` com 4 variantes de query. `truncated` agora compara `items.len() < total_count`.
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy, 0 diffs de fmt, 0 warnings de doc.
+- Suite de testes: 875 testes lib, 0 falhas.
+- Todos os 24 gaps/bugs fechados; 0 abertos.
+
 ## [1.0.89] - 2026-06-19
 
 ### Corrigido

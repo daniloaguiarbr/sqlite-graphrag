@@ -119,7 +119,7 @@ pub struct IngestArgs {
     pub enable_ner: bool,
 
     /// GAP-E2E-011: gera description heurística a partir da primeira linha
-    /// significativa do body, em vez de "ingested from <path>". Quando
+    /// significativa do body, em vez de "ingested from `<path>`". Quando
     /// `--no-auto-describe` é passado, mantém o comportamento legado.
     #[arg(
         long,
@@ -285,6 +285,29 @@ pub struct IngestArgs {
     )]
     pub codex_timeout: u64,
 
+    /// Path to the `opencode` binary (override PATH lookup, only with --mode opencode).
+    #[arg(long, value_name = "PATH", env = "SQLITE_GRAPHRAG_OPENCODE_BINARY")]
+    pub opencode_binary: Option<PathBuf>,
+
+    /// Model override for OpenCode extraction.
+    #[arg(
+        long,
+        value_name = "MODEL",
+        env = "SQLITE_GRAPHRAG_OPENCODE_MODEL",
+        help = "Model override for OpenCode extraction"
+    )]
+    pub opencode_model: Option<String>,
+
+    /// Timeout in seconds for each opencode run invocation.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        env = "SQLITE_GRAPHRAG_OPENCODE_TIMEOUT",
+        default_value_t = 300,
+        help = "Timeout in seconds for each opencode run invocation (default: 300)"
+    )]
+    pub opencode_timeout: u64,
+
     /// G30: poll for the job singleton every second for up to N seconds
     /// when another invocation holds the lock. Default: 0 (fail fast).
     #[arg(long, value_name = "SECONDS")]
@@ -307,6 +330,9 @@ pub enum IngestMode {
     ClaudeCode,
     /// LLM-curated extraction via locally installed OpenAI Codex CLI.
     Codex,
+    /// LLM-curated extraction via locally installed OpenCode CLI.
+    #[value(name = "opencode")]
+    Opencode,
 }
 
 /// Returns true when the `SQLITE_GRAPHRAG_LOW_MEMORY` env var is set to a
@@ -453,12 +479,12 @@ struct StagedFile {
     snippet: String,
     name: String,
     description: String,
-    embedding: Vec<f32>,
+    embedding: Option<Vec<f32>>,
     chunk_embeddings: Option<Vec<Vec<f32>>>,
     chunks_info: Vec<crate::chunking::Chunk>,
     entities: Vec<NewEntity>,
     relationships: Vec<NewRelationship>,
-    entity_embeddings: Vec<Vec<f32>>,
+    entity_embeddings: Option<Vec<Vec<f32>>>,
     urls: Vec<crate::extraction::ExtractedUrl>,
     /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
     /// executou o embedding do body. `None` quando o batch paralelo
@@ -609,13 +635,28 @@ fn stage_file(
     }
 
     let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
+    let skip_embed = crate::embedder::should_skip_embedding_on_failure();
     // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
     // backend que efetivamente rodou para popular `backend_invoked` no
     // envelope NDJSON por arquivo.
-    let (embedding, backend_invoked) = if chunks_info.len() == 1 {
+    let (embedding, backend_invoked): (Option<Vec<f32>>, Option<&'static str>) = if chunks_info
+        .len()
+        == 1
+    {
         // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
-        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))
-            .map(|(v, k)| (v, Some(k.as_str())))?
+        match crate::embedder::embed_passage_with_choice(
+            &paths.models,
+            &raw_body,
+            Some(llm_backend),
+        ) {
+            Ok((v, k)) => (Some(v), Some(k.as_str())),
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, file = %path.display(), "ingest: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                (None, None)
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         // G42/S2+S3 (v1.0.79): batched bounded fan-out replaces the
         // serial per-chunk subprocess loop.
@@ -638,17 +679,26 @@ fn stage_file(
                 });
             }
         }
-        let chunk_embeddings = crate::embedder::embed_passages_parallel_local(
+        match crate::embedder::embed_passages_parallel_local(
             &paths.models,
             &chunk_texts,
             llm_parallelism,
             crate::embedder::chunk_embed_batch_size(),
-        )?;
-        let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
-        chunk_embeddings_opt = Some(chunk_embeddings);
-        // v1.0.84 (ADR-0042): batch paralelo não retorna discriminador
-        // único por chamada. Conservadoramente, populamos None aqui.
-        (aggregated, None)
+        ) {
+            Ok(chunk_embeddings) => {
+                let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
+                chunk_embeddings_opt = Some(chunk_embeddings);
+                // v1.0.84 (ADR-0042): batch paralelo não retorna discriminador
+                // único por chamada. Conservadoramente, populamos None aqui.
+                (Some(aggregated), None)
+            }
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, file = %path.display(), "ingest: chunk embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                (None, None)
+            }
+            Err(e) => return Err(e),
+        }
     };
 
     // G42/S2+A4 (v1.0.79): entity names use the short-text batch profile.
@@ -662,16 +712,28 @@ fn stage_file(
     // G56 (v1.0.80): ingest reuses canonical entity names across many
     // memories (e.g. `sqlite-graphrag`, `claude-code`); the in-process
     // cache collapses the repeated LLM calls into one per unique text.
-    let (entity_embeddings, embed_cache_stats) =
-        crate::embedder::embed_entity_texts_cached(&paths.models, &entity_texts, llm_parallelism)?;
-    if embed_cache_stats.hits > 0 {
-        tracing::debug!(
-            hits = embed_cache_stats.hits,
-            misses = embed_cache_stats.misses,
-            requested = embed_cache_stats.requested,
-            "G56: entity embed cache hit (ingest)"
-        );
-    }
+    let entity_embeddings_opt = match crate::embedder::embed_entity_texts_cached(
+        &paths.models,
+        &entity_texts,
+        llm_parallelism,
+    ) {
+        Ok((entity_embeddings, embed_cache_stats)) => {
+            if embed_cache_stats.hits > 0 {
+                tracing::debug!(
+                    hits = embed_cache_stats.hits,
+                    misses = embed_cache_stats.misses,
+                    requested = embed_cache_stats.requested,
+                    "G56: entity embed cache hit (ingest)"
+                );
+            }
+            Some(entity_embeddings)
+        }
+        Err(e) if skip_embed => {
+            tracing::warn!(error = %e, file = %path.display(), "ingest: entity embedding failed; --skip-embedding-on-failure active");
+            None
+        }
+        Err(e) => return Err(e),
+    };
 
     Ok(StagedFile {
         body: raw_body,
@@ -684,7 +746,7 @@ fn stage_file(
         chunks_info,
         entities: extracted_entities,
         relationships: extracted_relationships,
-        entity_embeddings,
+        entity_embeddings: entity_embeddings_opt,
         urls: extracted_urls,
         backend_invoked,
     })
@@ -760,40 +822,42 @@ fn persist_staged(
         None,
         "create",
     )?;
-    memories::upsert_vec(
-        &tx,
-        memory_id,
-        namespace,
-        memory_type,
-        &staged.embedding,
-        &staged.name,
-        &staged.snippet,
-    )?;
+    if let Some(ref emb) = staged.embedding {
+        memories::upsert_vec(
+            &tx,
+            memory_id,
+            namespace,
+            memory_type,
+            emb,
+            &staged.name,
+            &staged.snippet,
+        )?;
+    }
 
     if staged.chunks_info.len() > 1 {
         storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &staged.chunks_info)?;
-        let chunk_embeddings = staged.chunk_embeddings.ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "missing chunk embeddings cache on multi-chunk ingest path"
-            ))
-        })?;
-        for (i, emb) in chunk_embeddings.iter().enumerate() {
-            storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+        if let Some(ref chunk_embeddings) = staged.chunk_embeddings {
+            for (i, emb) in chunk_embeddings.iter().enumerate() {
+                storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+            }
         }
     }
 
     if !staged.entities.is_empty() || !staged.relationships.is_empty() {
         for (idx, entity) in staged.entities.iter().enumerate() {
             let entity_id = entities::upsert_entity(&tx, namespace, entity)?;
-            let entity_embedding = &staged.entity_embeddings[idx];
-            entities::upsert_entity_vec(
-                &tx,
-                entity_id,
-                namespace,
-                entity.entity_type,
-                entity_embedding,
-                &entity.name,
-            )?;
+            if let Some(ref entity_embeddings) = staged.entity_embeddings {
+                if let Some(entity_embedding) = entity_embeddings.get(idx) {
+                    entities::upsert_entity_vec(
+                        &tx,
+                        entity_id,
+                        namespace,
+                        entity.entity_type,
+                        entity_embedding,
+                        &entity.name,
+                    )?;
+                }
+            }
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
             entities::increment_degree(&tx, entity_id)?;
         }
@@ -906,6 +970,19 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
                 args.codex_timeout
             ));
         }
+        if args.opencode_binary.is_some() {
+            conflicts
+                .push("--opencode-binary is ignored when --mode is none or gliner".to_string());
+        }
+        if args.opencode_model.is_some() {
+            conflicts.push("--opencode-model is ignored when --mode is none or gliner".to_string());
+        }
+        if !is_at_default(args.opencode_timeout, DEFAULT_TIMEOUT) {
+            conflicts.push(format!(
+                "--opencode-timeout={} is ignored when --mode is none or gliner (remove the flag to use the default 300s)",
+                args.opencode_timeout
+            ));
+        }
         if args.max_cost_usd.is_some() {
             conflicts.push("--max-cost-usd is ignored when --mode is none or gliner (cost is only tracked for LLM-backed modes)".to_string());
         }
@@ -940,6 +1017,18 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
                     args.codex_timeout
                 ));
             }
+            if args.opencode_binary.is_some() {
+                conflicts.push("--opencode-binary is ignored when --mode=claude-code".to_string());
+            }
+            if args.opencode_model.is_some() {
+                conflicts.push("--opencode-model is ignored when --mode=claude-code".to_string());
+            }
+            if !is_at_default(args.opencode_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--opencode-timeout={} is ignored when --mode=claude-code (remove the flag to use the default 300s)",
+                    args.opencode_timeout
+                ));
+            }
         }
         IngestMode::Codex => {
             if args.claude_binary.is_some() {
@@ -957,6 +1046,59 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
             if args.max_cost_usd.is_some() {
                 conflicts.push(
                     "--max-cost-usd is ignored when --mode=codex (OAuth-first; cost is metered by your subscription)"
+                        .to_string(),
+                );
+            }
+            if args.resume {
+                conflicts.push("--resume is only valid for --mode=claude-code".to_string());
+            }
+            if args.retry_failed {
+                conflicts.push("--retry-failed is only valid for --mode=claude-code".to_string());
+            }
+            if args.keep_queue {
+                conflicts.push("--keep-queue is only valid for --mode=claude-code".to_string());
+            }
+            if args.opencode_binary.is_some() {
+                conflicts.push("--opencode-binary is ignored when --mode=codex".to_string());
+            }
+            if args.opencode_model.is_some() {
+                conflicts.push("--opencode-model is ignored when --mode=codex".to_string());
+            }
+            if !is_at_default(args.opencode_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--opencode-timeout={} is ignored when --mode=codex (remove the flag to use the default 300s)",
+                    args.opencode_timeout
+                ));
+            }
+        }
+        IngestMode::Opencode => {
+            if args.claude_binary.is_some() {
+                conflicts.push("--claude-binary is ignored when --mode=opencode".to_string());
+            }
+            if args.claude_model.is_some() {
+                conflicts.push("--claude-model is ignored when --mode=opencode".to_string());
+            }
+            if !is_at_default(args.claude_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--claude-timeout={} is ignored when --mode=opencode (remove the flag to use the default 300s)",
+                    args.claude_timeout
+                ));
+            }
+            if args.codex_binary.is_some() {
+                conflicts.push("--codex-binary is ignored when --mode=opencode".to_string());
+            }
+            if args.codex_model.is_some() {
+                conflicts.push("--codex-model is ignored when --mode=opencode".to_string());
+            }
+            if !is_at_default(args.codex_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--codex-timeout={} is ignored when --mode=opencode (remove the flag to use the default 300s)",
+                    args.codex_timeout
+                ));
+            }
+            if args.max_cost_usd.is_some() {
+                conflicts.push(
+                    "--max-cost-usd is ignored when --mode=opencode (OAuth-first; cost is metered by your subscription)"
                         .to_string(),
                 );
             }
@@ -997,6 +1139,9 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
     }
     if args.mode == IngestMode::Codex {
         return super::ingest_codex::run_codex_ingest(&args);
+    }
+    if args.mode == IngestMode::Opencode {
+        return super::ingest_opencode::run_opencode_ingest(&args);
     }
 
     let started = std::time::Instant::now();

@@ -333,6 +333,9 @@ pub enum EnrichMode {
     ClaudeCode,
     /// Use locally installed OpenAI Codex CLI.
     Codex,
+    /// Use locally installed OpenCode CLI.
+    #[value(name = "opencode")]
+    Opencode,
 }
 
 impl std::fmt::Display for EnrichMode {
@@ -340,6 +343,7 @@ impl std::fmt::Display for EnrichMode {
         match self {
             EnrichMode::ClaudeCode => write!(f, "claude-code"),
             EnrichMode::Codex => write!(f, "codex"),
+            EnrichMode::Opencode => write!(f, "opencode"),
         }
     }
 }
@@ -412,6 +416,24 @@ pub struct EnrichArgs {
     /// Timeout per item in seconds when using Codex. Default: 300.
     #[arg(long, value_name = "SECONDS", default_value_t = 300)]
     pub codex_timeout: u64,
+
+    // -- Provider flags (OpenCode) --
+    /// Path to the OpenCode binary. Default: auto-detect from PATH.
+    #[arg(long, value_name = "PATH", env = "SQLITE_GRAPHRAG_OPENCODE_BINARY")]
+    pub opencode_binary: Option<PathBuf>,
+
+    /// OpenCode model to use.
+    #[arg(long, value_name = "MODEL", env = "SQLITE_GRAPHRAG_OPENCODE_MODEL")]
+    pub opencode_model: Option<String>,
+
+    /// Timeout per item in seconds when using OpenCode. Default: 300.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        env = "SQLITE_GRAPHRAG_OPENCODE_TIMEOUT",
+        default_value_t = 300
+    )]
+    pub opencode_timeout: u64,
 
     // -- Cost controls --
     /// Abort when cumulative cost exceeds this USD budget (API key only; ignored for OAuth).
@@ -821,6 +843,43 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
             }
             PreflightOutcome::Healthy
         }
+        EnrichMode::Opencode => {
+            let bin = match super::opencode_runner::find_opencode_binary_with_override(
+                args.opencode_binary.as_deref(),
+            ) {
+                Ok(b) => b,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            let model =
+                super::opencode_runner::resolve_opencode_model(args.opencode_model.as_deref());
+            let mut cmd =
+                super::opencode_runner::build_opencode_command_sync(&bin, &model, "ping", "");
+            let child = match super::opencode_runner::spawn_opencode(&mut cmd) {
+                Ok(c) => c,
+                Err(e) => return PreflightOutcome::Error(AppError::Io(e)),
+            };
+            let output = match wait_with_timeout(child, timeout) {
+                Ok(out) => out,
+                Err(e) => return PreflightOutcome::Error(e),
+            };
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("rate_limit")
+                    || stderr.contains("429")
+                    || stderr.contains("Too Many Requests")
+                {
+                    return PreflightOutcome::RateLimited {
+                        reason: stderr.trim().to_string(),
+                        suggestion: "wait for the rate-limit window to reset",
+                    };
+                }
+                return PreflightOutcome::Error(AppError::Validation(format!(
+                    "preflight probe failed: {stderr}",
+                    stderr = stderr.trim()
+                )));
+            }
+            PreflightOutcome::Healthy
+        }
     }
 }
 
@@ -980,27 +1039,64 @@ fn scan_entities_without_description(
     conn: &Connection,
     namespace: &str,
     limit: Option<usize>,
+    name_filter: &[String],
 ) -> Result<Vec<(i64, String, String)>, AppError> {
     let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
-    let sql = format!(
-        "SELECT id, name, type
-         FROM entities
-         WHERE namespace = ?1
-           AND (description IS NULL OR description = '')
-         ORDER BY id
-         {limit_clause}"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params![namespace], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT id, name, type
+             FROM entities
+             WHERE namespace = ?1
+               AND (description IS NULL OR description = '')
+             ORDER BY id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT id, name, type
+             FROM entities
+             WHERE namespace = ?1
+               AND name IN ({in_clause})
+               AND (description IS NULL OR description = '')
+             ORDER BY id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+        params_vec.push(&namespace);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
 }
 
 /// Returns memories whose body length is below the configured minimum.
@@ -1011,28 +1107,68 @@ fn scan_short_body_memories(
     namespace: &str,
     min_chars: usize,
     limit: Option<usize>,
+    name_filter: &[String],
 ) -> Result<Vec<(i64, String, String)>, AppError> {
     let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
-    let sql = format!(
-        "SELECT m.id, m.name, m.body
-         FROM memories m
-         WHERE m.namespace = ?1
-           AND m.deleted_at IS NULL
-           AND LENGTH(COALESCE(m.body,'')) < ?2
-         ORDER BY m.id
-         {limit_clause}"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params![namespace, min_chars as i64], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT m.id, m.name, m.body
+             FROM memories m
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND LENGTH(COALESCE(m.body,'')) < ?2
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace, min_chars as i64], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let placeholders: Vec<String> = (3..=name_filter.len() + 2)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT m.id, m.name, m.body
+             FROM memories m
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND m.name IN ({in_clause})
+               AND LENGTH(COALESCE(m.body,'')) < ?2
+             ORDER BY m.id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + name_filter.len());
+        let min_chars_i64 = min_chars as i64;
+        params_vec.push(&namespace);
+        params_vec.push(&min_chars_i64);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
 }
 
 /// Returns live memories that still have no row in `memory_embeddings`.
@@ -1504,6 +1640,26 @@ fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppEr
                 );
             }
         }
+        EnrichMode::Opencode => {
+            if args.claude_binary.is_some() {
+                conflicts.push("--claude-binary is ignored when --mode=opencode".to_string());
+            }
+            if args.claude_model.is_some() {
+                conflicts.push("--claude-model is ignored when --mode=opencode".to_string());
+            }
+            if !is_at_default(args.claude_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--claude-timeout={} is ignored when --mode=opencode (remove the flag to use the default 300s)",
+                    args.claude_timeout
+                ));
+            }
+            if args.max_cost_usd.is_some() {
+                conflicts.push(
+                    "--max-cost-usd is ignored when --mode=opencode (OAuth-first; cost is metered by your subscription, not the call)"
+                        .to_string(),
+                );
+            }
+        }
     }
 
     if !conflicts.is_empty() {
@@ -1567,6 +1723,20 @@ pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
             }
             EnrichMode::Codex => {
                 let bin = find_codex_binary(args.codex_binary.as_deref())?;
+                emit_json(&PhaseEvent {
+                    phase: "validate",
+                    binary_path: bin.to_str(),
+                    version: None,
+                    items_total: None,
+                    items_pending: None,
+                    llm_parallelism: None,
+                });
+                bin
+            }
+            EnrichMode::Opencode => {
+                let bin = super::opencode_runner::find_opencode_binary_with_override(
+                    args.opencode_binary.as_deref(),
+                )?;
                 emit_json(&PhaseEvent {
                     phase: "validate",
                     binary_path: bin.to_str(),
@@ -1776,6 +1946,19 @@ pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
                 // validated at parallelism 8 in production (1161 items,
                 // 0 failures) per the 2026-06-04 session audit.
             }
+            EnrichMode::Opencode if parallelism > 16 => {
+                tracing::warn!(
+                    target: "enrich",
+                    llm_parallelism = parallelism,
+                    recommended_max = 16,
+                    mode = "opencode",
+                    "llm_parallelism above 16 risks OAuth rate-limit on OpenCode; \
+                     consider --llm-parallelism 8 for safer concurrency"
+                );
+            }
+            EnrichMode::Opencode => {
+                // No warning: opencode does not spawn MCP children.
+            }
         }
     }
 
@@ -1791,11 +1974,13 @@ pub fn run(args: &EnrichArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
     let provider_timeout = match args.mode {
         EnrichMode::ClaudeCode => args.claude_timeout,
         EnrichMode::Codex => args.codex_timeout,
+        EnrichMode::Opencode => args.opencode_timeout,
     };
 
     let provider_model: Option<&str> = match args.mode {
         EnrichMode::ClaudeCode => args.claude_model.as_deref(),
         EnrichMode::Codex => args.codex_model.as_deref(),
+        EnrichMode::Opencode => args.opencode_model.as_deref(),
     };
 
     // G19: when parallelism > 1, spawn bounded worker threads.
@@ -2502,6 +2687,14 @@ fn call_memory_bindings(
             model,
             timeout,
         )?,
+        EnrichMode::Opencode => call_opencode(
+            binary,
+            BINDINGS_PROMPT,
+            BINDINGS_SCHEMA,
+            &body,
+            model,
+            timeout,
+        )?,
     };
 
     let empty_arr = serde_json::Value::Array(vec![]);
@@ -2559,6 +2752,14 @@ fn call_entity_description(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            &prompt,
+            ENTITY_DESCRIPTION_SCHEMA,
+            "",
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             &prompt,
             ENTITY_DESCRIPTION_SCHEMA,
@@ -2691,6 +2892,9 @@ fn call_body_enrich(
         }
         EnrichMode::Codex => {
             call_codex(binary, &prompt, BODY_ENRICH_SCHEMA, &body, model, timeout)?
+        }
+        EnrichMode::Opencode => {
+            call_opencode(binary, &prompt, BODY_ENRICH_SCHEMA, &body, model, timeout)?
         }
     };
 
@@ -2837,12 +3041,18 @@ fn scan_operation(
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::EntityDescriptions => {
-            let rows = scan_entities_without_description(conn, namespace, args.limit)?;
+            let rows =
+                scan_entities_without_description(conn, namespace, args.limit, &name_filter)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::BodyEnrich => {
-            let rows =
-                scan_short_body_memories(conn, namespace, args.min_output_chars, args.limit)?;
+            let rows = scan_short_body_memories(
+                conn,
+                namespace,
+                args.min_output_chars,
+                args.limit,
+                &name_filter,
+            )?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::ReEmbed => {
@@ -2977,6 +3187,14 @@ fn call_weight_calibrate(
             model,
             timeout,
         )?,
+        EnrichMode::Opencode => call_opencode(
+            binary,
+            WEIGHT_CALIBRATE_PROMPT,
+            WEIGHT_CALIBRATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
 
     let calibrated = value
@@ -3039,6 +3257,14 @@ fn call_relation_reclassify(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            RELATION_RECLASSIFY_PROMPT,
+            RELATION_RECLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             RELATION_RECLASSIFY_PROMPT,
             RELATION_RECLASSIFY_SCHEMA,
@@ -3112,6 +3338,14 @@ fn call_entity_connect(
             model,
             timeout,
         )?,
+        EnrichMode::Opencode => call_opencode(
+            binary,
+            ENTITY_CONNECT_PROMPT,
+            ENTITY_CONNECT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let relation = value
         .get("relation")
@@ -3170,6 +3404,14 @@ fn call_entity_type_validate(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            ENTITY_TYPE_VALIDATE_PROMPT,
+            ENTITY_TYPE_VALIDATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             ENTITY_TYPE_VALIDATE_PROMPT,
             ENTITY_TYPE_VALIDATE_SCHEMA,
@@ -3242,25 +3484,30 @@ fn call_description_enrich(
             model,
             timeout,
         )?,
+        EnrichMode::Opencode => call_opencode(
+            binary,
+            DESCRIPTION_ENRICH_PROMPT,
+            DESCRIPTION_ENRICH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let new_desc = value
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or(&old_desc);
-    let old_name: String = conn
-        .query_row(
-            "SELECT name FROM memories WHERE id = ?1",
-            rusqlite::params![mem_id],
-            |r| r.get(0),
-        )?;
+    let old_name: String = conn.query_row(
+        "SELECT name FROM memories WHERE id = ?1",
+        rusqlite::params![mem_id],
+        |r| r.get(0),
+    )?;
     conn.execute(
         "UPDATE memories SET description = ?1 WHERE id = ?2",
         rusqlite::params![new_desc, mem_id],
     )?;
     memories::sync_fts_after_update(
-        conn, mem_id,
-        &old_name, &old_desc, &body,
-        &old_name, new_desc, &body,
+        conn, mem_id, &old_name, &old_desc, &body, &old_name, new_desc, &body,
     )?;
     Ok(EnrichItemResult::Done {
         memory_id: Some(mem_id),
@@ -3303,6 +3550,14 @@ fn call_domain_classify(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            DOMAIN_CLASSIFY_PROMPT,
+            DOMAIN_CLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             DOMAIN_CLASSIFY_PROMPT,
             DOMAIN_CLASSIFY_SCHEMA,
@@ -3375,6 +3630,14 @@ fn call_graph_audit(
             model,
             timeout,
         )?,
+        EnrichMode::Opencode => call_opencode(
+            binary,
+            GRAPH_AUDIT_PROMPT,
+            GRAPH_AUDIT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let issues = value
         .get("issues")
@@ -3422,6 +3685,14 @@ fn call_deep_research_synth(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            DEEP_RESEARCH_SYNTH_PROMPT,
+            DEEP_RESEARCH_SYNTH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             DEEP_RESEARCH_SYNTH_PROMPT,
             DEEP_RESEARCH_SYNTH_SCHEMA,
@@ -3503,12 +3774,11 @@ fn call_body_extract(
             |r| Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
         )
         .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
-    let old_name: String = conn
-        .query_row(
-            "SELECT name FROM memories WHERE id = ?1",
-            rusqlite::params![mem_id],
-            |r| r.get(0),
-        )?;
+    let old_name: String = conn.query_row(
+        "SELECT name FROM memories WHERE id = ?1",
+        rusqlite::params![mem_id],
+        |r| r.get(0),
+    )?;
     let input_text = format!("Memory: {item_key}\nBody:\n{body}");
     let (value, cost, is_oauth) = match mode {
         EnrichMode::ClaudeCode => call_claude(
@@ -3520,6 +3790,14 @@ fn call_body_extract(
             timeout,
         )?,
         EnrichMode::Codex => call_codex(
+            binary,
+            BODY_EXTRACT_PROMPT,
+            BODY_EXTRACT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::Opencode => call_opencode(
             binary,
             BODY_EXTRACT_PROMPT,
             BODY_EXTRACT_SCHEMA,
@@ -3540,9 +3818,14 @@ fn call_body_extract(
         rusqlite::params![restructured, new_hash, mem_id],
     )?;
     memories::sync_fts_after_update(
-        conn, mem_id,
-        &old_name, &old_desc, &body,
-        &old_name, &old_desc, restructured,
+        conn,
+        mem_id,
+        &old_name,
+        &old_desc,
+        &body,
+        &old_name,
+        &old_desc,
+        restructured,
     )?;
     Ok(EnrichItemResult::Done {
         memory_id: Some(mem_id),
@@ -3741,6 +4024,95 @@ fn call_codex(
     }
 }
 
+fn call_opencode(
+    binary: &Path,
+    prompt: &str,
+    json_schema: &str,
+    input_text: &str,
+    model: Option<&str>,
+    timeout_secs: u64,
+) -> Result<(serde_json::Value, f64, bool), AppError> {
+    use wait_timeout::ChildExt;
+
+    let resolved_model = super::opencode_runner::resolve_opencode_model(model);
+
+    let augmented_prompt = if json_schema.is_empty() {
+        prompt.to_string()
+    } else {
+        format!(
+            "{prompt}\n\nIMPORTANT: You MUST respond with ONLY valid JSON (no markdown, no explanation, no code fences). \
+             The JSON MUST match this schema:\n{json_schema}"
+        )
+    };
+
+    let mut cmd = super::opencode_runner::build_opencode_command_sync(
+        binary,
+        &resolved_model,
+        &augmented_prompt,
+        input_text,
+    );
+
+    let mut child = super::opencode_runner::spawn_opencode(&mut cmd).map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("failed to spawn opencode: {e}"),
+        ))
+    })?;
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let status = child.wait_timeout(timeout).map_err(AppError::Io)?;
+
+    match status {
+        Some(exit_status) => {
+            tracing::debug!(
+                target: "process",
+                exit_code = ?exit_status.code(),
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "opencode process completed"
+            );
+
+            let mut stdout_buf = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                std::io::Read::read_to_end(&mut out, &mut stdout_buf).map_err(AppError::Io)?;
+            }
+            if !exit_status.success() {
+                let mut stderr_buf = Vec::new();
+                if let Some(mut err) = child.stderr.take() {
+                    std::io::Read::read_to_end(&mut err, &mut stderr_buf).map_err(AppError::Io)?;
+                }
+                let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                tracing::warn!(
+                    target: "enrich",
+                    exit_code = ?exit_status.code(),
+                    stderr = %stderr_str.trim(),
+                    "opencode process failed"
+                );
+                return Err(AppError::Validation(format!(
+                    "opencode exited with code {:?}: {}",
+                    exit_status.code(),
+                    stderr_str.trim()
+                )));
+            }
+            let stdout_str = String::from_utf8(stdout_buf)
+                .map_err(|_| AppError::Validation("opencode stdout is not valid UTF-8".into()))?;
+            let (text, cost, _tokens) = super::opencode_runner::parse_opencode_output(&stdout_str)?;
+            let value: serde_json::Value =
+                super::opencode_runner::parse_json_from_opencode_text(&text).map_err(|e| {
+                    AppError::Validation(format!("opencode response is not valid JSON: {e}"))
+                })?;
+            Ok((value, cost, false))
+        }
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(AppError::Validation(format!(
+                "opencode timed out after {timeout_secs} seconds"
+            )))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -3870,7 +4242,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_entities_without_description(&conn, "global", None).unwrap();
+        let results = scan_entities_without_description(&conn, "global", None, &[]).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, "my-tool");
     }
@@ -3884,7 +4256,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_entities_without_description(&conn, "global", None).unwrap();
+        let results = scan_entities_without_description(&conn, "global", None, &[]).unwrap();
         assert!(
             results.is_empty(),
             "entity with description must not appear"
@@ -3900,7 +4272,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_short_body_memories(&conn, "global", 100, None).unwrap();
+        let results = scan_short_body_memories(&conn, "global", 100, None, &[]).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, "short-mem");
     }
@@ -3915,7 +4287,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = scan_short_body_memories(&conn, "global", 100, None).unwrap();
+        let results = scan_short_body_memories(&conn, "global", 100, None, &[]).unwrap();
         assert!(results.is_empty(), "long memory must not appear in scan");
     }
 
@@ -3930,7 +4302,7 @@ mod tests {
             .unwrap();
         }
 
-        let results = scan_short_body_memories(&conn, "global", 1000, Some(3)).unwrap();
+        let results = scan_short_body_memories(&conn, "global", 1000, Some(3), &[]).unwrap();
         assert_eq!(results.len(), 3, "limit must be respected");
     }
 
@@ -4085,7 +4457,7 @@ JSONL
         )
         .unwrap();
 
-        let results = scan_short_body_memories(&conn, "global", 1000, None).unwrap();
+        let results = scan_short_body_memories(&conn, "global", 1000, None, &[]).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, "dry-mem");
         // If scan finds the item and dry_run is set, no LLM would be called.

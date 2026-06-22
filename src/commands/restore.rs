@@ -166,7 +166,11 @@ pub fn run(args: RestoreArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resu
         crate::i18n::validation::runtime_pt::restore_recomputing_embedding(),
     );
     let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(&paths.models, &old_body, Some(llm_backend)) {
+    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(
+        &paths.models,
+        &old_body,
+        Some(llm_backend),
+    ) {
         Ok((emb, _backend)) => Some(emb),
         Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
         Err(e) if skip_embed => {

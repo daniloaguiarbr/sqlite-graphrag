@@ -30,6 +30,7 @@ pub enum LlmBackendChoice {
     Auto,
     Claude,
     Codex,
+    Opencode,
     None,
 }
 
@@ -48,6 +49,12 @@ impl LlmBackendChoice {
         match self {
             LlmBackendChoice::Codex => vec![LlmBackendKind::Codex, LlmBackendKind::None],
             LlmBackendChoice::Claude => vec![LlmBackendKind::Claude, LlmBackendKind::None],
+            LlmBackendChoice::Opencode => vec![
+                LlmBackendKind::Opencode,
+                LlmBackendKind::Codex,
+                LlmBackendKind::Claude,
+                LlmBackendKind::None,
+            ],
             LlmBackendChoice::None => vec![LlmBackendKind::None],
             LlmBackendChoice::Auto => parse_fallback_chain(
                 &std::env::var("SQLITE_GRAPHRAG_LLM_FALLBACK")
@@ -64,15 +71,23 @@ fn parse_fallback_chain(s: &str) -> Vec<crate::embedder::LlmBackendKind> {
         .filter_map(|tok| match tok.trim().to_ascii_lowercase().as_str() {
             "codex" => Some(LlmBackendKind::Codex),
             "claude" | "claude-code" => Some(LlmBackendKind::Claude),
+            "opencode" => Some(LlmBackendKind::Opencode),
             "none" => Some(LlmBackendKind::None),
             _ => {
-                tracing::warn!(token = tok.trim(), "unknown backend in --llm-fallback, skipping");
+                tracing::warn!(
+                    token = tok.trim(),
+                    "unknown backend in --llm-fallback, skipping"
+                );
                 Option::None
             }
         })
         .collect();
     if chain.is_empty() {
-        chain = vec![LlmBackendKind::Codex, LlmBackendKind::Claude, LlmBackendKind::None];
+        chain = vec![
+            LlmBackendKind::Codex,
+            LlmBackendKind::Claude,
+            LlmBackendKind::None,
+        ];
     }
     chain
 }
@@ -182,7 +197,8 @@ pub struct Cli {
     /// v1.0.82 (GAP-003) / v1.0.84 (ADR-0042): backend LLM para embedding.
     /// Aceita `auto` (detecta via PATH, codex-first), `codex` (força
     /// `codex exec`), `claude` (força `claude -p`; desde v1.0.84 NÃO cai em
-    /// codex — emite `AppError::Validation` se `claude` ausente), ou `none`
+    /// codex — emite `AppError::Validation` se `claude` ausente),
+    /// `opencode` (força `opencode run`), ou `none`
     /// (skip-a embedding; útil para testes). Honra env var
     /// `SQLITE_GRAPHRAG_LLM_BACKEND`.
     #[arg(long, global = true, value_enum, default_value_t = LlmBackendChoice::Auto, env = "SQLITE_GRAPHRAG_LLM_BACKEND")]
@@ -218,6 +234,16 @@ pub struct Cli {
         env = "SQLITE_GRAPHRAG_CODEX_BINARY"
     )]
     pub codex_binary: Option<std::path::PathBuf>,
+
+    /// v1.0.90 (GAP-OPENCODE-001): path para o binário `opencode` (override de
+    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_OPENCODE_BINARY`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        env = "SQLITE_GRAPHRAG_OPENCODE_BINARY"
+    )]
+    pub opencode_binary: Option<std::path::PathBuf>,
 
     /// v1.0.82 (GAP-005): cadeia de backends LLM tentados em ordem
     /// quando o primário falha. Default `codex,claude,none`. Honra

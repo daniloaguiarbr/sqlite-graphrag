@@ -1,3 +1,31 @@
+# MIGRANDO PARA v1.0.90 — Integração do Backend OpenCode (ADR-0051)
+
+> Este guia cobre a atualização da v1.0.89 para a v1.0.90. Nenhuma migração de banco roda. O schema permanece em v15. O comportamento é ADITIVO.
+
+## v1.0.90 — OpenCode como Terceiro Backend LLM
+
+- OpenCode adicionado como terceiro backend: `codex > claude > opencode > none`
+- Novas variáveis de ambiente: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`
+- Novas flags CLI: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`
+- 24 bugs/gaps fechados (veja `gaps.md` e `CHANGELOG.md` para lista completa)
+- Sem mudança de schema. Nenhuma migração roda
+
+```bash
+# Teste de fumaça após upgrade
+sqlite-graphrag health --json | jaq '.integrity_ok'
+sqlite-graphrag --llm-backend auto remember --name upgrade-test --type note --body "v1.0.90 test" --json
+```
+
+### Mudanças quebrantes
+
+- Nenhuma. Todas as mudanças são aditivas. `--llm-backend codex` e `--llm-backend claude` existentes continuam funcionando sem alteração
+
+### Se você tem opencode instalado
+
+- O auto-detect (`--llm-backend auto`) agora sonda opencode no PATH após codex e claude
+- Para excluir opencode da cadeia de fallback: `--llm-fallback codex,claude,none`
+
+
 # MIGRANDO PARA v1.0.89 — Camada Pre-flight + Hotfixes BUG-11/12/13 + Schema Drift (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
 > Este guia é para operadores na v1.0.82 que querem atualizar para a v1.0.83 sem perder dados. Esta release é bump PATCH sem NENHUMA migração de banco. O schema permanece em v15. O comportamento é ADITIVO para operadores OAuth padrão.

@@ -19,12 +19,12 @@
 ## Infraestrutura de Testes — Matriz CI de Features (2 features desde a v1.0.79)
 - O workflow de CI roda jobs de `clippy` e `test` em uma matriz de 2 features desde a v1.0.79: `default` e `llm-only` (`embedding-legacy` foi removida junto com a feature).
 - Os jobs `default` e `llm-only` instalam uma CLI stub `mock-llm` no `PATH` para que os testes de round-trip de embedding rodem sem uma assinatura real de LLM.
-- 26 arquivos de teste foram cabeados para consumir a mock LLM CLI como substituto drop-in para `claude -p` e `codex exec`. Isso desbloqueia o CI de exigir credenciais OAuth reais.
+- 26 arquivos de teste foram cabeados para consumir a mock LLM CLI como substituto drop-in para `claude -p`, `codex exec` e `opencode run`. Isso desbloqueia o CI de exigir credenciais OAuth reais.
 - 107 de 115 testes previamente lentos foram corrigidos no commit `bd0a3f5` (a mock LLM desbloqueia testes que dependiam de um turno OAuth real).
 - Veja o arquivo de workflow do GitHub Actions em `.github/workflows/ci.yml` para a definição da matriz.
 
 ### Contrato da Mock LLM CLI
-- Os mocks são dois shell scripts em `tests/mock-llm/` (`claude` e `codex`) que devolvem JSON determinístico para qualquer prompt; os testes de integração os copiam para um diretório temporário e o prependem ao `PATH`.
+- Os mocks são shell scripts em `tests/mock-llm/` (`claude`, `codex` e `opencode`) que devolvem JSON determinístico para qualquer prompt; os testes de integração os copiam para um diretório temporário e o prependem ao `PATH`.
 - Para requisições de embedding: devolvem vetores `f32` de 64 dimensões zerados (a dimensionalidade default ativa desde a v1.0.79, G42/S1).
 - Os dois formatos de resposta são falados desde o fix do G43: single (`{"embedding":[...]}`) e batch (`{"items":[{"i":N,"v":[...]}]}` quando o prompt pede EXATAMENTE N itens, G42/S2).
 - Testes de extração de entidades devem mockar em nível mais alto ou chamar a API da biblioteca; os scripts são dedicados ao caminho de embedding.

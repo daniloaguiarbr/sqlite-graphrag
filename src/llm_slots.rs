@@ -267,11 +267,28 @@ mod tests {
         dir
     }
 
+    fn isolate_slots_env() -> (Option<String>, Option<String>) {
+        let orig_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+        let orig_cache = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok();
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", unique_test_dir());
+        (orig_xdg, orig_cache)
+    }
+
+    fn restore_slots_env(orig_xdg: Option<String>, orig_cache: Option<String>) {
+        match orig_xdg {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+        match orig_cache {
+            Some(v) => std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", v),
+            None => std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR"),
+        }
+    }
+
     #[test]
     fn slot_enforces_max_concurrency() {
-        // Salva env var, seta tempdir
-        let original = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok();
-        std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", unique_test_dir());
+        let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let _g1 = acquire_llm_slot(2, 5).expect("first slot");
         let _g2 = acquire_llm_slot(2, 5).expect("second slot");
@@ -283,28 +300,18 @@ mod tests {
             "should wait full timeout before failing"
         );
 
-        if let Some(v) = original {
-            std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", v);
-        } else {
-            std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR");
-        }
+        restore_slots_env(orig_xdg, orig_cache);
     }
 
     #[test]
     fn slot_releases_on_drop() {
-        let original = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok();
-        std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", unique_test_dir());
+        let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let g1 = acquire_llm_slot(1, 5).expect("first slot");
         drop(g1);
-        // Após drop, novo acquire deve succeed
         let _g2 = acquire_llm_slot(1, 5).expect("second slot after drop");
 
-        if let Some(v) = original {
-            std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", v);
-        } else {
-            std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR");
-        }
+        restore_slots_env(orig_xdg, orig_cache);
     }
 
     #[test]

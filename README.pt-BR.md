@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.85 — Split real do backend Claude (GAP-002) e remediação dos cinco gaps (GAP-003, G58, G45-CR5, G55, G56).** Todo build embute via `claude -p` ou `codex exec` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~14.6 MiB. A v1.0.85 entrega a cadeia de fallback determinístico (G58, `try_embed_query_with_deterministic_fallback` re-tenta com backend alternativo em `OAuthQuota` e dorme 750ms em `SlotExhausted` antes de cair em FTS5-puro), 12-14 headers `anthropic-ratelimit-*-remaining` capturados ANTES do exit do subprocesso (G45-CR5), o enum `FallbackReason` estendido de 3 para 7 variantes com discriminador `reason_code` em envelopes `hybrid-search` e `recall`, mais o job `.github/workflows/embedder-ignore.yml` que roda testes `#[ignore]` em env hermético (sem API keys). A v1.0.84 (ADR-0042) adicionou o split real do backend Claude (GAP-002, `embed_via_claude_local` que não delega mais para `codex` via `LlmEmbedding::detect_available`), o `LlmEmbeddingBuilder` com overrides de binary/model, o campo `backend_invoked` em 7 envelopes JSON, o campo `vec_degraded_reason` em `hybrid-search` e `recall`, a flag global `--dry-run-backend`, o helper `apply_env_whitelist_for_claude` e `LlmBackendKind::as_str` mais `FallbackReason::reason_code`. Consumidores da biblioteca devem fixar em `=1.0.85`; veja a `Política de Estabilidade` abaixo.
+> **Release atual: v1.0.90 — Integração do backend OpenCode (terceiro backend LLM) e remediação de 24 bugs.** Todo build embute via `claude -p`, `codex exec` ou `opencode run` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~14.6 MiB. A v1.0.90 adiciona o OpenCode como terceiro backend LLM ao lado de codex e claude (GAP-OPENCODE-001/002), com `--llm-backend opencode`, `--mode opencode` para ingest/enrich, env vars `SQLITE_GRAPHRAG_OPENCODE_*`, e cadeia de fallback estendida para `codex → claude → opencode → none`. Corrige compilação Windows (BUG-WINDOWS-001), timeout de embedding hardcoded (BUG-TIMEOUT-HARDCODE-001), paginação do `list` (BUG-LIST-TOTAL-COUNT-001) e 21 bugs adicionais de auditoria. Consumidores da biblioteca devem fixar em `=1.0.90`; veja a `Política de Estabilidade` abaixo.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -22,6 +22,7 @@
 - **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76
 - **Atualizando de v1.0.79 para v1.0.80?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.80 adiciona o job de CI `semver-checks` (informativo), os steps de pre-warm do Windows (ADR-0033) e a saída sem panic no terceiro sinal (ADR-0034). Consumidores da biblioteca devem fixar em `=1.0.80`; veja a `Política de Estabilidade` abaixo. / v1.0.77 / v1.0.78 / v1.0.79
 - **Atualizando de v1.0.80 / v1.0.81 para v1.0.82?** Duas novas migrations rodam automaticamente no primeiro `init`/`migrate`: `V014__pending_memories` (fila de checkpoint do `remember`) e `V015__pending_embeddings` (fila de retry de embedding). Após atualizar, rode `codex login` uma vez para refrescar o refresh token OAuth — o incidente de 2026-06-14 mostrou que `codex exec` retornando HTTP 401 `refresh_token_reused` agora é capturado pela nova cadeia de fallback (ADR-0040) e roteado para o próximo backend em `--llm-backend codex,claude`. Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento completo em 6 passos incluindo rollback.
+- **Atualizando de v1.0.85 / v1.0.86 / v1.0.87 / v1.0.88 / v1.0.89 para v1.0.90?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.90 adiciona o backend OpenCode como terceiro backend LLM ao lado de codex e claude (GAP-OPENCODE-001/002), corrige 11 bugs de auditoria incluindo compilação Windows (BUG-WINDOWS-001), timeout de embedding hardcoded (BUG-TIMEOUT-HARDCODE-001), paginação do `list` (BUG-LIST-TOTAL-COUNT-001) e propagação de `--db` no graph. Novas env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`. Nova cadeia de fallback: `codex → claude → opencode → none`. Consumidores da biblioteca devem fixar em `=1.0.90`.
 - **Atualizando de v1.0.82 / v1.0.83 para v1.0.85?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.84 (ADR-0042, GAP-002) adicionou o split real do backend Claude via `LlmEmbeddingBuilder` para que `--llm-backend claude` invoque `claude` e nunca `codex`, o campo `backend_invoked` em 7 envelopes JSON, o campo `vec_degraded_reason` em `hybrid-search` e `recall`, a flag global `--dry-run-backend` para auditoria pré-voo em CI, e `apply_env_whitelist_for_claude` para providers hardened. A v1.0.85 (ADR-0043) estendeu `FallbackReason` de 3 para 7 variantes com discriminador `reason_code` (captura exaustão de quota, exaustão de slot, mismatch de backend, dim zero, cancelamento, timeout), `try_embed_query_with_deterministic_fallback` re-tenta o backend alternativo em `OAuthQuota` e dorme 750ms em `SlotExhausted`, e `LlmEmbedding::invoke_claude` agora captura 12-14 headers `anthropic-ratelimit-*-remaining` ANTES de checar o exit do subprocesso (G45-CR5). Consumidores da biblioteca devem fixar em `=1.0.85`; veja a `Política de Estabilidade` abaixo.
 
 ```bash
@@ -33,12 +34,12 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- **Build (v1.0.79):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p` ou `codex exec` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~14.6 MiB
+- **Build (v1.0.90):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p`, `codex exec` ou `opencode run` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~14.6 MiB
 - **Build legado:** REMOVIDO na v1.0.79 — a feature `embedding-legacy` e o caminho local fastembed/ONNX não existem mais
 - Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
 - Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
 - Preserva cada edição através de uma tabela imutável de histórico de versões para auditoria completa
-- Roda em Linux, macOS e Windows nativamente sem serviços externos (o build padrão precisa de `claude` ou `codex` CLI no `PATH`)
+- Roda em Linux, macOS e Windows nativamente sem serviços externos (o build padrão precisa de `claude`, `codex` ou `opencode` CLI no `PATH`)
 
 
 ## Por que sqlite-graphrag?
@@ -49,7 +50,7 @@ sqlite-graphrag --version
 - Armazenamento em arquivo SQLite único substitui clusters Docker de bancos vetoriais
 - Recuperação com grafo supera RAG vetorial puro em perguntas multi-hop por design
 - Saída JSON determinística habilita orquestração limpa por agentes de IA em pipelines
-- Binário cross-platform nativo dispensa dependências Python, Node ou Docker (o build padrão precisa apenas de `claude` ou `codex` CLI)
+- Binário cross-platform nativo dispensa dependências Python, Node ou Docker (o build padrão precisa apenas de `claude`, `codex` ou `opencode` CLI)
 
 
 ## Política de Estabilidade (G53, v1.0.80)

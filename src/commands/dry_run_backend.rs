@@ -111,6 +111,25 @@ pub fn emit_dry_run_backend(cli: &Cli) -> Result<(), AppError> {
             }
             backend_payload(&resolved, "claude-explicit", cli, false)
         }
+        LlmBackendChoice::Opencode => {
+            let resolved = LlmEmbedding::detect_available()?;
+            let flavour = resolved.model_label();
+            if !flavour.starts_with("opencode:") {
+                let hint = if flavour.starts_with("codex:") || flavour.starts_with("claude:") {
+                    format!(
+                        "`--llm-backend opencode` requested but auto-detect resolved `{flavour}` \
+                         (opencode has lower priority than codex/claude in detect_available). \
+                         Pass `--llm-backend auto` or set SQLITE_GRAPHRAG_OPENCODE_BINARY explicitly."
+                    )
+                } else {
+                    "`--llm-backend opencode` requested but `opencode` was not found on PATH. \
+                     Install `opencode` (>= 1.17) or pass `--llm-backend auto` to auto-detect."
+                        .to_string()
+                };
+                return Err(AppError::Embedding(hint));
+            }
+            backend_payload(&resolved, "opencode-explicit", cli, false)
+        }
     };
 
     emit_json_compact(&payload)?;
@@ -165,12 +184,15 @@ fn backend_payload(
         LlmBackendChoice::Auto => {
             if flavour == "codex" {
                 "codex"
+            } else if flavour == "opencode" {
+                "opencode"
             } else {
                 "claude"
             }
         }
         LlmBackendChoice::Codex => "codex",
         LlmBackendChoice::Claude => "claude",
+        LlmBackendChoice::Opencode => "opencode",
         LlmBackendChoice::None => "none",
     };
 

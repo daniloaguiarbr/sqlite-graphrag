@@ -5,6 +5,44 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.90] - 2026-06-22
+
+### Added
+- **GAP-OPENCODE-001** — OpenCode backend integration in the embedding and extraction pipeline. Added `Opencode` variant to `EmbeddingFlavour`, `LlmBackendKindFactory` and `LlmBackendKind` enums. New `LlmEmbeddingBuilder::opencode_default()`, `invoke_opencode_async()`, `build_opencode_embedding_command()` and `opencode_embed_model()`. Auto-detect via `which::which("opencode")`. Env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`. Fallback chain extended to `codex → claude → opencode → none`.
+- **GAP-OPENCODE-002** — OpenCode backend integration in the ingest, enrich and fallback chain pipelines. New `--mode opencode` for `ingest` and `enrich`. New `src/commands/ingest_opencode.rs` and `src/commands/opencode_runner.rs` modules. New CLI flags: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`. Updated `parse_fallback_chain()` to recognize `"opencode"` token. Updated `dry_run_backend` to probe opencode on PATH.
+- **GAP-SKILL-OPENCODE-001** — Skills EN/PT updated with OpenCode backend documentation, env vars, CLI flags and usage examples.
+
+### Fixed
+- **BUG-AUDIT-001** — Cross-contamination of opencode model: `opencode_embed_model()` and `resolve_opencode_model()` no longer fall back to `SQLITE_GRAPHRAG_LLM_MODEL` (which could contain a codex model). Precedence now: `OPENCODE_EMBED_MODEL` > `OPENCODE_MODEL` > default `opencode/big-pickle`.
+- **BUG-AUDIT-002** — Embedding prompt rewritten with role-setting "You are an embedding function" to produce real 64-dimensional vectors instead of being refused by the model.
+- **BUG-AUDIT-003** — `env_clear()` in opencode invoke now preserves provider credentials (`OPENROUTER_API_KEY`, etc.) and config (`XDG_CONFIG_HOME`) via new `propagate_opencode_env()` helper.
+- **BUG-AUDIT-004** — `ingest_opencode` was a stub returning `Err(Validation("under development"))`. Fully implemented with per-file extraction loop, entity/relationship persist and NDJSON event stream.
+- **BUG-AUDIT-005** — Schema mismatch in `persist_memory_with_graph`: INSERT used `entity_type` instead of `type` column; missing `body_hash` NOT NULL field. Fixed to match SQLite schema.
+- **GAP-ENRICH-OPENCODE-001** — `enrich --mode opencode` was silently delegating to codex headless (13 match arms). Created dedicated `call_opencode()` using `opencode_runner`.
+- **BUG-AUDIT-006** — `--opencode-binary` CLI flag was declared in clap but ignored. Created `find_opencode_binary_with_override()` that honours the explicit path.
+- **BUG-AUDIT-007** — `spawn_with_memory_limit()` (RLIMIT_AS 4GB) crashed the Bun runtime used by opencode. Created `spawn_opencode()` with setsid but without RLIMIT_AS.
+- **BUG-AUDIT-008** — `call_opencode()` in enrich ignored `json_schema` parameter. Schema is now injected into the prompt when non-empty for structured JSON output.
+- **BUG-AUDIT-009** — Preflight probe for opencode used `spawn_with_memory_limit()` (same RLIMIT_AS crash as BUG-007). Replaced with `spawn_opencode()`.
+- **BUG-AUDIT-010** — `dry_run_backend` misleading error when opencode was eclipsed by codex on PATH. Differentiated message to explain priority vs absence.
+- **BUG-AUDIT-011** — `--names` filter silently ignored in `entity-descriptions` and `body-enrich` operations. Added `name_filter` parameter to `scan_entities_without_description()` and `scan_short_body_memories()` with SQL `WHERE name IN (...)`.
+- **BUG-SLOT-TEST-001** — Test `slot_enforces_max_concurrency` leaked `XDG_RUNTIME_DIR` causing collision with real host slots. Created `isolate_slots_env()` / `restore_slots_env()` helpers.
+- **DOC-WARNING-001** — `cargo doc` warning "unresolved link to 0" in `preflight.rs:84`. Escaped brackets: `argv\[0\]`.
+- **DOC-WARNING-002** — `cargo doc` warning "unclosed HTML tag path" in `ingest.rs:122`. Converted to inline code: `` `<path>` ``.
+- **FMT-001** — `cargo fmt --check` formatting difference in `cli.rs:74`. Applied `cargo fmt`.
+- **BUG-TIMEOUT-HARDCODE-001** — Embedding timeout hardcoded at 60s causing exit 11 on large bodies. Added `timeout_override: Option<Duration>` to `LlmEmbedding` and `LlmEmbeddingBuilder`. New instance methods `instance_embed_timeout()` and `instance_embed_timeout_for_batch()`. Removed unsafe `std::env::set_var` from `embed_batch_async()`.
+- **BUG-WINDOWS-001** — Windows compilation failed: 3 uses of `std::os::unix::process::ExitStatusExt` without `#[cfg(unix)]` guard. Created `extract_exit_info()` helper with `#[cfg(unix)]` and `#[cfg(not(unix))]` branches, replacing 3 inline blocks (DRY + cross-platform).
+- **BUG-PENDING-CLEANUP-DB-001** — `pending cleanup` did not accept `--db` flag. Added `db: Option<String>` to `PendingCleanupArgs` and parameterized `open_conn()`.
+- **BUG-REMEMBER-BATCH-DRYRUN-001** — `remember-batch --dry-run` was not implemented (exit 2). Added `dry_run` field to `RememberBatchArgs` with preview events (`would_create`, `would_update`, `would_fail_duplicate`).
+- **BUG-INGEST-SKIP-EMBED-001** — `ingest` ignored `--skip-embedding-on-failure`. Changed `StagedFile.embedding` from `Vec<f32>` to `Option<Vec<f32>>`, added skip guards at 3 embedding call sites.
+- **BUG-GRAPH-DB-PROPAGATION-001** — `graph --db X stats|traverse|entities` ignored parent flags. Propagated `args.db` and `args.namespace` to subcommands when their own fields are `None`.
+- **BUG-PENDING-EMBEDDINGS-DB-001** — `pending-embeddings list|abandon` did not accept `--db`. Added `db` field to both args structs and parameterized `open_conn()`.
+- **BUG-LIST-TOTAL-COUNT-001** — `list` returned `total_count` equal to page size instead of global total. Created `memories::count()` with 4 query variants. `truncated` now compares `items.len() < total_count`.
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings, 0 fmt diffs, 0 doc warnings.
+- Test suite: 875 lib tests, 0 failures.
+- All 24 gaps/bugs closed; 0 open.
+
 ## [1.0.89] - 2026-06-19
 
 ### Fixed

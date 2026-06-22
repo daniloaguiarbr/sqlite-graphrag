@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
-> **Current release: v1.0.85.2 (with ADR-0044 hotfixes for BUG-001/002/003 and ADR-0043 hotfix for GAP-004)** — Real Claude backend split (GAP-002) and five-gap remediation (GAP-003, G58, G45-CR5, G55, G56). Every build embeds through `claude -p` or `codex exec` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~14.6 MiB binary. v1.0.85 ships the deterministic fallback chain (G58, `try_embed_query_with_deterministic_fallback` retries alternative backend on `OAuthQuota` and sleeps 750ms on `SlotExhausted` before yielding to FTS5-pure), 12-14 `anthropic-ratelimit-*-remaining` headers captured BEFORE subprocess exit (G45-CR5), the `FallbackReason` enum extended from 3 to 7 variants with a `reason_code` discriminator in `hybrid-search` and `recall` envelopes, plus a new `.github/workflows/embedder-ignore.yml` job that runs `#[ignore]` tests in a hermetic env (no API keys). v1.0.84 added the real Claude backend split (GAP-002, `embed_via_claude_local` no longer delegates to codex via `LlmEmbedding::detect_available`), the `LlmEmbeddingBuilder` with binary/model overrides, the `backend_invoked` field in 7 JSON envelopes, the `vec_degraded_reason` field in `hybrid-search` and `recall`, the global `--dry-run-backend` flag, the `apply_env_whitelist_for_claude` helper, and `LlmBackendKind::as_str` plus `FallbackReason::reason_code`. Library consumers must pin to `=1.0.85.2`; see the `Stability Policy` below.
+> **Current release: v1.0.90 — OpenCode backend integration (third LLM backend) and 24-bug remediation.** Every build embeds through `claude -p`, `codex exec` or `opencode run` (OAuth, no MCP, no hooks). No daemon, no ONNX runtime, ~14.6 MiB binary. v1.0.90 adds OpenCode as the third LLM backend alongside codex and claude (GAP-OPENCODE-001/002), with `--llm-backend opencode`, `--mode opencode` for ingest/enrich, env vars `SQLITE_GRAPHRAG_OPENCODE_*`, and fallback chain extended to `codex → claude → opencode → none`. Also fixes Windows compilation (BUG-WINDOWS-001), embedding timeout hardcode (BUG-TIMEOUT-HARDCODE-001), `list` pagination (BUG-LIST-TOTAL-COUNT-001), and 21 additional audit bugs. Library consumers must pin to `=1.0.90`; see the `Stability Policy` below.
 
 - Read this document in [Portuguese (pt-BR)](README.pt-BR.md).
 
@@ -23,6 +23,7 @@
 - **Upgrading from v1.0.79 to v1.0.80?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.80 adds the CI `semver-checks` job (informational), the Windows pre-warm steps (ADR-0033), and the panic-free third-signal exit (ADR-0034). Library consumers must pin to `=1.0.80`; see the `Stability Policy` below.
 - **Upgrading from v1.0.80 / v1.0.81 to v1.0.82?** Two new migrations run automatically on first `init`/`migrate`: `V014__pending_memories` (pending `remember` checkpoint queue) and `V015__pending_embeddings` (pending embedding retry queue). After upgrading, run `codex login` once to refresh the OAuth refresh token — the 2026-06-14 incident showed that `codex exec` returning HTTP 401 `refresh_token_reused` is now caught by the new fallback chain (ADR-0040) and routed to the next backend in `--llm-backend codex,claude`. See [docs/MIGRATION.md](docs/MIGRATION.md) for the full 6-step procedure including rollback.
 - **Upgrading from v1.0.82 / v1.0.83 to v1.0.85?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.84 (ADR-0042, GAP-002) added the real Claude backend split via `LlmEmbeddingBuilder` so `--llm-backend claude` invokes `claude` and never `codex`, the `backend_invoked` field in 7 JSON envelopes, the `vec_degraded_reason` field in `hybrid-search` and `recall`, the global `--dry-run-backend` flag for CI pre-flight, and `apply_env_whitelist_for_claude` for hardened providers. v1.0.85 (ADR-0043) extended `FallbackReason` from 3 to 7 variants with a `reason_code` discriminator (catches quota exhaustion, slot exhaustion, backend mismatch, dim zero, cancellation, timeout), `try_embed_query_with_deterministic_fallback` retries the alternative backend on `OAuthQuota` and sleeps 750ms on `SlotExhausted`, and `LlmEmbedding::invoke_claude` now captures 12-14 `anthropic-ratelimit-*-remaining` headers BEFORE checking the subprocess exit (G45-CR5). v1.0.85.1 (hotfix) restored the FTS5 failsafe for --llm-backend none (GAP-004, ADR-0043 hotfix). v1.0.85.2 (hotfix) made --dry-run-backend work standalone (BUG-001, ADR-0044), propagated resolved_kind from embed_via_backend so backend_invoked is populated in all 7 envelopes (BUG-002), and aligned the test mock JSON shape (BUG-003). Library consumers must pin to `=1.0.85.2`; see the `Stability Policy` below.
+- **Upgrading from v1.0.85 / v1.0.86 / v1.0.87 / v1.0.88 / v1.0.89 to v1.0.90?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.90 adds OpenCode as the third LLM backend alongside codex and claude (GAP-OPENCODE-001/002), fixes 11 audit bugs including Windows compilation (BUG-WINDOWS-001), embedding timeout hardcode (BUG-TIMEOUT-HARDCODE-001), `list` pagination (BUG-LIST-TOTAL-COUNT-001), and `graph --db` propagation. New env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`. New fallback chain: `codex → claude → opencode → none`. Library consumers must pin to `=1.0.90`.
 
 ```bash
 cargo install sqlite-graphrag --locked --force
@@ -33,12 +34,12 @@ sqlite-graphrag --version
 ## What is it?
 ### sqlite-graphrag delivers durable memory for AI agents
 - Stores memories, entities and relationships inside a single SQLite file under 25 MB
-- **Build (v1.0.79):** LLM-only and one-shot — embeddings are generated by spawning `claude -p` or `codex exec` with OAuth; no local model, no daemon, no ONNX runtime, ~14.6 MiB binary
+- **Build (v1.0.90):** LLM-only and one-shot — embeddings are generated by spawning `claude -p`, `codex exec` or `opencode run` with OAuth; no local model, no daemon, no ONNX runtime, ~14.6 MiB binary
 - **Legacy build:** REMOVED in v1.0.79 — the `embedding-legacy` feature and the local fastembed/ONNX path no longer exist
 - Combines FTS5 full-text search with pure-Rust cosine similarity into a hybrid Reciprocal Rank Fusion ranker
 - Stores and traverses an explicit entity graph with typed edges for multi-hop recall across memories
 - Preserves every edit through an immutable version history table for full audit
-- Runs on Linux, macOS and Windows natively with zero external services required (default build needs `claude` or `codex` CLI on `PATH`)
+- Runs on Linux, macOS and Windows natively with zero external services required (default build needs `claude`, `codex` or `opencode` CLI on `PATH`)
 
 
 ## Why sqlite-graphrag?
@@ -49,7 +50,7 @@ sqlite-graphrag --version
 - Single-file SQLite storage replaces Docker clusters of vector databases entirely
 - Graph-native retrieval beats pure vector RAG on multi-hop questions by design
 - Deterministic JSON output unlocks clean orchestration by LLM agents in pipelines
-- Native cross-platform binary ships without Python, Node or Docker dependencies (default build needs only `claude` or `codex` CLI)
+- Native cross-platform binary ships without Python, Node or Docker dependencies (default build needs only `claude`, `codex` or `opencode` CLI)
 
 
 ## Stability Policy (G53, v1.0.80)
@@ -63,7 +64,7 @@ sqlite-graphrag --version
 ## Superpowers for AI Agents
 ### First-class CLI contract for orchestration
 - Every subcommand accepts `--json` producing deterministic stdout payloads
-- **v1.0.76 is one-shot by default** — no background process; each embedding call spawns a fresh `claude -p` or `codex exec`
+- **v1.0.76 is one-shot by default** — no background process; each embedding call spawns a fresh `claude -p`, `codex exec` or `opencode run`
 - Every write is idempotent through `--name` kebab-case uniqueness constraints
 - Stdin is explicit: use `--body-stdin` for body text or `--graph-stdin` for one `{body?, entities, relationships}` object; raw entity and relationship arrays use `--entities-file` and `--relationships-file`
 - `remember` accepts body payloads up to `512000` bytes and up to `512` chunks
@@ -135,7 +136,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - For high-quality entity/relationship extraction prefer `ingest --mode claude-code`/`--mode codex` (LLM-curated) or pass curated entities via `--graph-stdin`
 - `--skip-extraction` is deprecated since v1.0.45 and has no effect
 
-- **`sqlite-graphrag init` is OPTIONAL** but recommended on first use because it creates the database, applies migrations and validates that a `claude` or `codex` CLI is reachable on `PATH` (there is no model download since v1.0.76 — embeddings come from the LLM subprocess).
+- **`sqlite-graphrag init` is OPTIONAL** but recommended on first use because it creates the database, applies migrations and validates that a `claude`, `codex` or `opencode` CLI is reachable on `PATH` (there is no model download since v1.0.76 — embeddings come from the LLM subprocess).
 - **`graphrag.sqlite` is created in the current working directory by default** (override with `--db <path>` or `SQLITE_GRAPHRAG_DB_PATH`)
 - For the local checkout, `cargo install --path .` is enough
 - Re-run `sqlite-graphrag --version` after any upgrade to confirm the active binary
@@ -143,6 +144,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 
 ## Version Highlights
+- **v1.0.90**: OpenCode backend integration (GAP-OPENCODE-001/002) — third LLM backend alongside codex and claude; `--llm-backend opencode`, `--mode opencode` for ingest/enrich, `--opencode-binary/model/timeout` flags, env vars `SQLITE_GRAPHRAG_OPENCODE_*`; fallback chain extended to `codex → claude → opencode → none`; Windows compilation fix (BUG-WINDOWS-001); embedding timeout hardcode fix (BUG-TIMEOUT-HARDCODE-001); `list` pagination fix (BUG-LIST-TOTAL-COUNT-001); 24 total bug/gap fixes; 875+ tests, 0 failures
 - **v1.0.85**: Five-gap remediation (ADR-0043) — `FallbackReason` extended from 3 to 7 variants (`EmbeddingFailed | SlotExhausted | OAuthQuota { backend } | BackendMismatch { requested, resolved } | DimZero | Cancelled | Timeout`) with a `reason_code` discriminator in `hybrid-search` and `recall` envelopes for granular diagnosis; `try_embed_query_with_deterministic_fallback` retries the alternative backend (codex ↔ claude) on `OAuthQuota` and sleeps 750ms on `SlotExhausted` before yielding to FTS5-pure; `LlmEmbedding::invoke_claude` captures 12-14 `anthropic-ratelimit-*-remaining` headers BEFORE checking the subprocess exit (G45-CR5 — quota exhaustion aborts the embed and triggers immediate fallback); `.github/workflows/embedder-ignore.yml` runs `#[ignore]` tests in a hermetic env (no API keys); 5 new regression tests in `tests/embedder.rs` covering GAP-003, G58, G45-CR5, G55, G56
 - **v1.0.85.1 (2026-06-17, hotfix)**: recall --llm-backend none and hybrid-search --llm-backend none return exit 0 with envelope vec_degraded=true + source=fts_fallback + vec_degraded_reason=dim_zero (GAP-004, ADR-0043 hotfix).
 - **v1.0.85.2 (2026-06-17, hotfix)**: --dry-run-backend works standalone without a subcommand (pub command: Option<Commands> at src/cli.rs:248); embed_via_backend returns Result<(Vec<f32>, LlmBackendKind), AppError> propagating resolved_kind (BUG-002); setup_mock_path() in tests/embedder.rs:37-77 aligned to JSON (BUG-003). 945 tests green.

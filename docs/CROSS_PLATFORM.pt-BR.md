@@ -15,7 +15,7 @@
 
 
 ## Nota Arquitetural da v1.0.76
-- O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth) spawnado por chamada.
+- O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) spawnado por chamada. Desde a v1.0.90, opencode é o terceiro backend com prioridade de auto-detect `codex > claude > opencode > none`.
 - A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o cronograma da v1.1.0). Todo build é LLM-only; o pipeline fastembed + ort + tokenizers e o contrato ONNX ARM64 GNU não se aplicam mais.
 - A tabela cross-platform abaixo descreve o build LLM-only, que agora é o único build.
 

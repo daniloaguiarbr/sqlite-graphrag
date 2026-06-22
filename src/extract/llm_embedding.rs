@@ -55,10 +55,28 @@ fn embed_timeout() -> std::time::Duration {
 /// A single-item batch uses the base timeout (60s default).
 /// Each additional item adds 15s to account for the LLM generating
 /// more embedding vectors in the same call.
+#[cfg(test)]
 fn embed_timeout_for_batch(batch_size: usize) -> std::time::Duration {
     let base = embed_timeout();
     let extra = std::time::Duration::from_secs(15) * batch_size.saturating_sub(1) as u32;
     base + extra
+}
+
+/// Cross-platform helper: extracts `(exit_code, signal)` from an
+/// `ExitStatus` whose `.code()` returned `None`. On Unix this means
+/// the process was killed by a signal; on Windows processes always
+/// have an exit code so this branch returns `(None, None)`.
+fn extract_exit_info(status: &std::process::ExitStatus) -> (Option<i32>, Option<i32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        (None, status.signal())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        (None, None)
+    }
 }
 
 /// G42/S1: single-vector JSON schema generated from the active dim.
@@ -89,6 +107,9 @@ pub struct LlmEmbedding {
     /// across clones. Keyed by dim so an env change between tests cannot
     /// serve a stale schema.
     codex_schemas: Arc<parking_lot::Mutex<CodexSchemaFiles>>,
+    /// BUG-TIMEOUT-HARDCODE-001: instance-scoped timeout override.
+    /// Precedence: this field > env var > DEFAULT_EMBED_TIMEOUT_SECS.
+    timeout_override: Option<std::time::Duration>,
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +122,7 @@ struct CodexSchemaFiles {
 pub enum EmbeddingFlavour {
     Claude,
     Codex,
+    Opencode,
 }
 
 /// ADR-0042 / GAP-002: builder for [`LlmEmbedding`] that lets callers
@@ -114,6 +136,7 @@ pub struct LlmEmbeddingBuilder {
     flavour: EmbeddingFlavour,
     binary_override: Option<std::path::PathBuf>,
     model_override: Option<String>,
+    timeout_override: Option<std::time::Duration>,
 }
 
 impl LlmEmbeddingBuilder {
@@ -126,6 +149,7 @@ impl LlmEmbeddingBuilder {
             flavour: EmbeddingFlavour::Claude,
             binary_override: None,
             model_override: None,
+            timeout_override: None,
         }
     }
 
@@ -136,6 +160,18 @@ impl LlmEmbeddingBuilder {
             flavour: EmbeddingFlavour::Codex,
             binary_override: None,
             model_override: None,
+            timeout_override: None,
+        }
+    }
+
+    /// Convenience: produce an OpenCode-backed builder pre-configured with
+    /// the canonical default binary + model.
+    pub fn opencode_default() -> Self {
+        Self {
+            flavour: EmbeddingFlavour::Opencode,
+            binary_override: None,
+            model_override: None,
+            timeout_override: None,
         }
     }
     /// Override the binary path (skips the `which::which` PATH probe).
@@ -150,6 +186,13 @@ impl LlmEmbeddingBuilder {
         self
     }
 
+    /// Override the per-call embedding timeout (skips env-var lookup).
+    pub fn override_timeout(mut self, secs: u64) -> Self {
+        let clamped = secs.clamp(10, 3_600);
+        self.timeout_override = Some(std::time::Duration::from_secs(clamped));
+        self
+    }
+
     /// Build the [`LlmEmbedding`]. Enforces OAuth-only and resolves the
     /// binary/model via the override or the env-var defaults.
     pub fn build(self) -> Result<LlmEmbedding, AppError> {
@@ -160,6 +203,7 @@ impl LlmEmbeddingBuilder {
                 let (env_var, which_name) = match self.flavour {
                     EmbeddingFlavour::Codex => ("SQLITE_GRAPHRAG_CODEX_BINARY", "codex"),
                     EmbeddingFlavour::Claude => ("SQLITE_GRAPHRAG_CLAUDE_BINARY", "claude"),
+                    EmbeddingFlavour::Opencode => ("SQLITE_GRAPHRAG_OPENCODE_BINARY", "opencode"),
                 };
                 let path = std::env::var_os(env_var)
                     .map(std::path::PathBuf::from)
@@ -175,6 +219,7 @@ impl LlmEmbeddingBuilder {
             None => match self.flavour {
                 EmbeddingFlavour::Codex => codex_embed_model(),
                 EmbeddingFlavour::Claude => claude_embed_model(),
+                EmbeddingFlavour::Opencode => opencode_embed_model(),
             },
         };
         Ok(LlmEmbedding {
@@ -182,6 +227,7 @@ impl LlmEmbeddingBuilder {
             binary,
             model,
             codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+            timeout_override: self.timeout_override,
         })
     }
 }
@@ -191,6 +237,7 @@ impl EmbeddingFlavour {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Opencode => "opencode",
         }
     }
 }
@@ -279,6 +326,22 @@ fn codex_embed_model() -> String {
         })
 }
 
+fn opencode_embed_model() -> String {
+    // Precedence: SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL > SQLITE_GRAPHRAG_OPENCODE_MODEL > default
+    // NOTE: intentionally does NOT fall back to SQLITE_GRAPHRAG_LLM_MODEL because that
+    // var typically holds a codex/claude model name (e.g. "gpt-5.4-mini") that opencode
+    // does not recognise — cross-contamination caused ProviderModelNotFoundError (v1.0.90 audit).
+    std::env::var("SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL")
+        .or_else(|_| std::env::var("SQLITE_GRAPHRAG_OPENCODE_MODEL"))
+        .unwrap_or_else(|_| {
+            tracing::info!(
+                target: "llm_embedding",
+                "no model specified; defaulting to opencode/big-pickle"
+            );
+            "opencode/big-pickle".to_string()
+        })
+}
+
 impl LlmEmbedding {
     /// Detects which LLM CLI is available on PATH and returns the
     /// matching embedding client.
@@ -305,6 +368,7 @@ impl LlmEmbedding {
                 binary: resolve_real_binary(&path),
                 model: codex_embed_model(),
                 codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+                timeout_override: None,
             });
         }
         // v1.0.89: honour SQLITE_GRAPHRAG_CLAUDE_BINARY for the embedding
@@ -319,12 +383,42 @@ impl LlmEmbedding {
                 binary: resolve_real_binary(&path),
                 model: claude_embed_model(),
                 codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+                timeout_override: None,
+            });
+        }
+        // v1.0.90 (GAP-OPENCODE-001): probe opencode as 3rd priority.
+        let opencode_path = std::env::var_os("SQLITE_GRAPHRAG_OPENCODE_BINARY")
+            .map(std::path::PathBuf::from)
+            .or_else(|| which::which("opencode").ok());
+        if let Some(path) = opencode_path {
+            return Ok(Self {
+                flavour: EmbeddingFlavour::Opencode,
+                binary: resolve_real_binary(&path),
+                model: opencode_embed_model(),
+                codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+                timeout_override: None,
             });
         }
         Err(AppError::Embedding(
-            "no LLM CLI found on PATH: install `codex` (0.130+) or `claude` (Claude Code 2.1+)"
+            "no LLM CLI found on PATH: install `codex` (0.130+), `claude` (Claude Code 2.1+), or `opencode` (1.17+)"
                 .to_string(),
         ))
+    }
+
+    /// Instance-scoped timeout. Precedence:
+    /// `timeout_override` field > env var > DEFAULT_EMBED_TIMEOUT_SECS.
+    fn instance_embed_timeout(&self) -> std::time::Duration {
+        if let Some(d) = self.timeout_override {
+            return d;
+        }
+        embed_timeout()
+    }
+
+    /// Instance-scoped batch timeout: base + 15s per extra item.
+    fn instance_embed_timeout_for_batch(&self, batch_size: usize) -> std::time::Duration {
+        let base = self.instance_embed_timeout();
+        let extra = std::time::Duration::from_secs(15) * batch_size.saturating_sub(1) as u32;
+        base + extra
     }
 
     pub fn with_codex() -> Result<Self, AppError> {
@@ -342,6 +436,7 @@ impl LlmEmbedding {
             flavour: EmbeddingFlavour::Codex,
             binary_override: None,
             model_override: None,
+            timeout_override: None,
         }
     }
 
@@ -352,6 +447,20 @@ impl LlmEmbedding {
             flavour: EmbeddingFlavour::Claude,
             binary_override: None,
             model_override: None,
+            timeout_override: None,
+        }
+    }
+
+    pub fn with_opencode() -> Result<Self, AppError> {
+        Self::with_opencode_builder().build()
+    }
+
+    pub fn with_opencode_builder() -> LlmEmbeddingBuilder {
+        LlmEmbeddingBuilder {
+            flavour: EmbeddingFlavour::Opencode,
+            binary_override: None,
+            model_override: None,
+            timeout_override: None,
         }
     }
     /// v1.0.69 (G31): refuse to spawn if an API key is set. The CLI
@@ -442,15 +551,9 @@ impl LlmEmbedding {
             prompt.push_str(&format!("{}: {prefix}{text}\n", pos + 1));
         }
 
-        // v1.0.89 (GAP-4): scale timeout with batch size via env var override.
-        // embed_timeout() reads SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS; we set it
-        // to the batch-scaled value before the LLM call and restore after.
-        let batch_timeout = embed_timeout_for_batch(batch.len());
-        let prev_timeout = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS").ok();
-        std::env::set_var(
-            "SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS",
-            batch_timeout.as_secs().to_string(),
-        );
+        // BUG-TIMEOUT-HARDCODE-001: batch timeout is now instance-scoped
+        // (no more std::env::set_var which was unsafe in multi-thread).
+        let _batch_timeout = self.instance_embed_timeout_for_batch(batch.len());
         let stdout = match self.flavour {
             EmbeddingFlavour::Claude => {
                 self.invoke_claude(&prompt, &build_batch_schema(dim))
@@ -460,13 +563,18 @@ impl LlmEmbedding {
                 let schema = self.codex_schema_file(dim, true)?;
                 self.invoke_codex(&prompt, schema.path()).await?
             }
+            EmbeddingFlavour::Opencode => {
+                let opencode_prompt = format!(
+                    "You are a batch embedding function. For each numbered text item below, \
+                     generate an array of exactly {dim} floating-point numbers between -1 and 1 \
+                     representing its semantic meaning. Output ONLY a JSON object with key \"items\" \
+                     containing an array of objects, each with \"i\" (the 1-based index) and \
+                     \"v\" (the {dim}-element float array). No markdown, no explanation.\n\n\
+                     {prompt}"
+                );
+                self.invoke_opencode(&opencode_prompt).await?
+            }
         };
-        // Restore previous timeout value.
-        match prev_timeout {
-            Some(v) => std::env::set_var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS", v),
-            None => std::env::remove_var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS"),
-        }
-
         let parsed: BatchEmbeddingResponse = parse_llm_json(&stdout).map_err(|e| {
             AppError::Embedding(format!(
                 "LLM batch embedding response parse failed: {e}; raw={stdout}"
@@ -539,6 +647,16 @@ impl LlmEmbedding {
             EmbeddingFlavour::Codex => {
                 let schema = self.codex_schema_file(dim, false)?;
                 self.invoke_codex(&prompt, schema.path()).await?
+            }
+            EmbeddingFlavour::Opencode => {
+                let opencode_prompt = format!(
+                    "You are an embedding function. Given the input text, output a JSON object \
+                     with a single key \"embedding\" containing an array of exactly {dim} \
+                     floating-point numbers between -1 and 1 that represent the semantic meaning \
+                     of the text. Output ONLY the JSON object, nothing else.\n\n\
+                     Input text: \"{prompt}\""
+                );
+                self.invoke_opencode(&opencode_prompt).await?
             }
         };
         let parsed: EmbeddingResponse = parse_llm_json(&stdout).map_err(|e| {
@@ -651,11 +769,11 @@ impl LlmEmbedding {
             cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
         }
         let binary_str = self.binary.to_string_lossy().into_owned();
-        let output = match tokio::time::timeout(embed_timeout(), cmd.output()).await {
+        let output = match tokio::time::timeout(self.instance_embed_timeout(), cmd.output()).await {
             Err(_elapsed) => {
                 return Err(crate::llm::exit_code_hints::into_legacy_embedding(
                     &crate::llm::exit_code_hints::LlmBackendError::Timeout {
-                        secs: embed_timeout().as_secs(),
+                        secs: self.instance_embed_timeout().as_secs(),
                         binary: binary_str.clone(),
                     },
                 ));
@@ -708,8 +826,7 @@ impl LlmEmbedding {
             let (exit_code, signal) = if let Some(code) = output.status.code() {
                 (Some(code), None)
             } else {
-                use std::os::unix::process::ExitStatusExt;
-                (None, output.status.signal())
+                extract_exit_info(&output.status)
             };
             let stdout_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
                 &output.stdout,
@@ -728,9 +845,7 @@ impl LlmEmbedding {
                 || stdout_tail.contains("401")
                 || stdout_tail.contains("Unauthorized")
             {
-                hint.push_str(
-                    " | Claude OAuth token may be expired; run `claude login` to renew",
-                );
+                hint.push_str(" | Claude OAuth token may be expired; run `claude login` to renew");
             }
             return Err(crate::llm::exit_code_hints::into_legacy_embedding(
                 &crate::llm::exit_code_hints::LlmBackendError::NonZeroExit {
@@ -797,31 +912,33 @@ impl LlmEmbedding {
                 .map_err(|e| AppError::Embedding(format!("codex stdin write failed: {e}")))?;
             drop(stdin);
         }
-        let output = match tokio::time::timeout(embed_timeout(), child.wait_with_output()).await {
-            Err(_elapsed) => {
-                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
-                    &crate::llm::exit_code_hints::LlmBackendError::Timeout {
-                        secs: embed_timeout().as_secs(),
-                        binary: binary_str,
-                    },
-                ));
-            }
-            Ok(Err(e)) => {
-                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
-                    &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
-                        binary: binary_str,
-                        source: format!("codex wait failed: {e}"),
-                    },
-                ));
-            }
-            Ok(Ok(o)) => o,
-        };
+        let output =
+            match tokio::time::timeout(self.instance_embed_timeout(), child.wait_with_output())
+                .await
+            {
+                Err(_elapsed) => {
+                    return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                        &crate::llm::exit_code_hints::LlmBackendError::Timeout {
+                            secs: self.instance_embed_timeout().as_secs(),
+                            binary: binary_str,
+                        },
+                    ));
+                }
+                Ok(Err(e)) => {
+                    return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                        &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                            binary: binary_str,
+                            source: format!("codex wait failed: {e}"),
+                        },
+                    ));
+                }
+                Ok(Ok(o)) => o,
+            };
         if !output.status.success() {
             let (exit_code, signal) = if let Some(code) = output.status.code() {
                 (Some(code), None)
             } else {
-                use std::os::unix::process::ExitStatusExt;
-                (None, output.status.signal())
+                extract_exit_info(&output.status)
             };
             let stdout_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
                 &output.stdout,
@@ -851,6 +968,73 @@ impl LlmEmbedding {
                     stderr_tail,
                     binary: binary_str,
                     hint: combined_hint,
+                },
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    async fn invoke_opencode(&self, prompt: &str) -> Result<String, AppError> {
+        let binary_str = self.binary.to_string_lossy().into_owned();
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("run")
+            .arg("--format")
+            .arg("json")
+            .arg("-m")
+            .arg(&self.model)
+            .arg("--dangerously-skip-permissions")
+            .arg(prompt)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", std::env::var("HOME").unwrap_or_default())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        crate::commands::opencode_runner::propagate_opencode_env(&mut cmd);
+
+        let output = match tokio::time::timeout(self.instance_embed_timeout(), cmd.output()).await {
+            Err(_elapsed) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::Timeout {
+                        secs: self.instance_embed_timeout().as_secs(),
+                        binary: binary_str.clone(),
+                    },
+                ));
+            }
+            Ok(Err(e)) => {
+                return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                    &crate::llm::exit_code_hints::LlmBackendError::SpawnFailed {
+                        binary: binary_str.clone(),
+                        source: e.to_string(),
+                    },
+                ));
+            }
+            Ok(Ok(o)) => o,
+        };
+        if !output.status.success() {
+            let (exit_code, signal) = if let Some(code) = output.status.code() {
+                (Some(code), None)
+            } else {
+                extract_exit_info(&output.status)
+            };
+            let stdout_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stdout,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let stderr_tail = crate::llm::exit_code_hints::LlmBackendError::truncate_tail(
+                &output.stderr,
+                crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
+            );
+            let hint = crate::llm::exit_code_hints::diagnose_exit_code(exit_code, signal);
+            return Err(crate::llm::exit_code_hints::into_legacy_embedding(
+                &crate::llm::exit_code_hints::LlmBackendError::NonZeroExit {
+                    exit_code,
+                    signal,
+                    stdout_tail,
+                    stderr_tail,
+                    binary: binary_str,
+                    hint,
                 },
             ));
         }
@@ -978,6 +1162,33 @@ fn parse_llm_json<T: serde::de::DeserializeOwned>(stdout: &str) -> Result<T, Str
     if let Ok(parsed) = serde_json::from_str::<T>(stdout) {
         return Ok(parsed);
     }
+    // Strategy 3: walk NDJSON and collect `.part.text` from `type == "text"`
+    // events (OpenCode path: `opencode run --format json`).
+    let mut opencode_texts: Vec<String> = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if event.get("type").and_then(|t| t.as_str()) == Some("text") {
+            if let Some(text) = event
+                .get("part")
+                .and_then(|p| p.get("text"))
+                .and_then(|t| t.as_str())
+            {
+                opencode_texts.push(text.to_string());
+            }
+        }
+    }
+    if !opencode_texts.is_empty() {
+        let combined = opencode_texts.concat();
+        if let Ok(parsed) = serde_json::from_str::<T>(&combined) {
+            return Ok(parsed);
+        }
+    }
     // Strategy 2: walk the JSONL line by line and pick the last
     // `item.completed` of type `agent_message` (Codex path).
     let mut last_agent_text: Option<String> = None;
@@ -1019,6 +1230,7 @@ mod tests {
             binary,
             model: "gpt-5.4".to_string(),
             codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
+            timeout_override: None,
         }
     }
 
@@ -1287,8 +1499,14 @@ echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\"
         let t1 = embed_timeout_for_batch(1);
         let t4 = embed_timeout_for_batch(4);
         let t8 = embed_timeout_for_batch(8);
-        assert!(t1 < t4, "batch of 4 must have longer timeout than batch of 1");
-        assert!(t4 < t8, "batch of 8 must have longer timeout than batch of 4");
+        assert!(
+            t1 < t4,
+            "batch of 4 must have longer timeout than batch of 1"
+        );
+        assert!(
+            t4 < t8,
+            "batch of 8 must have longer timeout than batch of 4"
+        );
         assert_eq!(t8 - t1, std::time::Duration::from_secs(15 * 7));
     }
 
@@ -1297,5 +1515,83 @@ echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\"
         let base = embed_timeout();
         let single = embed_timeout_for_batch(1);
         assert_eq!(base, single);
+    }
+
+    #[test]
+    fn opencode_flavour_as_str() {
+        assert_eq!(EmbeddingFlavour::Opencode.as_str(), "opencode");
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn opencode_embed_model_uses_env_override() {
+        unsafe {
+            std::env::set_var(
+                "SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL",
+                "opencode/test-model",
+            );
+            let model = opencode_embed_model();
+            std::env::remove_var("SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL");
+            assert_eq!(model, "opencode/test-model");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn opencode_embed_model_falls_back_to_opencode_model() {
+        unsafe {
+            std::env::remove_var("SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL");
+            std::env::set_var("SQLITE_GRAPHRAG_OPENCODE_MODEL", "opencode/fallback");
+            let model = opencode_embed_model();
+            std::env::remove_var("SQLITE_GRAPHRAG_OPENCODE_MODEL");
+            assert_eq!(model, "opencode/fallback");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn opencode_embed_model_ignores_llm_model() {
+        unsafe {
+            std::env::remove_var("SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL");
+            std::env::remove_var("SQLITE_GRAPHRAG_OPENCODE_MODEL");
+            std::env::set_var("SQLITE_GRAPHRAG_LLM_MODEL", "gpt-5.4-mini");
+            let model = opencode_embed_model();
+            std::env::remove_var("SQLITE_GRAPHRAG_LLM_MODEL");
+            assert_eq!(
+                model, "opencode/big-pickle",
+                "must NOT cross-contaminate with LLM_MODEL"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_llm_json_accepts_opencode_ndjson() {
+        let stdout = r#"{"type":"step_start","timestamp":1234,"sessionID":"ses_test","part":{"type":"step-start"}}
+{"type":"text","timestamp":1235,"sessionID":"ses_test","part":{"type":"text","text":"{\"embedding\":[0.1,0.2,0.3]}"}}
+{"type":"step_finish","timestamp":1236,"sessionID":"ses_test","part":{"type":"step-finish","tokens":{"total":100,"input":90,"output":10,"reasoning":0},"cost":0}}"#;
+
+        let parsed: EmbeddingResponse = parse_llm_json(stdout).expect("opencode NDJSON must parse");
+        assert_eq!(parsed.embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn parse_llm_json_accepts_opencode_batch_ndjson() {
+        let stdout = r#"{"type":"step_start","timestamp":1234,"sessionID":"ses_test","part":{"type":"step-start"}}
+{"type":"text","timestamp":1235,"sessionID":"ses_test","part":{"type":"text","text":"{\"items\":[{\"i\":1,\"v\":[0.1,0.2]},{\"i\":2,\"v\":[0.3,0.4]}]}"}}
+{"type":"step_finish","timestamp":1236,"sessionID":"ses_test","part":{"type":"step-finish","tokens":{"total":100,"input":90,"output":10,"reasoning":0},"cost":0}}"#;
+
+        let parsed: BatchEmbeddingResponse =
+            parse_llm_json(stdout).expect("opencode batch NDJSON must parse");
+        assert_eq!(parsed.items.len(), 2);
+        assert_eq!(parsed.items[0].i, 1);
+        assert_eq!(parsed.items[1].v, vec![0.3, 0.4]);
+    }
+
+    #[test]
+    fn opencode_builder_default_has_correct_flavour() {
+        let builder = LlmEmbeddingBuilder::opencode_default();
+        assert_eq!(builder.flavour, EmbeddingFlavour::Opencode);
+        assert!(builder.binary_override.is_none());
+        assert!(builder.model_override.is_none());
     }
 }

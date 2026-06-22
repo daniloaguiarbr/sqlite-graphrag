@@ -642,8 +642,15 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     // embedding da passagem (ou do batch em chunks) para popular
     // `backend_invoked` no envelope de resposta.
     let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-    let (embedding, backend_invoked_passage): (Option<Vec<f32>>, Option<&str>) = if chunks_info.len() == 1 {
-        match crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend)) {
+    let (embedding, backend_invoked_passage): (Option<Vec<f32>>, Option<&str>) = if chunks_info
+        .len()
+        == 1
+    {
+        match crate::embedder::embed_passage_with_choice(
+            &paths.models,
+            &raw_body,
+            Some(llm_backend),
+        ) {
             Ok((v, k)) => (Some(v), Some(k.as_str())),
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
             Err(e) if skip_embed => {
@@ -753,19 +760,20 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     // chunk body embedding below still uses `embed_passages_parallel_local`
     // because chunks are unique per memory and the cache hit rate is
     // effectively zero.
-    let (graph_entity_embeddings, embed_cache_stats) = match crate::embedder::embed_entity_texts_cached(
-        &paths.models,
-        &entity_texts,
-        args.llm_parallelism as usize,
-    ) {
-        Ok(r) => r,
-        Err(e) if skip_embed => {
-            tracing::warn!(error = %e, "entity embedding failed; --skip-embedding-on-failure active");
-            let empty: Vec<Vec<f32>> = entity_texts.iter().map(|_| vec![]).collect();
-            (empty, crate::embedder::EmbedCacheStats::default())
-        }
-        Err(e) => return Err(e),
-    };
+    let (graph_entity_embeddings, embed_cache_stats) =
+        match crate::embedder::embed_entity_texts_cached(
+            &paths.models,
+            &entity_texts,
+            args.llm_parallelism as usize,
+        ) {
+            Ok(r) => r,
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "entity embedding failed; --skip-embedding-on-failure active");
+                let empty: Vec<Vec<f32>> = entity_texts.iter().map(|_| vec![]).collect();
+                (empty, crate::embedder::EmbedCacheStats::default())
+            }
+            Err(e) => return Err(e),
+        };
     if embed_cache_stats.hits > 0 {
         tracing::debug!(
             hits = embed_cache_stats.hits,

@@ -109,7 +109,7 @@ See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full archi
 
 
 ## Latency Note — v1.0.76 LLM-Only
-- The CLI is 100% one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude -p` or `codex exec` subprocess (OAuth) for embedding generation
+- The CLI is 100% one-shot. Every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude -p`, `codex exec`, or `opencode run` subprocess (OAuth) for embedding generation
 - There is no daemon, no IPC, no background process
 - Subprocess spawn cost is approximately 1-3 seconds per call
 - Batch pipelines should batch chunks on the LLM side (one prompt with N passages) via `embed_passages_controlled` to amortize spawn cost.
@@ -144,7 +144,7 @@ sqlite-graphrag health --json
 
 
 ### Explanation
-- Command `init` creates the SQLite file and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download; the LLM subprocess is the model.
+- Command `init` creates the SQLite file and validates that an LLM CLI (`claude`, `codex`, or `opencode`) is reachable on `PATH`. No model download; the LLM subprocess is the model.
 - Flag `--namespace default` is a user-chosen name; the built-in fallback namespace is `global`
 - Command `health` validates integrity with `PRAGMA integrity_check` and returns JSON
 - Exit code `0` signals the database is ready for writes and reads from any agent
@@ -511,7 +511,7 @@ sqlite-graphrag remember --name "large-mem" --body "$(cat big.txt)" 2>&1 | jaq '
 # Fix: sqlite-graphrag edit --name "large-mem" --body-file chunk1.txt
 
 # Variant: BinaryNotFound
-# Symptom: claude or codex not on PATH
+# Symptom: claude, codex, or opencode not on PATH
 sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
 # Expected: "BinaryNotFound" with path to missing binary
 # Fix: export PATH="/path/to/claude:$PATH"

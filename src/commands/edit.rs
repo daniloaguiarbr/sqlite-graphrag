@@ -214,19 +214,20 @@ pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<
         // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
         // backend que efetivamente rodou para popular `backend_invoked`.
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-        let embedding: Option<(Vec<f32>, &'static str)> = match crate::embedder::embed_passage_with_choice(
-            &paths.models,
-            &new_body,
-            Some(llm_backend),
-        ) {
-            Ok((emb, kind)) => Some((emb, kind.as_str())),
-            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
-            Err(e) if skip_embed => {
-                tracing::warn!(error = %e, "edit: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
-                None
-            }
-            Err(e) => return Err(e),
-        };
+        let embedding: Option<(Vec<f32>, &'static str)> =
+            match crate::embedder::embed_passage_with_choice(
+                &paths.models,
+                &new_body,
+                Some(llm_backend),
+            ) {
+                Ok((emb, kind)) => Some((emb, kind.as_str())),
+                Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+                Err(e) if skip_embed => {
+                    tracing::warn!(error = %e, "edit: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                    None
+                }
+                Err(e) => return Err(e),
+            };
         if let Some((ref emb, kind)) = embedding {
             backend_invoked = Some(kind);
             let snippet: String = new_body.chars().take(300).collect();

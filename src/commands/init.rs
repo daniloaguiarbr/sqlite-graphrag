@@ -129,7 +129,11 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     // CLI missing), init still succeeds with dim from the database or default.
     // ADR-0011: Validation errors (OAuth-only enforcement) are FATAL — propagate.
     // v1.0.89 (GAP-EMBED-PROPAGATION): honour --llm-backend via embed_passage_with_choice.
-    let (dim, status) = match crate::embedder::embed_passage_with_choice(&paths.models, "smoke test", None) {
+    let (dim, status) = match crate::embedder::embed_passage_with_choice(
+        &paths.models,
+        "smoke test",
+        None,
+    ) {
         Ok((v, _backend)) => (v.len(), "ok"),
         Err(crate::errors::AppError::Validation(msg)) => {
             return Err(crate::errors::AppError::Validation(msg))

@@ -149,8 +149,8 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         })
         .collect();
 
-    let total_count = items.len();
-    let truncated = args.limit.is_some_and(|lim| items.len() >= lim);
+    let total_count = memories::count(&conn, &namespace, memory_type_str, args.include_deleted)?;
+    let truncated = items.len() < total_count;
 
     match args.format {
         OutputFormat::Json => {

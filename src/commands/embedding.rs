@@ -219,6 +219,7 @@ fn run_status(args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Resul
     let backend_invoked: &'static str = match llm_backend {
         LlmBackendChoice::Claude => "claude",
         LlmBackendChoice::Codex => "codex",
+        LlmBackendChoice::Opencode => "opencode",
         LlmBackendChoice::None => "none",
         LlmBackendChoice::Auto => "auto",
     };

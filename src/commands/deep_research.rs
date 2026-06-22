@@ -248,7 +248,10 @@ struct SubQueryResult {
 
 /// Sync entry point — builds a tokio runtime for the async fan-out.
 #[tracing::instrument(skip_all, level = "debug", name = "deep_research")]
-pub fn run(args: DeepResearchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: DeepResearchArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     tracing::debug!(target: "deep_research", query = %args.query, k = args.k, "starting deep research");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -259,7 +262,10 @@ pub fn run(args: DeepResearchArgs, llm_backend: crate::cli::LlmBackendChoice) ->
 }
 
 /// Main async logic: decompose, fan-out, assemble, emit JSON.
-async fn run_async(args: DeepResearchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+async fn run_async(
+    args: DeepResearchArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     let start = std::time::Instant::now();
 
     if args.query.trim().is_empty() {
