@@ -522,8 +522,13 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Máximo de entidades distintas persistidas por memória; valores fora de [1, 1.000] utilizam o padrão. Nota: o pipeline de extração limita internamente os candidatos a 30 antes da deduplicação, portanto o cap de persistência (padrão 50) funciona como teto de segurança e só é atingido se o extrator for estendido ou substituído. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Máximo de relações distintas persistidas por memória; valores fora de [1, 10.000] utilizam o padrão | `50` | `200` |
 | `SQLITE_GRAPHRAG_LOW_MEMORY` | Força ingest single-threaded para reduzir RSS. Aceita `1`/`true`/`yes`/`on` (case-insensitive) | indefinido (multi-thread) | `1` |
-| `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Caminho explícito para o binário Claude Code para `ingest --mode claude-code` | busca no PATH | `/usr/local/bin/claude` |
-| `SQLITE_GRAPHRAG_CODEX_BINARY` | Caminho explícito para o binário Codex CLI para `ingest --mode codex` | busca no PATH | `/usr/local/bin/codex` |
+| `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Caminho explícito para o binário Claude Code; afeta TODOS os comandos LLM (`recall`, `hybrid-search`, `remember`, `edit`, `ingest --mode claude-code`, `enrich`, `deep-research`). v1.0.89: agora propagado da flag CLI `--claude-binary` | busca no PATH | `/usr/local/bin/claude` |
+| `SQLITE_GRAPHRAG_CODEX_BINARY` | Caminho explícito para o binário Codex CLI; afeta TODOS os comandos LLM (`recall`, `hybrid-search`, `remember`, `edit`, `ingest --mode codex`, `enrich`, `deep-research`). v1.0.89: nova flag `--codex-binary` | busca no PATH | `/usr/local/bin/codex` |
+| `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE` | Quando definida, comandos persistem memórias com embedding NULL em vez de abortar com exit 11 em falha do LLM. Use `enrich --operation re-embed` para preencher depois. Aceita `1`/`true`/`yes`/`on` (v1.0.89) | desativado (abortar em falha) | `1` |
+| `SQLITE_GRAPHRAG_LLM_MODEL` | Modelo padrão para chamadas de embedding LLM; sobrescrito pelas variáveis específicas por backend (`SQLITE_GRAPHRAG_CODEX_EMBED_MODEL`, `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`). Mapeia para flag CLI `--llm-model` (v1.0.89) | `gpt-5.5` (codex) / `claude-sonnet-4-6` (claude) | `gpt-5.4` |
+| `SQLITE_GRAPHRAG_LLM_FALLBACK` | Cadeia de fallback separada por vírgula para `--llm-backend auto`. Tokens: `codex`, `claude`, `none`. Mapeia para flag CLI `--llm-fallback` (v1.0.89) | `codex,claude,none` | `claude,none` |
+| `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` | Máximo de subprocessos LLM concorrentes no host. Mapeia para flag CLI `--llm-max-host-concurrency` (v1.0.89) | `4` | `8` |
+| `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT` | Quando definida, aborta imediatamente em vez de esperar por slot LLM. Aceita `1`/`true`/`yes`/`on`. Mapeia para flag CLI `--llm-slot-no-wait` (v1.0.89) | desativado (esperar) | `1` |
 | `ORT_DYLIB_PATH` | HISTÓRICA (≤ v1.0.75) — nenhum build carrega ONNX desde a v1.0.76; a variável é ignorada | — | — |
 
 

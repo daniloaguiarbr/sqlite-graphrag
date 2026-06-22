@@ -49,13 +49,32 @@ impl LlmBackendChoice {
             LlmBackendChoice::Codex => vec![LlmBackendKind::Codex, LlmBackendKind::None],
             LlmBackendChoice::Claude => vec![LlmBackendKind::Claude, LlmBackendKind::None],
             LlmBackendChoice::None => vec![LlmBackendKind::None],
-            LlmBackendChoice::Auto => vec![
-                LlmBackendKind::Codex,
-                LlmBackendKind::Claude,
-                LlmBackendKind::None,
-            ],
+            LlmBackendChoice::Auto => parse_fallback_chain(
+                &std::env::var("SQLITE_GRAPHRAG_LLM_FALLBACK")
+                    .unwrap_or_else(|_| "codex,claude,none".to_string()),
+            ),
         }
     }
+}
+
+fn parse_fallback_chain(s: &str) -> Vec<crate::embedder::LlmBackendKind> {
+    use crate::embedder::LlmBackendKind;
+    let mut chain: Vec<LlmBackendKind> = s
+        .split(',')
+        .filter_map(|tok| match tok.trim().to_ascii_lowercase().as_str() {
+            "codex" => Some(LlmBackendKind::Codex),
+            "claude" | "claude-code" => Some(LlmBackendKind::Claude),
+            "none" => Some(LlmBackendKind::None),
+            _ => {
+                tracing::warn!(token = tok.trim(), "unknown backend in --llm-fallback, skipping");
+                Option::None
+            }
+        })
+        .collect();
+    if chain.is_empty() {
+        chain = vec![LlmBackendKind::Codex, LlmBackendKind::Claude, LlmBackendKind::None];
+    }
+    chain
 }
 
 #[derive(Parser)]
@@ -97,6 +116,7 @@ pub struct Cli {
         global = true,
         hide = true,
         default_value_t = false,
+        value_parser = clap::builder::BoolishValueParser::new(),
         env = "SQLITE_GRAPHRAG_STRICT_ENV_CLEAR"
     )]
     pub strict_env_clear: bool,
@@ -112,6 +132,7 @@ pub struct Cli {
         global = true,
         hide = true,
         default_value_t = false,
+        value_parser = clap::builder::BoolishValueParser::new(),
         env = "SQLITE_GRAPHRAG_DRY_RUN_BACKEND"
     )]
     pub dry_run_backend: bool,
@@ -188,6 +209,16 @@ pub struct Cli {
     )]
     pub claude_binary: Option<std::path::PathBuf>,
 
+    /// v1.0.89 (GAP-1): path para o binário `codex` (override de
+    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_CODEX_BINARY`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        env = "SQLITE_GRAPHRAG_CODEX_BINARY"
+    )]
+    pub codex_binary: Option<std::path::PathBuf>,
+
     /// v1.0.82 (GAP-005): cadeia de backends LLM tentados em ordem
     /// quando o primário falha. Default `codex,claude,none`. Honra
     /// env var `SQLITE_GRAPHRAG_LLM_FALLBACK`.
@@ -207,6 +238,7 @@ pub struct Cli {
         long,
         global = true,
         default_value_t = false,
+        value_parser = clap::builder::BoolishValueParser::new(),
         env = "SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE"
     )]
     pub skip_embedding_on_failure: bool,
@@ -240,6 +272,7 @@ pub struct Cli {
         long,
         global = true,
         default_value_t = false,
+        value_parser = clap::builder::BoolishValueParser::new(),
         env = "SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT"
     )]
     pub llm_slot_no_wait: bool,

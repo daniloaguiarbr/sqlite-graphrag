@@ -116,6 +116,12 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
         ));
     }
 
+    if !args.dry_run && !args.yes {
+        return Err(AppError::Validation(
+            "destructive operation: pass --yes to confirm purge (use --dry-run to preview)".to_string(),
+        ));
+    }
+
     if !args.dry_run {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         execute_purge(

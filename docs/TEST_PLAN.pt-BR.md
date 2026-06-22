@@ -35,7 +35,7 @@
 - Comando: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
 - Comando: `/usr/bin/timeout 1200 cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
 - Comando: `/usr/bin/timeout 1200 cargo test --features slow-tests --test prd_compliance -- --nocapture`
-- Critério: ZERO falhas nos ~1220 testes
+- Critério: ZERO falhas nos ~1881 testes
 ### Camada 5 — Concorrência Loom (somente opt-in explícito)
 - Comando: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
 - RISCO TÉRMICO: nunca rodar fora do script dedicado (incidente de 2026-04-19)

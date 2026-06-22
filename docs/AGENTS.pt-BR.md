@@ -49,7 +49,26 @@
 - **GAP-E2E-011 (P2)**: `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo (>20 chars, não header). `extract_heuristic_description(body, path_hint)` cai para o stem do arquivo quando não há linha significativa. Opt-out `--no-auto-describe`. 5 novos testes em `tests/ingest_auto_describe_regression.rs`
 - **GAP-E2E-002 (P3)**: `health --namespace <NS> --json` filtra contagens para um único namespace. 1 novo teste em `tests/health_namespace_regression.rs`
 - **GAP-E2E-001 (P2)**: Tamanho do binário 14.6 MiB (não 6 MB como documentado desde v1.0.76). 1 novo teste em `tests/binary_size_documented_regression.rs`
-- Total: 1877 testes passando (843 lib + 1013 integração + 21 doc). Binário 15.3 MB ELF stripped. Veja ADR-0048, ADR-0049
+- `BoolishValueParser`: variáveis de ambiente booleanas agora aceitam `1`/`yes`/`on` (e `0`/`no`/`off`), não apenas `true`/`false`
+- Novas flags: `--codex-binary`, `--llm-model`, `--llm-fallback`, `--llm-max-host-concurrency`, `--llm-slot-wait-secs`, `--llm-slot-no-wait`
+- Correção de dead flag: 7 flags de CLI antes parseadas mas nunca repassadas agora são corretamente propagadas para o caminho de spawn do LLM
+- Modelos padrão: `gpt-5.5` para codex, `claude-sonnet-4-6` para claude
+- Total: 1881 testes passando (847 lib + 1013 integração + 21 doc). Binário 15.3 MB ELF stripped. Veja ADR-0048, ADR-0049, ADR-0050
+
+## v1.0.89 — Remediação de Deadlock de Embedding (ADR-0050)
+- GAP-RECALL-001 (CRÍTICA): `recall`, `hybrid-search`, `deep-research` não travam mais quando subprocesso LLM emperra. Correção: `drop(stdin)` antes de `wait_with_output`, timeout 300s para 60s, limpeza de slots obsoletos, reaper mata processos `sqlite-graphrag` órfãos
+- GAP-DEEPRESEARCH-001: `deep-research` degrada graciosamente para FTS5-only quando embedding falha
+- BUG-SKIP-EMBED: `--skip-embedding-on-failure` agora funciona end-to-end em `remember`, `edit`, `restore`, `rename-entity`, `remember-batch`
+- BUG-MODEL-VAZIO: Modelos padrão `gpt-5.5` (codex) e `claude-sonnet-4-6` (claude) quando nenhuma env var está definida
+- BUG-YES-FLAG-IGNORED: `slots release`, `purge`, `cleanup-orphans` exigem `--yes`
+- BUG-BOOLISH-ENV: Env vars booleanas aceitam `1`/`yes`/`on` via `BoolishValueParser`
+- BUG-BATCH-FTS-DESYNC + BUG-ENRICH-*-FTS-DESYNC: FTS5 sincronizado após atualizações de batch/enrich
+- GAP-FLAGS-MORTAS: 7 flags de CLI mortas agora propagadas via `set_var`
+- GAP-BACKEND-PROPAGATION: `deep-research` e `remember-batch` honram `--llm-backend`
+- GAP-ADAPTIVE-TIMEOUT: Timeout de embedding em batch escala com tamanho do batch (60s + 15s por item)
+- USAR `--llm-model gpt-5.5` ou `--llm-model claude-sonnet-4-6` para selecionar modelo de embedding explicitamente
+- USAR `--llm-backend claude` para forçar backend Claude (padrão `auto` sonda PATH: codex primeiro)
+- USAR `--skip-embedding-on-failure` para persistir memória sem vetor quando LLM indisponível
 
 ## Arquitetura v1.0.79 (Apenas LLM)
 

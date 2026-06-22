@@ -3247,9 +3247,20 @@ fn call_description_enrich(
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or(&old_desc);
+    let old_name: String = conn
+        .query_row(
+            "SELECT name FROM memories WHERE id = ?1",
+            rusqlite::params![mem_id],
+            |r| r.get(0),
+        )?;
     conn.execute(
         "UPDATE memories SET description = ?1 WHERE id = ?2",
         rusqlite::params![new_desc, mem_id],
+    )?;
+    memories::sync_fts_after_update(
+        conn, mem_id,
+        &old_name, &old_desc, &body,
+        &old_name, new_desc, &body,
     )?;
     Ok(EnrichItemResult::Done {
         memory_id: Some(mem_id),
@@ -3485,13 +3496,19 @@ fn call_body_extract(
     timeout: u64,
     mode: &EnrichMode,
 ) -> Result<EnrichItemResult, AppError> {
-    let (mem_id, body): (i64, String) = conn
+    let (mem_id, body, old_desc): (i64, String, String) = conn
         .query_row(
-            "SELECT id, body FROM memories WHERE name = ?1 AND deleted_at IS NULL",
+            "SELECT id, body, description FROM memories WHERE name = ?1 AND deleted_at IS NULL",
             rusqlite::params![item_key],
-            |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
         )
         .map_err(|_| AppError::NotFound(format!("memory '{item_key}' not found")))?;
+    let old_name: String = conn
+        .query_row(
+            "SELECT name FROM memories WHERE id = ?1",
+            rusqlite::params![mem_id],
+            |r| r.get(0),
+        )?;
     let input_text = format!("Memory: {item_key}\nBody:\n{body}");
     let (value, cost, is_oauth) = match mode {
         EnrichMode::ClaudeCode => call_claude(
@@ -3521,6 +3538,11 @@ fn call_body_extract(
     conn.execute(
         "UPDATE memories SET body = ?1, body_hash = ?2, updated_at = unixepoch() WHERE id = ?3",
         rusqlite::params![restructured, new_hash, mem_id],
+    )?;
+    memories::sync_fts_after_update(
+        conn, mem_id,
+        &old_name, &old_desc, &body,
+        &old_name, &old_desc, restructured,
     )?;
     Ok(EnrichItemResult::Done {
         memory_id: Some(mem_id),

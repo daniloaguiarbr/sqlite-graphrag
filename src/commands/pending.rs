@@ -57,6 +57,9 @@ pub struct PendingListArgs {
     /// env var `SQLITE_GRAPHRAG_DB_PATH`.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -92,6 +95,9 @@ pub struct PendingShowArgs {
     /// env var `SQLITE_GRAPHRAG_DB_PATH`.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -105,6 +111,9 @@ pub struct PendingCleanupArgs {
     /// Dry-run: list what would be removed without touching the database.
     #[arg(long)]
     pub dry_run: bool,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Serialize)]

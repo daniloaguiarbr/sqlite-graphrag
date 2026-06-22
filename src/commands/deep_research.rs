@@ -199,6 +199,7 @@ struct ResearchStats {
     unique_memories_found: usize,
     evidence_chains_found: usize,
     elapsed_ms: u64,
+    vec_degraded: bool,
 }
 
 #[derive(Serialize)]
@@ -247,18 +248,18 @@ struct SubQueryResult {
 
 /// Sync entry point — builds a tokio runtime for the async fan-out.
 #[tracing::instrument(skip_all, level = "debug", name = "deep_research")]
-pub fn run(args: DeepResearchArgs) -> Result<(), AppError> {
+pub fn run(args: DeepResearchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     tracing::debug!(target: "deep_research", query = %args.query, k = args.k, "starting deep research");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to build tokio runtime: {e}")))?;
-    rt.block_on(run_async(args))
+    rt.block_on(run_async(args, llm_backend))
 }
 
 /// Main async logic: decompose, fan-out, assemble, emit JSON.
-async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
+async fn run_async(args: DeepResearchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
 
     if args.query.trim().is_empty() {
@@ -289,17 +290,29 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
         })
         .collect();
 
-    // GAP-07 FIX: compute ONE embedding PER sub-query text (sequential — daemon serialises).
-    // The previous code used a single embedding for args.query shared across all sub-queries,
-    // making decomposition cosmetic.  We now build a Vec<Arc<Vec<f32>>> indexed by sub-query.
+    // GAP-DEEPRESEARCH-001 FIX (v1.0.89): use graceful degradation path
+    // instead of hard-fail. When LLM is unavailable (OAuth expired, timeout,
+    // slots exhausted), fall back to FTS5-only search per sub-query — same
+    // contract as `recall` and `hybrid-search`.
     output::emit_progress_i18n(
         "Computing per-sub-query embeddings...",
         "Calculando embeddings por sub-consulta...",
     );
-    let mut sub_embeddings: Vec<Arc<Vec<f32>>> = Vec::with_capacity(sub_query_texts.len());
+    let mut sub_embeddings: Vec<Option<Arc<Vec<f32>>>> = Vec::with_capacity(sub_query_texts.len());
+    let mut vec_degraded = false;
     for sq_text in &sub_query_texts {
-        let emb = crate::embedder::embed_query_local(&paths.models, sq_text)?;
-        sub_embeddings.push(Arc::new(emb));
+        match crate::embedder::try_embed_query_with_deterministic_fallback(
+            &paths.models,
+            sq_text,
+            Some(llm_backend),
+        ) {
+            Ok((v, _backend)) => sub_embeddings.push(Some(Arc::new(v))),
+            Err(reason) => {
+                tracing::warn!(target: "deep_research", fallback_reason = %reason, reason_code = %reason.reason_code(), "embedding failed for sub-query; falling back to FTS5");
+                sub_embeddings.push(None);
+                vec_degraded = true;
+            }
+        }
     }
 
     // Phase 2: Fan-out — parallel sub-query execution.
@@ -318,8 +331,8 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
 
     for (idx, sq_text) in sub_query_texts.iter().enumerate() {
         let sem = Arc::clone(&semaphore);
-        // GAP-07 FIX: pass embedding for THIS specific sub-query.
-        let emb = Arc::clone(&sub_embeddings[idx]);
+        // GAP-DEEPRESEARCH-001 FIX: pass Optional embedding (None = FTS5-only).
+        let emb = sub_embeddings[idx].clone();
         let ns = namespace.clone();
         let db_path = paths.db.clone();
         let query_text = sq_text.clone();
@@ -342,7 +355,7 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
                 execute_sub_query(
                     idx,
                     &query_text,
-                    emb.as_slice(),
+                    emb.as_ref().map(|v| v.as_slice()),
                     &ns,
                     &db_path,
                     k,
@@ -590,6 +603,7 @@ async fn run_async(args: DeepResearchArgs) -> Result<(), AppError> {
             unique_memories_found: unique_memories,
             evidence_chains_found: evidence_count,
             elapsed_ms: start.elapsed().as_millis() as u64,
+            vec_degraded,
         },
     })?;
 
@@ -747,7 +761,7 @@ fn reconstruct_path(
 fn execute_sub_query(
     sub_query_id: usize,
     query_text: &str,
-    embedding: &[f32],
+    embedding: Option<&[f32]>,
     namespace: &str,
     db_path: &std::path::Path,
     k: usize,
@@ -767,17 +781,21 @@ fn execute_sub_query(
 
     // --- GAP-08/11 FIX: Use RRF fusion for KNN + FTS instead of hardcoded 0.5 ---
 
-    // 1. KNN vector search — collect ranked IDs.
-    let knn_results = memories::knn_search(&conn, embedding, &[namespace.to_string()], None, k)
-        .map_err(|e| format!("knn_search failed: {e}"))?;
-    let knn_ids: Vec<i64> = knn_results.iter().map(|(id, _)| *id).collect();
-    tracing::debug!(target: "deep_research", sub_query_id, knn_count = knn_ids.len(), "KNN complete");
-
-    // Build distance map for score computation.
-    let knn_distance_map: crate::hash::AHashMap<i64, f64> = knn_results
-        .iter()
-        .map(|(id, dist)| (*id, *dist as f64))
-        .collect();
+    // 1. KNN vector search — collect ranked IDs (skipped when embedding unavailable).
+    let (knn_ids, knn_distance_map) = if let Some(emb) = embedding {
+        let knn_results = memories::knn_search(&conn, emb, &[namespace.to_string()], None, k)
+            .map_err(|e| format!("knn_search failed: {e}"))?;
+        let ids: Vec<i64> = knn_results.iter().map(|(id, _)| *id).collect();
+        tracing::debug!(target: "deep_research", sub_query_id, knn_count = ids.len(), "KNN complete");
+        let dist_map: crate::hash::AHashMap<i64, f64> = knn_results
+            .iter()
+            .map(|(id, dist)| (*id, *dist as f64))
+            .collect();
+        (ids, dist_map)
+    } else {
+        tracing::debug!(target: "deep_research", sub_query_id, "KNN skipped (no embedding); FTS5-only");
+        (vec![], crate::hash::AHashMap::default())
+    };
 
     // 2. FTS5 search — collect ranked IDs.
     let fts_results = match memories::fts_search(&conn, query_text, namespace, None, k) {
@@ -848,11 +866,17 @@ fn execute_sub_query(
     let mut chains: Vec<EvidenceChain> = Vec::with_capacity(memory_ids.len());
 
     if !memory_ids.is_empty() && max_hops > 0 {
-        // Seed entities from KNN on entity vectors using THIS sub-query's embedding.
-        let entity_knn = entities::knn_search(&conn, embedding, namespace, 5)
-            .inspect_err(|e| tracing::warn!(target: "deep_research", error = %e, "entity KNN search failed, skipping graph seed"))
-            .unwrap_or_default();
-        let entity_ids: Vec<i64> = entity_knn.iter().map(|(id, _)| *id).collect();
+        // Seed entities from KNN on entity vectors (skipped when embedding unavailable).
+        let entity_ids: Vec<i64> = if let Some(emb) = embedding {
+            entities::knn_search(&conn, emb, namespace, 5)
+                .inspect_err(|e| tracing::warn!(target: "deep_research", error = %e, "entity KNN search failed, skipping graph seed"))
+                .unwrap_or_default()
+                .iter()
+                .map(|(id, _)| *id)
+                .collect()
+        } else {
+            vec![]
+        };
 
         // HIGH-01 FIX: limit seeds to top-5 memories by score to prevent
         // BFS from starting at every node when k >= total memories.
@@ -1171,6 +1195,7 @@ mod tests {
             unique_memories_found: 10,
             evidence_chains_found: 2,
             elapsed_ms: 1234,
+            vec_degraded: false,
         };
         let json = serde_json::to_value(&stats).expect("serialization failed");
         assert_eq!(json["sub_queries_total"], 3);
@@ -1199,6 +1224,7 @@ mod tests {
                 unique_memories_found: 0,
                 evidence_chains_found: 0,
                 elapsed_ms: 42,
+                vec_degraded: false,
             },
         };
         let json = serde_json::to_value(&resp).expect("serialization failed");

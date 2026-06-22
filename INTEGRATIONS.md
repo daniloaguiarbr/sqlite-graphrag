@@ -79,6 +79,18 @@
 - Bypass in emergencies: set `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` to disable all 7 guards.  Last-resort opt-out for production incident mitigation; bypassing reverts to direct `Command::spawn()` and inherits all 5 BUG classes from GAP-META-005.
 - Related v1.0.88 hotfixes: BUG-11 (preflight failure in `extract/llm_embedding.rs` did not propagate to `remember`; fixed with `embed_via_backend_strict` in `bug11_preflight_regression.rs`); BUG-12 (OAuth-only enforcement emitted 2 identical stderr lines; fixed with single-line stderr in `oauth_stderr_emits_single_line_v1088`); BUG-13 (`link --create-missing` bypassed entity-name validation; fixed by validating BEFORE normalizing in `entity_validation_integration.rs`).
 
+### Embedding Pipeline Fixes and New Global Flags (v1.0.89 — ADR-0050)
+- 7 global LLM flags now propagated from CLI to env vars via set_var in main.rs: --claude-binary, --codex-binary, --llm-model, --skip-embedding-on-failure, --llm-max-host-concurrency, --llm-slot-wait-secs, --llm-slot-no-wait. Previously accepted by clap but silently ignored by internal modules
+- New --codex-binary flag (symmetric with --claude-binary) with env var SQLITE_GRAPHRAG_CODEX_BINARY
+- --skip-embedding-on-failure now functional: persists memories with NULL embedding instead of exit 11; backfill with enrich --operation re-embed
+- --llm-fallback now functional: CSV chain (codex,claude,none) honoured by Auto backend resolution via parse_fallback_chain()
+- deep-research and remember-batch now honour --llm-backend (previously ignored the parameter)
+- Adaptive embedding timeout: embed_timeout_for_batch() scales base + 15s per additional chunk item
+- Graceful FTS5 degradation: deep-research, recall, hybrid-search fall back to FTS5-only when LLM embedding unavailable
+- BoolishValueParser on 4 boolean flags: --skip-embedding-on-failure, --strict-env-clear, --dry-run-backend, --llm-slot-no-wait now accept 1/0/yes/no/on/off (previously only true/false)
+- OAuth expiration hint: invoke_claude() detects 401/Unauthorized patterns and suggests claude login
+- Default models restored: codex uses gpt-5.5, claude uses claude-sonnet-4-6 when no model env var is set
+
 ## New Commands and Flags (since v1.0.76)
 ### LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
 - The default build of v1.0.76 is LLM-Only and one-shot.  No daemon, no ONNX runtime, no `multilingual-e5-small` model download.  Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks).  Release binary is approximately 6 MB.
@@ -230,7 +242,7 @@
 - Official docs live at https://github.com/openai/codex covering AGENTS.md discovery order
 - Golden tip is to include a working invocation example under each listed command for Codex
 - Since v1.0.62, `ingest --mode codex` uses the Codex CLI binary for LLM-curated entity/relationship extraction during bulk ingestion
-- The ingest mode spawns `codex exec --json` headless per file — requires Codex CLI >= 0.120.0 with active OpenAI API key
+- The ingest mode spawns `codex exec --json` headless per file — requires Codex CLI >= 0.120.0 with active ChatGPT OAuth session (codex login)
 - Use `--codex-timeout <S>` (default 300s) to prevent hung subprocesses in CI/cron pipelines
 
 > **Authentication:** OAuth is the ONLY accepted credential flow. API keys are PROHIBITED.

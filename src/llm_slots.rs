@@ -84,6 +84,12 @@ pub fn acquire_llm_slot(max_concurrent: u32, wait_secs: u64) -> Result<LlmSlotGu
         ))
     })?;
 
+    let stale = find_stale_slots(max_concurrent);
+    for slot_id in &stale {
+        let _ = force_release(*slot_id);
+        tracing::info!(slot_id, "released stale LLM slot (PID dead)");
+    }
+
     let start = Instant::now();
     let timeout = Duration::from_secs(wait_secs);
 

@@ -47,7 +47,7 @@ struct RenameEntityResponse {
     elapsed_ms: u64,
 }
 
-pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
+pub fn run(args: RenameEntityArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -91,8 +91,16 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
         )));
     }
 
-    // Embed the normalized new name for vec_entities replacement.
-    let embedding = crate::embedder::embed_passage_local(&paths.models, &new_name)?;
+    let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(&paths.models, &new_name, Some(llm_backend)) {
+        Ok((emb, _backend)) => Some(emb),
+        Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+        Err(e) if skip_embed => {
+            tracing::warn!(error = %e, "rename-entity: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+            None
+        }
+        Err(e) => return Err(e),
+    };
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute(
@@ -103,14 +111,16 @@ pub fn run(args: RenameEntityArgs) -> Result<(), AppError> {
     // G43: reuse the canonical writer instead of a duplicated INSERT that
     // hardcoded dim=384 and a removed local model name; `upsert_entity_vec`
     // records the real vector length and the CLI version as `model`.
-    entities::upsert_entity_vec(
-        &tx,
-        entity_id,
-        &namespace,
-        entity_type,
-        &embedding,
-        &new_name,
-    )?;
+    if let Some(ref emb) = embedding {
+        entities::upsert_entity_vec(
+            &tx,
+            entity_id,
+            &namespace,
+            entity_type,
+            emb,
+            &new_name,
+        )?;
+    }
     tx.commit()?;
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

@@ -114,6 +114,33 @@
       "description": "SQLite journaling mode (wal, delete, truncate, persist, memory, off).",
       "type": "string"
     },
+    "llm_slots_occupied": {
+      "description": "LLM embedding slots currently occupied (slot file exists).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "llm_slots_stale": {
+      "description": "LLM embedding slots held by dead processes (stale).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "llm_slots_total": {
+      "description": "Total LLM embedding slots available on this host.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "mentions_ratio": {
       "description": "Fraction of relationships that use the `mentions` relation type (0.0–1.0). Omitted when there are no relationships in the database.",
       "format": "double",

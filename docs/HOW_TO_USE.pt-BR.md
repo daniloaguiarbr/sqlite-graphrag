@@ -157,14 +157,14 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 ## Instalação
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.79 --force
+cargo install sqlite-graphrag --version 1.0.89 --force
 ```
 
 Isso instala o build padrão LLM-only. Verifique:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.79
+# sqlite-graphrag 1.0.89
 ```
 
 Para o pipeline legado fastembed (REMOVIDO na v1.0.79):
@@ -187,7 +187,7 @@ O comando `init`:
 1. Cria `graphrag.sqlite` no diretório atual.
 2. Roda todas as migrações incluindo V013 (dropa vec tables, cria `memory_embeddings`, `entity_embeddings`, `chunk_embeddings`).
 3. Spawna a LLM uma vez para confirmar que a sessão OAuth é válida.
-4. Reporta `schema_version: 13` no sucesso.
+4. Reporta `schema_version: 15` no sucesso.
 
 O primeiro `init` é lento (1-3 s de round-trip LLM). Chamadas subsequentes são no-ops (o schema já está na versão alvo).
 
@@ -328,4 +328,4 @@ Soluções alternativas:
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) para Windows e macOS
 - [AGENTS.md](AGENTS.md) para integração com agentes
 - [HEADLESS_INVOCATION.md](HEADLESS_INVOCATION.md) para invocação headless OAuth-safe de Claude/Codex/OpenCode
-- [decisions/](decisions/) para os 26 ADRs
+- [decisions/](decisions/) para os 44 ADRs

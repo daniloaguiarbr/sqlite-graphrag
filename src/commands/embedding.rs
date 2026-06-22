@@ -50,6 +50,9 @@ pub enum EmbeddingCmd {
 pub struct EmbeddingStatusArgs {
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -62,6 +65,9 @@ pub struct EmbeddingListArgs {
     /// Maximum number of entries to return. Default: 100.
     #[arg(long, default_value_t = 100)]
     pub limit: usize,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -93,6 +99,9 @@ pub struct EmbeddingAbandonArgs {
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
     pub yes: bool,
+    /// JSON output (always on; accepted for CLI consistency).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Serialize)]

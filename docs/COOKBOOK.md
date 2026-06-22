@@ -1103,12 +1103,12 @@ esac
 
 
 ### Explanation
-- 17 exit codes from 0 to 77 following sysexits.h conventions for machine-parseable error routing
+- 18 exit codes from 0 to 77 following sysexits.h conventions for machine-parseable error routing
 - Exit 3 means optimistic locking conflict: reload the memory with `read --json` and retry
 - Exit 13 means partial batch failure: reprocess only the failed items, NOT the entire batch
 - Exit 75 and 77 signal resource pressure: NEVER increase concurrency after receiving these codes
 - Exit 15 means database busy: widen `--wait-lock <ms>` to wait longer before failing
-- Full code table: 0=success, 1=validation, 2=Clap-argument-error, 9=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=partial, 14=I/O, 15=busy, 20=internal, 75=slots, 77=RAM
+- Full code table: 0=success, 1=validation, 2=Clap-argument-error, 9=duplicate-or-soft-deleted, 3=conflict, 4=not-found, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec (historical — removed in v1.0.76), 13=partial, 14=I/O, 15=busy, 16=preflight (EX_CONFIG), 19=shutdown (SHUTDOWN_EXIT_CODE), 20=internal, 75=slots, 77=RAM
 
 
 ### Variants
@@ -1262,7 +1262,7 @@ fn recall_agent_context(namespace: &str, query: &str, k: u8) -> anyhow::Result<V
 ```
 
 ### Explanation
-- `Command::new("sqlite-graphrag")` shells out to the 25 MB stateless binary with zero FFI cost
+- `Command::new("sqlite-graphrag")` shells out to the 15 MB stateless binary with zero FFI cost
 - `--namespace` scopes memory to the specific rig agent preventing cross-agent contamination
 - `--json` returns structured output that `serde_json` parses without fragile regex parsing
 - `anyhow::ensure!` converts exit-code failures into typed errors your agent can handle
@@ -2029,7 +2029,7 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 ```
 
 ### Variations
-- Use `--codex-model o4-mini` for lower cost extraction
+- Use `--codex-model gpt-5.5` to select the extraction model (accepted: codex-auto-review, gpt-5.3-codex-spark, gpt-5.4, gpt-5.4-mini, gpt-5.5)
 - Use `--codex-binary /usr/local/bin/codex` to specify binary path
 - Use `--codex-timeout 600` to increase per-file timeout from default 300s
 - Use `--dry-run` to preview file-to-name mapping without spawning Codex
@@ -2038,7 +2038,7 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 - Set `SQLITE_GRAPHRAG_CODEX_BINARY` env var to override PATH lookup permanently
 
 ### Notes
-- Requires Codex CLI >= 0.120.0 installed locally with active OpenAI API key
+- Requires Codex CLI 0.130.0+ installed locally with active OpenAI API key
 - Codex reports token usage (input_tokens, output_tokens) instead of cost_usd
 - Uses same NDJSON output format as `--mode claude-code` (PhaseEvent, FileEvent, Summary)
 - Queue DB `.ingest-queue.sqlite` enables resume/retry across sessions

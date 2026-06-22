@@ -55,9 +55,9 @@ pub fn run(args: CleanupOrphansArgs) -> Result<(), AppError> {
         0
     } else {
         if orphan_count > 0 && !args.yes {
-            output::emit_progress(&format!(
-                "removing {orphan_count} orphan entities (use --yes to skip this notice)"
-            ));
+            return Err(AppError::Validation(format!(
+                "refusing to delete {orphan_count} orphan entities without --yes (use --dry-run to preview)"
+            )));
         }
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let removed = entities::delete_entities_by_ids(&tx, &orphan_ids)?;

@@ -83,6 +83,14 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - v1.0.88 hotfixes: BUG-11 (preflight failure in extract/llm_embedding.rs did not propagate to remember; fixed with embed_via_backend_strict), BUG-12 (OAuth-only emitted 2 identical stderr lines; fixed with single-line stderr), BUG-13 (link --create-missing bypassed entity-name validation; fixed by validating BEFORE normalizing in entity_validation_integration.rs, 8 tests, 4-char boundary).
 - See docs/decisions/adr-0045-preflight-validation-layer.md and adr-0046-preflight-remediation.md for the full architectural decision.
 
+## v1.0.89 Embedding Pipeline Remediation and Safety Fixes (ADR-0050)
+- BUG-YES-FLAG-IGNORED: three destructive commands (slots release, purge, cleanup-orphans) declared --yes but executed deletions without it. All now abort with AppError::Validation when --yes is absent, matching the 5 other destructive commands that already enforced this
+- BUG-BOOLISH-ENV: four boolean CLI flags (--skip-embedding-on-failure, --strict-env-clear, --dry-run-backend, --llm-slot-no-wait) rejected standard Unix env values (1, yes, on) with exit 2. Fixed via BoolishValueParser. Scripts setting SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE=1 now work correctly
+- BUG-STRICT-ENV-PROPAGATION: --strict-env-clear CLI flag was silently ignored because main.rs did not propagate it to the env var. Fixed: now propagated via set_var before command dispatch
+- GAP-FLAGS-MORTAS: 7 global LLM flags were accepted by clap but silently ignored because internal modules read env vars directly. Fixed: main.rs now bridges CLI flags to env vars via set_var
+- GAP-RECALL-001: embedding deadlock from stale LLM subprocess slots resolved via explicit drop(stdin), reduced timeout (300s to 30s), stale slot reaper, and sqlite-graphrag orphan process cleanup
+- See docs/decisions/adr-0050-embedding-deadlock-remediation.md for the full architectural decision
+
 ## Hall of Fame
 - We publicly acknowledge researchers who report vulnerabilities responsibly
 - This section is open to contributions: your name will be added after coordinated disclosure

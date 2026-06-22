@@ -136,8 +136,24 @@ pub struct HealthResponse {
     /// Omitted when degree is within acceptable bounds or there are no entities.
     #[serde(skip_serializing_if = "Option::is_none")]
     hub_warning: Option<String>,
+    /// Total LLM embedding slots available on this host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_slots_total: Option<u32>,
+    /// LLM embedding slots currently occupied (slot file exists).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_slots_occupied: Option<u32>,
+    /// LLM embedding slots held by dead processes (stale).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_slots_stale: Option<u32>,
     checks: Vec<HealthCheck>,
     elapsed_ms: u64,
+}
+
+fn llm_slot_info() -> (u32, u32, u32) {
+    let max = crate::llm_slots::default_max_concurrency();
+    let status = crate::llm_slots::read_status(max);
+    let stale = crate::llm_slots::find_stale_slots(max);
+    (status.max, status.active, stale.len() as u32)
 }
 
 /// Checks whether a table (including virtual ones) exists in sqlite_master.
@@ -283,6 +299,9 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             top_hub_entity: None,
             top_hub_degree: None,
             hub_warning: None,
+            llm_slots_total: None,
+            llm_slots_occupied: None,
+            llm_slots_stale: None,
             checks: vec![HealthCheck {
                 name: "integrity".to_string(),
                 ok: false,
@@ -621,6 +640,7 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         }
     };
 
+    let llm_slots = llm_slot_info();
     let response = HealthResponse {
         status: status.to_string(),
         namespace: namespace_filter.clone(),
@@ -662,6 +682,9 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         top_hub_entity,
         top_hub_degree,
         hub_warning,
+        llm_slots_total: Some(llm_slots.0),
+        llm_slots_occupied: Some(llm_slots.1),
+        llm_slots_stale: Some(llm_slots.2),
         checks,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
@@ -802,6 +825,9 @@ mod tests {
             top_hub_entity: None,
             top_hub_degree: None,
             hub_warning: None,
+            llm_slots_total: None,
+            llm_slots_occupied: None,
+            llm_slots_stale: None,
             checks: vec![
                 HealthCheck {
                     name: "integrity".to_string(),
@@ -916,6 +942,9 @@ mod tests {
             top_hub_entity: None,
             top_hub_degree: None,
             hub_warning: None,
+            llm_slots_total: None,
+            llm_slots_occupied: None,
+            llm_slots_stale: None,
             checks: vec![],
         };
 
@@ -996,6 +1025,9 @@ mod tests {
             top_hub_entity: None,
             top_hub_degree: None,
             hub_warning: None,
+            llm_slots_total: None,
+            llm_slots_occupied: None,
+            llm_slots_stale: None,
             checks: vec![],
         }
     }

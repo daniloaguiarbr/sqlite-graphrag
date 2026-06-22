@@ -80,7 +80,7 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - DEFINA `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` para modo compliance (ADR-0041)
 - DEFINA `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1` APENAS para harnesses de teste CI
 - VALORES válidos de `--type`: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
-- FLAGS globais: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`
+- FLAGS globais: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--llm-model <MODEL>`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`, `--claude-binary <PATH>`, `--codex-binary <PATH>`, `--skip-embedding-on-failure`
 
 
 ## Contrato de Arquitetura (OAuth/LLM/One-Shot)
@@ -97,8 +97,8 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - OAUTH-ONLY: ambas API keys EXCLUÍDAS do whitelist de env-clear
 - OAUTH-ONLY: flag `--bare` REMOVIDA de todos os caminhos executáveis
 - OAUTH-ONLY: 7 flags de endurecimento SEMPRE passadas para `claude -p`
-- FLAGS de endurecimento para claude: `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema`
-- FLAGS de endurecimento para codex: `--json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}' --ask-for-approval never`
+- FLAGS de endurecimento para claude: `--model claude-sonnet-4-6 --strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema`
+- FLAGS de endurecimento para codex: `--model gpt-5.5 --json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}' --ask-for-approval never`
 - ADR-0041 v1.0.83: `ANTHROPIC_AUTH_TOKEN` PRESERVADA para providers Anthropic-compatíveis
 - ADR-0041 v1.0.83: `ANTHROPIC_BASE_URL` PRESERVADA para endpoints customizados
 - ADR-0041 v1.0.83: `OPENAI_BASE_URL` PRESERVADA para endpoints OpenAI-compatíveis
@@ -347,6 +347,22 @@ description:Para memória persistente, GraphRAG, ou contexto de longo prazo em C
 - INVOKE a variante `AppError::PreFlightFailed(PreFlightError)` no tratamento de erros; exit code 16, `is_permanent() == true`
 
 
+## Remediação de Deadlock de Embedding v1.0.89+ (ADR-0050)
+- PASSE `--llm-model <MODEL>` como flag global para selecionar modelo de embedding para TODOS os backends (v1.0.89, ADR-0050)
+- MODELO padrão para backend codex: `gpt-5.5`; para backend claude: `claude-sonnet-4-6`
+- DEFINA env `SQLITE_GRAPHRAG_LLM_MODEL` como override persistente para `--llm-model`
+- PASSE `--codex-binary <PATH>` para sobrescrever localização do binário codex (v1.0.89, ADR-0050)
+- DEFINA env `SQLITE_GRAPHRAG_CODEX_BINARY` como override persistente para `--codex-binary`
+- PASSE `--claude-binary <PATH>` para sobrescrever localização do binário claude (propagado via set_var desde v1.0.89)
+- PASSE `--skip-embedding-on-failure` para retornar exit 0 quando embedding LLM falha (cabeado end-to-end desde v1.0.89, ADR-0050)
+- SAIBA que 7 flags CLI mortas foram corrigidas na v1.0.89 via propagação `set_var` em `main.rs`: `--llm-model`, `--llm-fallback`, `--skip-embedding-on-failure`, `--claude-binary`, `--codex-binary`, `--llm-max-host-concurrency`, `--llm-slot-wait-secs`
+- SAIBA que `deep-research` e `remember-batch` agora recebem `llm_backend` do main.rs (v1.0.89, ADR-0050)
+- SAIBA que timeout adaptativo escala com tamanho do batch: `base + 15s × (batch_size - 1)` (v1.0.89, ADR-0050)
+- SAIBA que erros de OAuth expirado agora incluem hint acionável: "execute codex login" ou "atualize OAuth do claude" (v1.0.89)
+- SAIBA que `BoolishValueParser` aceita `1/yes/on/true` e `0/no/off/false` para env vars booleanas (v1.0.89, ADR-0050)
+- SAIBA que flag `--yes` em `slots release`, `purge`, `cleanup-orphans` foi cabeada end-to-end (v1.0.89, BUG-YES-FLAG-IGNORED)
+
+
 ## Drift de Schema e Paridade de Flag v1.0.89+ (ADR-0048, ADR-0049)
 - SAIBA que `health.schema.json` foi regenerado via macro derive `schemars` (ADR-0048); `additionalProperties: true` conforme política Must-Ignore (RFC 7493 I-JSON)
 - SAIBA que 17 novos campos foram adicionados ao envelope `health` desde v1.0.88: `fts_query_ok`, `vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`
@@ -510,7 +526,7 @@ sqlite-graphrag deep-research "Como o binário se autentica em providers OAuth?"
 
 ### Exemplo 7 — Extração de entidades curada por LLM
 ```bash
-sqlite-graphrag ingest ./corpus --mode claude-code --recursive --resume --json \
+sqlite-graphrag --llm-model claude-sonnet-4-6 ingest ./corpus --mode claude-code --recursive --resume --json \
   | jaq -c 'select(.status == "done") | {file, entities, rels}'
 ```
 - ESPERE: NDJSON por arquivo com `entities` count, `rels` count; `--resume` continua após interrupção

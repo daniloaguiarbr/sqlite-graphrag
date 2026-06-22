@@ -641,12 +641,17 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     // v1.0.84 (ADR-0042): extrai o backend que efetivamente executou o
     // embedding da passagem (ou do batch em chunks) para popular
     // `backend_invoked` no envelope de resposta.
-    let (embedding, backend_invoked_passage): (Vec<f32>, Option<&str>) = if chunks_info.len() == 1 {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
-        // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — kind
-        // é o backend que efetivamente rodou (Claude/Codex/None).
-        crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend))
-            .map(|(v, k)| (v, Some(k.as_str())))?
+    let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+    let (embedding, backend_invoked_passage): (Option<Vec<f32>>, Option<&str>) = if chunks_info.len() == 1 {
+        match crate::embedder::embed_passage_with_choice(&paths.models, &raw_body, Some(llm_backend)) {
+            Ok((v, k)) => (Some(v), Some(k.as_str())),
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                (None, None)
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         let chunk_texts: Vec<String> = chunks_info
             .iter()
@@ -682,30 +687,33 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
                 });
             }
         }
-        let chunk_embeddings = crate::embedder::embed_passages_parallel_local(
+        match crate::embedder::embed_passages_parallel_local(
             &paths.models,
             &chunk_texts,
             args.llm_parallelism as usize,
             crate::embedder::chunk_embed_batch_size(),
-        )?;
-        output::emit_progress_i18n(
-            &format!(
-                "Remember stage: chunk embeddings complete; process RSS {} MB",
-                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
-            ),
-            &format!(
-                "Stage remember: chunk embeddings completed; process RSS {} MB",
-                crate::memory_guard::current_process_memory_mb().unwrap_or(0)
-            ),
-        );
-        let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
-        chunk_embeddings_cache = Some(chunk_embeddings);
-        // v1.0.84 (ADR-0042): o batch paralelo embed_passages_parallel_local
-        // não retorna o discriminador por chamada (cada chunk pode ter caído
-        // em backends diferentes via fallback chain). Conservadoramente,
-        // populamos `None` aqui — o envelope ainda carrega o caminho
-        // single-chunk via `backend_invoked_passage` para corpos de 1 chunk.
-        (aggregated, None)
+        ) {
+            Ok(chunk_embeddings) => {
+                output::emit_progress_i18n(
+                    &format!(
+                        "Remember stage: chunk embeddings complete; process RSS {} MB",
+                        crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+                    ),
+                    &format!(
+                        "Stage remember: chunk embeddings completed; process RSS {} MB",
+                        crate::memory_guard::current_process_memory_mb().unwrap_or(0)
+                    ),
+                );
+                let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
+                chunk_embeddings_cache = Some(chunk_embeddings);
+                (Some(aggregated), None)
+            }
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "chunk embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                (None, None)
+            }
+            Err(e) => return Err(e),
+        }
     };
     let body_for_storage = raw_body;
 
@@ -745,11 +753,19 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     // chunk body embedding below still uses `embed_passages_parallel_local`
     // because chunks are unique per memory and the cache hit rate is
     // effectively zero.
-    let (graph_entity_embeddings, embed_cache_stats) = crate::embedder::embed_entity_texts_cached(
+    let (graph_entity_embeddings, embed_cache_stats) = match crate::embedder::embed_entity_texts_cached(
         &paths.models,
         &entity_texts,
         args.llm_parallelism as usize,
-    )?;
+    ) {
+        Ok(r) => r,
+        Err(e) if skip_embed => {
+            tracing::warn!(error = %e, "entity embedding failed; --skip-embedding-on-failure active");
+            let empty: Vec<Vec<f32>> = entity_texts.iter().map(|_| vec![]).collect();
+            (empty, crate::embedder::EmbedCacheStats::default())
+        }
+        Err(e) => return Err(e),
+    };
     if embed_cache_stats.hits > 0 {
         tracing::debug!(
             hits = embed_cache_stats.hits,
@@ -823,15 +839,17 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
                 "edit",
             )?;
             if !body_unchanged {
-                memories::upsert_vec(
-                    &tx,
-                    existing_id,
-                    &namespace,
-                    memory_type,
-                    &embedding,
-                    &normalized_name,
-                    &snippet,
-                )?;
+                if let Some(ref emb) = embedding {
+                    memories::upsert_vec(
+                        &tx,
+                        existing_id,
+                        &namespace,
+                        memory_type,
+                        emb,
+                        &normalized_name,
+                        &snippet,
+                    )?;
+                }
             }
             (existing_id, "updated".to_string(), next_v)
         }
@@ -854,15 +872,17 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
                 None,
                 "create",
             )?;
-            memories::upsert_vec(
-                &tx,
-                id,
-                &namespace,
-                memory_type,
-                &embedding,
-                &normalized_name,
-                &snippet,
-            )?;
+            if let Some(ref emb) = embedding {
+                memories::upsert_vec(
+                    &tx,
+                    id,
+                    &namespace,
+                    memory_type,
+                    emb,
+                    &normalized_name,
+                    &snippet,
+                )?;
+            }
             (id, "created".to_string(), 1)
         }
     };
@@ -870,14 +890,10 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
     if chunks_info.len() > 1 && !skip_reindex {
         storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
 
-        let chunk_embeddings = chunk_embeddings_cache.take().ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "chunk embeddings cache missing in multi-chunk remember path"
-            ))
-        })?;
-
-        for (i, emb) in chunk_embeddings.iter().enumerate() {
-            storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+        if let Some(chunk_embeddings) = chunk_embeddings_cache.take() {
+            for (i, emb) in chunk_embeddings.iter().enumerate() {
+                storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+            }
         }
         output::emit_progress_i18n(
             &format!(

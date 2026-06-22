@@ -76,6 +76,21 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Modelo de ameaça: valores de credencial para providers customizados fluem do processo orquestrador para o subprocesso LLM pela fronteira de processo. O teste de auditoria de no-leak previne regressões futuras onde uma macro `tracing` possa imprimir o token bruto no stderr. Operadores em hosts compartilhados devem preferir `--strict-env-clear` para evitar encaminhar segredos
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.md` (PT-BR) e `.md` (EN) para a decisão arquitetural completa e alternativas consideradas
 
+## v1.0.87+ Camada de Validação Pre-flight (ADR-0045)
+- Todo spawn de subprocesso LLM passa por src/spawn/preflight.rs (15 testes unitários, 7 guardas) ANTES do fork. Falhas retornam AppError::PreFlightFailed (exit code 16, EX_CONFIG).
+- 7 guardas: check_argv_size, check_binary_exists, check_mcp_config_inline (substitui o literal --mcp-config '{}' por tempfile, corrige BUG-2), check_mcp_config_path, check_walkup_mcp_json (valida o walk-up de .mcp.json, corrige BUG-5), check_output_buffer (corrige BUG-4), check_claude_config_dir (evita vazamento de MCP).
+- Bypass: SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 desabilita todas as 7 guardas. Opt-out de último recurso; o bypass reverte para Command::spawn() direto e herda todas as 5 classes de BUG.
+- Hotfixes da v1.0.88: BUG-11 (falha de preflight em extract/llm_embedding.rs não propagava para remember; corrigido com embed_via_backend_strict), BUG-12 (OAuth-only emitia 2 linhas idênticas no stderr; corrigido com stderr de linha única), BUG-13 (link --create-missing burlava a validação de nome de entidade; corrigido validando ANTES de normalizar em entity_validation_integration.rs, 8 testes, fronteira de 4 caracteres).
+- Veja docs/decisions/adr-0045-preflight-validation-layer.md e adr-0046-preflight-remediation.md para a decisão arquitetural completa.
+
+## v1.0.89 Remediação do Pipeline de Embedding e Correções de Segurança (ADR-0050)
+- BUG-YES-FLAG-IGNORED: três comandos destrutivos (slots release, purge, cleanup-orphans) declaravam --yes mas executavam deleções sem ele. Todos agora abortam com AppError::Validation quando --yes está ausente, alinhando com os 5 outros comandos destrutivos que já aplicavam isso
+- BUG-BOOLISH-ENV: quatro flags booleanas de CLI (--skip-embedding-on-failure, --strict-env-clear, --dry-run-backend, --llm-slot-no-wait) rejeitavam valores Unix padrão de env (1, yes, on) com exit 2. Corrigido via BoolishValueParser. Scripts que definem SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE=1 agora funcionam corretamente
+- BUG-STRICT-ENV-PROPAGATION: a flag de CLI --strict-env-clear era silenciosamente ignorada porque main.rs não a propagava para a env var. Corrigido: agora propagada via set_var antes do dispatch do comando
+- GAP-FLAGS-MORTAS: 7 flags globais de LLM eram aceitas pelo clap mas silenciosamente ignoradas porque módulos internos liam env vars diretamente. Corrigido: main.rs agora faz a ponte das flags de CLI para env vars via set_var
+- GAP-RECALL-001: deadlock de embedding causado por slots de subprocesso LLM obsoletos resolvido via drop(stdin) explícito, timeout reduzido (300s para 30s), reaper de slots obsoletos e limpeza de processos órfãos do sqlite-graphrag
+- Veja docs/decisions/adr-0050-embedding-deadlock-remediation.md para a decisão arquitetural completa
+
 ## Hall da Fama
 - Reconhecemos publicamente pesquisadores que reportam vulnerabilidades de forma responsável
 - Esta seção está aberta a contribuições: seu nome será adicionado após divulgação coordenada

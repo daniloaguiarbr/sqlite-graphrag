@@ -50,6 +50,8 @@ pub struct PendingEmbeddingsListArgs {
     /// Maximum number of entries to return. Default: 1000.
     #[arg(long, default_value_t = 1000)]
     pub limit: usize,
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +65,8 @@ pub struct PendingEmbeddingsAbandonArgs {
     /// Dry-run: count candidates without modifying.
     #[arg(long)]
     pub dry_run: bool,
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Serialize)]

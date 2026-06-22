@@ -23,9 +23,16 @@ pub struct LlmExtractorConfig {
 }
 
 impl Default for LlmExtractorConfig {
+    /// v1.0.89 (GAP-META-006): resolves the backend at runtime via
+    /// `detect_available_backend()` instead of hardcoding "codex".
     fn default() -> Self {
+        let backend = match detect_available_backend() {
+            Ok(LlmBackendKindFactory::Codex) | Ok(LlmBackendKindFactory::Auto) => "codex".to_string(),
+            Ok(LlmBackendKindFactory::Claude) => "claude".to_string(),
+            Ok(LlmBackendKindFactory::None) | Err(_) => "none".to_string(),
+        };
         Self {
-            backend: "codex".to_string(),
+            backend,
             model: None,
             timeout_secs: Some(300),
         }
@@ -42,6 +49,11 @@ impl LlmBackend {
         Self { config }
     }
 
+    /// v1.0.89 (GAP-WITH-DEFAULT-CODEX): legacy constructor — `Default` now
+    /// resolves the backend at runtime via `detect_available_backend()`.
+    /// Callers should use `LlmBackend::new(LlmExtractorConfig::default())`
+    /// or the factory pattern in `factory_for_choice()` instead.
+    #[deprecated(since = "1.0.89", note = "use LlmBackend::new(LlmExtractorConfig::default()) or factory_for_choice()")]
     pub fn with_default_codex() -> Self {
         Self::new(LlmExtractorConfig::default())
     }

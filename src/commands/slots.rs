@@ -34,6 +34,9 @@ pub enum SlotsCmd {
         /// Skip the interactive confirmation prompt.
         #[arg(long)]
         yes: bool,
+        /// JSON output (always on; accepted for CLI consistency).
+        #[arg(long, hide = true)]
+        json: bool,
     },
     /// Remove slot files older than `stale-after` seconds.
     Cleanup {
@@ -54,6 +57,9 @@ pub struct SlotsStatusArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     pub format: OutputFormat,
+    /// JSON output (always on; accepted for CLI consistency with other subcommands).
+    #[arg(long, hide = true)]
+    pub json: bool,
 }
 
 #[derive(Serialize)]
@@ -81,7 +87,11 @@ pub fn run(args: SlotsArgs) -> Result<(), AppError> {
 fn run_cmd(cmd: SlotsCmd) -> Result<(), AppError> {
     match cmd {
         SlotsCmd::Status(args) => run_status(args),
-        SlotsCmd::Release { slot_id, yes } => run_release(slot_id, yes),
+        SlotsCmd::Release {
+            slot_id,
+            yes,
+            json: _,
+        } => run_release(slot_id, yes),
         SlotsCmd::Cleanup {
             stale_after,
             yes,
@@ -169,10 +179,10 @@ fn run_release(slot_id: u32, yes: bool) -> Result<(), AppError> {
         )));
     }
     if !yes {
-        eprintln!(
-            "About to release slot {slot_id} at {}. Pass --yes to skip confirmation.",
+        return Err(AppError::Validation(format!(
+            "refusing to release slot {slot_id} without --yes (file: {})",
             path.display()
-        );
+        )));
     }
     std::fs::remove_file(&path).map_err(AppError::Io)?;
     let out = serde_json::json!({

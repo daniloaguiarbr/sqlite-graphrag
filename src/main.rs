@@ -313,6 +313,38 @@ fn main() -> std::process::ExitCode {
 
     sqlite_graphrag::signals::register_shutdown_handler();
 
+    // v1.0.89 (GAP-2): propagate CLI flags to env vars so internal modules
+    // that read via std::env::var() honour the CLI override. clap's `env = "..."`
+    // reads the env var as a FALLBACK when the flag is absent, but does NOT
+    // set the env var when the flag IS provided via CLI. This bridge closes
+    // the gap: --claude-binary /path → SQLITE_GRAPHRAG_CLAUDE_BINARY=/path.
+    if let Some(ref path) = cli.claude_binary {
+        std::env::set_var("SQLITE_GRAPHRAG_CLAUDE_BINARY", path);
+    }
+    if let Some(ref path) = cli.codex_binary {
+        std::env::set_var("SQLITE_GRAPHRAG_CODEX_BINARY", path);
+    }
+    if let Some(ref model) = cli.llm_model {
+        std::env::set_var("SQLITE_GRAPHRAG_LLM_MODEL", model);
+    }
+    if cli.skip_embedding_on_failure {
+        std::env::set_var("SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE", "1");
+    }
+    if let Some(n) = cli.llm_max_host_concurrency {
+        std::env::set_var("SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY", n.to_string());
+    }
+    if let Some(secs) = cli.llm_slot_wait_secs {
+        std::env::set_var("SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS", secs.to_string());
+    }
+    if cli.llm_slot_no_wait {
+        std::env::set_var("SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT", "1");
+    }
+    if cli.strict_env_clear {
+        std::env::set_var("SQLITE_GRAPHRAG_STRICT_ENV_CLEAR", "1");
+    }
+    // GAP-LLM-FALLBACK: propagate --llm-fallback so to_chain() can read it.
+    std::env::set_var("SQLITE_GRAPHRAG_LLM_FALLBACK", &cli.llm_fallback);
+
     // v1.0.84 (ADR-0042 / GAP-002): early-exit branch for `--dry-run-backend`.
     // Resolves the LLM backend that WOULD be invoked for embedding,
     // prints a compact JSON envelope, and exits 0 without spawning any
@@ -342,7 +374,7 @@ fn main() -> std::process::ExitCode {
                 commands::remember::run(args, cli.llm_backend)
             }
             sqlite_graphrag::cli::Commands::RememberBatch(args) => {
-                commands::remember_batch::run(args)
+                commands::remember_batch::run(args, cli.llm_backend)
             }
             sqlite_graphrag::cli::Commands::Ingest(args) => {
                 commands::ingest::run(args, cli.llm_backend)
@@ -356,7 +388,9 @@ fn main() -> std::process::ExitCode {
                 commands::edit::run(args, cli.llm_backend)
             }
             sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
-            sqlite_graphrag::cli::Commands::Restore(args) => commands::restore::run(args),
+            sqlite_graphrag::cli::Commands::Restore(args) => {
+                commands::restore::run(args, cli.llm_backend)
+            }
             sqlite_graphrag::cli::Commands::HybridSearch(args) => {
                 commands::hybrid_search::run(args, cli.llm_backend)
             }
@@ -380,7 +414,7 @@ fn main() -> std::process::ExitCode {
             sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
             sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
             sqlite_graphrag::cli::Commands::DeepResearch(args) => {
-                commands::deep_research::run(args)
+                commands::deep_research::run(args, cli.llm_backend)
             }
             sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
             sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
@@ -416,7 +450,7 @@ fn main() -> std::process::ExitCode {
             }
             sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
             sqlite_graphrag::cli::Commands::RenameEntity(args) => {
-                commands::rename_entity::run(args)
+                commands::rename_entity::run(args, cli.llm_backend)
             }
             sqlite_graphrag::cli::Commands::MergeEntities(args) => {
                 commands::merge_entities::run(args)

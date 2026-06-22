@@ -80,7 +80,7 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - SET `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` for compliance mode (ADR-0041)
 - SET `SQLITE_GRAPHRAG_IGNORE_SHUTDOWN=1` ONLY for CI test harnesses
 - VALID `--type` values: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
-- GLOBAL flags: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`
+- GLOBAL flags: `--db`, `--namespace`, `--lang`, `--tz`, `--json`, `--low-memory`, `--max-concurrency N`, `--wait-lock SECS`, `--llm-parallelism N`, `--llm-backend claude|codex|none|auto[,fallback...]`, `--llm-model <MODEL>`, `--dry-run-backend`, `--llm-fallback-mode <claude|codex>`, `--graceful-shutdown-secs N`, `--claude-binary <PATH>`, `--codex-binary <PATH>`, `--skip-embedding-on-failure`
 
 
 ## Architecture Contract (OAuth/LLM/One-Shot)
@@ -97,8 +97,8 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - OAUTH-ONLY: both API keys EXCLUDED from env-clear whitelist
 - OAUTH-ONLY: `--bare` flag REMOVED from all executable paths
 - OAUTH-ONLY: 7 hardening flags ALWAYS passed to `claude -p`
-- HARDENING flags for claude: `--strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema`
-- HARDENING flags for codex: `--json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}' --ask-for-approval never`
+- HARDENING flags for claude: `--model claude-sonnet-4-6 --strict-mcp-config --mcp-config '{}' --settings '{"hooks":{}}' --dangerously-skip-permissions --output-schema`
+- HARDENING flags for codex: `--model gpt-5.5 --json --output-schema --ephemeral --skip-git-repo-check --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers='{}' --ask-for-approval never`
 - ADR-0041 v1.0.83: `ANTHROPIC_AUTH_TOKEN` PRESERVED for Anthropic-compatible providers
 - ADR-0041 v1.0.83: `ANTHROPIC_BASE_URL` PRESERVED for custom endpoints
 - ADR-0041 v1.0.83: `OPENAI_BASE_URL` PRESERVED for OpenAI-compatible endpoints
@@ -347,6 +347,22 @@ description:For persistent memory, GraphRAG, or long-term context in Claude Code
 - INVOKE `AppError::PreFlightFailed(PreFlightError)` variant in error handling; exit code 16, `is_permanent() == true`
 
 
+## v1.0.89+ Embedding Deadlock Remediation (ADR-0050)
+- PASS `--llm-model <MODEL>` global flag to select embedding model for ALL backends (v1.0.89, ADR-0050)
+- DEFAULT model for codex backend: `gpt-5.5`; for claude backend: `claude-sonnet-4-6`
+- SET env `SQLITE_GRAPHRAG_LLM_MODEL` as persistent override for `--llm-model`
+- PASS `--codex-binary <PATH>` to override codex binary location (v1.0.89, ADR-0050)
+- SET env `SQLITE_GRAPHRAG_CODEX_BINARY` as persistent override for `--codex-binary`
+- PASS `--claude-binary <PATH>` to override claude binary location (propagated via set_var since v1.0.89)
+- PASS `--skip-embedding-on-failure` to exit 0 when LLM embedding fails (wired end-to-end since v1.0.89, ADR-0050)
+- KNOW 7 dead CLI flags were fixed in v1.0.89 via `set_var` propagation in `main.rs`: `--llm-model`, `--llm-fallback`, `--skip-embedding-on-failure`, `--claude-binary`, `--codex-binary`, `--llm-max-host-concurrency`, `--llm-slot-wait-secs`
+- KNOW `deep-research` and `remember-batch` now receive `llm_backend` from main.rs (v1.0.89, ADR-0050)
+- KNOW adaptive timeout scales with batch size: `base + 15s × (batch_size - 1)` (v1.0.89, ADR-0050)
+- KNOW OAuth expiry errors now include actionable hint: "run codex login" or "refresh claude OAuth" (v1.0.89)
+- KNOW `BoolishValueParser` accepts `1/yes/on/true` and `0/no/off/false` for boolean env vars (v1.0.89, ADR-0050)
+- KNOW `--yes` flag on `slots release`, `purge`, `cleanup-orphans` was wired end-to-end (v1.0.89, BUG-YES-FLAG-IGNORED)
+
+
 ## v1.0.89+ Schema Drift and Flag Parity (ADR-0048, ADR-0049)
 - KNOW `health.schema.json` regenerated via `schemars` derive macro (ADR-0048); `additionalProperties: true` per Must-Ignore policy (RFC 7493 I-JSON)
 - KNOW 17 new fields added to `health` envelope since v1.0.88: `fts_query_ok`, `vec_memories_missing`, `vec_memories_orphaned`, `sqlite_version`, `mentions_ratio`, `mentions_warning`, `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning`, `super_hub_count`, `super_hub_warning`, `top_hub_entity`, `top_hub_degree`, `hub_warning`, `non_normalized_count`, `normalization_warning`
@@ -510,7 +526,7 @@ sqlite-graphrag deep-research "How does the binary authenticate to OAuth provide
 
 ### Example 7 — LLM-curated entity extraction from existing docs
 ```bash
-sqlite-graphrag ingest ./corpus --mode claude-code --recursive --resume --json \
+sqlite-graphrag --llm-model claude-sonnet-4-6 ingest ./corpus --mode claude-code --recursive --resume --json \
   | jaq -c 'select(.status == "done") | {file, entities, rels}'
 ```
 - EXPECT: per-file NDJSON with `entities` count, `rels` count; `--resume` continues after interruption

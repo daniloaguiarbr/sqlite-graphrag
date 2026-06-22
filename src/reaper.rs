@@ -26,7 +26,7 @@ use std::time::Duration;
 const ORPHAN_MIN_AGE_SECS: u64 = 60;
 
 #[cfg(unix)]
-const ORPHAN_SCAN_TARGETS: &[&str] = &["claude", "codex"];
+const ORPHAN_SCAN_TARGETS: &[&str] = &["claude", "codex", "sqlite-graphrag"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReaperReport {
@@ -61,6 +61,13 @@ pub fn scan_and_kill_orphans() -> ReaperReport {
         // G42/S4 (v1.0.79): also remove stale `codex-home-{pid}`
         // isolation directories left behind by crashed invocations.
         clean_stale_codex_homes();
+    }
+
+    let max = crate::llm_slots::default_max_concurrency();
+    let stale = crate::llm_slots::find_stale_slots(max);
+    for slot_id in &stale {
+        let _ = crate::llm_slots::force_release(*slot_id);
+        tracing::info!(target: "reaper", slot_id, "released stale LLM slot (PID dead)");
     }
 
     #[cfg(not(unix))]
@@ -285,6 +292,12 @@ mod tests {
     fn orphan_targets_include_claude_and_codex() {
         assert!(ORPHAN_SCAN_TARGETS.contains(&"claude"));
         assert!(ORPHAN_SCAN_TARGETS.contains(&"codex"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_targets_include_sqlite_graphrag() {
+        assert!(ORPHAN_SCAN_TARGETS.contains(&"sqlite-graphrag"));
     }
 
     #[test]

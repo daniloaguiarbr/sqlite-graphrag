@@ -8,14 +8,16 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn llm_backend_kind_and_model() {
-    let backend = LlmBackend::with_default_codex();
+    let backend = LlmBackend::new(LlmExtractorConfig::default());
     assert_eq!(backend.kind(), BackendKind::Llm);
-    assert!(backend.model_name().contains("codex"));
+    // v1.0.89: default resolves dynamically; accept any known backend
+    let model = backend.model_name();
+    assert!(model.contains("codex") || model.contains("claude") || model.contains("none"));
 }
 
 #[tokio::test]
 async fn llm_backend_health_is_ok() {
-    let backend = LlmBackend::with_default_codex();
+    let backend = LlmBackend::new(LlmExtractorConfig::default());
     let health = backend.health().await.expect("health");
     assert!(health.healthy);
     assert_eq!(health.kind, BackendKind::Llm);
@@ -23,7 +25,7 @@ async fn llm_backend_health_is_ok() {
 
 #[tokio::test]
 async fn llm_backend_extracts_basic_entities() {
-    let backend = LlmBackend::with_default_codex();
+    let backend = LlmBackend::new(LlmExtractorConfig::default());
     let hints = ExtractionHints::default();
     let output = backend
         .extract("rust tokio sqlite graphrag is a memory tool", &hints)
@@ -36,7 +38,7 @@ async fn llm_backend_extracts_basic_entities() {
 
 #[tokio::test]
 async fn llm_backend_skips_short_input() {
-    let backend = LlmBackend::with_default_codex();
+    let backend = LlmBackend::new(LlmExtractorConfig::default());
     let hints = ExtractionHints::default();
     let output = backend.extract("", &hints).await.expect("extract");
     assert!(output.entities.is_empty());
@@ -45,7 +47,7 @@ async fn llm_backend_skips_short_input() {
 
 #[tokio::test]
 async fn llm_backend_clamps_relations_on_skip() {
-    let backend = LlmBackend::with_default_codex();
+    let backend = LlmBackend::new(LlmExtractorConfig::default());
     let hints = ExtractionHints {
         skip_relations: true,
         ..ExtractionHints::default()
@@ -81,7 +83,7 @@ async fn none_backend_returns_empty() {
 #[tokio::test]
 async fn composite_backend_merges_outputs() {
     let llm: Arc<dyn sqlite_graphrag::extract::ExtractionBackend> =
-        Arc::new(LlmBackend::with_default_codex());
+        Arc::new(LlmBackend::new(LlmExtractorConfig::default()));
     let none: Arc<dyn sqlite_graphrag::extract::ExtractionBackend> = Arc::new(NoneBackend::new());
     let composite = CompositeBackend::new(vec![llm, none]);
     let hints = ExtractionHints::default();

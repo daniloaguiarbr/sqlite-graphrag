@@ -240,6 +240,44 @@ pub fn embed_passage_local(models_dir: &Path, text: &str) -> Result<Vec<f32>, Ap
     embed_passage(embedder, text)
 }
 
+/// v1.0.89 (BUG-SKIP-EMBED): reads `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE`
+/// env var (set by `--skip-embedding-on-failure` via main.rs propagation).
+/// Returns `true` when the user opted to persist with NULL embedding on failure.
+pub fn should_skip_embedding_on_failure() -> bool {
+    matches!(
+        std::env::var("SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// v1.0.89 (BUG-SKIP-EMBED + GAP-EMBED-PROPAGATION): embed a passage
+/// honouring both `--llm-backend` and `--skip-embedding-on-failure`.
+///
+/// On success returns `Ok(Some(vec))`. On failure:
+/// - if `--skip-embedding-on-failure` is active, logs a warning and returns `Ok(None)`
+/// - otherwise propagates the error (exit 11)
+pub fn embed_passage_or_skip(
+    models_dir: &Path,
+    text: &str,
+    choice: Option<crate::cli::LlmBackendChoice>,
+) -> Result<Option<Vec<f32>>, AppError> {
+    match embed_passage_with_choice(models_dir, text, choice) {
+        Ok((v, _backend)) => Ok(Some(v)),
+        Err(AppError::Validation(msg)) => Err(AppError::Validation(msg)),
+        Err(e) => {
+            if should_skip_embedding_on_failure() {
+                tracing::warn!(
+                    error = %e,
+                    "embedding failed but --skip-embedding-on-failure is active; persisting with NULL embedding"
+                );
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 /// BUG-003 / v1.0.85: split of `embed_passage_local` that reports the
 /// resolved [`LlmBackendKind`] based on the ACTUAL
 /// [`LlmEmbedding::flavour`] of the embedder constructed. When

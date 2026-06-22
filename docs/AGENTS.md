@@ -48,7 +48,26 @@
 - GAP-E2E-011 (P2): ingest --auto-describe (default true) extracts description from first meaningful body line
 - GAP-E2E-002 (P3): health --namespace <NS> --json filters counts to a single namespace
 - GAP-E2E-001 (P2): Binary size 14.6 MiB (not 6 MB as documented since v1.0.76)
-- Total: 1877 tests passing (843 lib + 1013 integration + 21 doc). See ADR-0048, ADR-0049
+- BoolishValueParser: boolean env vars now accept `1`/`yes`/`on` (and `0`/`no`/`off`), not just `true`/`false`
+- New flags: `--codex-binary`, `--llm-model`, `--llm-fallback`, `--llm-max-host-concurrency`, `--llm-slot-wait-secs`, `--llm-slot-no-wait`
+- Dead flag fix: 7 CLI flags previously parsed but never forwarded are now properly propagated to the LLM spawn path
+- Default models: `gpt-5.5` for codex, `claude-sonnet-4-6` for claude
+- Total: 1881 tests passing (847 lib + 1013 integration + 21 doc). See ADR-0048, ADR-0049, ADR-0050
+
+## v1.0.89 — Embedding Deadlock Remediation (ADR-0050)
+- GAP-RECALL-001 (CRITICAL): `recall`, `hybrid-search`, `deep-research` no longer hang when LLM subprocess stalls. Fix: `drop(stdin)` before `wait_with_output`, timeout 300s to 60s, stale slot cleanup, reaper kills orphan `sqlite-graphrag` processes
+- GAP-DEEPRESEARCH-001: `deep-research` degrades gracefully to FTS5-only when embedding fails
+- BUG-SKIP-EMBED: `--skip-embedding-on-failure` now works end-to-end in `remember`, `edit`, `restore`, `rename-entity`, `remember-batch`
+- BUG-MODEL-VAZIO: Default models `gpt-5.5` (codex) and `claude-sonnet-4-6` (claude) when no env var is set
+- BUG-YES-FLAG-IGNORED: `slots release`, `purge`, `cleanup-orphans` enforce `--yes`
+- BUG-BOOLISH-ENV: Boolean env vars accept `1`/`yes`/`on` via `BoolishValueParser`
+- BUG-BATCH-FTS-DESYNC + BUG-ENRICH-*-FTS-DESYNC: FTS5 sync after batch/enrich updates
+- GAP-FLAGS-MORTAS: 7 dead CLI flags now propagated via `set_var`
+- GAP-BACKEND-PROPAGATION: `deep-research` and `remember-batch` honor `--llm-backend`
+- GAP-ADAPTIVE-TIMEOUT: Batch embedding timeout scales with batch size (60s + 15s per item)
+- USE `--llm-model gpt-5.5` or `--llm-model claude-sonnet-4-6` to select embedding model explicitly
+- USE `--llm-backend claude` to force Claude backend (default `auto` probes PATH: codex first)
+- USE `--skip-embedding-on-failure` to persist memory without vector when LLM is unavailable
 
 ## v1.0.79 Architecture (LLM-Only)
 

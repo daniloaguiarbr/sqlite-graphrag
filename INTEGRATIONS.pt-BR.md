@@ -73,6 +73,24 @@
 ### Reaper de Órfãos (G28-C)
 - `src/reaper.rs` varre `/proc` no startup, mata qualquer órfão `claude`/`codex` com `PPID=1` e idade maior que 60s.  Invocado do `main` ANTES de qualquer trabalho.  Suíte de 4 testes: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
 
+### Camada de Validação Pre-flight (v1.0.87+ — ADR-0045)
+- Todo spawn de subprocesso LLM passa por `src/spawn/preflight.rs` (15 testes unitários, 7 guards) ANTES do fork.  Falhas retornam `AppError::PreFlightFailed` (código de saída 16, `EX_CONFIG`) sem spawnar o subprocesso.
+- Os 7 guards em ordem: `check_argv_size` (rejeita invocações que excederiam `ARG_MAX` menos 4 KB), `check_binary_exists` (confirma que `claude`/`codex` está alcançável no `PATH`), `check_mcp_config_inline` (substitui o literal `--mcp-config {}` por um tempfile contendo `{"mcpServers":{}}` — corrige BUG-2), `check_mcp_config_path` (valida o conteúdo JSON de `--mcp-config <PATH>`), `check_walkup_mcp_json` (valida o walk-up de `.mcp.json` a partir da raiz do workspace), `check_output_buffer` (eleva o buffer do parser acima de 64 KB quando necessário — corrige BUG-4), `check_claude_config_dir` (valida que `CLAUDE_CONFIG_DIR` está vazio/ausente para evitar vazamento de MCP).
+- Bypass em emergências: defina `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` para desabilitar todos os 7 guards.  Opt-out de último recurso para mitigação de incidente em produção; o bypass reverte para `Command::spawn()` direto e herda todas as 5 classes de BUG do GAP-META-005.
+- Hotfixes relacionados da v1.0.88: BUG-11 (falha de preflight em `extract/llm_embedding.rs` não propagava para `remember`; corrigido com `embed_via_backend_strict` em `bug11_preflight_regression.rs`); BUG-12 (o enforcement OAuth-only emitia 2 linhas idênticas em stderr; corrigido com stderr de linha única em `oauth_stderr_emits_single_line_v1088`); BUG-13 (`link --create-missing` burlava a validação de nome de entidade; corrigido validando ANTES de normalizar em `entity_validation_integration.rs`).
+
+### Correções no Pipeline de Embedding e Novas Flags Globais (v1.0.89 — ADR-0050)
+- 7 flags globais de LLM agora são propagadas da CLI para variáveis de ambiente via set_var em main.rs: --claude-binary, --codex-binary, --llm-model, --skip-embedding-on-failure, --llm-max-host-concurrency, --llm-slot-wait-secs, --llm-slot-no-wait. Antes eram aceitas pelo clap mas silenciosamente ignoradas pelos módulos internos
+- Nova flag --codex-binary (simétrica a --claude-binary) com variável de ambiente SQLITE_GRAPHRAG_CODEX_BINARY
+- --skip-embedding-on-failure agora funcional: persiste memórias com embedding NULL em vez de exit 11; faça o backfill com enrich --operation re-embed
+- --llm-fallback agora funcional: a cadeia CSV (codex,claude,none) é honrada pela resolução do backend Auto via parse_fallback_chain()
+- deep-research e remember-batch agora honram --llm-backend (antes ignoravam o parâmetro)
+- Timeout de embedding adaptativo: embed_timeout_for_batch() escala base + 15s por item de chunk adicional
+- Degradação graciosa do FTS5: deep-research, recall e hybrid-search caem para FTS5-only quando o embedding LLM está indisponível
+- BoolishValueParser em 4 flags booleanas: --skip-embedding-on-failure, --strict-env-clear, --dry-run-backend, --llm-slot-no-wait agora aceitam 1/0/yes/no/on/off (antes só true/false)
+- Dica de expiração OAuth: invoke_claude() detecta padrões 401/Unauthorized e sugere claude login
+- Modelos padrão restaurados: codex usa gpt-5.5 e claude usa claude-sonnet-4-6 quando nenhuma variável de modelo está definida
+
 ## Novos Comandos e Flags (desde v1.0.76)
 ### Arquitetura LLM-Only One-Shot (G21 + G22 + G23 + G24 + G25)
 - O build padrão da v1.0.76 é LLM-Only e one-shot.  Sem daemon, sem runtime ONNX, sem download do modelo `multilingual-e5-small`.  A geração de embeddings e a NER delegam para um subprocesso headless `claude code` ou `codex` (OAuth, sem MCP, sem hooks).  O binário de release tem aproximadamente 6 MB.
@@ -224,7 +242,7 @@
 - Docs oficiais em https://github.com/openai/codex cobrindo a ordem de descoberta do AGENTS.md
 - Dica de ouro é incluir um exemplo de invocação funcional sob cada comando listado para Codex
 - Desde v1.0.62, `ingest --mode codex` usa o binário Codex CLI para extração curada por LLM de entidades/relações durante ingestão em massa
-- O modo de ingestão spawna `codex exec --json` headless por arquivo — requer Codex CLI >= 0.120.0 com API key OpenAI ativa
+- O modo de ingestão spawna `codex exec --json` headless por arquivo — requer Codex CLI >= 0.120.0 com sessão ChatGPT OAuth ativa (codex login)
 - Usar `--codex-timeout <S>` (padrão 300s) para prevenir subprocessos travados em pipelines CI/cron
 
 > **Autenticação:** OAuth é o ÚNICO fluxo de credencial aceito. Chaves de API são PROIBIDAS.

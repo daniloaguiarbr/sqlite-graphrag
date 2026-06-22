@@ -55,7 +55,7 @@ ANTHROPIC_API_KEY=sk-test sqlite-graphrag init
 # v1.0.88+: 1 linha stderr
 ```
 
-## v1.0.89 — Schema Drift + Flag Parity (ADR-0048, ADR-0049)
+## v1.0.89 — Schema Drift + Flag Parity + Remediação de Deadlock de Embedding (ADR-0048, ADR-0049, ADR-0050)
 
 - `health.schema.json` regenerado via `schemars` derive macro. `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON). 17 novos campos adicionados
 - Novos subcomandos que aceitam `--db <PATH>`: `embedding status`, `embedding list`, `embedding abandon`, `pending list`, `pending show`
@@ -64,7 +64,40 @@ ANTHROPIC_API_KEY=sk-test sqlite-graphrag init
 - `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo
 - `health --namespace <NS> --json` filtra contagens para um único namespace
 - Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6`
+- `BoolishValueParser`: variáveis de ambiente booleanas agora aceitam `1`/`yes`/`on` (e `0`/`no`/`off`), não apenas `true`/`false`
+- Novas flags: `--codex-binary`, `--llm-model`, `--llm-fallback`, `--llm-max-host-concurrency`, `--llm-slot-wait-secs`, `--llm-slot-no-wait`
+- Correção de dead flag: 7 flags de CLI antes parseadas mas nunca repassadas agora são corretamente propagadas para o caminho de spawn do LLM
+- Modelos padrão: `gpt-5.5` para codex, `claude-sonnet-4-6` para claude. Sobrescreva com `--llm-model` ou as flags específicas `--codex-model` / `--claude-model`
 - Nenhuma mudança de schema. Nenhuma migração roda
+
+### Remediação de Deadlock de Embedding (ADR-0050)
+
+- GAP-RECALL-001 (CRÍTICA): `recall`, `hybrid-search`, `deep-research` travavam indefinidamente em "Calculando embedding da consulta..." por subprocessos LLM pendurados saturando o semáforo host-wide de slots. Corrigido via `drop(stdin)` explícito antes de `wait_with_output`, redução de timeout 300s para 60s, limpeza de slots obsoletos no startup e expansão do reaper para matar processos `sqlite-graphrag` órfãos
+- GAP-DEEPRESEARCH-001: `deep-research` agora degrada graciosamente para FTS5-only quando embedding falha (antes era hard-fail exit 11)
+- BUG-SKIP-EMBED + BUG-SKIP-EMBED-INCOMPLETE: `--skip-embedding-on-failure` conectada end-to-end em `remember`, `edit`, `restore`, `rename-entity`, `remember-batch`. Memória persiste com embedding NULL para posterior `enrich --operation re-embed`
+- BUG-MODEL-VAZIO: `codex_embed_model()` e `claude_embed_model()` retornam defaults sensatos (`gpt-5.5`, `claude-sonnet-4-6`) em vez de string vazia
+- BUG-YES-FLAG-IGNORED: `slots release`, `purge`, `cleanup-orphans` agora exigem `--yes` antes de operações destrutivas
+- BUG-BOOLISH-ENV: 4 flags booleanas com `env = "SQLITE_GRAPHRAG_*"` agora aceitam `1`/`yes`/`on` via `BoolishValueParser`
+- BUG-BATCH-FTS-DESYNC: `remember-batch --force-merge` agora chama `sync_fts_after_update`
+- BUG-ENRICH-DESC-FTS-DESYNC + BUG-ENRICH-BODY-EXTRACT-FTS-DESYNC: operações de `enrich` agora sincronizam FTS5 após atualizações de descrição/corpo
+- BUG-FORGET-DOUBLE-DELETE-VEC: removida segunda chamada redundante a `delete_vec` no `forget`
+- GAP-FLAGS-MORTAS: 7 flags globais de CLI agora propagadas via `set_var` no `main.rs`
+- GAP-BACKEND-PROPAGATION: `deep-research` e `remember-batch` agora honram `--llm-backend`
+- GAP-ADAPTIVE-TIMEOUT: `embed_timeout_for_batch(batch_size)` escala: 60s base + 15s por item adicional
+
+```bash
+# Forçar backend claude com modelo explícito (ADR-0050)
+sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 \
+  recall "consulta de teste" --k 5 --json
+
+# Pular embedding em falha (persiste memória sem vetor)
+sqlite-graphrag --skip-embedding-on-failure \
+  remember --name resiliente --type note --body "texto" --json
+
+# Codex com modelo explícito
+sqlite-graphrag --llm-backend codex --llm-model gpt-5.5 \
+  hybrid-search "teste" --k 10 --json
+```
 
 ```bash
 # Filtro de namespace em health (GAP-E2E-002)

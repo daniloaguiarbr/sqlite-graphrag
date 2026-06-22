@@ -101,7 +101,7 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 - `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
 ## Current Test Suite Size
 
-945 tests passing via `cargo nextest -P ci` as of v1.0.85.2. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
+847 lib tests, 1881 total tests passing via `cargo nextest -P ci` as of v1.0.89. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
 - `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists
 - `ensure_v013_tables_creates_when_phantom` — verifies repair when V013 is in history but tables are missing
 ### Coverage Rationale

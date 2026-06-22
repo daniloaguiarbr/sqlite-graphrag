@@ -82,7 +82,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         )
         .optional()?;
 
-    let (action, forgotten, deleted_at, memory_id) = match probe {
+    let (action, forgotten, deleted_at, _memory_id) = match probe {
         None => ("not_found", false, None, None),
         Some((id, Some(existing))) => ("already_deleted", false, Some(existing), Some(id)),
         Some((id, None)) => {
@@ -126,17 +126,9 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         }
     };
 
-    if forgotten {
-        if let Some(id) = memory_id {
-            // FTS5 external-content: manual `DELETE FROM fts_memories WHERE rowid=?`
-            // corrupts the index. The correct cleanup happens via the `trg_fts_ad` trigger
-            // when `purge` physically removes the row from `memories`. Between soft-delete
-            // and purge, FTS queries filter `m.deleted_at IS NULL` in the JOIN.
-            if let Err(e) = memories::delete_vec(&conn, id) {
-                tracing::warn!(target: "forget", memory_id = id, error = %e, "vec cleanup failed — orphan vector left");
-            }
-        }
-    }
+    // NOTE: delete_vec is already called BEFORE soft_delete (line 94) inside
+    // the `Some((id, None))` arm above.  A second call here is redundant and
+    // produces spurious log warnings when the vector row no longer exists.
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 

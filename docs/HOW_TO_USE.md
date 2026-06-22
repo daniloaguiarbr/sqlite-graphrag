@@ -219,14 +219,14 @@ set in a parent process.
 ## Install
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.79 --force
+cargo install sqlite-graphrag --version 1.0.89 --force
 ```
 
 This installs the LLM-only default build. Verify:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.80
+# sqlite-graphrag 1.0.89
 ```
 
 For the legacy fastembed pipeline (REMOVED in v1.0.79):
@@ -250,7 +250,7 @@ The `init` command:
 2. Runs all migrations including V013 (drops vec tables, creates
    `memory_embeddings` / `entity_embeddings` / `chunk_embeddings`).
 3. Spawns the LLM once to confirm the OAuth session is valid.
-4. Reports `schema_version: 13` on success.
+4. Reports `schema_version: 15` on success.
 
 The first `init` is slow (1-3 s LLM round-trip). Subsequent
 `init` calls are no-ops (the schema is already at the target
@@ -413,4 +413,4 @@ Workarounds:
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) for Windows / macOS
 - [AGENTS.md](AGENTS.md) for agent integration
 - [HEADLESS_INVOCATION.md](HEADLESS_INVOCATION.md) for OAuth-safe Claude/Codex/OpenCode headless invocation
-- [decisions/](decisions/) for the 26 ADRs
+- [decisions/](decisions/) for the 44 ADRs

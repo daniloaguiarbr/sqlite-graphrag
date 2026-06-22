@@ -1050,14 +1050,15 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
             let snippet: String = body_text.chars().take(200).collect();
             let chunks_info = crate::chunking::split_into_chunks_hierarchical(&body_text);
 
+            // v1.0.89 (GAP-EMBED-PROPAGATION): honour --llm-backend via embed_passage_with_choice.
             let embedding_result = if chunks_info.len() <= 1 {
-                crate::embedder::embed_passage_local(&paths.models, &body_text)
+                crate::embedder::embed_passage_with_choice(&paths.models, &body_text, None).map(|(v, _)| v)
             } else {
                 let mut chunk_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_info.len());
                 let mut multi_ok = true;
                 for chunk in &chunks_info {
                     let chunk_text = crate::chunking::chunk_text(&body_text, chunk);
-                    match crate::embedder::embed_passage_local(&paths.models, chunk_text) {
+                    match crate::embedder::embed_passage_with_choice(&paths.models, chunk_text, None).map(|(v, _)| v) {
                         Ok(emb) => chunk_embeddings.push(emb),
                         Err(e) => {
                             tracing::warn!(
@@ -1104,7 +1105,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     Ok(aggregated)
                 } else {
                     // fallback: embed whole body for the memory-level vector
-                    crate::embedder::embed_passage_local(&paths.models, &body_text)
+                    crate::embedder::embed_passage_with_choice(&paths.models, &body_text, None).map(|(v, _)| v)
                 }
             };
 
@@ -1132,7 +1133,7 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             entities::find_entity_id(&conn, &namespace, &ent.name)
                         {
                             let entity_text = ent.name.clone();
-                            match crate::embedder::embed_passage_local(&paths.models, &entity_text)
+                            match crate::embedder::embed_passage_with_choice(&paths.models, &entity_text, None).map(|(v, _)| v)
                             {
                                 Ok(emb) => {
                                     if let Err(e) = entities::upsert_entity_vec(

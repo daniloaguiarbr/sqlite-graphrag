@@ -556,8 +556,13 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `SQLITE_GRAPHRAG_MAX_ENTITIES_PER_MEMORY` | Maximum distinct entities persisted per memory; values outside [1, 1 000] fall back to default. Note: the extraction pipeline internally caps candidates at 30 before deduplication, so the persistence cap (default 50) acts as a safety ceiling and is only reached when the extractor is extended or replaced. | `50` | `100` |
 | `SQLITE_GRAPHRAG_MAX_RELATIONS_PER_MEMORY` | Maximum distinct relationships persisted per memory; values outside [1, 10 000] fall back to default | `50` | `200` |
 | `SQLITE_GRAPHRAG_LOW_MEMORY` | Force single-threaded ingest to reduce RSS. Accepts `1`/`true`/`yes`/`on` (case-insensitive) | unset (multi-thread) | `1` |
-| `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Explicit path to the Claude Code binary for `ingest --mode claude-code` | PATH lookup | `/usr/local/bin/claude` |
-| `SQLITE_GRAPHRAG_CODEX_BINARY` | Explicit path to the Codex CLI binary for `ingest --mode codex` | PATH lookup | `/usr/local/bin/codex` |
+| `SQLITE_GRAPHRAG_CLAUDE_BINARY` | Explicit path to the Claude Code binary; affects ALL LLM commands (`recall`, `hybrid-search`, `remember`, `edit`, `ingest --mode claude-code`, `enrich`, `deep-research`). v1.0.89: now propagated from `--claude-binary` CLI flag | PATH lookup | `/usr/local/bin/claude` |
+| `SQLITE_GRAPHRAG_CODEX_BINARY` | Explicit path to the Codex CLI binary; affects ALL LLM commands (`recall`, `hybrid-search`, `remember`, `edit`, `ingest --mode codex`, `enrich`, `deep-research`). v1.0.89: new flag `--codex-binary` | PATH lookup | `/usr/local/bin/codex` |
+| `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE` | When set, commands persist memories with NULL embedding instead of aborting with exit 11 on LLM failure. Use `enrich --operation re-embed` to backfill later. Accepts `1`/`true`/`yes`/`on` (v1.0.89) | unset (abort on failure) | `1` |
+| `SQLITE_GRAPHRAG_LLM_MODEL` | Default model for embedding LLM calls; overridden by backend-specific vars (`SQLITE_GRAPHRAG_CODEX_EMBED_MODEL`, `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`). Maps to `--llm-model` CLI flag (v1.0.89) | `gpt-5.5` (codex) / `claude-sonnet-4-6` (claude) | `gpt-5.4` |
+| `SQLITE_GRAPHRAG_LLM_FALLBACK` | Comma-separated fallback chain for `--llm-backend auto`. Tokens: `codex`, `claude`, `none`. Maps to `--llm-fallback` CLI flag (v1.0.89) | `codex,claude,none` | `claude,none` |
+| `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` | Maximum concurrent LLM subprocesses host-wide. Maps to `--llm-max-host-concurrency` CLI flag (v1.0.89) | `4` | `8` |
+| `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT` | When set, abort immediately instead of waiting for an LLM slot. Accepts `1`/`true`/`yes`/`on`. Maps to `--llm-slot-no-wait` CLI flag (v1.0.89) | unset (wait) | `1` |
 | `ORT_DYLIB_PATH` | HISTORICAL (≤ v1.0.75) — no build loads ONNX since v1.0.76; the variable is ignored | — | — |
 
 

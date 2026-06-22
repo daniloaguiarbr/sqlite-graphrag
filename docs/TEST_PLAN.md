@@ -35,7 +35,7 @@
 - Command: `/usr/bin/timeout 1800 cargo nextest run --profile heavy --features slow-tests`
 - Command: `/usr/bin/timeout 1200 cargo test --features slow-tests --test doc_contract_integration -- --nocapture`
 - Command: `/usr/bin/timeout 1200 cargo test --features slow-tests --test prd_compliance -- --nocapture`
-- Pass criterion: ZERO failures across ~1220 tests
+- Pass criterion: ZERO failures across ~1881 tests
 ### Layer 5 — Loom Concurrency (explicit opt-in only)
 - Command: `/usr/bin/timeout 3900 bash scripts/test-loom.sh`
 - THERMAL RISK: never run outside the dedicated script (2026-04-19 incident)

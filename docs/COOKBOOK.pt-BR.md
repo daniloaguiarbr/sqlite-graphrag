@@ -480,6 +480,161 @@ sqlite-graphrag related "$SEED" --hops 2 --json \
 - Receita "Como Percorrer O Grafo De Entidades Para Recall Multi-Hop"
 
 
+## Como Diagnosticar Falhas De Validação Pré-voo (v1.0.87+, ADR-0045)
+
+### Problem
+- `remember`, `ingest --mode claude-code`, `ingest --mode codex` ou qualquer subcomando que spawna LLM falha imediatamente com exit code 16
+- O erro acontece ANTES do subprocesso LLM iniciar, então nenhum token OAuth é consumido
+- Você precisa saber qual dos 7 guards rejeitou o spawn para corrigir a configuração
+
+### Solution
+- A camada de validação pré-voo (ADR-0045, GAP-META-005) gateia todo spawn de subprocesso LLM
+- O envelope de erro no stderr é estruturado: `{error: true, code: 16, message: "...", error_class: "permanent", retryable: false, variant: "<PreFlightError variant>"}`
+- Oito variantes são expostas: `ArgvExceedsArgMax`, `BinaryNotFound`, `McpConfigInlineJsonRejected`, `McpConfigPathMissing`, `McpConfigPathInvalidJson`, `WalkUpMcpJsonInvalid`, `OutputBufferTooSmall`, `ClaudeConfigDirNotEmpty`
+- Os 7 guards rodam nesta ordem: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`
+- Bypass em emergências: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` desabilita todos os 7 guards. O bypass reverte para `Command::spawn()` direto e herda todas as 5 classes de BUG da GAP-META-005
+
+### Recipe — Diagnosticar e corrigir cada variante
+
+```bash
+# Variante: ArgvExceedsArgMax (Bug 3 da GAP-META-005)
+# Sintoma: body > ARG_MAX menos 4 KB falha com E2BIG pós-fork
+# Correção: divida o body da memória em chunks menores; use --max-body-bytes N
+sqlite-graphrag remember --name "large-mem" --body "$(cat big.txt)" 2>&1 | jaq '.variant'
+# Esperado: "ArgvExceedsArgMax" com detalhes total_bytes e arg_max
+# Correção: sqlite-graphrag edit --name "large-mem" --body-file chunk1.txt
+
+# Variante: BinaryNotFound
+# Sintoma: claude ou codex não está no PATH
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Esperado: "BinaryNotFound" com path do binário ausente
+# Correção: export PATH="/path/to/claude:$PATH"
+
+# Variante: McpConfigInlineJsonRejected (Bug 2)
+# Sintoma: --mcp-config '{}' literal rejeitado pelo Claude Code 2.1.177
+# O preflight auto-substitui por um tempfile contendo {"mcpServers":{}}, então esta variante
+# só dispara se a escrita do tempfile falhar. Verifique permissões de escrita em /tmp.
+
+# Variante: McpConfigPathMissing ou McpConfigPathInvalidJson
+# Sintoma: --mcp-config aponta para arquivo inexistente ou malformado
+sqlite-graphrag remember --name "test" --body "x" --claude-mcp-config /bad/path.json 2>&1 | jaq '.variant'
+# Correção: garanta que o arquivo existe e parseia como JSON válido
+
+# Variante: WalkUpMcpJsonInvalid (Bug 5)
+# Sintoma: um diretório ancestral contém um .mcp.json sintaticamente inválido
+# Ou um sintaticamente válido com objeto mcpServers não-vazio
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Correção: remova ou conserte o .mcp.json ofensor na cadeia de ancestrais
+# Ou: sqlite-graphrag init --workspace /tmp/clean-dir && cd /tmp/clean-dir
+
+# Variante: OutputBufferTooSmall (Bug 4)
+# Sintoma: parser JSON downstream truncado em 65.536 chars
+# Correção: preflight auto-duplica a capacidade do buffer acima de 64 KB
+# Esta variante só dispara se a alocação do buffer falhar (pressão de memória)
+
+# Variante: ClaudeConfigDirNotEmpty
+# Sintoma: CLAUDE_CONFIG_DIR aponta para um diretório populado
+sqlite-graphrag remember --name "test" --body "x" 2>&1 | jaq '.variant, .path'
+# Correção: export CLAUDE_CONFIG_DIR=/tmp/empty-dir/ (o dir deve existir mas estar vazio)
+# Ou: sqlite-graphrag --strict-env-clear remember --name "test" --body "x"
+```
+
+### Recipe — Bypass em emergências
+
+```bash
+# Quando o preflight falha em ambiente de CI e você precisa prosseguir imediatamente
+SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 sqlite-graphrag remember --name "test" --body "x"
+# Aviso: o bypass reativa todas as 5 classes de BUG da GAP-META-005:
+#   - E2BIG em argv grande (Bug 3)
+#   - Configuração MCP inválida do Claude Code 2.1.177 (Bug 2)
+#   - Saída JSON truncada em 65.536 chars (Bug 4)
+#   - Falhas de walk-up do .mcp.json (Bug 5)
+#   - Extração silenciosa entities:0 no ingest (Bug 1)
+
+# Padrão recomendado: detectar exit 16, corrigir a variante, tentar novamente
+out=$(sqlite-graphrag remember --name "test" --body "x" 2>&1) || {
+    exit_code=$?
+    if [ $exit_code -eq 16 ]; then
+        variant=$(echo "$out" | jaq -r '.variant')
+        echo "Preflight failed: $variant" >&2
+        # Aplique a correção por variante...
+    fi
+}
+```
+
+### Cross-references
+- `docs/HEADLESS_INVOCATION.md` — camada preflight em contextos headless
+- `docs/SECURITY.md` — preflight como defesa em profundidade antes do OAuth
+- `docs/decisions/adr-0045-preflight-validation-layer.md` (en + pt-BR) — decisão arquitetural completa
+
+## Como Usar Recuperação De Deriva De Schema (v1.0.89+, GAP-E2E-007, ADR-0048)
+
+### Problem
+- Um consumidor de `sqlite-graphrag health --json` parseia a resposta contra o schema publicado
+- Após upgrade para v1.0.89, o validador do consumidor rejeita novos campos como `vec_memories_missing`, `sqlite_version`, `mentions_warning`, etc.
+- Validação estrita (`additionalProperties: false`) falha nos 17 novos campos adicionados pelo derive `schemars 0.8`
+
+### Solution
+- `health.schema.json` usa `additionalProperties: true` (política Must-Ignore por RFC 7493 I-JSON e `rules_rust_json_e_ndjson.md:33`)
+- Consumidores devem migrar para Must-Ignore para compatibilidade forward
+- O novo `src/bin/dump_schema.rs` regenera o schema de forma idempotente via `schema_for!()` + ordenação BTreeMap + enforcement recursivo da política `apply_must_ignore`
+
+### Recipe — Migrar consumidor Python para Must-Ignore
+
+```python
+import json
+import jsonschema
+from jsonschema import Draft202012Validator
+
+# Pré-v1.0.89: validação estrita rejeitava chaves desconhecidas
+with open("docs/schemas/health.schema.json") as f:
+    schema = json.load(f)
+
+# Antes: Draft202012Validator(schema) — falha em novos campos da v1.0.89
+# Agora: ainda Draft202012Validator(schema), mas additionalProperties: true
+#         significa que chaves desconhecidas são aceitas (Must-Ignore)
+
+validator = Draft202012Validator(schema)
+out = subprocess.check_output(["sqlite-graphrag", "health", "--json"])
+errors = list(validator.iter_errors(json.loads(out)))
+# Pré-v1.0.89 com schema estrito: errors continha "Additional properties are not allowed ('vec_memories_missing' was unexpected)"
+# v1.0.89+ com Must-Ignore: zero erros para chaves desconhecidas; só violações de type/range permanecem
+```
+
+### Recipe — Migrar consumidor TypeScript para Must-Ignore
+
+```typescript
+import Ajv from "ajv";
+import * as fs from "fs";
+
+const schema = JSON.parse(fs.readFileSync("docs/schemas/health.schema.json", "utf-8"));
+const ajv = new Ajv({ strict: false, allErrors: true });  // strict: false aceita additionalProperties
+const validate = ajv.compile(schema);
+
+const out = JSON.parse(execSync("sqlite-graphrag health --json").toString());
+const valid = validate(out);
+if (!valid) {
+    console.error("Validation errors:", validate.errors);
+}
+```
+
+### Recipe — Regenerar o schema a partir do fonte
+
+```bash
+# O schema agora é derivado de HealthResponse via macro derive schemars 0.8
+# Regenere de forma idempotente:
+cargo run --bin dump_schema -- --output docs/schemas/health.schema.json
+
+# Valide que o schema regenerado bate com o que está no repo
+diff <(cargo run --bin dump_schema) docs/schemas/health.schema.json
+# Esperado: diff vazio (idempotente)
+```
+
+### Cross-references
+- `docs/decisions/adr-0048-schema-as-derived-artifact.md` (en + pt-BR) — justificativa da política Must-Ignore
+- `docs/HEADLESS_INVOCATION.md` — timeline de adoção do schemars
+- `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — teste de regressão
+
 ## Como Linkar Entidades Com Auto-Criação
 ### Problem
 - Criar arestas de grafo requer que entidades existam antes, forçando um workflow tedioso de duas etapas
@@ -943,12 +1098,12 @@ esac
 
 
 ### Explanation
-- 17 exit codes de 0 a 77 seguindo convenções sysexits.h para roteamento de erros parseável por máquina
+- 18 exit codes de 0 a 77 seguindo convenções sysexits.h para roteamento de erros parseável por máquina
 - Exit 3 significa conflito de locking otimista: recarregue a memória com `read --json` e tente novamente
 - Exit 13 significa falha parcial em lote: reprocesse apenas os itens falhos, NÃO o lote inteiro
 - Exit 75 e 77 sinalizam pressão de recursos: NUNCA aumente concorrência após receber esses códigos
 - Exit 15 significa banco ocupado: amplie `--wait-lock <ms>` para esperar mais antes de falhar
-- Tabela completa de códigos: 0=sucesso, 1=validação, 2=erro-argumento-Clap, 9=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec, 13=parcial, 14=I/O, 15=ocupado, 20=interno, 75=slots, 77=RAM
+- Tabela completa de códigos: 0=sucesso, 1=validação, 2=erro-argumento-Clap, 9=duplicata-ou-soft-deleted, 3=conflito, 4=não-encontrado, 5=namespace, 6=payload, 10=database, 11=embedding, 12=sqlite-vec (histórico — removido na v1.0.76), 13=parcial, 14=I/O, 15=ocupado, 16=preflight (EX_CONFIG), 19=shutdown (SHUTDOWN_EXIT_CODE), 20=interno, 75=slots, 77=RAM
 
 
 ### Variants
@@ -1102,7 +1257,7 @@ fn recuperar_contexto_agente(namespace: &str, consulta: &str, k: u8) -> anyhow::
 ```
 
 ### Explanation
-- `Command::new("sqlite-graphrag")` executa o binário de 25 MB sem custo de FFI
+- `Command::new("sqlite-graphrag")` executa o binário de 15 MB sem custo de FFI
 - `--namespace` isola a memória do agente rig prevenindo contaminação entre agentes
 - `--json` retorna saída estruturada que `serde_json` parseia sem regex frágil
 - `anyhow::ensure!` converte falhas de exit-code em erros tipados que o agente trata
@@ -1869,7 +2024,7 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 ```
 
 ### Variações
-- Use `--codex-model o4-mini` para extração com menor custo
+- Use `--codex-model gpt-5.5` para selecionar o modelo de extração (aceitos: codex-auto-review, gpt-5.3-codex-spark, gpt-5.4, gpt-5.4-mini, gpt-5.5)
 - Use `--codex-binary /usr/local/bin/codex` para especificar o caminho do binário
 - Use `--codex-timeout 600` para aumentar o timeout por arquivo do padrão de 300s
 - Use `--dry-run` para pré-visualizar o mapeamento arquivo-nome sem spawnar o Codex
@@ -1878,7 +2033,7 @@ sqlite-graphrag ingest ./docs --mode codex --recursive --json
 - Defina `SQLITE_GRAPHRAG_CODEX_BINARY` para sobrescrever a busca no PATH permanentemente
 
 ### Notas
-- Requer Codex CLI >= 0.120.0 instalado localmente com chave OpenAI API ativa
+- Requer Codex CLI 0.130.0+ instalado localmente com chave OpenAI API ativa
 - Codex reporta uso de tokens (input_tokens, output_tokens) em vez de cost_usd
 - Usa o mesmo formato NDJSON que `--mode claude-code` (PhaseEvent, FileEvent, Summary)
 - Queue DB `.ingest-queue.sqlite` habilita resume/retry entre sessões

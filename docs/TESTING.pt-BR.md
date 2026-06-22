@@ -103,7 +103,7 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 
 ## Tamanho Atual da Suite de Testes
 
-945 testes passando via `cargo nextest -P ci` a partir de v1.0.85.2. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
+847 testes de lib, 1881 testes no total passando via `cargo nextest -P ci` a partir de v1.0.89. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
 - `ensure_v013_tables_noop_when_tables_exist` — verifica no-op quando `memory_embeddings` já existe
 - `ensure_v013_tables_creates_when_phantom` — verifica reparo quando V013 está no histórico mas as tabelas não existem
 ### Justificativa de Cobertura

@@ -91,14 +91,21 @@ pub fn emit_text(msg: &str) {
 }
 
 /// Logs `msg` as a structured `tracing::info!` event (does not write to stdout).
+/// v1.0.89: suppressed when stderr is not a terminal (pipe) to avoid
+/// polluting JSON pipelines when the user redirects stderr with `2>&1`.
 #[inline]
 pub fn emit_progress(msg: &str) {
-    tracing::info!(target: "output", message = msg);
+    if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        tracing::info!(target: "output", message = msg);
+    }
 }
 
 /// Emits a bilingual progress message honouring `--lang` or `SQLITE_GRAPHRAG_LANG`.
-/// Usage: `output::emit_progress_i18n("Computing embedding...", "Calculando embedding...")`.
+/// v1.0.89: suppressed when stderr is not a terminal (pipe).
 pub fn emit_progress_i18n(en: &str, pt: &str) {
+    if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        return;
+    }
     use crate::i18n::{current, Language};
     match current() {
         Language::English => tracing::info!(target: "output", message = en),

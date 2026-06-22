@@ -213,22 +213,33 @@ pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<
         // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
         // v1.0.84 (ADR-0042): tuple (Vec<f32>, LlmBackendKind) — extrai o
         // backend que efetivamente rodou para popular `backend_invoked`.
-        let (embedding, backend_kind) = crate::embedder::embed_passage_with_choice(
+        let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+        let embedding: Option<(Vec<f32>, &'static str)> = match crate::embedder::embed_passage_with_choice(
             &paths.models,
             &new_body,
             Some(llm_backend),
-        )?;
-        backend_invoked = Some(backend_kind.as_str());
-        let snippet: String = new_body.chars().take(300).collect();
-        memories::upsert_vec(
-            &tx,
-            memory_id,
-            &namespace,
-            &memory_type,
-            &embedding,
-            &name,
-            &snippet,
-        )?;
+        ) {
+            Ok((emb, kind)) => Some((emb, kind.as_str())),
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "edit: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                None
+            }
+            Err(e) => return Err(e),
+        };
+        if let Some((ref emb, kind)) = embedding {
+            backend_invoked = Some(kind);
+            let snippet: String = new_body.chars().take(300).collect();
+            memories::upsert_vec(
+                &tx,
+                memory_id,
+                &namespace,
+                &memory_type,
+                emb,
+                &name,
+                &snippet,
+            )?;
+        }
     }
 
     let next_v = versions::next_version(&tx, memory_id)?;

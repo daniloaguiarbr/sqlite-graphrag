@@ -126,11 +126,11 @@ fn slots_release_routes_through_tracing() {
         "the single println! in run_status must be the JSON data payload `println!(\"{{json}}\");`"
     );
 
-    // And the eprintln! for the confirmation prompt is the
-    // ONLY eprintln! in the file (interactive prompt must stay).
+    // BUG-SLOTS-YES-IGNORED fix: the old eprintln! prompt was replaced
+    // with AppError::Validation, so zero eprintln! calls remain.
     let eprintln_count = source.matches("eprintln!").count();
     assert_eq!(
-        eprintln_count, 1,
-        "slots.rs must contain exactly 1 eprintln! (the interactive confirmation prompt)"
+        eprintln_count, 0,
+        "slots.rs must contain zero eprintln! (confirmation now uses AppError::Validation)"
     );
 }

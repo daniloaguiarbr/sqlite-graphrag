@@ -71,7 +71,7 @@ struct RestoreResponse {
     elapsed_ms: u64,
 }
 
-pub fn run(args: RestoreArgs) -> Result<(), AppError> {
+pub fn run(args: RestoreArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
     tracing::debug!(target: "restore", name = ?args.name_positional.as_deref().or(args.name.as_deref()), version = ?args.version, "restoring version");
@@ -165,7 +165,16 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         "Re-computing embedding for restored memory...",
         crate::i18n::validation::runtime_pt::restore_recomputing_embedding(),
     );
-    let embedding = crate::embedder::embed_passage_local(&paths.models, &old_body)?;
+    let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(&paths.models, &old_body, Some(llm_backend)) {
+        Ok((emb, _backend)) => Some(emb),
+        Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+        Err(e) if skip_embed => {
+            tracing::warn!(error = %e, "restore: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+            None
+        }
+        Err(e) => return Err(e),
+    };
     let snippet: String = old_body.chars().take(300).collect();
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -217,9 +226,11 @@ pub fn run(args: RestoreArgs) -> Result<(), AppError> {
         "restore",
     )?;
 
-    memories::upsert_vec(
-        &tx, memory_id, &namespace, &old_type, &embedding, &cur_name, &snippet,
-    )?;
+    if let Some(ref emb) = embedding {
+        memories::upsert_vec(
+            &tx, memory_id, &namespace, &old_type, emb, &cur_name, &snippet,
+        )?;
+    }
 
     memories::sync_fts_after_update(
         &tx,

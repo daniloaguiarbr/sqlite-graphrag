@@ -79,7 +79,7 @@ struct BatchSummary {
     elapsed_ms: u64,
 }
 
-pub fn run(args: RememberBatchArgs) -> Result<(), AppError> {
+pub fn run(args: RememberBatchArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -102,7 +102,7 @@ pub fn run(args: RememberBatchArgs) -> Result<(), AppError> {
     if args.transaction {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for (idx, line) in lines.iter().enumerate() {
-            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths) {
+            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths, llm_backend) {
                 Ok(event) => {
                     output::emit_json(&event)?;
                     succeeded += 1;
@@ -128,7 +128,7 @@ pub fn run(args: RememberBatchArgs) -> Result<(), AppError> {
     } else {
         for (idx, line) in lines.iter().enumerate() {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths) {
+            match process_line(&tx, &namespace, line, idx, args.force_merge, &paths, llm_backend) {
                 Ok(event) => {
                     tx.commit()?;
                     output::emit_json(&event)?;
@@ -170,6 +170,7 @@ fn process_line(
     index: usize,
     force_merge: bool,
     paths: &AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<BatchItemEvent, AppError> {
     let input: BatchInputLine = serde_json::from_str(line)
         .map_err(|e| AppError::Validation(format!("line {index}: invalid JSON: {e}")))?;
@@ -185,13 +186,21 @@ fn process_line(
 
     let existing = memories::find_by_name(tx, namespace, &normalized_name)?;
 
-    let memory_id = if let Some((existing_id, _updated_at, _version)) = existing {
+    let (memory_id, batch_action) = if let Some((existing_id, _updated_at, _version)) = existing {
         if !force_merge {
             return Err(AppError::Duplicate(format!(
                 "memory '{normalized_name}' already exists; use --force-merge to update"
             )));
         }
         let snippet: String = input.body.chars().take(200).collect();
+        // Capture old FTS values BEFORE the UPDATE for sync_fts_after_update
+        // (trg_fts_au trigger is absent by design due to sqlite-vec conflict).
+        let (old_fts_name, old_fts_desc, old_fts_body): (String, String, String) = tx
+            .query_row(
+                "SELECT name, description, body FROM memories WHERE id = ?1",
+                rusqlite::params![existing_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
         memories::update(
             tx,
             existing_id,
@@ -208,6 +217,16 @@ fn process_line(
             },
             None,
         )?;
+        memories::sync_fts_after_update(
+            tx,
+            existing_id,
+            &old_fts_name,
+            &old_fts_desc,
+            &old_fts_body,
+            &normalized_name,
+            &input.description,
+            &input.body,
+        )?;
         let next_v = versions::next_version(tx, existing_id)?;
         versions::insert_version(
             tx,
@@ -222,17 +241,18 @@ fn process_line(
             "edit",
         )?;
 
-        let embedding = crate::embedder::embed_passage_local(&paths.models, &input.body)?;
-        memories::upsert_vec(
-            tx,
-            existing_id,
-            namespace,
-            &input.r#type,
-            &embedding,
-            &normalized_name,
-            &snippet,
-        )?;
-        existing_id
+        let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+        match crate::embedder::embed_passage_with_choice(&paths.models, &input.body, Some(llm_backend)) {
+            Ok((embedding, _backend)) => {
+                memories::upsert_vec(tx, existing_id, namespace, &input.r#type, &embedding, &normalized_name, &snippet)?;
+            }
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "remember-batch: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+            }
+            Err(e) => return Err(e),
+        }
+        (existing_id, "updated")
     } else {
         let new_mem = memories::NewMemory {
             namespace: namespace.to_string(),
@@ -260,17 +280,18 @@ fn process_line(
         )?;
 
         let snippet: String = input.body.chars().take(200).collect();
-        let embedding = crate::embedder::embed_passage_local(&paths.models, &input.body)?;
-        memories::upsert_vec(
-            tx,
-            id,
-            namespace,
-            &input.r#type,
-            &embedding,
-            &normalized_name,
-            &snippet,
-        )?;
-        id
+        let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+        match crate::embedder::embed_passage_with_choice(&paths.models, &input.body, Some(llm_backend)) {
+            Ok((embedding, _backend)) => {
+                memories::upsert_vec(tx, id, namespace, &input.r#type, &embedding, &normalized_name, &snippet)?;
+            }
+            Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "remember-batch: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+            }
+            Err(e) => return Err(e),
+        }
+        (id, "created")
     };
 
     // Persist graph entities and relationships if provided
@@ -280,25 +301,24 @@ fn process_line(
             Some(desc) => format!("{} {}", entity.name, desc),
             None => entity.name.clone(),
         };
-        // G56 (v1.0.80): batch the per-item `embed_passage_local` through
-        // the in-process cache so repeated entity names across the
-        // remember-batch loop only spawn one LLM call per unique text.
-        let (entity_embedding_vec, _stats) = crate::embedder::embed_entity_texts_cached(
+        let skip_embed = crate::embedder::should_skip_embedding_on_failure();
+        match crate::embedder::embed_entity_texts_cached(
             &paths.models,
             std::slice::from_ref(&entity_text),
             1,
-        )?;
-        let entity_embedding = entity_embedding_vec.into_iter().next().ok_or_else(|| {
-            crate::errors::AppError::Embedding("empty entity embed result".into())
-        })?;
-        entities::upsert_entity_vec(
-            tx,
-            entity_id,
-            namespace,
-            entity.entity_type,
-            &entity_embedding,
-            &entity.name,
-        )?;
+        ) {
+            Ok((entity_embedding_vec, _stats)) => {
+                if let Some(entity_embedding) = entity_embedding_vec.into_iter().next() {
+                    entities::upsert_entity_vec(
+                        tx, entity_id, namespace, entity.entity_type, &entity_embedding, &entity.name,
+                    )?;
+                }
+            }
+            Err(e) if skip_embed => {
+                tracing::warn!(error = %e, "remember-batch: entity embedding failed; --skip-embedding-on-failure active");
+            }
+            Err(e) => return Err(e),
+        }
         entities::link_memory_entity(tx, memory_id, entity_id)?;
     }
 
@@ -323,7 +343,7 @@ fn process_line(
 
     Ok(BatchItemEvent {
         name: normalized_name,
-        status: "indexed".to_string(),
+        status: batch_action.to_string(),
         memory_id: Some(memory_id),
         error: None,
         index,

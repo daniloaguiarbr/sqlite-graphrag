@@ -68,7 +68,7 @@ claude -p "SUA TAREFA AQUI" \
   --mcp-config '{}' \
   --dangerously-skip-permissions \
   --settings '{"hooks":{}}' \
-  --model sonnet \
+  --model claude-sonnet-4-6 \
   --max-turns 8 \
   --output-format json
 ```
@@ -79,7 +79,7 @@ claude -p "SUA TAREFA AQUI" \
 - `--mcp-config '{}'` fornece a lista vazia que zera os servidores
 - `--dangerously-skip-permissions` evita travar pedindo confirmação (modo `bypassPermissions`)
 - `--settings '{"hooks":{}}'` desliga os hooks naquela chamada específica
-- `--model sonnet` escolhe o modelo sem depender de variável de ambiente
+- `--model claude-sonnet-4-6` escolhe o modelo sem depender de variável de ambiente
 - `--max-turns 8` limita as voltas do agente como rede de segurança contra loop infinito
 - `--output-format json` entrega saída fácil de parsear com `jaq`
 
@@ -114,6 +114,7 @@ Rodar `codex exec` zerando a tabela de servidores MCP do config.
 
 ```bash
 codex exec \
+  --model gpt-5.5 \
   -c mcp_servers='{}' \
   --sandbox workspace-write \
   --ask-for-approval never \
@@ -128,7 +129,7 @@ codex exec \
 - Por isso o `--ignore-user-config` NÃO derruba o login
 
 ```bash
-codex exec --ignore-user-config --sandbox workspace-write "SUA TAREFA AQUI"
+codex exec --model gpt-5.5 --ignore-user-config --sandbox workspace-write "SUA TAREFA AQUI"
 ```
 
 ### O Que Cada Pedaço Faz
@@ -315,6 +316,85 @@ podem retomar a partir da última memória bem-sucedida.
 - `health --namespace <NS> --json` filtra contagens para um único namespace — útil em ambientes multi-tenant
 - Binário medido em 15.323.128 bytes (14.6 MiB), dentro de 1 MiB do documentado em `Cargo.toml:6`. Drift viral "6 MB" eliminado
 - 1877 testes passando (843 lib + 1013 integração + 21 doc)
+
+## Atualização v1.0.89 — Propagação de Flags LLM e Seleção de Modelo (ADR-0050)
+
+A v1.0.89 corrige uma classe crítica de bugs de flag morta: 7 flags
+globais de CLI eram aceitas pelo clap mas nunca propagadas para os
+módulos internos de embedding. Todas as 7 agora funcionam via CLI ou
+variável de ambiente.
+
+### Flags globais novas e corrigidas
+
+- `--llm-model <MODEL>` / `SQLITE_GRAPHRAG_LLM_MODEL` — seleciona o
+  modelo de embedding. Padrões: `gpt-5.5` (codex), `claude-sonnet-4-6`
+  (claude). Sobrescreve as variáveis por backend
+  `SQLITE_GRAPHRAG_CODEX_EMBED_MODEL` e
+  `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`
+- `--llm-backend <auto|codex|claude|none>` /
+  `SQLITE_GRAPHRAG_LLM_BACKEND` — seleciona qual CLI spawna o
+  subprocesso de embedding. `auto` (padrão) sonda o PATH: codex
+  primeiro, depois claude
+- `--codex-binary <PATH>` / `SQLITE_GRAPHRAG_CODEX_BINARY` —
+  sobrescreve a localização do binário codex (novo na v1.0.89;
+  `--claude-binary` existe desde a v1.0.82)
+- `--llm-fallback <chain>` / `SQLITE_GRAPHRAG_LLM_FALLBACK` — cadeia
+  de fallback quando o backend primário falha (padrão:
+  `codex,claude,none`)
+- `--skip-embedding-on-failure` /
+  `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE` — persiste a memória sem
+  embedding quando o LLM falha (exit 0 em vez de exit 11)
+- `--llm-max-host-concurrency <N>` /
+  `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` — limita os subprocessos
+  LLM concorrentes em todo o host
+- `--llm-slot-wait-secs <N>` / `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS` —
+  segundos para esperar por um slot livre antes de falhar
+- `--llm-slot-no-wait` / `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT` — falha
+  imediatamente se nenhum slot estiver disponível
+
+### BoolishValueParser para env vars booleanas
+
+Flags booleanas com `env = "SQLITE_GRAPHRAG_*"` agora aceitam `1`,
+`yes`, `on`, `true` (e `0`, `no`, `off`, `false`). Antes só
+`true`/`false` eram aceitos, causando exit 2 para scripts que setavam
+`SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE=1`.
+
+### Invocação headless com modelo explícito
+
+```bash
+# Claude com modelo explícito
+claude -p "SUA TAREFA" \
+  --model claude-sonnet-4-6 \
+  --strict-mcp-config --mcp-config '{}' \
+  --dangerously-skip-permissions \
+  --settings '{"hooks":{}}' \
+  --output-format json
+
+# Codex com modelo explícito
+codex exec \
+  --model gpt-5.5 \
+  -c mcp_servers='{}' \
+  --sandbox workspace-write \
+  --ask-for-approval never \
+  "SUA TAREFA"
+```
+
+### sqlite-graphrag com override de backend e modelo
+
+```bash
+# Força o backend claude com modelo específico
+sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 \
+  remember --name example --type note --body "text" --json
+
+# Força o backend codex com modelo específico
+sqlite-graphrag --llm-backend codex --llm-model gpt-5.5 \
+  recall "query" --k 5 --json
+
+# Pula o embedding em caso de falha (persiste a memória sem vetor)
+sqlite-graphrag --skip-embedding-on-failure \
+  remember --name resilient --type note --body "text" --json
+```
+
 
 ## Referências Externas Validadas
 

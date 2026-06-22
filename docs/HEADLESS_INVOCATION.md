@@ -68,7 +68,7 @@ claude -p "YOUR TASK HERE" \
   --mcp-config '{}' \
   --dangerously-skip-permissions \
   --settings '{"hooks":{}}' \
-  --model sonnet \
+  --model claude-sonnet-4-6 \
   --max-turns 8 \
   --output-format json
 ```
@@ -79,7 +79,7 @@ claude -p "YOUR TASK HERE" \
 - `--mcp-config '{}'` provides the empty list that zeroes out servers
 - `--dangerously-skip-permissions` avoids stalling on confirmation prompts (`bypassPermissions` mode)
 - `--settings '{"hooks":{}}'` disables hooks for that specific call
-- `--model sonnet` picks the model without depending on an environment variable
+- `--model claude-sonnet-4-6` picks the model without depending on an environment variable
 - `--max-turns 8` caps agent turns as a safety net against infinite loops
 - `--output-format json` delivers output that is easy to parse with `jaq`
 
@@ -114,6 +114,7 @@ Run `codex exec` zeroing out the MCP server table from the config.
 
 ```bash
 codex exec \
+  --model gpt-5.5 \
   -c mcp_servers='{}' \
   --sandbox workspace-write \
   --ask-for-approval never \
@@ -128,7 +129,7 @@ codex exec \
 - That is why `--ignore-user-config` does NOT break the login
 
 ```bash
-codex exec --ignore-user-config --sandbox workspace-write "YOUR TASK HERE"
+codex exec --model gpt-5.5 --ignore-user-config --sandbox workspace-write "YOUR TASK HERE"
 ```
 
 ### What Each Piece Does
@@ -330,6 +331,83 @@ gate was introduced in v1.0.87:
   by normalizing the name BEFORE the validator ran. Fixed in v1.0.88
   by validating BEFORE normalizing (8 tests in
   `entity_validation_integration.rs`).
+
+## v1.0.89 Update — LLM Flag Propagation and Model Selection (ADR-0050)
+
+v1.0.89 fixes a critical class of dead-flag bugs: 7 global CLI flags
+were accepted by clap but never propagated to the internal embedding
+modules. All 7 now work via CLI or env var.
+
+### New and fixed global flags
+
+- `--llm-model <MODEL>` / `SQLITE_GRAPHRAG_LLM_MODEL` — select the
+  embedding model. Defaults: `gpt-5.5` (codex), `claude-sonnet-4-6`
+  (claude). Overrides per-backend vars
+  `SQLITE_GRAPHRAG_CODEX_EMBED_MODEL` and
+  `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL`
+- `--llm-backend <auto|codex|claude|none>` /
+  `SQLITE_GRAPHRAG_LLM_BACKEND` — select which CLI spawns the
+  embedding subprocess. `auto` (default) probes PATH: codex first,
+  then claude
+- `--codex-binary <PATH>` / `SQLITE_GRAPHRAG_CODEX_BINARY` — override
+  the codex binary location (new in v1.0.89; `--claude-binary` existed
+  since v1.0.82)
+- `--llm-fallback <chain>` / `SQLITE_GRAPHRAG_LLM_FALLBACK` — fallback
+  chain when primary backend fails (default: `codex,claude,none`)
+- `--skip-embedding-on-failure` /
+  `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE` — persist memory without
+  embedding when LLM fails (exit 0 instead of exit 11)
+- `--llm-max-host-concurrency <N>` /
+  `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` — cap concurrent LLM
+  subprocesses host-wide
+- `--llm-slot-wait-secs <N>` / `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS` —
+  seconds to wait for a free slot before failing
+- `--llm-slot-no-wait` / `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT` — fail
+  immediately if no slot is available
+
+### BoolishValueParser for boolean env vars
+
+Boolean flags with `env = "SQLITE_GRAPHRAG_*"` now accept `1`, `yes`,
+`on`, `true` (and `0`, `no`, `off`, `false`). Previously only
+`true`/`false` were accepted, causing exit 2 for scripts that set
+`SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE=1`.
+
+### Headless invocation with explicit model
+
+```bash
+# Claude with explicit model
+claude -p "YOUR TASK" \
+  --model claude-sonnet-4-6 \
+  --strict-mcp-config --mcp-config '{}' \
+  --dangerously-skip-permissions \
+  --settings '{"hooks":{}}' \
+  --output-format json
+
+# Codex with explicit model
+codex exec \
+  --model gpt-5.5 \
+  -c mcp_servers='{}' \
+  --sandbox workspace-write \
+  --ask-for-approval never \
+  "YOUR TASK"
+```
+
+### sqlite-graphrag with backend and model override
+
+```bash
+# Force claude backend with specific model
+sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 \
+  remember --name example --type note --body "text" --json
+
+# Force codex backend with specific model
+sqlite-graphrag --llm-backend codex --llm-model gpt-5.5 \
+  recall "query" --k 5 --json
+
+# Skip embedding on failure (persist memory without vector)
+sqlite-graphrag --skip-embedding-on-failure \
+  remember --name resilient --type note --body "text" --json
+```
+
 
 ## Validated External References
 

@@ -119,19 +119,34 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     )?;
 
     output::emit_progress_i18n(
-        "Initializing embedding model (may download on first run)...",
-        crate::i18n::validation::runtime_pt::initializing_embedding_model(),
+        "Validating embedding backend...",
+        "Validando backend de embedding...",
     );
 
-    let test_emb = crate::embedder::embed_passage_local(&paths.models, "smoke test")?;
+    // GAP-INIT-EMBEDDING-001 FIX (v1.0.89): init must succeed without LLM.
+    // Schema, tables and FTS5 are created above; the smoke test only validates
+    // that the embedding subprocess is reachable. When it is not (OAuth expired,
+    // CLI missing), init still succeeds with dim from the database or default.
+    // ADR-0011: Validation errors (OAuth-only enforcement) are FATAL — propagate.
+    // v1.0.89 (GAP-EMBED-PROPAGATION): honour --llm-backend via embed_passage_with_choice.
+    let (dim, status) = match crate::embedder::embed_passage_with_choice(&paths.models, "smoke test", None) {
+        Ok((v, _backend)) => (v.len(), "ok"),
+        Err(crate::errors::AppError::Validation(msg)) => {
+            return Err(crate::errors::AppError::Validation(msg))
+        }
+        Err(e) => {
+            tracing::warn!(target: "init", error = %e, "embedding smoke test failed; init continues without LLM validation");
+            (crate::constants::embedding_dim(), "ok_no_embedding")
+        }
+    };
 
     output::emit_json(&InitResponse {
         db_path: paths.db.display().to_string(),
         schema_version,
         model: crate::constants::SQLITE_GRAPHRAG_VERSION.to_string(),
-        dim: test_emb.len(),
+        dim,
         namespace,
-        status: "ok".to_string(),
+        status: status.to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 

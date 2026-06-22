@@ -51,6 +51,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0047](adr-0047-stderr-deduplication.md) | Stderr Deduplication (BUG-12) | v1.0.88 | Accepted | [PT-BR](adr-0047-stderr-deduplication.pt-BR.md) |
 | [ADR-0048](adr-0048-schema-as-derived-artifact.md) | Schema as Derived Artifact (schemars + Must-Ignore) | v1.0.89 | Accepted | [PT-BR](adr-0048-schema-as-derived-artifact.pt-BR.md) |
 | [ADR-0049](adr-0049-db-flag-scope-per-subcommand.md) | `--db` Flag Scope Per Subcommand | v1.0.89 | Accepted | [PT-BR](adr-0049-db-flag-scope-per-subcommand.pt-BR.md) |
+| [ADR-0050](adr-0050-embedding-deadlock-remediation.md) | Embedding Deadlock Remediation | v1.0.89 | Accepted | [PT-BR](adr-0050-embedding-deadlock-remediation.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -66,7 +67,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.85.2**: 1 ADR (0044) — BUG-001/002/003 hotfixes
 - **v1.0.87**: 1 ADR (0045) — preflight layer
 - **v1.0.88**: 2 ADRs (0046-0047) — BUG-11/12/13 hotfixes
-- **v1.0.89**: 2 ADRs (0048-0049) — schema + flag parity
+- **v1.0.89**: 3 ADRs (0048-0050) — schema + flag parity + embedding deadlock
 
 ## Bilíngue Status
 
@@ -85,8 +86,8 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 
 ## Adding a New ADR
 
-1. Choose the next sequential number (next is ADR-0050)
-2. Create `adr-0050-slug.md` following the canonical structure
+1. Choose the next sequential number (next is ADR-0051)
+2. Create `adr-0051-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
 4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`
 5. Add PT-BR column link

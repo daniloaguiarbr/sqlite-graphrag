@@ -40,7 +40,7 @@ use tokio::process::Command;
 /// Default per-LLM-call timeout in seconds. Consistent with the
 /// `--claude-timeout` / `--codex-timeout` defaults used by ingest.
 /// Override via `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`.
-const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 60;
 
 fn embed_timeout() -> std::time::Duration {
     let secs = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS")
@@ -49,6 +49,16 @@ fn embed_timeout() -> std::time::Duration {
         .filter(|&n| (10..=3_600).contains(&n))
         .unwrap_or(DEFAULT_EMBED_TIMEOUT_SECS);
     std::time::Duration::from_secs(secs)
+}
+
+/// v1.0.89 (GAP-4): scales the per-call timeout with batch size.
+/// A single-item batch uses the base timeout (60s default).
+/// Each additional item adds 15s to account for the LLM generating
+/// more embedding vectors in the same call.
+fn embed_timeout_for_batch(batch_size: usize) -> std::time::Duration {
+    let base = embed_timeout();
+    let extra = std::time::Duration::from_secs(15) * batch_size.saturating_sub(1) as u32;
+    base + extra
 }
 
 /// G42/S1: single-vector JSON schema generated from the active dim.
@@ -147,13 +157,16 @@ impl LlmEmbeddingBuilder {
         let binary = match self.binary_override {
             Some(path) => resolve_real_binary(&path),
             None => {
-                let which_name = match self.flavour {
-                    EmbeddingFlavour::Codex => "codex",
-                    EmbeddingFlavour::Claude => "claude",
+                let (env_var, which_name) = match self.flavour {
+                    EmbeddingFlavour::Codex => ("SQLITE_GRAPHRAG_CODEX_BINARY", "codex"),
+                    EmbeddingFlavour::Claude => ("SQLITE_GRAPHRAG_CLAUDE_BINARY", "claude"),
                 };
-                let path = which::which(which_name).map_err(|_| {
-                    AppError::Embedding(format!("`{which_name}` not found on PATH"))
-                })?;
+                let path = std::env::var_os(env_var)
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| which::which(which_name).ok())
+                    .ok_or_else(|| {
+                        AppError::Embedding(format!("`{which_name}` not found on PATH"))
+                    })?;
                 resolve_real_binary(&path)
             }
         };
@@ -241,12 +254,29 @@ fn extract_exec_target_from_shim(path: &std::path::Path) -> Option<std::path::Pa
 /// G42/S5: claude embedding model with env override, symmetric to the
 /// codex `SQLITE_GRAPHRAG_CODEX_EMBED_MODEL` introduced in v1.0.78.
 fn claude_embed_model() -> String {
+    // Precedence: SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL > SQLITE_GRAPHRAG_LLM_MODEL > default
     std::env::var("SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string())
+        .or_else(|_| std::env::var("SQLITE_GRAPHRAG_LLM_MODEL"))
+        .unwrap_or_else(|_| {
+            tracing::info!(
+                target: "llm_embedding",
+                "no model specified; defaulting to claude-sonnet-4-6"
+            );
+            "claude-sonnet-4-6".to_string()
+        })
 }
 
 fn codex_embed_model() -> String {
-    std::env::var("SQLITE_GRAPHRAG_CODEX_EMBED_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string())
+    // Precedence: SQLITE_GRAPHRAG_CODEX_EMBED_MODEL > SQLITE_GRAPHRAG_LLM_MODEL > default
+    std::env::var("SQLITE_GRAPHRAG_CODEX_EMBED_MODEL")
+        .or_else(|_| std::env::var("SQLITE_GRAPHRAG_LLM_MODEL"))
+        .unwrap_or_else(|_| {
+            tracing::info!(
+                target: "llm_embedding",
+                "no model specified; defaulting to gpt-5.5"
+            );
+            "gpt-5.5".to_string()
+        })
 }
 
 impl LlmEmbedding {
@@ -264,7 +294,12 @@ impl LlmEmbedding {
     pub fn detect_available() -> Result<Self, AppError> {
         Self::oauth_only_enforce()?;
 
-        if let Ok(path) = which::which("codex") {
+        // v1.0.89 (GAP-1): honour SQLITE_GRAPHRAG_CODEX_BINARY for the
+        // embedding pipeline, symmetric with SQLITE_GRAPHRAG_CLAUDE_BINARY.
+        let codex_path = std::env::var_os("SQLITE_GRAPHRAG_CODEX_BINARY")
+            .map(std::path::PathBuf::from)
+            .or_else(|| which::which("codex").ok());
+        if let Some(path) = codex_path {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Codex,
                 binary: resolve_real_binary(&path),
@@ -272,7 +307,13 @@ impl LlmEmbedding {
                 codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
             });
         }
-        if let Ok(path) = which::which("claude") {
+        // v1.0.89: honour SQLITE_GRAPHRAG_CLAUDE_BINARY for the embedding
+        // pipeline, not just ingest/enrich. This lets operators override the
+        // symlink-resolved path (e.g. a stale multi-instance binary).
+        let claude_path = std::env::var_os("SQLITE_GRAPHRAG_CLAUDE_BINARY")
+            .map(std::path::PathBuf::from)
+            .or_else(|| which::which("claude").ok());
+        if let Some(path) = claude_path {
             return Ok(Self {
                 flavour: EmbeddingFlavour::Claude,
                 binary: resolve_real_binary(&path),
@@ -401,6 +442,15 @@ impl LlmEmbedding {
             prompt.push_str(&format!("{}: {prefix}{text}\n", pos + 1));
         }
 
+        // v1.0.89 (GAP-4): scale timeout with batch size via env var override.
+        // embed_timeout() reads SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS; we set it
+        // to the batch-scaled value before the LLM call and restore after.
+        let batch_timeout = embed_timeout_for_batch(batch.len());
+        let prev_timeout = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS").ok();
+        std::env::set_var(
+            "SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS",
+            batch_timeout.as_secs().to_string(),
+        );
         let stdout = match self.flavour {
             EmbeddingFlavour::Claude => {
                 self.invoke_claude(&prompt, &build_batch_schema(dim))
@@ -411,6 +461,11 @@ impl LlmEmbedding {
                 self.invoke_codex(&prompt, schema.path()).await?
             }
         };
+        // Restore previous timeout value.
+        match prev_timeout {
+            Some(v) => std::env::set_var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS", v),
+            None => std::env::remove_var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS"),
+        }
 
         let parsed: BatchEmbeddingResponse = parse_llm_json(&stdout).map_err(|e| {
             AppError::Embedding(format!(
@@ -664,7 +719,19 @@ impl LlmEmbedding {
                 &output.stderr,
                 crate::llm::exit_code_hints::DIAG_TAIL_BYTES,
             );
-            let hint = crate::llm::exit_code_hints::diagnose_exit_code(exit_code, signal);
+            let mut hint = crate::llm::exit_code_hints::diagnose_exit_code(exit_code, signal);
+            // v1.0.89 (GAP-5): detect expired OAuth and suggest actionable fix.
+            if stderr_tail.contains("401")
+                || stderr_tail.contains("Unauthorized")
+                || stderr_tail.contains("expired")
+                || stderr_tail.contains("login")
+                || stdout_tail.contains("401")
+                || stdout_tail.contains("Unauthorized")
+            {
+                hint.push_str(
+                    " | Claude OAuth token may be expired; run `claude login` to renew",
+                );
+            }
             return Err(crate::llm::exit_code_hints::into_legacy_embedding(
                 &crate::llm::exit_code_hints::LlmBackendError::NonZeroExit {
                     exit_code,
@@ -728,6 +795,7 @@ impl LlmEmbedding {
                 .write_all(prompt.as_bytes())
                 .await
                 .map_err(|e| AppError::Embedding(format!("codex stdin write failed: {e}")))?;
+            drop(stdin);
         }
         let output = match tokio::time::timeout(embed_timeout(), child.wait_with_output()).await {
             Err(_elapsed) => {
@@ -830,12 +898,12 @@ fn claude_embedding_config_dir() -> Option<std::path::PathBuf> {
     }
     // Linux stores OAuth credentials on disk; copy them so the isolated
     // config dir still authenticates. Best-effort: macOS uses Keychain.
+    // v1.0.89: ALWAYS copy (was: skip if target exists). OAuth tokens
+    // expire and the stale copy causes 401 until manually deleted.
     let creds = std::path::Path::new(&home).join(".claude/.credentials.json");
     if creds.exists() {
         let target = dir.join(".credentials.json");
-        if !target.exists() {
-            let _ = std::fs::copy(&creds, &target);
-        }
+        let _ = std::fs::copy(&creds, &target);
     }
     Some(dir)
 }
@@ -866,17 +934,24 @@ fn build_codex_embedding_command(
     if crate::extract::codex_compat::codex_supports_ask_for_approval() {
         cmd.arg("--ask-for-approval").arg("never");
     }
-    // v1.0.77: isolate codex from user config by pointing CODEX_HOME at a
-    // minimal directory containing only auth.json (OAuth credentials).
-    let codex_home = prepare_isolated_codex_home();
+    // v1.0.89: use the real CODEX_HOME (~/.codex) instead of an isolated
+    // per-PID directory. The isolated dir caused cold-start overhead (codex
+    // creates ~6 SQLite databases on first run) that regularly exceeded
+    // the 30s embedding timeout. The --ignore-user-config + --ephemeral
+    // flags already prevent config pollution; CODEX_HOME only needs auth.
     cmd.arg("--model")
         .arg(model)
         .arg("-")
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", std::env::var("HOME").unwrap_or_default());
-    if let Some(ref ch) = codex_home {
-        cmd.env("CODEX_HOME", ch);
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        cmd.env("CODEX_HOME", codex_home);
+    } else if let Ok(home) = std::env::var("HOME") {
+        let default_home = std::path::Path::new(&home).join(".codex");
+        if default_home.exists() {
+            cmd.env("CODEX_HOME", &default_home);
+        }
     }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -886,21 +961,9 @@ fn build_codex_embedding_command(
     cmd
 }
 
-fn prepare_isolated_codex_home() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let real_auth = std::path::Path::new(&home).join(".codex/auth.json");
-    if !real_auth.exists() {
-        return None;
-    }
-    let base = std::path::Path::new(&home).join(".local/share/sqlite-graphrag");
-    let isolated = base.join(format!("codex-home-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&isolated);
-    let target = isolated.join("auth.json");
-    if !target.exists() {
-        let _ = std::fs::copy(&real_auth, &target);
-    }
-    Some(isolated)
-}
+// prepare_isolated_codex_home removed in v1.0.89: the per-PID isolated
+// CODEX_HOME caused cold-start overhead that exceeded the 30s embedding
+// timeout. The real ~/.codex is now used directly (see build_codex_embedding_command).
 
 /// Parse an LLM JSON response of type `T`. The two backends emit
 /// different shapes:
@@ -957,6 +1020,11 @@ mod tests {
             model: "gpt-5.4".to_string(),
             codex_schemas: Arc::new(parking_lot::Mutex::new(CodexSchemaFiles::default())),
         }
+    }
+
+    #[test]
+    fn embed_timeout_default_is_60() {
+        assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 60);
     }
 
     #[test]
@@ -1208,5 +1276,26 @@ echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\"
         let builder =
             LlmEmbeddingBuilder::codex_default().override_model("gpt-5.4-custom".to_string());
         assert_eq!(builder.model_override.as_deref(), Some("gpt-5.4-custom"));
+    }
+
+    // ---------------------------------------------------------------
+    // v1.0.89 GAP tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn embed_timeout_for_batch_scales_with_size() {
+        let t1 = embed_timeout_for_batch(1);
+        let t4 = embed_timeout_for_batch(4);
+        let t8 = embed_timeout_for_batch(8);
+        assert!(t1 < t4, "batch of 4 must have longer timeout than batch of 1");
+        assert!(t4 < t8, "batch of 8 must have longer timeout than batch of 4");
+        assert_eq!(t8 - t1, std::time::Duration::from_secs(15 * 7));
+    }
+
+    #[test]
+    fn embed_timeout_for_batch_single_equals_base() {
+        let base = embed_timeout();
+        let single = embed_timeout_for_batch(1);
+        assert_eq!(base, single);
     }
 }

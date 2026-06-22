@@ -119,20 +119,48 @@ impl ExtractionBackend for CompositeBackend {
 }
 
 /// Factory that builds the default backend for the current build configuration.
+///
+/// v1.0.89 (GAP-META-006): uses `detect_available_backend()` to resolve
+/// the LLM CLI at runtime instead of hardcoding codex. The user's
+/// `--llm-backend` flag (propagated via env var) is honoured by the
+/// factory infrastructure in `llm_backend.rs`.
 pub fn default_backend() -> SharedBackend {
     use std::sync::Arc;
-    Arc::new(super::llm_backend::LlmBackend::with_default_codex())
+    let kind = super::llm_backend::detect_available_backend()
+        .unwrap_or(super::llm_backend::LlmBackendKindFactory::None);
+    let config = super::llm_backend::LlmExtractorConfig::default();
+    match kind {
+        super::llm_backend::LlmBackendKindFactory::Codex
+        | super::llm_backend::LlmBackendKindFactory::Auto => {
+            Arc::new(super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
+                backend: "codex".to_string(),
+                ..config
+            }))
+        }
+        super::llm_backend::LlmBackendKindFactory::Claude => {
+            Arc::new(super::llm_backend::LlmBackend::new(super::llm_backend::LlmExtractorConfig {
+                backend: "claude".to_string(),
+                ..config
+            }))
+        }
+        super::llm_backend::LlmBackendKindFactory::None => {
+            Arc::new(super::none_backend::NoneBackend::new())
+        }
+    }
 }
 
 /// Factory that builds a backend from a CLI flag.
+///
+/// v1.0.89 (GAP-META-006): the `Llm` variant now resolves via
+/// `detect_available_backend()` instead of hardcoding codex.
 pub fn backend_from_kind(kind: BackendKind) -> SharedBackend {
     use std::sync::Arc;
     match kind {
-        BackendKind::Llm => Arc::new(super::llm_backend::LlmBackend::with_default_codex()),
+        BackendKind::Llm => default_backend(),
         BackendKind::Embedding => Arc::new(super::embedding_backend::EmbeddingBackend::new()),
         BackendKind::None => Arc::new(super::none_backend::NoneBackend::new()),
         BackendKind::Composite => {
-            let llm: SharedBackend = Arc::new(super::llm_backend::LlmBackend::with_default_codex());
+            let llm: SharedBackend = default_backend();
             let embedding: SharedBackend =
                 Arc::new(super::embedding_backend::EmbeddingBackend::new());
             Arc::new(CompositeBackend::new(vec![llm, embedding]))
