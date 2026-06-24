@@ -8,13 +8,34 @@
 - Sem telemetria nova: o fix é silencioso. Nenhum macro `tracing::info!` registra qual provider está em uso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
 - Resolve GAP-058 parcialmente: env vars de custom-provider roteiam em torno de contenção de quota OAuth; `recall`/`hybrid-search` permanecem determinísticos sob fadiga OAuth oficial
-# COMO USAR sqlite-graphrag (v1.0.89 — Camada Pre-flight, Drift de Schema, Flag Parity, 1877 testes)
+# COMO USAR sqlite-graphrag (v1.0.91 — Isolamento de CWD, Correção de Degree, Backend OpenCode, 1877+ testes)
 
 > Entregue memória persistente a qualquer agente de IA com um binário local, um único arquivo SQLite, e a CLI de LLM que você já confia.
 
 - Versão em inglês: [HOW_TO_USE.md](HOW_TO_USE.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 
+
+## O Que Mudou na v1.0.90, v1.0.91
+
+### v1.0.91 — Isolamento de CWD, Correção de Degree, 6-Gap Doc Remediation
+
+- **GAP-SPAWN-001**: `apply_cwd_isolation()` adicionado em `src/spawn/mod.rs` — define `current_dir(temp_dir)` e `CLAUDE_CONFIG_DIR=temp_dir` em TODOS os 10 sites de spawn de subprocessos LLM. Elimina interferência de walk-up de `.mcp.json`. O workaround manual `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` NÃO É MAIS NECESSÁRIO
+- **GAP-SPAWN-002**: `cleanup_spawn_dir()` adicionado em `src/main.rs` — remove diretório de spawn ao final do processo via `remove_dir()` não-recursivo
+- **BUG-14**: Teste `opencode_adapter_build_args` corrigido — assertava `"headless"` mas adapter retorna `"run"` desde refatoração v1.0.90
+- **BUG-15**: 7 JSON schemas atualizados de `backend_invoked: enum ["claude", "codex", "none"]` para `["claude", "codex", "opencode", "none", "auto"]`. Afetados: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`
+- **BUG-16**: `deep-research.schema.json` ganhou `vec_degraded: boolean` em `ResearchStats` (ausente, violava `additionalProperties: false`)
+- **BUG-17 (ALTA)**: Inflação de `entities.degree` corrigida — `remember` e `ingest` agora usam `recalculate_degree()` após inserção de relações em vez de `increment_degree()` por entidade. `graph stats`, `graph entities` e tabela `entities` agora consistentes
+
+### v1.0.90 — Integração Backend OpenCode (ADR-0051)
+
+- Terceiro backend LLM: `--llm-backend opencode` spawna OpenCode CLI headless via `opencode run --format json --dangerously-skip-permissions`
+- Novas flags: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`; env vars `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_TIMEOUT`
+- Modelo padrão: `opencode/big-pickle`; modelos gratuitos: `opencode/deepseek-v4-flash-free`, `opencode/mimo-v2.5-free`, `opencode/nemotron-3-ultra-free`, `opencode/north-mini-code-free`
+- Cadeia de fallback: `--llm-backend codex,claude,opencode,none` tenta cada backend em ordem
+- `--mode opencode` para pipelines de extração de entidades em `ingest` e `enrich`
+- Saída NDJSON do opencode tem 3 tipos de evento: `step_start`, `text`, `step_finish`
+- 24 bugs/gaps remediados; auditoria completa de skills com ADR-0051
 
 ## O Que Mudou na v1.0.86, v1.0.87, v1.0.88, v1.0.89 (ADR-0045, ADR-0046, ADR-0047, ADR-0048, ADR-0049)
 
@@ -128,8 +149,10 @@ Você precisa de UMA destas CLIs instalada e no `PATH`:
   ([instalação](https://docs.claude.com/claude-code))
 - `codex` — CLI do OpenAI Codex 0.130.0+
   ([repositório](https://github.com/openai/codex))
+- `opencode` — CLI do OpenCode (v1.0.90+)
 
-Ambas precisam estar logadas com o **fluxo OAuth** (assinatura Claude Pro/Max ou ChatGPT Pro). Chaves de API NÃO são suportadas — veja a seção "Validação OAuth" abaixo.
+`claude` e `codex` precisam estar logados com o **fluxo OAuth** (assinatura Claude Pro/Max ou ChatGPT Pro). `opencode` usa sistema de auth próprio.
+Chaves de API NÃO são suportadas — veja a seção "Validação OAuth" abaixo.
 
 Para verificar:
 
@@ -157,14 +180,14 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 ## Instalação
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.89 --force
+cargo install sqlite-graphrag --version 1.0.91 --force
 ```
 
 Isso instala o build padrão LLM-only. Verifique:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.89
+# sqlite-graphrag 1.0.91
 ```
 
 Para o pipeline legado fastembed (REMOVIDO na v1.0.79):
@@ -328,4 +351,4 @@ Soluções alternativas:
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) para Windows e macOS
 - [AGENTS.md](AGENTS.md) para integração com agentes
 - [HEADLESS_INVOCATION.md](HEADLESS_INVOCATION.md) para invocação headless OAuth-safe de Claude/Codex/OpenCode
-- [decisions/](decisions/) para os 44 ADRs
+- [decisions/](decisions/) para os 45 ADRs

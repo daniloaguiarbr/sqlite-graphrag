@@ -89,7 +89,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 ## Adding a New ADR
 
 1. Choose the next sequential number (next is ADR-0052)
-2. Create `adr-0051-slug.md` following the canonical structure
+2. Create `adr-0052-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
 4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`
 5. Add PT-BR column link

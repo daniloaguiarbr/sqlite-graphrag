@@ -201,7 +201,7 @@ mod isolation_tests {
         let mut cmd = std::process::Command::new("false");
         let dir = apply_cwd_isolation(&mut cmd).unwrap();
         assert!(dir.exists());
-        let debug = format!("{:?}", cmd);
+        let debug = format!("{cmd:?}");
         assert!(debug.contains("sqlite-graphrag-spawn-"));
     }
 }

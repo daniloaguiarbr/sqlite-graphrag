@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: Esta skill DEVE ativar para operações da CLI sqlite-graphrag incluindo memória persistente, GraphRAG, grafo de entidades, busca híbrida, recall, remember, ingest, enrich, deep-research, embedding LLM, seleção de backend (codex claude opencode), enforço OAuth-only, validação preflight, FTS5, similaridade cosine BLOB-backed, isolamento de CWD, gestão de namespace, migração, manutenção. Ativa em palavras-chave memória RAG GraphRAG SQLite one-shot OAuth offline persistente grafo entidade embedding codex claude opencode remember recall hybrid-search ingest enrich forget purge link
+description: Esta skill DEVE ativar para operações da CLI sqlite-graphrag incluindo memória persistente, GraphRAG, grafo de entidades, busca híbrida, recall, remember, ingest, enrich, deep-research, embedding LLM, seleção de backend (codex claude opencode), enforcement OAuth-only, validação preflight, FTS5, similaridade cosine BLOB-backed, isolamento de CWD, gestão de namespace, migração, manutenção. Ativa em palavras-chave memória RAG GraphRAG SQLite one-shot OAuth offline persistente grafo entidade embedding codex claude opencode remember recall hybrid-search ingest enrich forget purge link
 ---
 
 
@@ -138,12 +138,20 @@ description: Esta skill DEVE ativar para operações da CLI sqlite-graphrag incl
 - INVOKE `read --name <kebab> --json` para fetch O(1); `read --id <N>` por memory_id; `--with-graph` para entidades vinculadas
 - INVOKE `list --type <kind> --limit N --offset N --json`; `--include-deleted` para soft-deleted
 - INVOKE `history --name <n> --diff --json` para versões com diff de caracteres
-- INVOKE `edit --name <n> --body-file <path>` para atualizar corpo (re-embeda); `--description` para só descrição; `--force-reembed` sem mudar corpo
+- INVOKE `edit --name <n> --body-file <path>` para atualizar corpo (re-embeda automaticamente)
+- USE `--description <text>` para atualizar apenas descrição (sem re-embed)
+- USE `--type <kind>` para mudar tipo de memória sem recriar
+- USE `--force-reembed` para regenerar embedding sem mudar corpo
 - USE `--expected-updated-at <ts>` para optimistic locking; TRATE exit 3 como conflito
-- INVOKE `rename --from <old> --to <new>`; `restore --name <n> --version <N>`; `forget --name <n>` (soft-delete, exit 4 se ausente)
-- INVOKE `purge --retention-days <N> --yes --dry-run` para preview; `unlink --from <a> --to <b> --relation <type>`; `--entity <name> --all` para massa
-- INVOKE `prune-relations --relation <type> --yes --show-entities --dry-run`; `cleanup-orphans --yes` após bulk forget; `vacuum --json`
-- NUNCA pule optimistic locking; NUNCA delete via shell `sqlite3`
+- INVOKE `rename --from <old> --to <new>` para renomear preservando histórico
+- INVOKE `restore --name <n> --version <N>` para restaurar versão anterior
+- INVOKE `forget --name <n>` para soft-delete reversível; TRATE exit 4 como ausente
+- INVOKE `purge --retention-days <N> --yes` para hard delete; USE `--dry-run` primeiro
+- INVOKE `unlink --from <a> --to <b> --relation <type>` para remover aresta; `--entity <name> --all` para massa
+- INVOKE `prune-relations --relation <type> --yes` para deleção em massa; `--show-entities --dry-run` para preview
+- INVOKE `cleanup-orphans --yes` após bulk forget; depois `vacuum --json`
+- NUNCA pule optimistic locking em pipelines concorrentes
+- NUNCA delete manualmente via shell `sqlite3`
 
 
 ## Operações de Grafo de Entidades
@@ -331,8 +339,6 @@ description: Esta skill DEVE ativar para operações da CLI sqlite-graphrag incl
 - CACHE listar: `sqlite-graphrag cache list --json`
 - CACHE limpar: `sqlite-graphrag cache clear-models --yes`
 - FALLBACK CHAIN: `sqlite-graphrag --llm-backend codex --llm-fallback codex,claude,opencode,none --skip-embedding-on-failure remember --name <n> --type note --description "desc" --body-file nota.md --json`
-- Manutenção semanal: INVOKE `purge --retention-days 90 --yes` depois `cleanup-orphans --yes` depois `prune-relations --relation mentions --yes` depois `vacuum` depois `optimize` depois `sync-safe-copy --dest backup.sqlite`
-- Roteamento de exit code: ROTEAR `$?` — 0 sucesso, 9 use `--force-merge`, 11 verifique backend OAuth, 16 corrija preflight MCP, 19 RETRY OBRIGATÓRIO, 75 aguarde cooldown
 
 
 ## Regras Ativas

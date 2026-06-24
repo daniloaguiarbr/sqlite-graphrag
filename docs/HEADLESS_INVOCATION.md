@@ -59,7 +59,7 @@ Run `claude -p` with the MCP config locked down and empty, and the hooks config 
 - This function sets `current_dir(temp_dir)` — the subprocess CWD is a clean `/tmp/sqlite-graphrag-spawn-{PID}/` directory with NO `.mcp.json` in any ancestor
 - It also sets `CLAUDE_CONFIG_DIR=temp_dir` — isolating the subprocess from user-level `~/.claude/` MCP configuration
 - The manual workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` is NO LONGER NEEDED for normal operation (retained as emergency override)
-- Spawn directories are cleaned up automatically at process exit (GAP-SPAWN-002)
+- Spawn directories are cleaned up automatically at process exit via `cleanup_spawn_dir()` in `src/main.rs` (GAP-SPAWN-002) — non-recursive `remove_dir()`, safe for non-empty directories
 - The v1.0.79 `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` env var and the managed `~/.local/state/sqlite-graphrag/claude-empty-config` directory remain functional but are superseded by the automatic CWD isolation
 
 ### Why NOT To Use `--bare`

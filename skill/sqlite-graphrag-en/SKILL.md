@@ -347,8 +347,6 @@ description: This skill MUST activate for sqlite-graphrag CLI operations includi
 - CACHE list: `sqlite-graphrag cache list --json`
 - CACHE clear: `sqlite-graphrag cache clear-models --yes`
 - FALLBACK CHAIN: `sqlite-graphrag --llm-backend codex --llm-fallback codex,claude,opencode,none --skip-embedding-on-failure remember --name <n> --type note --description "desc" --body-file note.md --json`
-- WEEKLY maintenance: INVOKE `purge --retention-days 90 --yes` then `cleanup-orphans --yes` then `prune-relations --relation mentions --yes` then `vacuum` then `optimize` then `sync-safe-copy --dest backup.sqlite`
-- EXIT routing: ROUTE `$?` — 0 success, 9 use `--force-merge`, 11 check backend OAuth, 16 fix MCP preflight, 19 RETRY MANDATORY, 75 wait cooldown
 
 
 ## Active Rules

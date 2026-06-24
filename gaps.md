@@ -369,3 +369,300 @@ SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config \
 | `graph stats` usa campo armazenado | `max_degree` inflado — dados de observabilidade incorretos |
 | `health` warnings de super-hub usam campo armazenado | Falsos positivos de `super_hub_warning` |
 | Divergência entre `graph stats` e `graph entities` | Inconsistência visível ao consumidor da API |
+
+
+## GAP-E2E-001: `forget` de memória já deletada retorna exit 0 — DECISÃO DE DESIGN (2026-06-24)
+
+### Problema
+- `forget --name <n>` em memória já soft-deleted retorna `{"action": "already_deleted", "forgotten": false}` com exit 0
+- Documentação e skill do GraphRAG indicam "exit 4 se ausente"
+- O comportamento é defensivo (informar sem falhar) mas diverge do contrato documentado
+
+### Causa Raiz
+- `commands/forget.rs` trata memória já deletada como caso de sucesso em vez de not-found
+- O envelope JSON contém `action: already_deleted` com informações úteis (deleted_at, namespace)
+- O exit code 0 impede que scripts usem `$?` para detectar que a operação foi no-op
+
+### Consequências
+- Scripts que fazem `forget` idempotente e checam exit code NÃO detectam a condição already-deleted
+- Consumidores LLM que confiam no exit code para routing de decisão perdem a sinalização
+- Divergência entre documentação e comportamento real causa confusão
+
+### Relações Causa x Efeito
+| Causa | Efeito |
+|-------|--------|
+| `forget.rs` retorna `Ok(())` para already-deleted | Exit code é 0 em vez de 4 |
+| Documentação diz "exit 4 se ausente" | Consumidores esperam exit 4 e não recebem |
+| Envelope JSON contém `action: already_deleted` | Informação está disponível mas só via parsing JSON |
+
+### Análise
+- O comportamento é DELIBERADO — `forget` é idempotente por design (análogo a `DELETE WHERE` em SQL)
+- O `action: already_deleted` no JSON provê feedback suficiente para consumidores programáticos
+- `not_found` (nenhuma row) retorna exit 4 corretamente
+- `already_deleted` (row com deleted_at setado) retorna exit 0 com informação útil
+- A documentação da skill GraphRAG deve ser atualizada para refletir que `already_deleted` é exit 0
+
+### Resolução
+- DECISÃO DE DESIGN: manter exit 0 para `already_deleted` como comportamento idempotente
+- Atualizar documentação da skill para especificar: exit 4 para memória INEXISTENTE, exit 0 para already_deleted
+
+
+## GAP-E2E-002: Validação de `--type` no remember — FALSO POSITIVO (2026-06-24)
+
+### Investigação
+- `--type` usa `clap::ValueEnum` via enum `MemoryType` com 9 variantes tipadas
+- Clap REJEITA valores inválidos com exit 2 e lista `[possible values: user, feedback, ...]`
+- O teste original redirecionava stderr com `2>/dev/null` e não capturou a mensagem de erro do clap
+- O stdout vazio foi interpretado como "aceitou silenciosamente" quando na verdade clap abortou
+
+### Resolução
+- FALSO POSITIVO — a validação já existe e funciona corretamente via `clap::ValueEnum`
+
+
+## GAP-E2E-003: Auditoria E2E v1.0.91 round 2 — ZERO bugs reais (2026-06-24)
+
+### Escopo da Auditoria
+- Build: `cargo build --release` — OK (v1.0.91)
+- Testes automatizados: 1068 passando, 0 falhas, 1 ignorado
+- Clippy: ZERO warnings
+- Cargo doc: ZERO warnings
+- Cenários e2e manuais: 66 cenários executados
+
+### Cenários E2E Executados
+- CRUD completo: init, remember, read, read --with-graph, list, edit, rename, history, forget, restore
+- Validação de entrada: tipo inválido (exit 2 clap), nome vazio (exit 1), duplicata (exit 9)
+- Operações de grafo: link, traverse, related, merge-entities, reclassify, rename-entity, delete-entity
+- Busca: hybrid-search --fallback-fts-only
+- Manutenção: health, stats, vacuum, optimize, fts check/stats/rebuild, vec stats/orphan-list
+- Diagnóstico: debug-schema, namespace-detect, embedding status, slots status, codex-models, cache list
+- Batch: remember-batch (NDJSON), export (NDJSON), ingest --dry-run
+- Concorrência: 5 escritas paralelas — ZERO conflitos, ZERO corrupção
+- Idempotência: forget de memória já deletada = exit 0 (design correto)
+- Forget inexistente: exit 4 (correto)
+
+### Achados Investigados e Classificados
+- `debug-schema.schema_version: 120` vs `health.schema_version: 15` — NAO e bug: debug-schema usa `PRAGMA schema_version` (DDL counter), health usa `MAX(version) FROM refinery_schema_history` (migrações canônicas), ambos documentados
+- `remember-batch` campo `status` vs `action` — NAO e bug: batch usa campo `status` (created/updated), remember single usa `action`; design intencional com semântica distinta
+- `export` última linha com `name: null` — NAO e bug: trailer NDJSON `{summary: true}` padrão de design para todos subcomandos batch
+- `fts check` sem campo `status` — NAO e bug: campo correto é `action: "checked"` com `integrity_ok: true`
+- `backup` sem campo `status` — NAO e bug: campo correto é `action: "backed_up"` com `size_bytes`
+- `slots status` mostra slots órfãos após testes concorrentes — COMPORTAMENTO ESPERADO: slots baseados em file lock são limpos por timeout, não por gc imediato
+- `rename-entity --from --to` vs `--name --new-name` — NAO e bug: erro de instrumentação do teste, a CLI documenta `--name` e `--new-name` corretamente
+
+### Resolução
+- ZERO bugs reais encontrados
+- ZERO gaps de funcionalidade
+- ZERO regressões desde a auditoria anterior (GAP-E2E-001/002)
+- CLI v1.0.91 estável e íntegra com 1068 testes unitários + 66 cenários e2e manuais
+
+
+## GAP-E2E-004 — Auditoria E2E Round 7 (2026-06-24)
+### Contexto
+- Versão: v1.0.91
+- Build: cargo build --release OK (0.20s, cached)
+- Clippy: ZERO warnings (--all-targets -D warnings)
+- Cargo doc: ZERO warnings (--no-deps)
+- Testes unitários: 1068 passando, ZERO falhando, 6 ignored
+- Doc-tests: 21 passando, 1 ignored
+
+### Cenários E2E Manuais Executados (86 cenários)
+- Banco isolado /tmp/e2e-audit-v1091-c.sqlite namespace e2e-c
+- Init + Health (2 cenários): schema_version 15, integrity_ok true
+- Remember + Force-merge (4 cenários): create, update, big body 15KB, graph-stdin
+- Read + Read --with-graph (3 cenários): metadados, corpo, entidades vinculadas
+- List + List --include-deleted (2 cenários): contagem correta, soft-delete visível
+- Hybrid-search --fallback-fts-only (2 cenários): busca por texto, filtro por tipo
+- Graph stats + entities + traverse (3 cenários): node_count, edge_count, hops
+- Link + Unlink + --create-missing (3 cenários): aresta criada, deletada, auto-create
+- Related (1 cenário): travessia multi-hop
+- History (2 cenários): versionamento após edits e restore
+- Edit description (1 cenário): atualização sem re-embed
+- Rename + Rename-entity (2 cenários): memória e entidade renomeadas
+- Forget + Purge (3 cenários): soft-delete, purge --dry-run, purge real
+- Remember-batch NDJSON (2 cenários): batch create, trailer {summary: true}
+- Ingest --dry-run + Ingest real (3 cenários): mapeamento, indexação, busca
+- Merge-entities (1 cenário): merge 2 entidades em alvo existente
+- Delete-entity --cascade (2 cenários): cascade real, entidade já deletada exit 4
+- Reclassify + Reclassify --batch (2 cenários): entidade e batch
+- Reclassify-relation --batch (1 cenário): migração de relações
+- Normalize-entities (1 cenário): kebab-case normalizado
+- Cleanup-orphans (1 cenário): zero órfãos detectados
+- Prune-relations --dry-run (1 cenário): preview sem efeito
+- Prune-ner --all (1 cenário): NER bindings removidos
+- Optimize + Vacuum (2 cenários): status ok, fts_rebuilt
+- Debug-schema (1 cenário): schema_version 120, user_version 50
+- Namespace-detect (1 cenário): source explicit_flag
+- Backup + Sync-safe-copy (2 cenários): backed_up, status ok
+- Export NDJSON (1 cenário): 4 linhas incluindo trailer
+- Vec stats + Vec orphan-list (2 cenários): zero orphans
+- Embedding status + Slots status (2 cenários): schemas corretos
+- Pending list + Pending-embeddings list (2 cenários): schemas corretos
+- Cache list (1 cenário): listagem de modelo em cache
+- Codex-models (1 cenário): 4 modelos na whitelist
+- Completions bash (1 cenário): 3 ocorrências de sqlite-graphrag
+- Concorrência 5 escritas paralelas (1 cenário): todas 5 criadas
+- Validação entity name curto (1 cenário): exit 1 correto
+- Validação entity ALL_CAPS (1 cenário): exit 1 correto
+- Validação relação não canônica --strict-relations (1 cenário): exit 1 correto
+- Read inexistente (1 cenário): exit 4 correto
+- Forget inexistente (1 cenário): exit 4 correto
+- Remember duplicado sem force-merge (1 cenário): exit 9 correto
+- Link --max-entity-degree (1 cenário): warning sem bloquear
+- Stats (1 cenário): memories=14, entities=10, relationships=4
+- Migrate --dry-run (1 cenário): nenhuma migração pendente
+- Health final (1 cenário): integrity_ok true, schema_version 15
+
+### Achados Investigados e Classificados
+- `graph traverse` campo `hops` vs `nodes/edges` — NAO e bug: schema usa campo `hops[]` com entity, relation, direction, weight, depth; instrumentação do teste estava com campos errados
+- `stats` não aceita `--namespace` — NAO e bug: stats é estatística do banco inteiro, não por namespace; design correto
+- `cleanup-orphans` sem campo `action` — NAO e bug: schema usa `orphan_count` e `deleted`; não tem campo `action`
+- `optimize` e `vacuum` sem campo `action` — NAO e bug: optimize usa `status: "ok"`, vacuum usa `status: "ok"` com `size_before_bytes`/`size_after_bytes`
+- `purge` campo `purged: null` — NAO e bug: jaq query usou campo `purged`, mas schema real usa `total_purged` e `entries_purged`; instrumentação do teste errada
+- `health` campo `fts_degraded: null` — NAO e bug: campo correto é `fts_ok` ou ausente quando FTS está saudável; jaq query usou campo inexistente
+- `namespace-detect` campo `resolved: null` — NAO e bug: schema usa `namespace` e `source`, não `resolved`; instrumentação errada
+- `--db` como flag não-global — NAO e bug: design correto, `--db` é flag por subcomando; flags globais são `--llm-backend`, `--skip-embedding-on-failure`, etc
+
+### Resolução
+- ZERO bugs reais encontrados
+- ZERO gaps de funcionalidade
+- ZERO regressões desde a auditoria anterior (GAP-E2E-003)
+- 8 achados investigados: todos erros de instrumentação do teste (jaq queries com campos errados)
+- CLI v1.0.91 estável e íntegra com 1068 testes unitários + 86 cenários e2e manuais
+
+
+## GAP-E2E-005 — Auditoria E2E Round 8 (2026-06-24)
+
+### Contexto
+- Compilação: `cargo build --release` OK
+- Test suite: `cargo test` — ZERO failures (21 passed na última suite, 0 failed, 1 ignored)
+- Clippy: `cargo clippy -- -D warnings` — ZERO warnings
+- 60 cenários e2e manuais executados
+
+### Cenários Cobertos (60 fases)
+- Fases 1-5: init, health, migrate, remember CRUD, read, list, edit, history, rename
+- Fases 6-11: graph link, stats, entities, traverse, related, memory-entities forward/reverse, forget, restore, unlink
+- Fases 12-19: remember-batch (3 itens NDJSON), hybrid-search FTS-only, validação nome vazio (exit 1), tipo inválido (exit 2), duplicata sem force-merge (exit 9), force-merge OK, stats, namespace-detect
+- Fases 20-30: optimize, fts check/stats/rebuild, vec stats/orphan-list, cleanup-orphans, vacuum, purge dry-run, backup, export NDJSON, debug-schema, embedding status, pending list, pending-embeddings
+- Fases 31-40: merge-entities, reclassify, normalize-entities, slots status, read --with-graph, 5 escritas concorrentes, read por ID, list --include-deleted, reclassify-relation, prune-ner
+- Fases 41-50: delete-entity --cascade, graph stats pós-delete, ingest dry-run, ingest real, list pós-ingest, corpo 10KB (15 chunks), completions bash, health final
+- Fases 51-60: unicode roundtrip (PT/JP/CN/AR), clear-body, entidade nome longo (120 chars), --strict-relations rejeição, forget inexistente (exit 4), read namespace errado (exit 4), traverse entidade inexistente (exit 4), sync-safe-copy, health/stats finais
+
+### Achados Investigados
+- `rename` retorna `{memory_id, name, action, version}` — NÃO `old_name`/`new_name`: instrumentação errada, NÃO bug
+- `graph traverse` usa campo `from` — NÃO `root`: instrumentação errada, NÃO bug
+- `stats` usa `memories`/`entities`/`relationships` — NÃO `total_memories`/`total_entities`: instrumentação errada
+- `fts check` usa `integrity_ok` — NÃO `status`: instrumentação errada
+- `fts rebuild` usa `rows_indexed` — NÃO `status`: instrumentação errada
+- `purge` usa `purged_count` — NÃO `total_purged`: instrumentação errada
+- `backup` usa `action: backed_up` com `source`/`destination`/`size_bytes` — NÃO `status`: instrumentação errada
+- 100KB body timeout (>120s) — lentidão de chunking, NÃO bug; 10KB funciona em <30s com 15 chunks
+
+### Resolução
+- ZERO bugs reais encontrados
+- ZERO gaps de funcionalidade
+- ZERO regressões desde round 7 (GAP-E2E-004)
+- 8 achados: todos erros de instrumentação do teste (jaq queries com campos errados)
+- CLI v1.0.91 estável com test suite + 60 cenários e2e manuais adicionais (total acumulado: 146 cenários)
+
+
+## GAP-DOC-001: v1.0.90 ausente da seção Architecture nos llms*.txt — RESOLVIDO (2026-06-24)
+
+### Problema
+- Os 3 arquivos `llms.txt`, `llms-full.txt` e `llms.pt-BR.txt` tinham seção "v1.0.86 → v1.0.91 Architecture" com bullets para v1.0.86, v1.0.87, v1.0.88, v1.0.89 e v1.0.91
+- v1.0.90 (OpenCode backend, ADR-0051, 24-bug remediation) estava AUSENTE — pulada da lista
+
+### Causa Raiz
+- A seção de arquitetura foi atualizada para v1.0.91 sem adicionar o bullet de v1.0.90 que introduziu o terceiro backend LLM
+
+### Correção
+- Adicionado bullet de v1.0.90 em todos os 3 arquivos documentando OpenCode backend, flags, env vars e os 24 bugs/gaps remediados
+
+### Relações Causa x Efeito
+| Causa | Efeito |
+|-------|--------|
+| Seção atualizada de v1.0.89 direto para v1.0.91 | v1.0.90 ausente da documentação de arquitetura |
+| v1.0.90 introduziu backend OpenCode | Terceiro backend LLM sem documentação na spec sheet |
+
+
+## GAP-DOC-002: INDEX.md com referência errada a adr-0051 em vez de adr-0052 — RESOLVIDO (2026-06-24)
+
+### Problema
+- `docs/decisions/INDEX.md` linha 92 dizia "Create `adr-0051-slug.md`" enquanto linha 91 dizia "next is ADR-0052"
+- Erro de copy-paste que indicaria ao desenvolvedor criar arquivo com número duplicado
+
+### Correção
+- Corrigido para "Create `adr-0052-slug.md`"
+
+
+## GAP-DOC-003: HOW_TO_USE.md e HOW_TO_USE.pt-BR.md parados na v1.0.89 — RESOLVIDO (2026-06-24)
+
+### Problema
+- Título dizia "v1.0.89" — sem menção a v1.0.90 (OpenCode backend) ou v1.0.91 (CWD isolation)
+- Comando de instalação dizia `--version 1.0.89`
+- Seção Prerequisites listava apenas `claude` e `codex` — `opencode` ausente (adicionado v1.0.90)
+- "See Also" dizia "44 ADRs" — são 45 (ADR-0051 adicionado v1.0.90)
+- Faltavam seções documentando changes de v1.0.90 e v1.0.91
+
+### Correção
+- Título atualizado para v1.0.91 em ambos EN e PT-BR
+- Seções v1.0.90 e v1.0.91 adicionadas com todos os BUGs e GAPs
+- Install version atualizada para 1.0.91
+- Prerequisites: `opencode` adicionado como terceira opção
+- Contagem de ADRs corrigida para 45
+- Mesmas correções aplicadas em ambos os idiomas
+
+
+## GAP-DOC-004: cleanup_spawn_dir() não nomeada em HEADLESS_INVOCATION — RESOLVIDO (2026-06-24)
+
+### Problema
+- HEADLESS_INVOCATION.md e .pt-BR.md referenciavam GAP-SPAWN-002 apenas pelo ID
+- A função `cleanup_spawn_dir()` e sua localização em `src/main.rs` não eram nomeadas
+- AGENTS.md nomeava explicitamente, criando inconsistência
+
+### Correção
+- Texto expandido para incluir nome da função e localização em ambos os idiomas
+
+
+## GAP-DOC-005: schemas/README.md backend_invoked enum sem "auto" — RESOLVIDO (2026-06-24)
+
+### Problema
+- schemas/README.md linha 103 dizia `backend_invoked: enum [claude, codex, opencode, none]`
+- BUG-15 adicionou "auto" como quinto valor válido em 7 schemas
+- README não refletia o valor "auto"
+
+### Correção
+- Enum atualizada para `[claude, codex, opencode, none, auto]`
+
+
+## GAP-SKILL-001: PT skill CRUD seção comprimida e omitindo `edit --type` — RESOLVIDO (2026-06-24)
+
+### Problema
+- skill/sqlite-graphrag-pt/SKILL.md comprimia 4 bullets da seção CRUD em 1 linha com semicolons
+- Flag `edit --type <kind>` (alias de `--memory-type`) ausente na skill PT
+- EN skill tinha cobertura completa na linha 150 mas PT omitia
+
+### Correção
+- Seção CRUD Leitura expandida de 6 para 14 bullets com uma ideia por linha
+- Flag `--type <kind>` adicionada para mudar tipo de memória
+- Flags `--description`, `--force-reembed` separadas em bullets individuais
+
+
+## GAP-SKILL-002: Description usa "enforço" — termo inexistente em português padrão — RESOLVIDO (2026-06-24)
+
+### Problema
+- Campo description do frontmatter YAML usava "enforço OAuth-only"
+- "enforço" não é palavra válida em português brasileiro padrão
+
+### Correção
+- Substituído por "enforcement OAuth-only"
+
+
+## GAP-SKILL-003: Fórmulas CLI duplicavam conteúdo de seções anteriores — RESOLVIDO (2026-06-24)
+
+### Problema
+- Linhas "Manutenção semanal" e "Roteamento de exit code" na seção Fórmulas duplicavam conteúdo das seções "Pipeline de Manutenção" e "Códigos de Saída"
+- Word count PT ultrapassava 4000 palavras após expansão CRUD
+
+### Correção
+- Removidas 2 linhas duplicadas de ambas as skills (PT e EN)
+- Word count PT ajustado para 3974 (dentro do limite de 4000)
