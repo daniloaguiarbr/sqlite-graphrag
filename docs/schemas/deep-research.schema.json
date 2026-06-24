@@ -55,7 +55,8 @@
       "type": "object",
       "required": [
         "sub_queries_total", "sub_queries_completed", "sub_queries_failed",
-        "sub_queries_timed_out", "unique_memories_found", "evidence_chains_found", "elapsed_ms"
+        "sub_queries_timed_out", "unique_memories_found", "evidence_chains_found", "elapsed_ms",
+        "vec_degraded"
       ],
       "additionalProperties": false,
       "properties": {
@@ -65,7 +66,8 @@
         "sub_queries_timed_out":  { "type": "integer", "minimum": 0, "description": "Sub-queries that exceeded the per-query timeout." },
         "unique_memories_found":  { "type": "integer", "minimum": 0, "description": "Distinct memories after deduplication." },
         "evidence_chains_found":  { "type": "integer", "minimum": 0, "description": "Multi-hop evidence chains retained after filtering." },
-        "elapsed_ms":             { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." }
+        "elapsed_ms":             { "type": "integer", "minimum": 0, "description": "Total wall-clock time in milliseconds." },
+        "vec_degraded":           { "type": "boolean", "description": "True when vector embedding failed and search fell back to FTS-only for one or more sub-queries." }
       }
     }
   },

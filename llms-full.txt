@@ -1,9 +1,9 @@
-# sqlite-graphrag (v1.0.90 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.91 LLM-Only One-Shot)
 
 
-> Persistent memory for 27 AI agents in a single 6 MB Rust binary (LLM-only, one-shot)
+> Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary (LLM-only, one-shot)
 
-27 AI agents. One 14.6 MiB binary. Zero model download. v1.0.90 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth), `codex` (ChatGPT Pro OAuth) or `opencode` subprocess for embedding generation. No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
+27 AI agents. One 14.6 MiB binary. Zero model download. v1.0.91 gives every AI coding assistant a local, private memory layer backed by a single SQLite file. The CLI is a thin orchestrator: every `remember` / `ingest` / `recall` / `hybrid-search` spawns a headless `claude code` (Anthropic OAuth), `codex` (ChatGPT Pro OAuth) or `opencode` subprocess for embedding generation in an isolated temp directory (no .mcp.json inheritance since v1.0.91). No daemon, no ONNX runtime, no 1.1 GB `multilingual-e5-small` model to download. Graph-native retrieval. Deterministic JSON output ready for pipeline orchestration.
 
 - Portuguese version available at [README.pt-BR.md](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/README.pt-BR.md)
 - Compact summary in [llms.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.txt); Portuguese variant in [llms.pt-BR.txt](https://github.com/daniloaguiarbr/sqlite-graphrag/blob/main/llms.pt-BR.txt)
@@ -32,12 +32,13 @@ cargo install --locked sqlite-graphrag
 - OAuth enforcement: the spawn of `claude -p` or `codex exec` ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. See [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md).
 - Cosine similarity is now pure Rust: see [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) for the algorithm. BLOB-backed embeddings replace vec0: see [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md).
 
-## v1.0.86 → v1.0.90 Architecture (Pre-flight, Schema Drift, Flag Parity, OpenCode Backend)
+## v1.0.86 → v1.0.91 Architecture (Pre-flight, Schema Drift, Flag Parity, OpenCode Backend, Spawn Isolation)
 - The pre-flight validation layer (v1.0.87, ADR-0045, GAP-META-005) gates every LLM subprocess spawn BEFORE the fork. `src/spawn/preflight.rs` (≥200 lines, 7 guards, 15 unit tests) runs `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir` before `Command::spawn()`. Failures return `AppError::PreFlightFailed` with `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`). Bypass: `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1`. The 4 spawners (`claude_runner`, `codex_spawn`, `ingest_claude`, `extract/llm_embedding`) share this single module
 - v1.0.86 added 10 LLM-pipeline subcommands: `pending list|show|cleanup`, `embedding status|list|abandon`, `pending-embeddings list|process`, `slots status|release`. New global flags: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`. Host-wide slot semaphore via `fs4` with `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows (ADR-0036-0040)
 - v1.0.88 fixed 3 hotfixes: BUG-11 (CRITICAL) preflight failure in `extract/llm_embedding.rs:563-565` now propagates to `remember` via `embed_via_backend_strict`; BUG-12 (MEDIUM) OAuth-only enforcement emits 1 stderr line (was 2); BUG-13 (MEDIUM) `link --create-missing` respects entity-name validation. 11 new regression tests (ADR-0046, ADR-0047)
 - v1.0.89 closed 7 GAPs: GAP-E2E-007 `health.schema.json` regenerated via `schemars` derive macro with `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON, 17 new fields); GAP-E2E-008 `--db <PATH>` parity on `embedding status|list|abandon`, `pending list|show`; GAP-E2E-009 `migrate --dry-run --json` reports pending migrations without applying; GAP-E2E-010 `codex-models --json` accepted as no-op; GAP-E2E-011 `ingest --auto-describe` extracts description from first meaningful body line; GAP-E2E-002 `health --namespace <NS> --json` filters counts; GAP-E2E-001 binary size 14.6 MiB documented in `Cargo.toml:6` (ADR-0048, ADR-0049). 1877 tests passing (843 lib + 1013 integration + 21 doc)
-- Schema version stays at v15 throughout v1.0.86-89. No database migrations run in this 4-release cycle
+- Schema version stays at v15 throughout v1.0.86-91. No database migrations run in this 6-release cycle
+- v1.0.91 spawn CWD isolation (GAP-SPAWN-001): `spawn_isolation_dir()` and `apply_cwd_isolation()` in `src/spawn/mod.rs` set `current_dir` to an ephemeral temp directory and `CLAUDE_CONFIG_DIR` to the same dir for ALL 10 production spawn sites. LLM subprocesses no longer inherit `.mcp.json` from the caller's project — embedding works zero-config in any directory. `cleanup_spawn_dir()` removes the temp dir at process exit (GAP-SPAWN-002). BUG-17 fixed `entities.degree` inflation: `increment_degree()` replaced by `recalculate_degree()` after all relationships are inserted. BUG-15 fixed 7 JSON schemas with missing `"opencode"` and `"auto"` in `backend_invoked` enum. BUG-16 fixed `deep-research.schema.json` missing `vec_degraded` field
 
 
 
@@ -116,7 +117,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 ### Core database lifecycle
 | Command | Arguments | Description |
 | --- | --- | --- |
-| `init` | `--namespace <ns>` | Initialize database and download embedding model |
+| `init` | `--namespace <ns>` | Initializes SQLite database and validates LLM CLI on PATH. No model download. |
 | `health` | `--json` | Show database integrity and pragma status; reports super-hub detection and `relation_concentration_warning` when any entity or relation type dominates the graph |
 | `stats` | `--json` | Count memories, entities and relationships |
 | `migrate` | `--json` | Apply pending schema migrations via `refinery` |
@@ -343,13 +344,13 @@ RUN cargo install --locked sqlite-graphrag
 ### Measured on a 1000-memory database
 - Embedding latency is dominated by the headless LLM round-trip (~1-3 s per batched call); pure reads stay in the low milliseconds
 - Since v1.0.79 LLM calls are batched (calibration bases of 8 chunks / 25 entity names at dim 64, dim-adaptive — G44) and parallel (`--llm-parallelism`), so a 39-item memory embeds in 4-5 calls instead of 39 serialized spawns
-- `init` performs no model download — it only creates the database and validates that a `claude`/`codex` CLI is reachable
+- `init` performs no model download — it only creates the database and validates that a `claude`/`codex`/`opencode` CLI is reachable
 - Each LLM embedding worker consumes roughly 350 MB of RSS — the concurrency-gate budget unit since v1.0.79
 
 
 ## Safe Parallel Invocation
 ### Counting semaphore with four simultaneous slots
-- Each heavy invocation spawns an LLM subprocess (`claude` or `codex`); the Rust binary itself holds no model in memory
+- Each heavy invocation spawns an LLM subprocess (`claude`, `codex` or `opencode`); the Rust binary itself holds no model in memory
 - Up to four instances run in parallel via `MAX_CONCURRENT_CLI_INSTANCES` default
 - Lock files live at `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` using `flock`
 - A fifth concurrent invocation waits up to 300 seconds then exits with code 75
@@ -393,16 +394,16 @@ RUN cargo install --locked sqlite-graphrag
 - Parallel invocations beyond four slots receive exit 75 and SHOULD retry with backoff
 - Exit 10 signals database error: run `sqlite-graphrag health --json` to inspect integrity
 - Exit 12 is historical (legacy feature removed in v1.0.79); no current build returns exit 12
-- Exit 77 signals low RAM: free at least 1 GB before invoking the embedding model
+- Exit 77 signals low RAM: free at least 2 GB before invoking the LLM subprocess
 
 
 ## HOW TO USE
 ### Prerequisites
 - Rust 1.88 or newer installed via `rustup` across Linux macOS and Windows
 - SQLite version 3.40 or newer shipped with your operating system distribution
-- Available RAM of 100 MB free for runtime plus 1 GB during embedding model load
-- Disk space of 200 MB for the embedding model cache on first invocation
-- Network access required ONLY for first `init` to download quantized embeddings
+- Available RAM of 100 MB free for runtime plus ~150 MB per LLM subprocess (codex/claude/opencode)
+- Disk space of 50 MB for the database and cache; no local embedding model stored
+- Network access required for OAuth authentication of the LLM subprocess (codex/claude/opencode)
 
 
 ### First Command in 60 Seconds
@@ -412,7 +413,7 @@ sqlite-graphrag init
 sqlite-graphrag remember --name first-note --type user --description "first memory" --body "hello graphrag"
 ```
 - First line downloads, builds and installs the binary into `~/.cargo/bin`
-- Second line creates the SQLite database and validates that a `claude`/`codex` CLI is reachable (no model download)
+- Second line creates the SQLite database and validates that a `claude`/`codex`/`opencode` CLI is reachable (no model download)
 - Third line persists your first memory and indexes it for hybrid retrieval
 - Your next `recall` call returns the note you just saved in milliseconds
 
@@ -473,7 +474,7 @@ cargo install --locked sqlite-graphrag
 sqlite-graphrag init --namespace default
 sqlite-graphrag health --json
 ```
-- Command `init` creates the SQLite file and validates that an LLM CLI (`claude` or `codex`) is reachable on `PATH`. No model download.
+- Command `init` creates the SQLite file and validates that an LLM CLI (`claude`, `codex` or `opencode`) is reachable on `PATH`. No model download.
 - Exit code `0` signals the database is ready for writes and reads from any agent
 - Saves 30 minutes per laptop versus a Pinecone plus Docker plus Python bootstrap
 
@@ -618,11 +619,11 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 - `retry::CircuitBreaker` is integrated into the worker loop with `breaker.record(AttemptOutcome::HardFailure)`. The loop aborts after `--circuit-breaker-threshold` consecutive failures (default 5, set to 0 to disable).
 - `src/system_load.rs` provides `load_average_one`, `ncpus`, and `is_system_saturated`. `enrich` aborts the spawn when `load_average_one() > 2 * ncpus` and `--max-load-check` is set (default true).
 ### Orphan Reaper (G28-C)
-- `src/reaper.rs` walks `/proc` at startup, kills any `claude`/`codex` orphan with `PPID=1` and age greater than 60s. Invoked from `main` BEFORE any work. 4-test suite: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
+- `src/reaper.rs` walks `/proc` at startup, kills any `claude`/`codex`/`opencode` orphan with `PPID=1` and age greater than 60s. Invoked from `main` BEFORE any work. 4-test suite: `orphan_min_age_is_one_minute`, `orphan_targets_include_claude_and_codex`, `reaper_report_starts_zeroed`, `scan_completes_without_panic_on_linux`.
 
 ## What Changed in v1.0.76
 ### LLM-Only One-Shot Architecture (G21 + G22 + G23 + G24 + G25)
-- The default build is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 6 MB.
+- The default build is LLM-Only and one-shot. No daemon, no ONNX runtime, no `multilingual-e5-small` model download. Embedding generation and NER delegate to a headless `claude code` or `codex` subprocess (OAuth, no MCP, no hooks). Release binary is approximately 14.6 MiB.
 - The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The legacy fastembed + ort + tokenizers pipeline no longer exists.
 - See ADR-0019 (LLM-Only One-Shot), ADR-0020 (Pure-Rust Cosine), ADR-0021 (Daemon Deprecation), ADR-0022 (BLOB-Backed Embeddings), ADR-0023 (Tokenizer Removal), ADR-0024 (FTS5 Coarse Filter + Cosine Refinement), ADR-0025 (OAuth-Only LLM Credential Flow), ADR-0026 (V002 `vec_tables` Migration Drift).
 ### `migrate` Subcommand Family
@@ -640,10 +641,10 @@ sqlite-graphrag hybrid-search "$GEMINI_QUERY" --json --k 5 \
 
 ## Stable Identity
 ### Facts that remain invariant across doc updates
-- Package `sqlite-graphrag` v1.0.79 published on crates.io with MSRV Rust 1.88
+- Package `sqlite-graphrag` v1.0.91 published on crates.io with MSRV Rust 1.88
 - Repository `https://github.com/daniloaguiarbr/sqlite-graphrag` with CI on push and tag
 - License dual `MIT OR Apache-2.0` with individual license files at the repository root
-- Embedding generation: delegated to a headless `claude code` or `codex` subprocess (OAuth) per call. The Rust binary holds no model.
+- Embedding generation: delegated to a headless `claude code`, `codex` or `opencode` subprocess (OAuth) per call. The Rust binary holds no model.
 - Storage layer `rusqlite` bundled SQLite plus FTS5 module plus BLOB-backed embedding tables (pure-Rust cosine since v1.0.76)
 
 

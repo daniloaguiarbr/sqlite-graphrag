@@ -155,7 +155,11 @@ pub fn propagate_opencode_env(cmd: &mut Command) {
 ///
 /// Unlike codex (9 flags) and claude (7 flags), opencode has only
 /// `--dangerously-skip-permissions` for auto-approval.
-pub fn build_opencode_command(binary: &Path, model: &str, prompt: &str) -> Command {
+pub fn build_opencode_command(
+    binary: &Path,
+    model: &str,
+    prompt: &str,
+) -> Result<Command, AppError> {
     let mut cmd = Command::new(binary);
     cmd.arg("run")
         .arg("--format")
@@ -172,7 +176,8 @@ pub fn build_opencode_command(binary: &Path, model: &str, prompt: &str) -> Comma
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     propagate_opencode_env(&mut cmd);
-    cmd
+    crate::spawn::apply_cwd_isolation_tokio(&mut cmd)?;
+    Ok(cmd)
 }
 
 /// Parse the NDJSON output from `opencode run --format json`.
@@ -295,7 +300,7 @@ pub async fn call_opencode<T: serde::de::DeserializeOwned>(
     prompt: &str,
     timeout_secs: u64,
 ) -> Result<(T, f64, u64), AppError> {
-    let mut cmd = build_opencode_command(binary, model, prompt);
+    let mut cmd = build_opencode_command(binary, model, prompt)?;
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
     let output = match tokio::time::timeout(timeout, cmd.output()).await {
@@ -353,7 +358,7 @@ pub fn build_opencode_command_sync(
     model: &str,
     prompt: &str,
     input_text: &str,
-) -> std::process::Command {
+) -> Result<std::process::Command, AppError> {
     let full_prompt = if input_text.is_empty() {
         prompt.to_string()
     } else {
@@ -374,7 +379,8 @@ pub fn build_opencode_command_sync(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     propagate_opencode_env_sync(&mut cmd);
-    cmd
+    crate::spawn::apply_cwd_isolation(&mut cmd)?;
+    Ok(cmd)
 }
 
 /// Spawn opencode with setsid for process group isolation but WITHOUT
@@ -534,7 +540,8 @@ mod tests {
             Path::new("/usr/bin/opencode"),
             "opencode/big-pickle",
             "test prompt",
-        );
+        )
+        .unwrap();
         let argv: Vec<String> = cmd
             .as_std()
             .get_args()

@@ -1,8 +1,8 @@
-# sqlite-graphrag (v1.0.90 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.91 LLM-Only One-Shot)
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 14.6 MiB
 
-27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.90 (atual; v1.0.90 adicionou OpenCode como terceiro backend LLM ao lado de codex e claude, remediação de 24 bugs, correção de compilação Windows, correção de timeout de embedding, correção de paginação do list; v1.0.89 regenerou health.schema.json via schemars e adicionou paridade --db em 5 subcomandos; v1.0.88 corrigiu hotfixes BUG-11/12/13; v1.0.87 adicionou a camada de validação pre-flight; v1.0.86 adicionou 10 subcomandos para o pipeline LLM; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) para gerar embeddings. Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
+27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.91 (atual; v1.0.91 corrigiu GAP-SPAWN-001 isolamento de CWD em spawn para que subprocessos LLM não herdem mais .mcp.json, BUG-17 correção de inflação de degree, BUG-15/16 correções de schema, GAP-SPAWN-002 cleanup de diretórios órfãos; v1.0.90 adicionou OpenCode como terceiro backend LLM ao lado de codex e claude, remediação de 24 bugs; v1.0.89 regenerou health.schema.json via schemars e adicionou paridade --db em 5 subcomandos; v1.0.88 corrigiu hotfixes BUG-11/12/13; v1.0.87 adicionou a camada de validação pre-flight; v1.0.86 adicionou 10 subcomandos para o pipeline LLM; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) para gerar embeddings em diretório temporário isolado (sem herança de .mcp.json). Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
 
 ## Arquitetura v1.0.85 (apenas LLM, substitui v1.0.79)
 ### Build one-shot sem modelo local
@@ -16,11 +16,12 @@
 - Leia este documento em [inglês (EN)](llms.txt).
 
 
-## Arquitetura v1.0.86 → v1.0.90 (Pre-flight, Schema Drift, Flag Parity, Backend OpenCode)
+## Arquitetura v1.0.86 → v1.0.91 (Pre-flight, Schema Drift, Flag Parity, Backend OpenCode, Isolamento de Spawn)
 - v1.0.86 adicionou 10 subcomandos do pipeline LLM: `pending list|show|cleanup`, `embedding status|list|abandon`, `pending-embeddings list|process`, `slots status|release`. Novas flags globais: `--max-concurrency`, `--wait-lock`, `--llm-parallelism`, `--ingest-parallelism`, `--graceful-shutdown-secs`, `--skip-embedding-on-failure`. Semáforo de slots host-wide via `fs4` com `fcntl(F_SETLK)` em Unix e `LockFileEx` em Windows (ADR-0036, 0037, 0038, 0039, 0040)
 - v1.0.87 adicionou a camada de validação pre-flight: `src/spawn/preflight.rs` (≥200 linhas, 7 guards, 15 testes unitários) porta todo spawn de subprocesso LLM ANTES do fork. Nova variante `AppError::PreFlightFailed(PreFlightError)` com `exit_code() == 16` (`EX_CONFIG`, `is_permanent() == true`). Os 7 guards em ordem: `check_argv_size`, `check_binary_exists`, `check_mcp_config_inline`, `check_mcp_config_path`, `check_walkup_mcp_json`, `check_output_buffer`, `check_claude_config_dir`. Bypass via `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` (ADR-0045, GAP-META-005)
 - v1.0.88 hotfixes: BUG-11 (CRÍTICO) falha de pre-flight em `extract/llm_embedding.rs:563-565` agora propaga para `remember` via `embed_via_backend_strict`; BUG-12 (MÉDIO) enforço OAuth-only emite 1 linha stderr (era 2); BUG-13 (MÉDIO) `link --create-missing` respeita validação de nome de entidade. 11 novos regression tests (ADR-0046, ADR-0047)
 - v1.0.89 schema drift + flag parity: `health.schema.json` regenerado via `schemars` derive macro (política Must-Ignore por RFC 7493 I-JSON, `additionalProperties: true`); 17 novos campos adicionados. 5 subcomandos agora aceitam `--db <PATH>`: `embedding status|list|abandon`, `pending list|show`. `migrate --dry-run --json` reporta migrações pendentes sem aplicar. `codex-models --json` aceito como no-op. `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo. `health --namespace <NS> --json` filtra contagens. Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6` (ADR-0048, ADR-0049)
+- v1.0.91 isolamento de CWD em spawn: `spawn_isolation_dir()` e `apply_cwd_isolation()` em `src/spawn/mod.rs` definem `current_dir` para diretório temporário efêmero e `CLAUDE_CONFIG_DIR` para o mesmo diretório em TODOS os 10 spawn sites de produção. Subprocessos LLM não herdam mais `.mcp.json` do projeto do chamador — embedding funciona zero-config em qualquer diretório. `cleanup_spawn_dir()` remove o diretório temporário ao final do processo. BUG-17 corrigiu inflação de `entities.degree`: `increment_degree()` substituído por `recalculate_degree()` após inserção de todas as relações. BUG-15/16 corrigiram 8 JSON schemas com valores de enum e campos ausentes
 
 
 ## Documentação Principal
@@ -38,7 +39,7 @@
 
 ## Comandos Principais
 ### Subcomandos agrupados por ciclo de vida
-- `init` inicializa o banco SQLite e valida que uma CLI `claude`/`codex` está alcançável (sem download de modelo desde a v1.0.76)
+- `init` inicializa o banco SQLite e valida que uma CLI `claude`/`codex`/`opencode` está alcançável (sem download de modelo desde a v1.0.76)
 - `remember` salva uma memória com nome, tipo, descrição, corpo e grafo de entidades opcional; use `--max-rss-mb` para limitar o RSS do processo durante embedding (padrão 8192 MiB)
 - `recall` realiza busca por similaridade vetorial KNN sobre as memórias armazenadas
 - `hybrid-search` funde FTS5 full-text e KNN vetorial via Reciprocal Rank Fusion
@@ -134,14 +135,15 @@ Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORTAM o spawn com AppError::
 - `5` namespace não pôde ser resolvido: passe `--namespace` explicitamente
 - `6` payload excedeu os limites configurados: divida o corpo em partes menores
 - `10` erro no banco de dados SQLite: execute `health` para inspecionar integridade
-- `11` geração de embedding falhou: verifique os arquivos do modelo e tente novamente
-- `12` extensão sqlite-vec falhou ao carregar: reinstale com a extensão bundled
+- `11` geração de embedding falhou: verifique disponibilidade da CLI LLM e tente novamente
 - `13` falha parcial em batch: respeite o backoff e tente novamente
 - `14` erro de I/O no sistema de arquivos: diretório de cache não gravável, diretório de ingestão inexistente
 - `15` banco de dados ocupado após tentativas: aguarde e tente novamente
+- `16` validação pre-flight falhou (v1.0.87+): corrija config MCP ou caminho do binário, veja envelope para variante
+- `19` SHUTDOWN: shutdown graceful interrompeu trabalho, estado parcial descartado, RETRY OBRIGATÓRIO
 - `20` erro interno ou de serialização JSON
 - `75` EX_TEMPFAIL: todos os slots de concorrência ocupados OU singleton de job travado, tente com backoff
-- `77` RAM disponível abaixo do mínimo necessário para carregar o modelo de embeddings
+- `77` RAM disponível abaixo do mínimo necessário para subprocesso LLM
 
 
 ## O Que Mudou na v1.0.79
@@ -176,8 +178,8 @@ Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORTAM o spawn com AppError::
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.79 com MSRV Rust 1.88 declarado no `Cargo.toml`
+- Versão atual 1.0.91. v1.0.91 = isolamento de CWD em spawn (GAP-SPAWN-001), correção de recálculo de degree (BUG-17), 7 correções de enum em schema (BUG-15), correção de schema deep-research (BUG-16), cleanup de diretórios órfãos (GAP-SPAWN-002). MSRV Rust 1.88. 877+ testes passando. Binário 14.6 MiB
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
-- Modelo de embeddings: delegado a subprocesso headless `claude code` (OAuth Anthropic) ou `codex` (OAuth ChatGPT Pro) por chamada; sem modelo em processo
+- Modelo de embeddings: delegado a subprocesso headless `claude code` (OAuth Anthropic), `codex` (OAuth ChatGPT Pro) ou `opencode` por chamada; sem modelo em processo. Subprocessos LLM rodam em diretório temporário isolado (v1.0.91)
 - Camada de armazenamento `rusqlite` com SQLite bundled e módulo FTS5. Extensão `sqlite-vec` REMOVIDA na v1.0.76; similaridade vetorial é cosseno em Rust puro sobre embeddings BLOB
 - Até quatro instâncias simultâneas suportadas via semáforo de contagem com locks advisory `fs4`

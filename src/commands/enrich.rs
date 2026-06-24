@@ -739,11 +739,12 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
                 }
             };
             let mut cmd = std::process::Command::new(&bin);
-            cmd.env_clear();
-            for var in &["PATH", "HOME", "USER"] {
-                if let Ok(val) = std::env::var(var) {
-                    cmd.env(var, val);
-                }
+            crate::spawn::env_whitelist::apply_env_whitelist(
+                &mut cmd,
+                crate::spawn::env_whitelist::is_strict_env_clear(),
+            );
+            if let Err(e) = crate::spawn::apply_cwd_isolation(&mut cmd) {
+                return PreflightOutcome::Error(e);
             }
             cmd.arg("-p")
                 .arg("ping")
@@ -853,7 +854,11 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
             let model =
                 super::opencode_runner::resolve_opencode_model(args.opencode_model.as_deref());
             let mut cmd =
-                super::opencode_runner::build_opencode_command_sync(&bin, &model, "ping", "");
+                match super::opencode_runner::build_opencode_command_sync(&bin, &model, "ping", "")
+                {
+                    Ok(c) => c,
+                    Err(e) => return PreflightOutcome::Error(e),
+                };
             let child = match super::opencode_runner::spawn_opencode(&mut cmd) {
                 Ok(c) => c,
                 Err(e) => return PreflightOutcome::Error(AppError::Io(e)),
@@ -4050,7 +4055,7 @@ fn call_opencode(
         &resolved_model,
         &augmented_prompt,
         input_text,
-    );
+    )?;
 
     let mut child = super::opencode_runner::spawn_opencode(&mut cmd).map_err(|e| {
         AppError::Io(std::io::Error::new(

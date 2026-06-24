@@ -859,13 +859,21 @@ fn persist_staged(
                 }
             }
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
-            entities::increment_degree(&tx, entity_id)?;
         }
         let entity_types: std::collections::HashMap<&str, EntityType> = staged
             .entities
             .iter()
             .map(|entity| (entity.name.as_str(), entity.entity_type))
             .collect();
+
+        let mut affected_entity_ids: std::collections::HashSet<i64> =
+            std::collections::HashSet::new();
+        for entity in &staged.entities {
+            if let Some(eid) = entities::find_entity_id(&tx, namespace, &entity.name)? {
+                affected_entity_ids.insert(eid);
+            }
+        }
+
         for rel in &staged.relationships {
             let source_entity = NewEntity {
                 name: rel.source.clone(),
@@ -887,6 +895,12 @@ fn persist_staged(
             let target_id = entities::upsert_entity(&tx, namespace, &target_entity)?;
             let rel_id = entities::upsert_relationship(&tx, namespace, source_id, target_id, rel)?;
             entities::link_memory_relationship(&tx, memory_id, rel_id)?;
+            affected_entity_ids.insert(source_id);
+            affected_entity_ids.insert(target_id);
+        }
+
+        for &eid in &affected_entity_ids {
+            entities::recalculate_degree(&tx, eid)?;
         }
     }
 

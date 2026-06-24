@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Memória persistente para agentes de IA em um único binário Rust com GraphRAG embutido.
-> **Release atual: v1.0.90 — Integração do backend OpenCode (terceiro backend LLM) e remediação de 24 bugs.** Todo build embute via `claude -p`, `codex exec` ou `opencode run` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~14.6 MiB. A v1.0.90 adiciona o OpenCode como terceiro backend LLM ao lado de codex e claude (GAP-OPENCODE-001/002), com `--llm-backend opencode`, `--mode opencode` para ingest/enrich, env vars `SQLITE_GRAPHRAG_OPENCODE_*`, e cadeia de fallback estendida para `codex → claude → opencode → none`. Corrige compilação Windows (BUG-WINDOWS-001), timeout de embedding hardcoded (BUG-TIMEOUT-HARDCODE-001), paginação do `list` (BUG-LIST-TOTAL-COUNT-001) e 21 bugs adicionais de auditoria. Consumidores da biblioteca devem fixar em `=1.0.90`; veja a `Política de Estabilidade` abaixo.
+> **Release atual: v1.0.91 — Isolamento de CWD em spawn, correção de degree e remediação de 6 gaps.** Todo build embute via `claude -p`, `codex exec` ou `opencode run` (OAuth, sem MCP, sem hooks). Sem daemon, sem runtime ONNX, binário de ~14.6 MiB. A v1.0.91 corrige GAP-SPAWN-001 (subprocessos LLM não herdam mais `.mcp.json` do CWD do chamador — embedding funciona zero-config em qualquer projeto), BUG-17 (inflação de `entities.degree` via `increment_degree` substituído por `recalculate_degree`), BUG-15 (7 schemas JSON faltando `"opencode"` e `"auto"` no enum `backend_invoked`), BUG-16 (campo `vec_degraded` ausente no schema `deep-research`), GAP-SPAWN-002 (cleanup de diretórios órfãos de spawn) e BUG-14 (correção de asserção em teste). Consumidores da biblioteca devem fixar em `=1.0.91`; veja a `Política de Estabilidade` abaixo.
 
 - Leia este documento em [inglês (EN)](README.md).
 
@@ -22,7 +22,7 @@
 - **Atualizando de v1.0.74 / v1.0.75?** Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento de migração da v1.0.76
 - **Atualizando de v1.0.79 para v1.0.80?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.80 adiciona o job de CI `semver-checks` (informativo), os steps de pre-warm do Windows (ADR-0033) e a saída sem panic no terceiro sinal (ADR-0034). Consumidores da biblioteca devem fixar em `=1.0.80`; veja a `Política de Estabilidade` abaixo. / v1.0.77 / v1.0.78 / v1.0.79
 - **Atualizando de v1.0.80 / v1.0.81 para v1.0.82?** Duas novas migrations rodam automaticamente no primeiro `init`/`migrate`: `V014__pending_memories` (fila de checkpoint do `remember`) e `V015__pending_embeddings` (fila de retry de embedding). Após atualizar, rode `codex login` uma vez para refrescar o refresh token OAuth — o incidente de 2026-06-14 mostrou que `codex exec` retornando HTTP 401 `refresh_token_reused` agora é capturado pela nova cadeia de fallback (ADR-0040) e roteado para o próximo backend em `--llm-backend codex,claude`. Veja [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md) para o procedimento completo em 6 passos incluindo rollback.
-- **Atualizando de v1.0.85 / v1.0.86 / v1.0.87 / v1.0.88 / v1.0.89 para v1.0.90?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.90 adiciona o backend OpenCode como terceiro backend LLM ao lado de codex e claude (GAP-OPENCODE-001/002), corrige 11 bugs de auditoria incluindo compilação Windows (BUG-WINDOWS-001), timeout de embedding hardcoded (BUG-TIMEOUT-HARDCODE-001), paginação do `list` (BUG-LIST-TOTAL-COUNT-001) e propagação de `--db` no graph. Novas env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`. Nova cadeia de fallback: `codex → claude → opencode → none`. Consumidores da biblioteca devem fixar em `=1.0.90`.
+- **Atualizando de v1.0.85 / v1.0.86 / v1.0.87 / v1.0.88 / v1.0.89 / v1.0.90 para v1.0.91?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.91 corrige GAP-SPAWN-001 (subprocessos LLM não herdam mais `.mcp.json` — embedding funciona zero-config em qualquer projeto), BUG-17 (inflação de `entities.degree` substituída por `recalculate_degree`), BUG-15 (7 enums de schema), BUG-16 (schema `deep-research`), GAP-SPAWN-002 (cleanup de diretórios órfãos) e BUG-14 (correção de teste). Consumidores da biblioteca devem fixar em `=1.0.91`.
 - **Atualizando de v1.0.82 / v1.0.83 para v1.0.85?** Nenhuma migração de banco necessária; basta `cargo install sqlite-graphrag --locked --force`. A v1.0.84 (ADR-0042, GAP-002) adicionou o split real do backend Claude via `LlmEmbeddingBuilder` para que `--llm-backend claude` invoque `claude` e nunca `codex`, o campo `backend_invoked` em 7 envelopes JSON, o campo `vec_degraded_reason` em `hybrid-search` e `recall`, a flag global `--dry-run-backend` para auditoria pré-voo em CI, e `apply_env_whitelist_for_claude` para providers hardened. A v1.0.85 (ADR-0043) estendeu `FallbackReason` de 3 para 7 variantes com discriminador `reason_code` (captura exaustão de quota, exaustão de slot, mismatch de backend, dim zero, cancelamento, timeout), `try_embed_query_with_deterministic_fallback` re-tenta o backend alternativo em `OAuthQuota` e dorme 750ms em `SlotExhausted`, e `LlmEmbedding::invoke_claude` agora captura 12-14 headers `anthropic-ratelimit-*-remaining` ANTES de checar o exit do subprocesso (G45-CR5). Consumidores da biblioteca devem fixar em `=1.0.85`; veja a `Política de Estabilidade` abaixo.
 
 ```bash
@@ -34,7 +34,7 @@ sqlite-graphrag --version
 ## O que é?
 ### sqlite-graphrag entrega memória durável para agentes de IA
 - Armazena memórias, entidades e relacionamentos em um único arquivo SQLite abaixo de 25 MB
-- **Build (v1.0.90):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p`, `codex exec` ou `opencode run` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~14.6 MiB
+- **Build (v1.0.91):** LLM-only e one-shot — embeddings são gerados ao spawnar `claude -p`, `codex exec` ou `opencode run` com OAuth; sem modelo local, sem daemon, sem runtime ONNX, binário de ~14.6 MiB. Subprocessos LLM rodam em diretório temporário isolado (GAP-SPAWN-001) para que `.mcp.json` do projeto do chamador nunca seja herdado
 - **Build legado:** REMOVIDO na v1.0.79 — a feature `embedding-legacy` e o caminho local fastembed/ONNX não existem mais
 - Combina busca full-text FTS5 com similaridade de cosseno em Rust puro em um ranqueador híbrido de Reciprocal Rank Fusion
 - Armazena e atravessa um grafo explícito de entidades com arestas tipadas para recall multi-hop entre memórias
@@ -64,7 +64,7 @@ sqlite-graphrag --version
 ## Superpoderes para Agentes de IA
 ### Contrato de CLI de primeira classe para orquestração
 - Todo subcomando aceita `--json` produzindo payloads determinísticos em stdout
-- **v1.0.76 é one-shot por padrão** — sem processo em segundo plano; cada chamada de embedding spawna um novo `claude -p` ou `codex exec`
+- **v1.0.76 é one-shot por padrão** — sem processo em segundo plano; cada chamada de embedding spawna um novo `claude -p`, `codex exec` ou `opencode run`
 - Toda escrita é idempotente via restrições de unicidade em `--name` kebab-case
 - Stdin é explícito: use `--body-stdin` para texto ou `--graph-stdin` para um objeto `{body?, entities, relationships}`; arrays crus de entidades e relacionamentos usam `--entities-file` e `--relationships-file`
 - `remember` aceita payloads de body até `512000` bytes e até `512` chunks
@@ -136,7 +136,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 - Para extração de alta qualidade prefira `ingest --mode claude-code`/`--mode codex` (curada por LLM) ou passe entidades curadas via `--graph-stdin`
 - `--skip-extraction` está obsoleto desde v1.0.45 e não tem efeito
 
-- **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque cria o banco, aplica migrações e valida que uma CLI `claude` ou `codex` está alcançável no `PATH` (não há download de modelo desde a v1.0.76 — os embeddings vêm do subprocesso LLM).
+- **`sqlite-graphrag init` é OPCIONAL** mas recomendado no primeiro uso porque cria o banco, aplica migrações e valida que uma CLI `claude`, `codex` ou `opencode` está alcançável no `PATH` (não há download de modelo desde a v1.0.76 — os embeddings vêm do subprocesso LLM).
 - **`graphrag.sqlite` é criado no diretório de trabalho atual por padrão** (sobrescreva com `--db <caminho>` ou `SQLITE_GRAPHRAG_DB_PATH`)
 - Para o checkout local, `cargo install --path .` é suficiente
 - Reexecute `sqlite-graphrag --version` após qualquer upgrade para confirmar o binário ativo
@@ -428,7 +428,7 @@ sqlite-graphrag history testes-integracao-postgres --no-body --json
 ### Núcleo de ciclo de vida do banco
 | Comando | Argumentos | Descrição |
 | --- | --- | --- |
-| `init` | `--namespace <ns>` | Inicializa banco, aplica migrações e valida que uma CLI `claude`/`codex` está alcançável (sem download de modelo) |
+| `init` | `--namespace <ns>` | Inicializa banco, aplica migrações e valida que uma CLI `claude`/`codex`/`opencode` está alcançável (sem download de modelo) |
 | `health` | `--json` | Exibe integridade, teste funcional FTS5, versão SQLite, detecção de super-hub (grau > 50) |
 | `stats` | `--json` | Conta memórias, entidades e relacionamentos |
 | `migrate` | `--json` | Aplica migrações pendentes via `refinery` |
@@ -592,8 +592,8 @@ RUN cargo install --path .
 - A latência de embedding é dominada pelo round-trip do LLM headless (~1-3 s por chamada em lote); leituras puras (`read`, `list`, `graph`) ficam em poucos milissegundos
 - Desde a v1.0.79 as chamadas LLM são EM LOTE (bases de calibração de 8 chunks / 25 nomes de entidade em dim 64, adaptativas à dim — G44) e PARALELAS (`--llm-parallelism`, `Semaphore` + `JoinSet` limitados), então uma memória de 39 itens embeda em 4-5 chamadas em vez de 39 spawns serializados
 - `--embedding-dim 64` (o padrão) corta o output do LLM por vetor ~6x em relação ao payload antigo de 384 dimensões
-- `init` não baixa modelo algum — apenas cria o banco e valida que uma CLI `claude`/`codex` está alcançável
-- **Build (v1.0.79):** cada chamada de embedding spawna `claude -p` ou `codex exec` — RSS de ~350 MB por worker LLM (a carga de 1100 MB do modelo ONNX não existe mais em nenhum build)
+- `init` não baixa modelo algum — apenas cria o banco e valida que uma CLI `claude`/`codex`/`opencode` está alcançável
+- **Build (v1.0.79):** cada chamada de embedding spawna `claude -p`, `codex exec` ou `opencode run` — RSS de ~350 MB por worker LLM (a carga de 1100 MB do modelo ONNX não existe mais em nenhum build)
 
 
 ## Requisitos de Memória
@@ -614,7 +614,7 @@ RUN cargo install --path .
 
 ## Invocação Paralela Segura
 ### Semáforo de contagem com até quatro slots simultâneos
-- Cada worker LLM de embedding (subprocesso `claude -p`/`codex exec`) consome aproximadamente 350 MB de RSS — a unidade de orçamento do portão de concorrência desde a v1.0.79
+- Cada worker LLM de embedding (subprocesso `claude -p`/`codex exec`/`opencode run`) consome aproximadamente 350 MB de RSS — a unidade de orçamento do portão de concorrência desde a v1.0.79
 - `MAX_CONCURRENT_CLI_INSTANCES` continua sendo o teto rígido de 4 subprocessos cooperantes
 - Comandos pesados `init`, `remember`, `recall` e `hybrid-search` podem ser reduzidos dinamicamente para baixo desse teto quando a RAM disponível não sustenta o paralelismo com segurança
 - Arquivos de lock em `~/.cache/sqlite-graphrag/cli-slot-{1..4}.lock` usando `flock`
@@ -634,7 +634,7 @@ RUN cargo install --path .
 ### Problemas comuns e correções
 - O comportamento padrão sempre cria ou abre `graphrag.sqlite` no diretório atual
 - Banco travado após crash exige `sqlite-graphrag vacuum` para fazer checkpoint do WAL
-- `init` é quase instantâneo desde a v1.0.76 — não há download de modelo; se falhar, verifique se uma CLI `claude` ou `codex` está alcançável no `PATH`
+- `init` é quase instantâneo desde a v1.0.76 — não há download de modelo; se falhar, verifique se uma CLI `claude`, `codex` ou `opencode` está alcançável no `PATH`
 - Chamadas de embedding falhando com exit 11 normalmente indicam CLI LLM ausente, sem autenticação (OAuth obrigatório) ou timeout — aumente `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (padrão 300) em links lentos
 - A orientação sobre `ORT_DYLIB_PATH`/`libonnxruntime.so` é HISTÓRICA (≤ v1.0.75) — nenhum build carrega ONNX desde a v1.0.76
 - Permissão negada no Linux indica falta de escrita no diretório de cache do usuário

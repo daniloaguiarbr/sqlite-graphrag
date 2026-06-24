@@ -276,6 +276,7 @@ pub fn build_codex_command(args: &CodexSpawnArgs<'_>) -> Result<Command, crate::
     // `CODEX_ACCESS_TOKEN` and `OPENAI_BASE_URL` ARE whitelisted for
     // custom providers via the canonical list in src/spawn/env_whitelist.rs.
     apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
+    crate::spawn::apply_cwd_isolation(&mut cmd)?;
 
     // v1.0.77: point CODEX_HOME at an isolated dir that only contains
     // auth.json — this prevents the codex subprocess from loading

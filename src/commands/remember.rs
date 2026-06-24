@@ -928,24 +928,6 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
                 &entity.name,
             )?;
             entities::link_memory_entity(&tx, memory_id, entity_id)?;
-            entities::increment_degree(&tx, entity_id)?;
-            // GAP-17: warn when entity degree exceeds the configured cap.
-            if args.max_entity_degree > 0 {
-                let cap = args.max_entity_degree as i64;
-                let degree: i64 = tx.query_row(
-                    "SELECT degree FROM entities WHERE id = ?1",
-                    rusqlite::params![entity_id],
-                    |r| r.get(0),
-                )?;
-                if degree > cap {
-                    tracing::warn!(target: "remember",
-                        entity = %entity.name,
-                        degree = degree,
-                        cap = cap,
-                        "entity degree cap exceeded"
-                    );
-                }
-            }
             entities_persisted += 1;
         }
         let entity_types: std::collections::HashMap<&str, EntityType> = graph
@@ -953,6 +935,14 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
             .iter()
             .map(|entity| (entity.name.as_str(), entity.entity_type))
             .collect();
+
+        let mut affected_entity_ids: std::collections::HashSet<i64> =
+            std::collections::HashSet::new();
+        for entity in &graph.entities {
+            if let Some(eid) = entities::find_entity_id(&tx, &namespace, &entity.name)? {
+                affected_entity_ids.insert(eid);
+            }
+        }
 
         for rel in &graph.relationships {
             let source_entity = NewEntity {
@@ -975,7 +965,37 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
             let target_id = entities::upsert_entity(&tx, &namespace, &target_entity)?;
             let rel_id = entities::upsert_relationship(&tx, &namespace, source_id, target_id, rel)?;
             entities::link_memory_relationship(&tx, memory_id, rel_id)?;
+            affected_entity_ids.insert(source_id);
+            affected_entity_ids.insert(target_id);
             relationships_persisted += 1;
+        }
+
+        for &eid in &affected_entity_ids {
+            entities::recalculate_degree(&tx, eid)?;
+        }
+        // GAP-17: warn when entity degree exceeds the configured cap.
+        if args.max_entity_degree > 0 {
+            let cap = args.max_entity_degree as i64;
+            for &eid in &affected_entity_ids {
+                let degree: i64 = tx.query_row(
+                    "SELECT degree FROM entities WHERE id = ?1",
+                    rusqlite::params![eid],
+                    |r| r.get(0),
+                )?;
+                if degree > cap {
+                    let name: String = tx.query_row(
+                        "SELECT name FROM entities WHERE id = ?1",
+                        rusqlite::params![eid],
+                        |r| r.get(0),
+                    )?;
+                    tracing::warn!(target: "remember",
+                        entity = %name,
+                        degree = degree,
+                        cap = cap,
+                        "entity degree cap exceeded"
+                    );
+                }
+            }
         }
     }
     tx.commit()?;

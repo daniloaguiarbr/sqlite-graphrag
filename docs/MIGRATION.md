@@ -1,3 +1,36 @@
+# MIGRATING TO v1.0.91 — Spawn CWD Isolation, Degree Fix, Schema Corrections
+
+> This guide covers upgrading from v1.0.90 to v1.0.91. No database migration runs. Schema stays at v15. Behaviour is ADDITIVE.
+
+## v1.0.91 — Spawn CWD Isolation (GAP-SPAWN-001)
+
+- ALL 10 LLM subprocess spawn sites now call `apply_cwd_isolation()` which sets `current_dir(temp_dir)` and `CLAUDE_CONFIG_DIR=temp_dir`
+- This eliminates `.mcp.json` walk-up interference that caused timeout or 401 errors in projects with MCP servers
+- The workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` is NO LONGER NEEDED for normal operation
+- Spawn directories `/tmp/sqlite-graphrag-spawn-{PID}/` are cleaned up automatically at process exit (GAP-SPAWN-002)
+- BUG-17 fixed: `entities.degree` no longer inflates on `remember` and `ingest` — `increment_degree()` replaced by `recalculate_degree()` after relationship insertion
+- BUG-15 fixed: 7 JSON schemas now include `"opencode"` and `"auto"` in `backend_invoked` enum
+- BUG-16 fixed: `deep-research.schema.json` includes `vec_degraded` in `ResearchStats`
+- No schema change. No migration runs
+
+```bash
+# Smoke test after upgrade
+sqlite-graphrag health --json | jaq '.integrity_ok'
+sqlite-graphrag --llm-backend auto remember --name upgrade-test --type note --body "v1.0.91 test" --json
+```
+
+### Breaking changes
+
+- None. All changes are additive
+- If you relied on `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` or `CLAUDE_CONFIG_DIR` workaround, you can remove them — CWD isolation is now built-in
+
+### If degree values look wrong after upgrade
+
+- `graph stats` may have shown inflated `max_degree` values from BUG-17
+- After upgrade, new `remember` and `ingest` operations will write correct degree values
+- To fix existing inflated degrees: `sqlite-graphrag normalize-entities --yes --json` triggers recalculation
+
+
 # MIGRATING TO v1.0.90 — OpenCode Backend Integration (ADR-0051)
 
 > This guide covers upgrading from v1.0.89 to v1.0.90. No database migration runs. Schema stays at v15. Behaviour is ADDITIVE.

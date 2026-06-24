@@ -103,7 +103,7 @@ async fn opencode_adapter_build_args() {
     let v = ExecutorVersion::parse("0.5.0").unwrap();
     let caps = adapter.capabilities_for(&v);
     let args = adapter.build_args("hello", &caps, CompatMode::Auto);
-    assert!(args.contains(&"headless".to_string()));
+    assert!(args.contains(&"run".to_string()));
     assert!(args.contains(&"hello".to_string()));
 }
 

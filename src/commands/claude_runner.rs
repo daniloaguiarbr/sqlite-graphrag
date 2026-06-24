@@ -259,26 +259,7 @@ pub fn build_claude_command(
     // truth lives in `src/spawn/env_whitelist.rs`; do NOT reintroduce a
     // local whitelist here.
     apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
-
-    // G28-A: if the user has pointed us at an empty config dir, force Claude
-    // Code to use it (which suppresses user-scoped MCP servers and hooks).
-    if let Ok(empty_dir) = std::env::var("SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR") {
-        if std::path::Path::new(&empty_dir).is_dir() {
-            cmd.env("CLAUDE_CONFIG_DIR", &empty_dir);
-            tracing::debug!(
-                target: "claude_runner",
-                "isolating claude subprocess to CLAUDE_CONFIG_DIR={}",
-                empty_dir
-            );
-        } else {
-            tracing::warn!(
-                target: "claude_runner",
-                path = %empty_dir,
-                "SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR is set but path is not a directory; \
-                 ignoring.  MCP isolation will NOT be applied."
-            );
-        }
-    }
+    crate::spawn::apply_cwd_isolation(&mut cmd)?;
 
     // Canonical OAuth-only command line (gaps.md:201-208). Every flag is
     // mandatory; do NOT pass `--bare` (PROHIBITED, gaps.md:49).

@@ -9,11 +9,20 @@
 - Distinção semântica que o fix resolve: `ANTHROPIC_API_KEY` (chave de API paga, PROIBIDA pelo ADR-0011), `ANTHROPIC_AUTH_TOKEN` (token OAuth para custom provider, PRESERVADO), `OPENAI_API_KEY` (PROIBIDA), `OPENAI_BASE_URL` (PRESERVADO), `ANTHROPIC_BASE_URL` (PRESERVADO). O mandato da v1.0.69 estava correto; o whitelist env-clear da v1.0.69 era amplo demais
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` para a justificativa arquitetural completa e `docs/MIGRATION.pt-BR.md#migrando-para-v1083` para os passos de upgrade do operador
 - Resolução parcial do G58: env vars de custom-provider roteiam em torno de contenção de quota OAuth, fornecendo fallback determinístico para `recall`/`hybrid-search` sob fadiga OAuth oficial
-# sqlite-graphrag para Agentes de IA (v1.0.90 — OpenCode Backend, 24 Correções)
+# sqlite-graphrag para Agentes de IA (v1.0.91 — Isolamento de Spawn, Correção de Grau, Schemas)
 
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 14.6 MiB.
-> A v1.0.90 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code, codex ou opencode CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
+> A v1.0.91 é **apenas LLM e one-shot**: cada `remember` ou `ingest` spawna um subprocesso headless do claude code, codex ou opencode CLI (OAuth, sem MCP, sem hooks). Não há daemon, não há runtime ONNX, não há modelo local de embedding.
+
+## Novo na v1.0.91 — Isolamento de CWD no Spawn, Correção de Grau, Correções de Schema
+- GAP-SPAWN-001 (CRÍTICO): `apply_cwd_isolation()` adicionado em `src/spawn/mod.rs` — define `current_dir(temp_dir)` e `CLAUDE_CONFIG_DIR=temp_dir` em TODOS os 10 sites de spawn de subprocessos LLM. Elimina interferência de walk-up de `.mcp.json` que causava timeout/401 em qualquer projeto com servidores MCP configurados. Zero-config: não é mais necessário o workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/...`
+- GAP-SPAWN-002 (BAIXO): `cleanup_spawn_dir()` em `src/main.rs` remove `/tmp/sqlite-graphrag-spawn-{PID}/` ao final do processo. `remove_dir()` não-recursivo — seguro para diretórios não-vazios
+- BUG-14 (BAIXO): Teste `opencode_adapter_build_args` corrigido — `"headless"` substituído por `"run"` para casar com o output real de `OpencodeAdapter::build_args()`
+- BUG-15 (MÉDIO): 7 schemas JSON atualizados: enum `backend_invoked` expandida de `["claude", "codex", "none"]` para `["claude", "codex", "opencode", "none", "auto"]`. Afetados: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`
+- BUG-16 (MÉDIO): `deep-research.schema.json` — adicionado campo `vec_degraded: boolean` ausente no objeto `ResearchStats` (presente no struct Rust mas ausente do schema)
+- BUG-17 (ALTO): Inflação de `entities.degree` corrigida — `increment_degree()` substituído por `recalculate_degree()` em `remember.rs` e `ingest.rs`. Grau agora é calculado APÓS inserção de relações via `COUNT(*) FROM relationships`. Elimina falsos positivos de `super_hub_warning` no `health`
+- 877 testes lib + 21 testes doc + 38 testes de contrato de schema passando. Veja `gaps.md` para tabelas causa-efeito completas
 
 ## Novo na v1.0.90 — Integração do Backend OpenCode (ADR-0051)
 - OpenCode adicionado como terceiro backend LLM ao lado de codex e claude para pipelines de embedding, ingestão e enriquecimento

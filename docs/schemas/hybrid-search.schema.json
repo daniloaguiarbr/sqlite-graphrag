@@ -202,7 +202,7 @@
     "backend_invoked": {
       "description": "v1.0.84 (ADR-0042): backend LLM that ran the live embedding for this query (claude, codex, or none). Omitted when embedding was skipped or the response fell back fully to FTS5.",
       "type": "string",
-      "enum": ["claude", "codex", "none"]
+      "enum": ["claude", "codex", "opencode", "none", "auto"]
     },
     "vec_degraded_reason": {
       "description": "v1.0.84 (ADR-0042) / v1.0.85 (ADR-0043): structured reason why live embedding degraded. Seven-variant enum discriminates embedding_failed, slot_exhausted (GAP-003), oauth_quota (G58, G45-CR5), backend_mismatch, dim_zero, cancelled, timeout. Omitted when live embedding succeeded. Null when no degradation path was triggered.",

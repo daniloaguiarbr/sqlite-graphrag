@@ -53,6 +53,15 @@ Run `claude -p` with the MCP config locked down and empty, and the hooks config 
 - A populated `~/.claude` used to cost ~223k cache-creation tokens per call (~40-50s); the empty config dir brings it down to ~10-15s
 - The flags below are still passed as defence in depth, but do NOT rely on them for isolation
 
+### v1.0.91 Update — Automatic CWD Isolation via `apply_cwd_isolation()`
+
+- Since v1.0.91, ALL 10 LLM subprocess spawn sites call `apply_cwd_isolation()` from `src/spawn/mod.rs`
+- This function sets `current_dir(temp_dir)` — the subprocess CWD is a clean `/tmp/sqlite-graphrag-spawn-{PID}/` directory with NO `.mcp.json` in any ancestor
+- It also sets `CLAUDE_CONFIG_DIR=temp_dir` — isolating the subprocess from user-level `~/.claude/` MCP configuration
+- The manual workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` is NO LONGER NEEDED for normal operation (retained as emergency override)
+- Spawn directories are cleaned up automatically at process exit (GAP-SPAWN-002)
+- The v1.0.79 `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` env var and the managed `~/.local/state/sqlite-graphrag/claude-empty-config` directory remain functional but are superseded by the automatic CWD isolation
+
 ### Why NOT To Use `--bare`
 
 - `--bare` also cuts MCP, hooks, skills, plugins and auto memory

@@ -1,3 +1,36 @@
+# MIGRANDO PARA v1.0.91 — Isolamento de CWD no Spawn, Correção de Grau, Correções de Schema
+
+> Este guia cobre a atualização de v1.0.90 para v1.0.91. Nenhuma migração de banco roda. Schema permanece na v15. Comportamento é ADITIVO.
+
+## v1.0.91 — Isolamento de CWD no Spawn (GAP-SPAWN-001)
+
+- TODOS os 10 sites de spawn de subprocessos LLM agora chamam `apply_cwd_isolation()` que define `current_dir(temp_dir)` e `CLAUDE_CONFIG_DIR=temp_dir`
+- Isso elimina interferência de walk-up de `.mcp.json` que causava timeout ou erros 401 em projetos com servidores MCP
+- O workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` NÃO É MAIS NECESSÁRIO para operação normal
+- Diretórios de spawn `/tmp/sqlite-graphrag-spawn-{PID}/` são limpos automaticamente ao final do processo (GAP-SPAWN-002)
+- BUG-17 corrigido: `entities.degree` não infla mais em `remember` e `ingest` — `increment_degree()` substituído por `recalculate_degree()` após inserção de relações
+- BUG-15 corrigido: 7 schemas JSON agora incluem `"opencode"` e `"auto"` na enum `backend_invoked`
+- BUG-16 corrigido: `deep-research.schema.json` inclui `vec_degraded` no `ResearchStats`
+- Nenhuma mudança de schema. Nenhuma migração roda
+
+```bash
+# Teste de fumaça após upgrade
+sqlite-graphrag health --json | jaq '.integrity_ok'
+sqlite-graphrag --llm-backend auto remember --name upgrade-test --type note --body "v1.0.91 test" --json
+```
+
+### Mudanças quebrantes
+
+- Nenhuma. Todas as mudanças são aditivas
+- Se você dependia do workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` ou `CLAUDE_CONFIG_DIR`, pode removê-los — isolamento de CWD agora é embutido
+
+### Se valores de degree parecem errados após upgrade
+
+- `graph stats` pode ter mostrado valores inflados de `max_degree` por causa do BUG-17
+- Após o upgrade, novas operações de `remember` e `ingest` escreverão valores de grau corretos
+- Para corrigir graus inflados existentes: `sqlite-graphrag normalize-entities --yes --json` dispara recálculo
+
+
 # MIGRANDO PARA v1.0.90 — Integração do Backend OpenCode (ADR-0051)
 
 > Este guia cobre a atualização da v1.0.89 para a v1.0.90. Nenhuma migração de banco roda. O schema permanece em v15. O comportamento é ADITIVO.

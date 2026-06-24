@@ -5,6 +5,23 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.91] - 2026-06-23
+
+### Fixed
+- **GAP-SPAWN-001** — LLM subprocesses (`codex exec`, `claude -p`, `opencode run`) inherited the caller's CWD and `HOME`, causing `.mcp.json` walk-up that loaded project MCP servers (PostgreSQL, SSH, docs-rs) into headless embedding subprocesses. This caused 120s timeouts or 401 auth errors on every `remember`/`recall`/`ingest` in projects with `.mcp.json`. Fix: new `spawn_isolation_dir()` and `apply_cwd_isolation()` helpers in `src/spawn/mod.rs` set `current_dir` to an ephemeral temp directory and `CLAUDE_CONFIG_DIR` to the same dir, blocking both CWD and user-level MCP inheritance. Applied to all 10 production spawn sites across `llm_embedding.rs`, `codex_spawn.rs`, `claude_runner.rs`, `opencode_runner.rs`, `ingest_claude.rs` and `enrich.rs`. Default embed timeout was increased from 60s to 120s in the previous session as partial mitigation.
+- **GAP-SPAWN-002** — Orphan spawn directories accumulated in `/tmp/sqlite-graphrag-spawn-{PID}/` across CLI invocations. Added `cleanup_spawn_dir()` in `main.rs` that removes the current PID's spawn directory at process exit (success, error and shutdown paths). Uses non-recursive `remove_dir()` — safe for empty directories only.
+- **BUG-14** — Test `opencode_adapter_build_args` in `tests/spawn_version_adapter.rs` asserted the string `"headless"` which was never returned by `OpencodeAdapter::build_args()` (returns `"run"` since the v1.0.90 refactor). Fixed: assertion now checks for `"run"`.
+- **BUG-15** — 7 JSON schemas in `docs/schemas/` declared `backend_invoked` with enum `["claude", "codex", "none"]`, missing `"opencode"` and `"auto"` values added in v1.0.90. Consumers validating against the schema would reject valid responses. Fixed: all 7 schemas updated to `["claude", "codex", "opencode", "none", "auto"]`. Affected: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`.
+- **BUG-16** — `deep-research.schema.json` did not declare the `vec_degraded` field in `ResearchStats`, causing `additionalProperties: false` validation to reject real output. Fixed: added `"vec_degraded": { "type": "boolean" }` to the schema and to the `required` array.
+- **BUG-17** (HIGH) — `entities.degree` stored field was inflated by `increment_degree()` in `remember` and `ingest`. The function blindly incremented +1 per entity per memory, even when the entity had no relationships in that call. Also, it ran BEFORE relationship insertion, so degrees were calculated without considering the current call's relationships. `graph stats` (which uses the stored field) diverged from `graph entities` (which recalculates via SQL subquery). Fix: removed `increment_degree()` from entity loops in both `remember.rs` and `ingest.rs`; added `HashSet<i64>` collection of all affected entity IDs (entities + relationship endpoints); `recalculate_degree()` called for ALL affected entities AFTER all relationships are inserted. `graph stats`, `graph entities` and the stored field are now consistent.
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings, 0 fmt diffs.
+- Test suite: 877 lib tests + 21 doc tests + 38 schema contract tests, 0 failures.
+- E2E audit: 90 tests across empty DB, CRUD, graph ops, search, maintenance, validation and edge cases.
+- All 6 gaps/bugs closed (GAP-SPAWN-001, GAP-SPAWN-002, BUG-14, BUG-15, BUG-16, BUG-17); 0 open.
+
+
 ## [1.0.90] - 2026-06-22
 
 ### Added

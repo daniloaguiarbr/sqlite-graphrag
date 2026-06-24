@@ -299,6 +299,7 @@ fn extract_with_claude(
     // v1.0.83 (ADR-0041): env whitelist delegated to the shared helper.
     // `ANTHROPIC_API_KEY` is INTENTIONALLY ABSENT (defence-in-depth).
     apply_env_whitelist(&mut cmd, crate::spawn::env_whitelist::is_strict_env_clear());
+    crate::spawn::apply_cwd_isolation(&mut cmd)?;
 
     // Canonical OAuth-only command line (gaps.md:201-208 + 211-213).
     // `--bare` is PROHIBITED (gaps.md:49) — never emitted.

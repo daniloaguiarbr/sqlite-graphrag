@@ -40,7 +40,7 @@ use tokio::process::Command;
 /// Default per-LLM-call timeout in seconds. Consistent with the
 /// `--claude-timeout` / `--codex-timeout` defaults used by ingest.
 /// Override via `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`.
-const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 120;
 
 fn embed_timeout() -> std::time::Duration {
     let secs = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS")
@@ -52,7 +52,7 @@ fn embed_timeout() -> std::time::Duration {
 }
 
 /// v1.0.89 (GAP-4): scales the per-call timeout with batch size.
-/// A single-item batch uses the base timeout (60s default).
+/// A single-item batch uses the base timeout (120s default).
 /// Each additional item adds 15s to account for the LLM generating
 /// more embedding vectors in the same call.
 #[cfg(test)]
@@ -731,12 +731,13 @@ impl LlmEmbedding {
         // `write_empty_mcp_config_tempfile()` and run the full
         // preflight gate BEFORE `Command::spawn()`, mirroring what
         // `invoke_codex` already does for the codex backend.
+        let spawn_dir = crate::spawn::spawn_isolation_dir()?;
         let mcp_config_path = crate::spawn::preflight::write_empty_mcp_config_tempfile()?;
         let argv_refs: [std::ffi::OsString; 0] = [];
         let preflight_args = crate::spawn::preflight::PreFlightArgs {
             binary_path: &self.binary,
             argv: &argv_refs,
-            workspace_root: std::path::Path::new("."),
+            workspace_root: &spawn_dir,
             mcp_config_inline_json: None,
             expected_output_bytes: 65_536,
             spawner_name: "llm_embedding",
@@ -765,6 +766,9 @@ impl LlmEmbedding {
             .stderr(Stdio::piped())
             // BLOCO 4: cancellation (dropped future) must kill the child.
             .kill_on_drop(true);
+        // GAP-SPAWN-001: isolate CWD so child never inherits .mcp.json
+        cmd.current_dir(&spawn_dir);
+        cmd.env("CLAUDE_CONFIG_DIR", &spawn_dir);
         if let Some(config_dir) = claude_embedding_config_dir() {
             cmd.env("CLAUDE_CONFIG_DIR", &config_dir);
         }
@@ -867,7 +871,7 @@ impl LlmEmbedding {
         schema_path: &std::path::Path,
     ) -> Result<String, AppError> {
         let binary_str = self.binary.to_string_lossy().into_owned();
-        let mut cmd = build_codex_embedding_command(&self.binary, &self.model, schema_path);
+        let mut cmd = build_codex_embedding_command(&self.binary, &self.model, schema_path)?;
 
         // GAP-META-005 (v1.0.87, ADR-0045): pre-flight gate before spawn.
         // `tokio::process::Command` does not expose `get_args()`, so we
@@ -976,7 +980,9 @@ impl LlmEmbedding {
 
     async fn invoke_opencode(&self, prompt: &str) -> Result<String, AppError> {
         let binary_str = self.binary.to_string_lossy().into_owned();
+        let spawn_dir = crate::spawn::spawn_isolation_dir()?;
         let mut cmd = Command::new(&self.binary);
+        cmd.current_dir(&spawn_dir);
         cmd.arg("run")
             .arg("--format")
             .arg("json")
@@ -1096,11 +1102,10 @@ fn build_codex_embedding_command(
     binary: &std::path::Path,
     model: &str,
     schema_path: &std::path::Path,
-) -> Command {
+) -> Result<Command, AppError> {
+    let spawn_dir = crate::spawn::spawn_isolation_dir()?;
     let mut cmd = Command::new(binary);
-    // v1.0.77: `-c` TOML overrides bypass the codex exec --sandbox propagation
-    // bug (openai/codex#18113). CLI flags alone are insufficient — the exec
-    // subcommand may not inherit --sandbox from the parent codex command.
+    cmd.current_dir(&spawn_dir);
     cmd.arg("exec")
         .arg("-c")
         .arg("sandbox_mode='read-only'")
@@ -1142,7 +1147,7 @@ fn build_codex_embedding_command(
         .stderr(Stdio::piped())
         // BLOCO 4: cancellation (dropped future) must kill the child.
         .kill_on_drop(true);
-    cmd
+    Ok(cmd)
 }
 
 // prepare_isolated_codex_home removed in v1.0.89: the per-PID isolated
@@ -1235,8 +1240,8 @@ mod tests {
     }
 
     #[test]
-    fn embed_timeout_default_is_60() {
-        assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 60);
+    fn embed_timeout_default_is_120() {
+        assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 120);
     }
 
     #[test]
@@ -1361,7 +1366,8 @@ mod tests {
             std::path::Path::new("/bin/true"),
             "gpt-5.4",
             &schema_path,
-        );
+        )
+        .expect("build_codex_embedding_command must succeed in test");
         let argv: Vec<String> = cmd
             .as_std()
             .get_args()

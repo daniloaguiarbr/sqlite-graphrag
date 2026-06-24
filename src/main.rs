@@ -483,6 +483,7 @@ fn main() -> std::process::ExitCode {
         sqlite_graphrag::output::emit_error(&e.localized_message());
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());
+        cleanup_spawn_dir();
         return std::process::ExitCode::from(e.exit_code() as u8);
     }
 
@@ -490,14 +491,15 @@ fn main() -> std::process::ExitCode {
     let _ = std::io::Write::flush(&mut std::io::stderr());
 
     if sqlite_graphrag::shutdown_requested() {
-        // GAP-002 (v1.0.82): deterministic code 19 for shutdown, regardless
-        // of which Unix signal triggered it. The JSON envelope has already
-        // been emitted to stdout by the signal handler itself; this branch
-        // just propagates the code to the shell.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        let _ = std::io::Write::flush(&mut std::io::stderr());
+        cleanup_spawn_dir();
         return std::process::ExitCode::from(sqlite_graphrag::constants::SHUTDOWN_EXIT_CODE as u8);
     }
 
+    cleanup_spawn_dir();
     std::process::ExitCode::SUCCESS
+}
+
+fn cleanup_spawn_dir() {
+    let dir = std::env::temp_dir().join(format!("sqlite-graphrag-spawn-{}", std::process::id()));
+    let _ = std::fs::remove_dir(&dir);
 }

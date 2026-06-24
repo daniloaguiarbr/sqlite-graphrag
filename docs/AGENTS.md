@@ -9,13 +9,22 @@
 - Semantic distinction the fix resolves: `ANTHROPIC_API_KEY` (paid API key, PROHIBITED by ADR-0011), `ANTHROPIC_AUTH_TOKEN` (OAuth token for custom provider, PRESERVED), `OPENAI_API_KEY` (PROHIBITED), `OPENAI_BASE_URL` (PRESERVED), `ANTHROPIC_BASE_URL` (PRESERVED). The v1.0.69 mandate was correct; the v1.0.69 env-clear whitelist was overly broad
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale and `docs/MIGRATION.md#migrating-to-v1083` for operator upgrade steps
 - G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
-# sqlite-graphrag for AI Agents (v1.0.90)
+# sqlite-graphrag for AI Agents (v1.0.91)
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary.
-> v1.0.90 is **LLM-only and one-shot**: every `remember` / `ingest`
+> v1.0.91 is **LLM-only and one-shot**: every `remember` / `ingest`
 > spawns a headless claude code, codex, or opencode CLI subprocess
 > (OAuth, no MCP, no hooks). There is no daemon, no ONNX runtime,
 > no local embedding model.
+
+## New in v1.0.91 — Spawn CWD Isolation, Degree Fix, Schema Corrections
+- GAP-SPAWN-001 (CRITICAL): `apply_cwd_isolation()` added to `src/spawn/mod.rs` — sets `current_dir(temp_dir)` and `CLAUDE_CONFIG_DIR=temp_dir` on ALL 10 LLM subprocess spawn sites. Eliminates `.mcp.json` walk-up interference that caused timeout/401 in any project with MCP servers configured. Zero-config: no more `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/...` workaround needed
+- GAP-SPAWN-002 (LOW): `cleanup_spawn_dir()` in `src/main.rs` removes `/tmp/sqlite-graphrag-spawn-{PID}/` at process exit. Non-recursive `remove_dir()` — safe for non-empty directories
+- BUG-14 (LOW): Test `opencode_adapter_build_args` assertion fixed — `"headless"` replaced by `"run"` to match actual `OpencodeAdapter::build_args()` output
+- BUG-15 (MEDIUM): 7 JSON schemas updated: `backend_invoked` enum expanded from `["claude", "codex", "none"]` to `["claude", "codex", "opencode", "none", "auto"]`. Affected: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`
+- BUG-16 (MEDIUM): `deep-research.schema.json` — added missing `vec_degraded: boolean` to `ResearchStats` object (was present in Rust struct but absent from schema)
+- BUG-17 (HIGH): `entities.degree` inflation fixed — `increment_degree()` replaced by `recalculate_degree()` in `remember.rs` and `ingest.rs`. Degree is now computed AFTER relationship insertion via `COUNT(*) FROM relationships`. Eliminates false `super_hub_warning` in `health`
+- 877 lib tests + 21 doc tests + 38 schema contract tests passing. See `gaps.md` for full causa-efeito tables
 
 ## New in v1.0.90 — OpenCode Backend Integration (ADR-0051)
 - OpenCode added as third LLM backend alongside codex and claude for embedding, ingest, and enrich pipelines

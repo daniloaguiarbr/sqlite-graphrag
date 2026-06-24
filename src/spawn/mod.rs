@@ -138,3 +138,70 @@ pub fn base_command(binary: &str) -> std::process::Command {
         .stderr(Stdio::piped());
     cmd
 }
+
+/// GAP-SPAWN-001 (v1.0.91): isolation directory for LLM subprocesses.
+/// Prevents .mcp.json walk-up by anchoring CWD in a clean temp dir.
+pub fn spawn_isolation_dir() -> Result<std::path::PathBuf, AppError> {
+    let dir = std::env::temp_dir().join(format!("sqlite-graphrag-spawn-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "failed to create spawn isolation dir {}: {e}",
+                dir.display()
+            ),
+        ))
+    })?;
+    Ok(dir)
+}
+
+/// Apply CWD isolation to a subprocess command.
+/// Sets current_dir to an ephemeral directory without .mcp.json ancestors
+/// and CLAUDE_CONFIG_DIR to block user-level MCP inheritance.
+pub fn apply_cwd_isolation(
+    cmd: &mut std::process::Command,
+) -> Result<std::path::PathBuf, AppError> {
+    let dir = spawn_isolation_dir()?;
+    cmd.current_dir(&dir);
+    cmd.env("CLAUDE_CONFIG_DIR", &dir);
+    Ok(dir)
+}
+
+/// Tokio variant of [`apply_cwd_isolation`] for async subprocess commands.
+pub fn apply_cwd_isolation_tokio(
+    cmd: &mut tokio::process::Command,
+) -> Result<std::path::PathBuf, AppError> {
+    let dir = spawn_isolation_dir()?;
+    cmd.current_dir(&dir);
+    cmd.env("CLAUDE_CONFIG_DIR", &dir);
+    Ok(dir)
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+
+    #[test]
+    fn test_spawn_isolation_dir_creates_in_temp() {
+        let dir = spawn_isolation_dir().unwrap();
+        assert!(dir.exists());
+        assert!(dir.starts_with(std::env::temp_dir()));
+        let mut check = dir.as_path();
+        while let Some(parent) = check.parent() {
+            assert!(!parent.join(".mcp.json").exists() || parent == std::path::Path::new("/"));
+            check = parent;
+            if parent == std::path::Path::new("/") {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_apply_cwd_isolation_modifies_command() {
+        let mut cmd = std::process::Command::new("false");
+        let dir = apply_cwd_isolation(&mut cmd).unwrap();
+        assert!(dir.exists());
+        let debug = format!("{:?}", cmd);
+        assert!(debug.contains("sqlite-graphrag-spawn-"));
+    }
+}

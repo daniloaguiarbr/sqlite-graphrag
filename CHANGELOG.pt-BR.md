@@ -3,6 +3,23 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.91] - 2026-06-23
+
+### Corrigido
+- **GAP-SPAWN-001** — Subprocessos LLM (`codex exec`, `claude -p`, `opencode run`) herdavam o CWD e `HOME` do chamador, causando walk-up de `.mcp.json` que carregava servidores MCP do projeto (PostgreSQL, SSH, docs-rs) em subprocessos headless de embedding. Isso causava timeouts de 120s ou erros 401 em todo `remember`/`recall`/`ingest` em projetos com `.mcp.json`. Correção: novos helpers `spawn_isolation_dir()` e `apply_cwd_isolation()` em `src/spawn/mod.rs` definem `current_dir` para um diretório temporário efêmero e `CLAUDE_CONFIG_DIR` para o mesmo diretório, bloqueando herança de MCP tanto do CWD quanto do nível de usuário. Aplicado em todos os 10 spawn sites de produção em `llm_embedding.rs`, `codex_spawn.rs`, `claude_runner.rs`, `opencode_runner.rs`, `ingest_claude.rs` e `enrich.rs`.
+- **GAP-SPAWN-002** — Diretórios de spawn órfãos acumulavam em `/tmp/sqlite-graphrag-spawn-{PID}/` entre invocações da CLI. Adicionado `cleanup_spawn_dir()` em `main.rs` que remove o diretório de spawn do PID atual ao final da execução (caminhos de sucesso, erro e shutdown). Usa `remove_dir()` não-recursivo — seguro apenas para diretórios vazios.
+- **BUG-14** — Teste `opencode_adapter_build_args` em `tests/spawn_version_adapter.rs` assertava a string `"headless"` que nunca foi retornada por `OpencodeAdapter::build_args()` (retorna `"run"` desde a refatoração da v1.0.90). Correção: asserção agora verifica `"run"`.
+- **BUG-15** — 7 JSON schemas em `docs/schemas/` declaravam `backend_invoked` com enum `["claude", "codex", "none"]`, faltando os valores `"opencode"` e `"auto"` adicionados na v1.0.90. Consumidores validando contra o schema rejeitariam respostas válidas. Correção: todos os 7 schemas atualizados para `["claude", "codex", "opencode", "none", "auto"]`. Afetados: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`.
+- **BUG-16** — `deep-research.schema.json` não declarava o campo `vec_degraded` em `ResearchStats`, causando falha de validação `additionalProperties: false` no output real. Correção: adicionado `"vec_degraded": { "type": "boolean" }` ao schema e ao array `required`.
+- **BUG-17** (ALTA) — Campo `entities.degree` armazenado era inflado por `increment_degree()` em `remember` e `ingest`. A função incrementava cegamente +1 por entidade por memória, mesmo quando a entidade não participava de nenhuma relação naquela chamada. Além disso, rodava ANTES da inserção de relações, então o grau era calculado sem considerar as relações da chamada atual. `graph stats` (que usa o campo armazenado) divergia de `graph entities` (que recalcula via subquery SQL). Correção: removido `increment_degree()` dos loops de entidade em `remember.rs` e `ingest.rs`; adicionada coleta de `HashSet<i64>` com todos os IDs de entidades afetadas (entidades + endpoints de relações); `recalculate_degree()` chamado para TODAS as entidades afetadas APÓS a inserção de TODAS as relações. `graph stats`, `graph entities` e o campo armazenado são agora consistentes.
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy, 0 diffs de fmt.
+- Suite de testes: 877 testes lib + 21 testes doc + 38 testes de contrato de schema, 0 falhas.
+- Auditoria E2E: 90 testes em DB vazio, CRUD, operações de grafo, busca, manutenção, validação e edge cases.
+- Todos os 6 gaps/bugs fechados (GAP-SPAWN-001, GAP-SPAWN-002, BUG-14, BUG-15, BUG-16, BUG-17); 0 abertos.
+
+
 ## [1.0.90] - 2026-06-22
 
 ### Adicionado
