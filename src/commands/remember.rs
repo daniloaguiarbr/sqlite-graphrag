@@ -230,7 +230,11 @@ fn normalize_and_validate_graph_input(graph: &mut GraphInput) -> Result<(), AppE
 }
 
 #[tracing::instrument(skip_all, level = "debug", name = "remember")]
-pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: RememberArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
@@ -646,10 +650,11 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
         .len()
         == 1
     {
-        match crate::embedder::embed_passage_with_choice(
+        match crate::embedder::embed_passage_with_embedding_choice(
             &paths.models,
             &raw_body,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((v, k)) => (Some(v), Some(k.as_str())),
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
@@ -694,11 +699,13 @@ pub fn run(args: RememberArgs, llm_backend: crate::cli::LlmBackendChoice) -> Res
                 });
             }
         }
-        match crate::embedder::embed_passages_parallel_local(
+        match crate::embedder::embed_passages_parallel_with_embedding_choice(
             &paths.models,
             &chunk_texts,
             args.llm_parallelism as usize,
             crate::embedder::chunk_embed_batch_size(),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok(chunk_embeddings) => {
                 output::emit_progress_i18n(

@@ -1,3 +1,32 @@
+## O Que Mudou na v1.0.93 — Backend de Embedding OpenRouter (GAP-OR-INGEST)
+- Novos flags globais: `--embedding-backend auto|openrouter|llm`, `--embedding-model MODEL`, `--openrouter-api-key KEY`
+- Embedding via API REST OpenRouter substitui subprocess LLM para geração de vetores (~200ms vs 15s por chamada)
+- `EmbeddingBackendChoice` propagado para TODOS os 13 paths de embedding: `remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`, `enrich`, `init`, `rename-entity`, `ingest` (modo claude), `remember` (embedding de chunks)
+- Novo flag `--enrich-after` para ingest dispara `enrich --operation memory-bindings` após embedding
+- O usuário DEVE especificar `--embedding-model` ao usar `--embedding-backend openrouter` — SEM modelo padrão
+- Defina chave API via env var `OPENROUTER_API_KEY` ou flag `--openrouter-api-key`
+- 10 modelos verificados E2E: Qwen 4B/8B, NVIDIA Nemotron (gratuito), OpenAI small/large, Perplexity, Mistral, BAAI bge-m3, Google Gemini 001/002
+- Todos os modelos produzem vetores de 64 dims via MRL — zero mudança de schema, zero migração
+- **GAP-OR-PROPAGATION** (v1.0.93): 5 paths de embedding adicionais corrigidos — `enrich --operation re-embed`, `init` (probe de dimensão), `rename-entity`, `ingest --mode claude-code` (4 call sites) e `remember` (embedding paralelo de chunks) agora honram `--embedding-backend openrouter`
+- **BUG-OR-EXIT-CODE** (v1.0.93): Erros de configuração OpenRouter (chave ausente, modelo ausente, chave inválida) agora retornam exit code 78 (`EX_CONFIG`) em vez de exit 1
+```bash
+# Configuração
+export OPENROUTER_API_KEY="sk-or-v1-sua-chave-aqui"
+
+# Remember com OpenRouter
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  remember --name minha-nota --type note \
+  --description "embedding rápido" --body "conteúdo" --json
+
+# Ingest com OpenRouter + auto-enrich
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs --pattern "*.md" --recursive \
+  --enrich-after --llm-backend codex --json
+```
+
+
 ## Custom Providers (v1.0.83+)
 - O sqlite-graphrag suporta providers Anthropic-compatíveis (Minimax/api.minimax.io, OpenRouter, AWS Bedrock, gateways corporativos) preservando as seguintes env vars ao spawnar `claude -p` ou `codex exec`
 - Vars preservadas: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
@@ -8,7 +37,7 @@
 - Sem telemetria nova: o fix é silencioso. Nenhum macro `tracing::info!` registra qual provider está em uso. O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` em `tests/claude_runner_env.rs` garante que o valor literal do token NUNCA aparece em stdout ou stderr mesmo com `RUST_LOG=trace`
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
 - Resolve GAP-058 parcialmente: env vars de custom-provider roteiam em torno de contenção de quota OAuth; `recall`/`hybrid-search` permanecem determinísticos sob fadiga OAuth oficial
-# COMO USAR sqlite-graphrag (v1.0.91 — Isolamento de CWD, Correção de Degree, Backend OpenCode, 1877+ testes)
+# COMO USAR sqlite-graphrag (v1.0.93 — Embedding OpenRouter, GAP-OR-PROPAGATION, 1059 testes)
 
 > Entregue memória persistente a qualquer agente de IA com um binário local, um único arquivo SQLite, e a CLI de LLM que você já confia.
 
@@ -76,7 +105,7 @@ Desde a v1.0.85.2, quatro releases introduziram a superfície LLM-heavy, a camad
 - **GAP-E2E-011 (P2)**: `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo (>20 chars, não header). `extract_heuristic_description(body, path_hint)` cai para o stem do arquivo. Opt-out via `--no-auto-describe`. 5 novos testes em `tests/ingest_auto_describe_regression.rs`
 - **GAP-E2E-002 (P3)**: `health --namespace <NS> --json` filtra contagens para um único namespace. 1 novo teste em `tests/health_namespace_regression.rs`
 - **GAP-E2E-001 (P2)**: Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6` (era 6 MB desde v1.0.76). 1 novo teste em `tests/binary_size_documented_regression.rs`
-- Total: 1877 testes passando (843 lib + 1013 integração + 21 doc). Binário 15.3 MB ELF stripped
+- Total: 1059 testes passando. Binário 15.3 MB ELF stripped
 ## O Que Mudou na v1.0.80 (G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034)
 
 A v1.0.80 é bump **patch** SEM migração de banco. O schema continua

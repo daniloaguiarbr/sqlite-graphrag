@@ -62,6 +62,17 @@ Run `claude -p` with the MCP config locked down and empty, and the hooks config 
 - Spawn directories are cleaned up automatically at process exit via `cleanup_spawn_dir()` in `src/main.rs` (GAP-SPAWN-002) — non-recursive `remove_dir()`, safe for non-empty directories
 - The v1.0.79 `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` env var and the managed `~/.local/state/sqlite-graphrag/claude-empty-config` directory remain functional but are superseded by the automatic CWD isolation
 
+### v1.0.93 Update — OpenRouter Embedding Backend Bypasses Subprocess
+
+- Since v1.0.93, embedding can use the OpenRouter REST API instead of spawning a headless LLM subprocess
+- Use `--embedding-backend openrouter --embedding-model MODEL` to route embedding through `POST /api/v1/embeddings`
+- This eliminates subprocess cold-start (~200ms API call vs 15-20s subprocess spawn per embedding)
+- The OpenRouter path uses `reqwest+rustls-tls` directly — no `claude -p`, no `codex exec`, no CWD isolation needed
+- OAuth-only enforcement does NOT apply to OpenRouter — it uses its own `OPENROUTER_API_KEY` / `--openrouter-api-key`
+- Headless subprocess spawning remains unchanged for LLM-based embedding (`--embedding-backend llm`) and for `enrich` operations (which use generative reasoning, not vector embedding)
+- The `--enrich-after` flag on `ingest` still spawns a headless subprocess for the enrich phase, even when embedding uses OpenRouter
+- See ADR-0052 for the full architectural rationale
+
 ### Why NOT To Use `--bare`
 
 - `--bare` also cuts MCP, hooks, skills, plugins and auto memory
@@ -340,6 +351,21 @@ gate was introduced in v1.0.87:
   by normalizing the name BEFORE the validator ran. Fixed in v1.0.88
   by validating BEFORE normalizing (8 tests in
   `entity_validation_integration.rs`).
+
+## v1.0.93 Update — OpenRouter Embedding Backend
+- New `--embedding-backend openrouter` flag enables REST API embedding without LLM subprocess
+- Eliminates cold-start overhead: ~200ms per embedding vs 15s with subprocess
+- Requires `OPENROUTER_API_KEY` env var or `--openrouter-api-key` flag
+- Requires `--embedding-model MODEL` (no default — user must specify)
+- Works with all 8 embedding commands in headless mode
+- Example headless invocation:
+
+```bash
+OPENROUTER_API_KEY="$KEY" sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs --pattern "*.md" --recursive --json
+```
 
 ## v1.0.90 Update — OpenCode as Third LLM Backend (ADR-0051)
 

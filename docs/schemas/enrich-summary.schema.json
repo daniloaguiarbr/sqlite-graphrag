@@ -53,7 +53,7 @@
     "backend_invoked": {
       "description": "v1.0.84 (ADR-0042): backend LLM that ran the live embedding across this enrich run (claude, codex, or none). Omitted when enrich ran without embedding.",
       "type": "string",
-      "enum": ["claude", "codex", "opencode", "none", "auto"]
+      "enum": ["claude", "codex", "opencode", "openrouter", "none", "auto"]
     }
   },
   "required": [

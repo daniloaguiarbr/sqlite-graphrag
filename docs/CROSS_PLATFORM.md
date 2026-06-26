@@ -6,7 +6,7 @@
 - The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
 - `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
-# CROSS PLATFORM SUPPORT (v1.0.89 — Preflight Cross-Target + Slot Semaphore Windows ARM64)
+# CROSS PLATFORM SUPPORT (v1.0.93 — OpenRouter Embedding Backend + 986+ Tests)
 
 > One 14.6 MiB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 

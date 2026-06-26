@@ -63,7 +63,11 @@ struct InitResponse {
     elapsed_ms: u64,
 }
 
-pub fn run(args: InitArgs) -> Result<(), AppError> {
+pub fn run(
+    args: InitArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let paths = AppPaths::resolve(args.db.as_deref())?;
     paths.ensure_dirs()?;
@@ -129,10 +133,11 @@ pub fn run(args: InitArgs) -> Result<(), AppError> {
     // CLI missing), init still succeeds with dim from the database or default.
     // ADR-0011: Validation errors (OAuth-only enforcement) are FATAL — propagate.
     // v1.0.89 (GAP-EMBED-PROPAGATION): honour --llm-backend via embed_passage_with_choice.
-    let (dim, status) = match crate::embedder::embed_passage_with_choice(
+    let (dim, status) = match crate::embedder::embed_passage_with_embedding_choice(
         &paths.models,
         "smoke test",
-        None,
+        embedding_backend,
+        llm_backend,
     ) {
         Ok((v, _backend)) => (v.len(), "ok"),
         Err(crate::errors::AppError::Validation(msg)) => {

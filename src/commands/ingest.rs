@@ -317,6 +317,15 @@ pub struct IngestArgs {
     /// lock file from a previously crashed invocation.
     #[arg(long, default_value_t = false)]
     pub force_job_singleton: bool,
+
+    /// v1.0.93 (GAP-OR-INGEST): run `enrich --operation memory-bindings`
+    /// after all files are embedded, using the active `--llm-backend`.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Run enrich --operation memory-bindings after all files are ingested"
+    )]
+    pub enrich_after: bool,
 }
 
 /// Extraction mode for the ingest pipeline.
@@ -509,6 +518,7 @@ fn stage_file(
     max_rss_mb: u64,
     llm_parallelism: usize,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
     auto_describe: bool,
 ) -> Result<StagedFile, AppError> {
     use crate::constants::*;
@@ -643,11 +653,11 @@ fn stage_file(
         .len()
         == 1
     {
-        // v1.0.82 (GAP-003): forward --llm-backend to embed_with_fallback.
-        match crate::embedder::embed_passage_with_choice(
+        match crate::embedder::embed_passage_with_embedding_choice(
             &paths.models,
             &raw_body,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((v, k)) => (Some(v), Some(k.as_str())),
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
@@ -679,11 +689,13 @@ fn stage_file(
                 });
             }
         }
-        match crate::embedder::embed_passages_parallel_local(
+        match crate::embedder::embed_passages_parallel_with_embedding_choice(
             &paths.models,
             &chunk_texts,
             llm_parallelism,
             crate::embedder::chunk_embed_batch_size(),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok(chunk_embeddings) => {
                 let aggregated = chunking::aggregate_embeddings(&chunk_embeddings);
@@ -1143,13 +1155,17 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
 // ---------------------------------------------------------------------------
 
 #[tracing::instrument(skip_all, level = "debug", name = "ingest")]
-pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: IngestArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<(), AppError> {
     // G20: mode-conditional flag validation BEFORE any DB access.
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_ingest(&args)?;
     tracing::debug!(target: "ingest", dir = %args.dir.display(), mode = ?args.mode, "starting ingest");
     if args.mode == IngestMode::ClaudeCode {
-        return super::ingest_claude::run_claude_ingest(&args);
+        return super::ingest_claude::run_claude_ingest(&args, embedding_backend, llm_backend);
     }
     if args.mode == IngestMode::Codex {
         return super::ingest_codex::run_codex_ingest(&args);
@@ -1479,6 +1495,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
     // reintroduce the 2-phase blocking behaviour we are eliminating.
     let paths_owned = paths.clone();
     let llm_backend_owned = llm_backend;
+    let embedding_backend_owned = embedding_backend;
     let producer_handle = std::thread::spawn(move || {
         pool.install(|| {
             process_items.into_par_iter().for_each(|item| {
@@ -1496,6 +1513,7 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
                     max_rss_mb,
                     llm_parallelism,
                     llm_backend_owned,
+                    embedding_backend_owned,
                     auto_describe,
                 );
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
@@ -1753,6 +1771,65 @@ pub fn run(args: IngestArgs, llm_backend: crate::cli::LlmBackendChoice) -> Resul
         files_skipped: skipped,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })?;
+
+    if args.enrich_after && succeeded > 0 {
+        output::emit_json_compact(&serde_json::json!({
+            "event": "enrich_phase_started",
+            "operation": "memory-bindings"
+        }))?;
+        let enrich_args = super::enrich::EnrichArgs {
+            operation: super::enrich::EnrichOperation::MemoryBindings,
+            mode: super::enrich::EnrichMode::ClaudeCode,
+            limit: None,
+            dry_run: false,
+            namespace: args.namespace.clone(),
+            claude_binary: args.claude_binary.clone(),
+            claude_model: args.claude_model.clone(),
+            claude_timeout: args.claude_timeout,
+            codex_binary: args.codex_binary.clone(),
+            codex_model: args.codex_model.clone(),
+            codex_timeout: args.codex_timeout,
+            opencode_binary: args.opencode_binary.clone(),
+            opencode_model: args.opencode_model.clone(),
+            opencode_timeout: args.opencode_timeout,
+            db: args.db.clone(),
+            json: false,
+            resume: false,
+            retry_failed: false,
+            max_cost_usd: args.max_cost_usd,
+            llm_parallelism: args.llm_parallelism as u32,
+            wait_job_singleton: args.wait_job_singleton,
+            force_job_singleton: args.force_job_singleton,
+            names: Vec::new(),
+            names_file: None,
+            preflight_check: false,
+            fallback_mode: None,
+            rate_limit_buffer: 300,
+            max_load_check: true,
+            circuit_breaker_threshold: 5,
+            preserve_threshold: 0.7,
+            codex_model_validate: true,
+            codex_model_fallback: None,
+            min_output_chars: 500,
+            max_output_chars: 2000,
+            preserve_check: true,
+            prompt_template: None,
+        };
+        match super::enrich::run(&enrich_args, llm_backend, embedding_backend) {
+            Ok(()) => {
+                output::emit_json_compact(&serde_json::json!({
+                    "event": "enrich_phase_completed"
+                }))?;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "enrich --operation memory-bindings failed after ingest");
+                output::emit_json_compact(&serde_json::json!({
+                    "event": "enrich_phase_failed",
+                    "error": e.to_string()
+                }))?;
+            }
+        }
+    }
 
     Ok(())
 }

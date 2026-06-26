@@ -178,6 +178,7 @@ pub struct HybridSearchResponse {
 pub fn run(
     args: HybridSearchArgs,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let _ = args.format;
@@ -229,10 +230,11 @@ pub fn run(
         // v1.0.85 (G58 / ADR-0043): retry determinístico em OAuthQuota
         // (codex ↔ claude) e backoff 750ms em SlotExhausted antes de
         // aceitar a degradação para FTS5-puro.
-        match crate::embedder::try_embed_query_with_deterministic_fallback(
+        match crate::embedder::try_embed_query_with_embedding_choice(
             &paths.models,
             &args.query,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((v, backend)) => (Some(v), false, None, Some(backend.as_str())),
             Err(reason) => {

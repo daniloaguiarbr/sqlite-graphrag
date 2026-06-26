@@ -1,3 +1,27 @@
+# MIGRATING TO v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
+
+> This guide covers upgrading from v1.0.92 to v1.0.93. No database migration runs. Schema remains at v15. Behavior is ADDITIVE.
+
+## v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
+### What Changed
+- New embedding backend: OpenRouter REST API via `--embedding-backend openrouter`
+- `EmbeddingBackendChoice` propagated to all 13 embedding paths
+- **GAP-OR-PROPAGATION**: 5 additional embedding paths fixed in v1.0.93 — `enrich --operation re-embed`, `init` (dimension probe), `rename-entity`, `ingest --mode claude-code` (4 call sites), and `remember` (chunk parallel embedding)
+- **BUG-OR-EXIT-CODE**: OpenRouter config errors now return exit code 78 (`EX_CONFIG`) instead of exit 1
+- Exit code 78 covers: missing `OPENROUTER_API_KEY`, missing `--embedding-model`, invalid API key
+- New `--enrich-after` flag for ingest
+- New modules: `embedding_api.rs`, `config.rs`, `config_cmd.rs`
+### Who Is Affected
+- Users wanting faster embedding (~200ms vs 15s) via dedicated embedding models
+- Users running bulk ingest operations
+### How to Upgrade
+- No migration needed — zero schema change, zero ALTER TABLE
+- Existing databases work unchanged with `--embedding-backend llm` (default behavior)
+- To use OpenRouter: set `OPENROUTER_API_KEY` and add `--embedding-backend openrouter --embedding-model MODEL`
+### What Breaks
+- Nothing — fully backward compatible
+- `--embedding-backend auto` (default) falls back to LLM subprocess if OpenRouter not configured
+
 # MIGRATING TO v1.0.91 — Spawn CWD Isolation, Degree Fix, Schema Corrections
 
 > This guide covers upgrading from v1.0.90 to v1.0.91. No database migration runs. Schema stays at v15. Behaviour is ADDITIVE.

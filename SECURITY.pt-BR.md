@@ -91,6 +91,18 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - GAP-RECALL-001: deadlock de embedding causado por slots de subprocesso LLM obsoletos resolvido via drop(stdin) explícito, timeout reduzido (300s para 30s), reaper de slots obsoletos e limpeza de processos órfãos do sqlite-graphrag
 - Veja docs/decisions/adr-0050-embedding-deadlock-remediation.md para a decisão arquitetural completa
 
+## v1.0.93 Tratamento de Chave API OpenRouter (ADR-0052)
+- v1.0.93 introduz `--embedding-backend openrouter` que usa uma chave de API real (NÃO OAuth) para chamadas REST diretas ao OpenRouter
+- A chave é fornecida via flag `--openrouter-api-key` ou variável `OPENROUTER_API_KEY`
+- A chave é encapsulada em `secrecy::SecretString` e zeroizada no drop — JAMAIS mantida como String plana na memória após inicialização
+- A chave JAMAIS é logada no stderr mesmo em nível `RUST_LOG=trace`
+- A chave JAMAIS é persistida no `graphrag.sqlite` ou em qualquer arquivo de cache
+- A chave JAMAIS é encaminhada para subprocessos LLM (claude, codex, opencode) — flui apenas para chamadas HTTPS `reqwest` para `api.openrouter.ai`
+- Isto é SEMANTICAMENTE DISTINTO do enforço OAuth-only nos backends LLM: `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` continuam ABORTANDO com exit 1
+- A variável `OPENROUTER_API_KEY` NÃO está na whitelist de env-clear — permanece apenas no processo pai
+- Operadores em hosts compartilhados DEVEM preferir a flag `--openrouter-api-key` ao invés da variável para minimizar janela de exposição
+- Veja `docs/decisions/adr-0052-openrouter-embedding-backend.md` para a decisão arquitetural completa
+
 ## Hall da Fama
 - Reconhecemos publicamente pesquisadores que reportam vulnerabilidades de forma responsável
 - Esta seção está aberta a contribuições: seu nome será adicionado após divulgação coordenada
@@ -109,3 +121,5 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - JAMAIS ignore warnings do `cargo audit` sem abrir um advisory de segurança rastreado
 - JAMAIS defina `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` no ambiente; o spawn abortará com exit 1
 - JAMAIS dependa do encaminhamento de `ANTHROPIC_AUTH_TOKEN` quando o host é compartilhado com processos não confiáveis; prefira `--strict-env-clear` para que credenciais permaneçam apenas no processo pai
+- JAMAIS faça commit de valores `OPENROUTER_API_KEY` no repositório ou em forks derivados
+- SEMPRE use a flag `--openrouter-api-key` em vez da variável de ambiente em hosts compartilhados

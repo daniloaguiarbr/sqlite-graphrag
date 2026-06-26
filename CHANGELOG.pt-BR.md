@@ -3,6 +3,43 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.93] - 2026-06-25
+
+### Adicionado
+- `GAP-OR-INGEST`: Backend de embedding OpenRouter — novos flags globais `--embedding-backend auto|openrouter|llm`, `--embedding-model`, `--openrouter-api-key` para embedding via API REST (~200ms vs 15s subprocess LLM); `EmbeddingBackendChoice` propagado para TODOS os 8 comandos de embedding (`remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`)
+- Novo flag `--enrich-after` para `ingest` — dispara `enrich --operation memory-bindings` sequencialmente após fase de embedding
+- Novos módulos: `src/embedding_api.rs` (cliente REST OpenRouter com batch, retry, truncamento MRL), `src/config.rs` (config XDG para chave API), `src/commands/config_cmd.rs`
+- Novas funções: `embed_passages_parallel_with_embedding_choice()`, `try_embed_query_with_embedding_choice()` em `embedder.rs`
+- 10 modelos de embedding OpenRouter verificados E2E: `qwen/qwen3-embedding-4b`, `qwen/qwen3-embedding-8b`, `nvidia/llama-nemotron-embed-vl-1b-v2:free`, `openai/text-embedding-3-small`, `openai/text-embedding-3-large`, `perplexity/pplx-embed-v1-0.6b`, `mistralai/mistral-embed-2312`, `baai/bge-m3`, `google/gemini-embedding-001`, `google/gemini-embedding-2`
+- `GAP-OR-PROPAGATION` totalmente resolvido: `EmbeddingBackendChoice` propagado para todos os 13 paths de embedding (8 originais + 5 secundários)
+
+### Corrigido
+- `BUG-OR-1`: `input_type="search_document"` hardcoded quebrava NVIDIA Nemotron; agora por modelo via `model_default_input_type()`
+- `BUG-OR-2`: `model_supports_mrl()` não reconhecia NVIDIA e BAAI; adicionados `llama-nemotron-embed` e `bge-m3`
+- `BUG-OR-3`: `qwen/qwen3-embedding-0.6b` listado como aprovado mas sem endpoints ativos no OpenRouter
+- `BUG-OR-4`: `nvidia/llama-3.1-nemotron-embed-8b` listado mas não existe na API OpenRouter
+- `BUG-OR-5`: HTTP 200 com corpo malformado causava falha imediata sem retry; erros de parse em 200 agora tratados como transitórios
+- `GAP-OR-PROPAGATION`: 5 paths de embedding restantes agora respeitam `--embedding-backend openrouter` — `enrich --operation re-embed` (`reembed_memory_vector` + `call_reembed` + `persist_enriched_body`), `rename-entity` (embedding de entidade), `init` (probe smoke test), `ingest --mode claude-code` (4 call sites em `ingest_claude.rs`), chunks do `remember` (`embed_passages_parallel_local` → `embed_passages_parallel_with_embedding_choice`). `EmbeddingBackendChoice` propagado do `main.rs` para todos os 13 paths de embedding (8 originais + 5 corrigidos)
+- `BUG-OR-EXIT-CODE`: 3 validações de configuração OpenRouter em `main.rs` emitiam exit code 1 em vez de 78 (EX_CONFIG) para erros de configuração (`--embedding-backend openrouter` sem `--embedding-model`, chave API ausente, falha de inicialização do cliente). Corrigido: os 3 agora emitem exit 78 via `ExitCode::from(78_u8)`
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy, 0 diffs de fmt
+- Suite de testes: 1059 testes, 0 falhas
+- E2E: 10/10 modelos OpenRouter passaram todas as operações (init, remember, recall, hybrid-search, edit, ingest, enrich re-embed, rename-entity)
+- Todos os gaps/bugs fechados; 0 abertos
+
+
+## [1.0.92] - 2026-06-24
+
+### Adicionado
+- `GAP-DOC-CRUD-001` a `GAP-DOC-CRUD-008`: 8 gaps de documentação remediados em COOKBOOK, HOW_TO_USE, AGENTS, HEADLESS_INVOCATION (EN+PT-BR); expansão CRUD com receitas para `forget`, `restore`, `edit`, `rename`, `purge`, `cleanup-orphans`, `vacuum`
+- Auditoria de skills: arquivos de skill EN e PT-BR atualizados com documentação de subcomandos CRUD
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy, 0 diffs de fmt
+- Todos os 8 gaps de doc fechados; 0 abertos
+
+
 ## [1.0.91] - 2026-06-23
 
 ### Corrigido

@@ -91,6 +91,18 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - GAP-RECALL-001: embedding deadlock from stale LLM subprocess slots resolved via explicit drop(stdin), reduced timeout (300s to 30s), stale slot reaper, and sqlite-graphrag orphan process cleanup
 - See docs/decisions/adr-0050-embedding-deadlock-remediation.md for the full architectural decision
 
+## v1.0.93 OpenRouter API Key Handling (ADR-0052)
+- v1.0.93 introduces `--embedding-backend openrouter` which uses a real API key (NOT OAuth) for direct REST API calls to OpenRouter
+- The API key is provided via `--openrouter-api-key` flag or `OPENROUTER_API_KEY` env var
+- The key is wrapped in `secrecy::SecretString` and zeroized on drop — NEVER held as plain String in memory after initialization
+- The key is NEVER logged to stderr even at `RUST_LOG=trace` level
+- The key is NEVER persisted in `graphrag.sqlite` or any cache file
+- The key is NEVER forwarded to LLM subprocesses (claude, codex, opencode) — it flows only to `reqwest` HTTPS calls to `api.openrouter.ai`
+- This is SEMANTICALLY DISTINCT from the OAuth-only enforcement on LLM backends: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` still ABORT with exit 1
+- The `OPENROUTER_API_KEY` env var is NOT in the env-clear whitelist — it stays in the parent process only
+- Operators on shared hosts SHOULD prefer `--openrouter-api-key` flag over env var to minimize exposure window
+- See `docs/decisions/adr-0052-openrouter-embedding-backend.md` for the full architectural decision
+
 ## Hall of Fame
 - We publicly acknowledge researchers who report vulnerabilities responsibly
 - This section is open to contributions: your name will be added after coordinated disclosure

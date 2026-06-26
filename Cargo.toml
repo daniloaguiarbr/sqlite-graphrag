@@ -1,9 +1,9 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.92"
+version = "1.0.93"
 edition = "2021"
 rust-version = "1.88"
-description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 14.6 MiB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement: API keys ABORT the spawn."
+description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 17 MiB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). v1.0.93: optional OpenRouter API embedding backend (~100-500ms vs 20-60s subprocess). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement for LLM backends: API keys ABORT the spawn."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/daniloaguiarbr/sqlite-graphrag"
 homepage = "https://docs.rs/sqlite-graphrag"
@@ -147,6 +147,7 @@ refinery = { version = "0.9", features = ["rusqlite"] }
 siphasher = "1"
 anyhow = "1"
 thiserror = "2"
+toml = "0.8"
 blake3 = "1"
 directories = "5"
 # fastrand: dependency-free PRNG for jitter (H7+M7); MSRV 1.36, ~30 LOC, no transitive deps
@@ -154,6 +155,9 @@ fastrand = "2"
 fs4 = { version = "0.9", features = ["sync"] }
 interprocess = "2"
 regex = "1"
+# v1.0.93: reqwest for direct OpenRouter API embedding — replaces CLI subprocess spawning
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+secrecy = { version = "0.10", features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "macros", "process"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
@@ -192,6 +196,7 @@ tempfile = "3"
 sys-locale = "0.3"
 wait-timeout = "0.2"
 which = "7"
+zeroize = "1"
 
 # GAP-E2E-007 (v1.0.89): schemars 0.8 generates JSON Schema from Rust types
 # at compile time. Pinned to 0.8 because 1.0 introduced breaking API changes

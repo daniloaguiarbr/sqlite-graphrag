@@ -62,6 +62,17 @@ Rodar `claude -p` com a config de MCP travada e vazia, e a config de hooks zerad
 - Diretórios de spawn são limpos automaticamente ao final do processo via `cleanup_spawn_dir()` em `src/main.rs` (GAP-SPAWN-002) — `remove_dir()` não-recursivo, seguro para diretórios não-vazios
 - A env var `SQLITE_GRAPHRAG_CLAUDE_EMPTY_CONFIG_DIR` da v1.0.79 e o diretório gerenciado `~/.local/state/sqlite-graphrag/claude-empty-config` permanecem funcionais mas são suplantados pelo isolamento automático de CWD
 
+### Atualização v1.0.93 — Backend de Embedding OpenRouter Dispensa Subprocesso
+
+- Desde a v1.0.93, embedding pode usar a API REST do OpenRouter em vez de spawnar um subprocesso LLM headless
+- Use `--embedding-backend openrouter --embedding-model MODELO` para rotear embedding via `POST /api/v1/embeddings`
+- Isso elimina o cold-start do subprocesso (~200ms de chamada API vs 15-20s de spawn de subprocesso por embedding)
+- O caminho OpenRouter usa `reqwest+rustls-tls` diretamente — sem `claude -p`, sem `codex exec`, sem isolamento de CWD necessário
+- O enforcement OAuth-only NÃO se aplica ao OpenRouter — ele usa sua própria `OPENROUTER_API_KEY` / `--openrouter-api-key`
+- O spawn de subprocesso headless permanece inalterado para embedding baseado em LLM (`--embedding-backend llm`) e para operações de `enrich` (que usam raciocínio generativo, não embedding vetorial)
+- A flag `--enrich-after` no `ingest` ainda spawna um subprocesso headless para a fase de enrich, mesmo quando embedding usa OpenRouter
+- Veja ADR-0052 para a justificativa arquitetural completa
+
 ### Por Que NÃO Usar `--bare`
 
 - O `--bare` também corta MCP, hooks, skills, plugins e auto memory
@@ -325,6 +336,21 @@ podem retomar a partir da última memória bem-sucedida.
 - `health --namespace <NS> --json` filtra contagens para um único namespace — útil em ambientes multi-tenant
 - Binário medido em 15.323.128 bytes (14.6 MiB), dentro de 1 MiB do documentado em `Cargo.toml:6`. Drift viral "6 MB" eliminado
 - 1877 testes passando (843 lib + 1013 integração + 21 doc)
+
+## Atualização v1.0.93 — Backend de Embedding OpenRouter
+- Nova flag `--embedding-backend openrouter` habilita embedding via REST API sem subprocesso LLM
+- Elimina overhead de cold-start: ~200ms por embedding vs 15s com subprocesso
+- Requer variável de ambiente `OPENROUTER_API_KEY` ou flag `--openrouter-api-key`
+- Requer `--embedding-model MODEL` (sem padrão — o usuário deve especificar)
+- Funciona com todos os 8 comandos de embedding no modo headless
+- Exemplo de invocação headless:
+
+```bash
+OPENROUTER_API_KEY="$KEY" sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs --pattern "*.md" --recursive --json
+```
 
 ## Atualização v1.0.90 — OpenCode como Terceiro Backend LLM (ADR-0051)
 

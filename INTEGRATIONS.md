@@ -27,6 +27,15 @@
 - For LLM-curated entity/relationship extraction use `ingest --mode claude-code` or `ingest --mode codex`.
 - Entity types now include `organization`, `location`, `date` alongside `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## New Commands and Flags (since v1.0.93)
+- `--embedding-backend auto|openrouter|llm` — select embedding backend (global flag)
+- `--embedding-model MODEL` — select embedding model for OpenRouter (global flag, REQUIRED with openrouter)
+- `--openrouter-api-key KEY` — API key for OpenRouter (global flag)
+- `--enrich-after` — run enrich after ingest completes (ingest flag)
+- **GAP-OR-PROPAGATION**: All 13 embedding paths now honour `--embedding-backend` — including `enrich`, `init`, `rename-entity`, `ingest --mode claude-code`, `remember` (chunks)
+- Exit code 78 (`EX_CONFIG`) for OpenRouter config errors (missing API key, missing model, invalid key)
+- 10 models verified E2E with dim=64 MRL: `google/gemini-embedding-001` (0.892), `google/gemini-embedding-2` (0.868), `mistralai/mistral-embed-2312` (0.832), `qwen/qwen3-embedding-8b` (0.814), `qwen/qwen3-embedding-4b` (0.754), `openai/text-embedding-3-small` (0.668), `nvidia/llama-nemotron-embed-vl-1b-v2:free` (0.662), `baai/bge-m3` (0.537), `openai/text-embedding-3-large` (0.449), `perplexity/pplx-embed-v1-0.6b` (0.415)
+
 ## New Commands and Flags (since v1.0.68)
 ### Process Lifecycle (G28)
 - `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` now acquire a per-namespace singleton before doing real work.  A second concurrent invocation against the same database fails fast with `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) instead of stacking up subprocess trees.
@@ -459,6 +468,19 @@
 - Official docs live at https://openrouter.ai/docs explaining routing rules and API integration
 - Golden tip is to reuse the same namespace across all routed models for consistent context
 
+
+### OpenRouter Embedding Backend (v1.0.93)
+- Since v1.0.93, sqlite-graphrag can use OpenRouter as a dedicated embedding backend via REST API
+- Use `--embedding-backend openrouter --embedding-model MODEL` for ~200ms embedding instead of 15s subprocess
+- 10 models verified: Qwen 4B/8B, NVIDIA Nemotron (free), OpenAI small/large, Perplexity, Mistral, BAAI, Google Gemini
+- Set API key via `OPENROUTER_API_KEY` env var or `--openrouter-api-key` flag
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  remember --name test --type note --description "test" --body "content" --json
+```
 
 ## Minimax (since v1.0.83 — ADR-0041)
 ### Anthropic-Compatible Provider — MiniMax/api.minimax.io

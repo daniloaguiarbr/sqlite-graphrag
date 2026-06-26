@@ -95,6 +95,27 @@
 
 See [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) for the Claude Backend Split test plan (ADR-0042). See [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) for the Five-Gap Remediation test plan (ADR-0043). Both new plans are snapshots of the released test design.
 
+## v1.0.93 Test Plan — OpenRouter Embedding Backend (ADR-0052, GAP-OR-INGEST)
+
+### Layer 1 (unit) additions
+- `model_default_input_type()`: 10 tests covering per-model `input_type` selection (BUG-OR-1 fix — NVIDIA Nemotron returns `"passage"`, Mistral returns `None`, others return `"search_document"`)
+- `model_supports_mrl()`: tests covering MRL detection for all 10 verified models including NVIDIA and BAAI (BUG-OR-2 fix)
+- `validate_model_id()`: tests covering model ID validation against the 10 approved models and rejection of 5 non-existent IDs (BUG-OR-3, BUG-OR-4 fixes)
+- `execute_with_retry()`: test covering HTTP 200 with malformed body retry (BUG-OR-5 fix — parse error on HTTP 200 treated as transient)
+
+### Layer 2 (integration) additions
+- `tests/openrouter_embedding.rs`: wiremock-based integration tests covering the full OpenRouter REST API embedding flow — request building, MRL truncation, `input_type` per model, batch chunking (MAX_BATCH_SIZE=32), error retry, and `secrecy::SecretString` API key handling
+- `EmbeddingBackendChoice` propagation: tests verifying that `--embedding-backend openrouter` reaches all 8 commands (remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research)
+- `--enrich-after` flag: tests verifying that `ingest --enrich-after` triggers sequential `enrich --operation memory-bindings` after embedding phase
+
+### Layer 7 (post-publication) additions
+- OpenRouter embedding round-trip: `remember` with `--embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b"` followed by `recall` with same flags, verifying vector similarity
+- Exit 78 on missing `--embedding-model` when `--embedding-backend openrouter` is specified
+
+### Layer 8 (real-LLM smoke) deltas
+- Optional: one OpenRouter embedding smoke test using a real `OPENROUTER_API_KEY` (opt-in via `SQLITE_GRAPHRAG_OPENROUTER_E2E=1`)
+- Budget: 1 API call, under 5 seconds, expected embedding latency under 500ms
+
 ## Historical Plan — v1.0.80 Plan Deltas — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
 
 The v1.0.80 release (patch bump, no schema migration) added the

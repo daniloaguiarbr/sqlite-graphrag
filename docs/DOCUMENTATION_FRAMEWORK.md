@@ -41,25 +41,49 @@ This section updates the framework to cover the documentation generated for the 
 - Documented in: `AGENTS.md` (added v1.0.89), `TESTING.md` (added v1.0.89), `docs/decisions/INDEX.md` (created v1.0.89)
 - `llms.txt` still needs update for v1.0.89
 
-### Documentation Drift Status (as of v1.0.89)
+### v1.0.90 — OpenCode Backend Integration (ADR-0051)
+- New LLM backend `opencode` added to `LlmBackendChoice` enum
+- New global flags: `--opencode-binary`, `--opencode-model`, `--opencode-timeout`
+- New env vars: `SQLITE_GRAPHRAG_OPENCODE_BINARY`, `SQLITE_GRAPHRAG_OPENCODE_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_EMBED_MODEL`, `SQLITE_GRAPHRAG_OPENCODE_TIMEOUT`
+- New ADR: ADR-0051 (opencode-backend-integration) — EN only, PT-BR pending
+- Documented in: `AGENTS.md`, `HEADLESS_INVOCATION.md`, `COOKBOOK.md`, `HOW_TO_USE.md`, `MIGRATION.md`
+
+### v1.0.93 — OpenRouter Embedding Backend (ADR-0052, GAP-OR-INGEST)
+- New `EmbeddingBackendChoice` enum (`auto|openrouter|llm`) separate from `LlmBackendChoice`
+- New global flags: `--embedding-backend`, `--embedding-model`, `--openrouter-api-key`
+- New ingest flag: `--enrich-after` (triggers `enrich --operation memory-bindings` after embedding)
+- OpenRouter REST API embedding via `reqwest+rustls-tls` (~100-500ms vs 20-60s subprocess)
+- 10 verified OpenRouter models (qwen3-embedding-4b/8b, nvidia nemotron, openai 3-small/3-large, perplexity, mistral, baai bge-m3, google gemini-embedding-001/002)
+- 5 BUG-OR fixes: input_type per model, MRL detection, model validation, HTTP 200 malformed retry, dimension override
+- API key handled via `secrecy::SecretString` with zeroize-on-drop, NEVER logged
+- No default model — user MUST specify `--embedding-model` when using `--embedding-backend openrouter`
+- New ADR: ADR-0052 (openrouter-embedding-backend) — EN + PT-BR
+- New test plan section in `TEST_PLAN.md` and `TEST_PLAN.pt-BR.md` covering layers 1/2/7/8
+- New env var: `OPENROUTER_API_KEY`
+- New env var: `SQLITE_GRAPHRAG_EMBEDDING_BACKEND`
+- Documented in: ALL 12 root .md files, ALL 24 docs/ .md files, 7 schema JSON files, `docs/schemas/README.md`, `docs/decisions/INDEX.md`
+
+### Documentation Drift Status (as of v1.0.93)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.85.2 (corrected binary size) | v1.0.85 (3 versions behind) | PT-BR outdated |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.89 (100%) | v1.0.85.2 (4 versions behind) | PT-BR outdated |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.89 (added in v1.0.89 cycle) | v1.0.85 (3 versions behind) | PT-BR outdated |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.85 (3 versions behind) | PT-BR outdated |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.85 (3 versions behind) | PT-BR outdated |
-| `llms.txt` / `llms.pt-BR.txt` | v1.0.85.2 (3 versions behind) | v1.0.85 (3 versions behind) | BOTH outdated |
-| `llms-full.txt` | v1.0.79 (9 versions behind) | N/A | EN outdated |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.82 (6 versions behind for new GAPs) | Same | EN outdated for new GAPs |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.82 (6 versions behind for new GAPs) | Same | EN outdated for new GAPs |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.85.2 (3 versions behind for preflight) | Same | EN outdated for preflight |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.89 (added in v1.0.89 cycle) | v1.0.85 (3 versions behind) | PT-BR outdated |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.85.2 (3 versions behind) | v1.0.82 (6 versions behind) | BOTH outdated |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.89 (added preflight section) | v1.0.82 (6 versions behind) | PT-BR outdated |
-| `docs/decisions/` (43 ADRs) | 100% (43/43) | 77% (33/43) | 10 ADRs missing PT-BR |
-| `docs/schemas/` (70+ schemas) | 100% | N/A | N/A |
+| `README.md` / `README.pt-BR.md` | v1.0.93 (OpenRouter section) | v1.0.93 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.93 (100%) | v1.0.93 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.93 (OpenRouter backend) | v1.0.93 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.93 (new flags section) | v1.0.93 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.93 (API key handling) | v1.0.93 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.93 (OpenRouter tests) | v1.0.93 (espelhado) | Current |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.85.2 (outdated) | v1.0.85 (outdated) | BOTH outdated |
+| `llms-full.txt` | v1.0.79 (outdated) | N/A | EN outdated |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.93 (OpenRouter recipes) | v1.0.93 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.93 (OpenRouter guide) | v1.0.93 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.93 (migration guide) | v1.0.93 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.93 (wiremock/E2E) | v1.0.93 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.93 (rustls-tls) | v1.0.93 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.93 (OpenRouter headless) | v1.0.93 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.93 (layers 1/2/7/8) | v1.0.93 (espelhado) | Current |
+| `docs/decisions/` (45 ADRs) | 100% (45/45) | 76% (34/45) | 11 ADRs missing PT-BR |
+| `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |
 
 ### Framework Update — Mandatory Coverage of v1.0.86+
 

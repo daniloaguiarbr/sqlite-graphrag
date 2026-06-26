@@ -87,6 +87,8 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Run `cargo test --lib lock::tests retry::circuit_breaker_tests` after touching `lock.rs` or `retry.rs` to exercise the new v1.0.68 singleton and circuit-breaker helpers
 - Run `cargo test --test terminal_compile_windows` after touching `src/terminal.rs` to confirm the public surface stays callable; the dedicated CI job `windows-build-check` runs the full cross-platform type check
 - Test assertions involving timestamps MUST be timezone-agnostic — parse ISO via `chrono::DateTime::parse_from_rfc3339` and compare `timestamp()` against `DateTime::UNIX_EPOCH` instead of hardcoded `1970-01-01T00:00:00` strings; this rule was added after a `SQLITE_GRAPHRAG_DISPLAY_TZ` leak in v1.0.66/v1.0.67 made three pre-existing tests flaky
+- OpenRouter embedding tests live in `tests/openrouter_embedding.rs` using `wiremock` for HTTP mocking; run with `cargo test --test openrouter_embedding`
+- E2E OpenRouter tests with real API are opt-in: set `OPENROUTER_API_KEY` and `--embedding-model` to run against a live endpoint; these are NOT part of the default `cargo test` suite
 
 ### v1.0.76 Test Matrix (3 features)
 - The CI matrix runs `clippy` and `test` jobs across `default` and `llm-only` features (the `embedding-legacy` leg was removed in v1.0.79 together with the feature)

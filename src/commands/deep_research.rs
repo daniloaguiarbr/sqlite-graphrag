@@ -251,6 +251,7 @@ struct SubQueryResult {
 pub fn run(
     args: DeepResearchArgs,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<(), AppError> {
     tracing::debug!(target: "deep_research", query = %args.query, k = args.k, "starting deep research");
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -258,13 +259,14 @@ pub fn run(
         .enable_all()
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to build tokio runtime: {e}")))?;
-    rt.block_on(run_async(args, llm_backend))
+    rt.block_on(run_async(args, llm_backend, embedding_backend))
 }
 
 /// Main async logic: decompose, fan-out, assemble, emit JSON.
 async fn run_async(
     args: DeepResearchArgs,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<(), AppError> {
     let start = std::time::Instant::now();
 
@@ -307,10 +309,11 @@ async fn run_async(
     let mut sub_embeddings: Vec<Option<Arc<Vec<f32>>>> = Vec::with_capacity(sub_query_texts.len());
     let mut vec_degraded = false;
     for sq_text in &sub_query_texts {
-        match crate::embedder::try_embed_query_with_deterministic_fallback(
+        match crate::embedder::try_embed_query_with_embedding_choice(
             &paths.models,
             sq_text,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((v, _backend)) => sub_embeddings.push(Some(Arc::new(v))),
             Err(reason) => {

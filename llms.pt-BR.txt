@@ -1,8 +1,8 @@
-# sqlite-graphrag (v1.0.91 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.93 LLM-Only One-Shot)
 
 > Memória persistente para 27 agentes de IA em um único binário Rust de 14.6 MiB
 
-27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.91 (atual; v1.0.91 corrigiu GAP-SPAWN-001 isolamento de CWD em spawn para que subprocessos LLM não herdem mais .mcp.json, BUG-17 correção de inflação de degree, BUG-15/16 correções de schema, GAP-SPAWN-002 cleanup de diretórios órfãos; v1.0.90 adicionou OpenCode como terceiro backend LLM ao lado de codex e claude, remediação de 24 bugs; v1.0.89 regenerou health.schema.json via schemars e adicionou paridade --db em 5 subcomandos; v1.0.88 corrigiu hotfixes BUG-11/12/13; v1.0.87 adicionou a camada de validação pre-flight; v1.0.86 adicionou 10 subcomandos para o pipeline LLM; v1.0.79 foi a fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Cada `remember` / `ingest` / `recall` / `hybrid-search` spawna um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) para gerar embeddings em diretório temporário isolado (sem herança de .mcp.json). Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
+27 agentes de IA. Um binário de 14.6 MiB. Zero download de modelo. sqlite-graphrag v1.0.93 (atual; v1.0.93 adicionou backend de embedding via API REST OpenRouter com `--embedding-backend openrouter` com latência de ~100-500ms vs 20-60s do subprocesso LLM, flag `--enrich-after` para ingest, 5 correções BUG-OR; v1.0.91 corrigiu isolamento de CWD em spawn, BUG-17 correção de degree; v1.0.90 adicionou backend OpenCode; v1.0.89 schema drift via schemars; v1.0.87 camada de validação pre-flight; v1.0.79 fundação LLM-only) entrega a qualquer assistente de programação IA uma camada de memória local, rápida e privada, baseada em um único arquivo SQLite. Geração de embedding usa TANTO subprocesso LLM headless (claude/codex/opencode via OAuth) QUANTO a API REST OpenRouter (v1.0.93, via `--embedding-backend openrouter`). Sem daemon, sem runtime ONNX, sem modelo local. Recuperação nativa em grafo. Saída JSON determinística pronta para orquestração em pipelines.
 
 ## Arquitetura v1.0.85 (apenas LLM, substitui v1.0.79)
 ### Build one-shot sem modelo local
@@ -23,6 +23,19 @@
 - v1.0.89 schema drift + flag parity: `health.schema.json` regenerado via `schemars` derive macro (política Must-Ignore por RFC 7493 I-JSON, `additionalProperties: true`); 17 novos campos adicionados. 5 subcomandos agora aceitam `--db <PATH>`: `embedding status|list|abandon`, `pending list|show`. `migrate --dry-run --json` reporta migrações pendentes sem aplicar. `codex-models --json` aceito como no-op. `ingest --auto-describe` (padrão true) extrai descrição da primeira linha significativa do corpo. `health --namespace <NS> --json` filtra contagens. Tamanho do binário 14.6 MiB documentado em `Cargo.toml:6` (ADR-0048, ADR-0049)
 - v1.0.90 integração do backend OpenCode (ADR-0051): terceiro backend LLM `opencode run` ao lado de `codex exec` e `claude -p`. Novo `--llm-backend opencode`, `--mode opencode` para ingest/enrich, flags `--opencode-binary/model/timeout` e env vars `SQLITE_GRAPHRAG_OPENCODE_*`. Cadeia de fallback estendida para `codex → claude → opencode → none`. Remediação de 24 bugs incluindo ativação de `--skip-embedding-on-failure`, correção de flag morto `--llm-fallback`, dessincronia FTS em batch/enrich, compilação cruzada Windows, timeout hardcoded de embedding, paginação de `list`, enforço de `--yes` em comandos destrutivos. 875+ testes passando
 - v1.0.91 isolamento de CWD em spawn: `spawn_isolation_dir()` e `apply_cwd_isolation()` em `src/spawn/mod.rs` definem `current_dir` para diretório temporário efêmero e `CLAUDE_CONFIG_DIR` para o mesmo diretório em TODOS os 10 spawn sites de produção. Subprocessos LLM não herdam mais `.mcp.json` do projeto do chamador — embedding funciona zero-config em qualquer diretório. `cleanup_spawn_dir()` remove o diretório temporário ao final do processo. BUG-17 corrigiu inflação de `entities.degree`: `increment_degree()` substituído por `recalculate_degree()` após inserção de todas as relações. BUG-15/16 corrigiram 8 JSON schemas com valores de enum e campos ausentes
+
+
+## Arquitetura v1.0.93 (Backend de Embedding OpenRouter)
+- v1.0.93 adiciona backend de embedding via API REST OpenRouter com flag global `--embedding-backend auto|openrouter|llm` (ADR-0052, GAP-OR-INGEST)
+- Enum `EmbeddingBackendChoice` (`Auto`, `Openrouter`, `Llm`) é separado de `LlmBackendChoice` — seleção de embedding e extração LLM são independentes
+- `--embedding-model MODEL` seleciona o modelo OpenRouter; SEM padrão — usuário DEVE especificar ao usar `--embedding-backend openrouter`
+- Variável `OPENROUTER_API_KEY` ou flag `--openrouter-api-key` fornece a chave (tratada via `secrecy::SecretString` com zeroize-on-drop, JAMAIS logada)
+- API REST direta via `reqwest+rustls-tls` para `POST https://openrouter.ai/api/v1/embeddings` — ~100-500ms vs 20-60s do subprocesso LLM
+- Truncamento MRL (Matryoshka Representation Learning) para `--embedding-dim` configurado (padrão 64)
+- 10 modelos verificados: `qwen/qwen3-embedding-4b`, `qwen/qwen3-embedding-8b`, `nvidia/llama-nemotron-embed-vl-1b-v2:free`, `openai/text-embedding-3-small`, `openai/text-embedding-3-large`, `perplexity/pplx-embed-v1-0.6b`, `mistralai/mistral-embed-2312`, `baai/bge-m3`, `google/gemini-embedding-001`, `google/gemini-embedding-2`
+- `EmbeddingBackendChoice` propagado para TODOS os 8 comandos de embedding: `remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`
+- Flag `--enrich-after` no `ingest` dispara `enrich --operation memory-bindings` sequencialmente após todos os arquivos serem ingeridos
+- BUG-OR-1 a BUG-OR-5: input_type por modelo, detecção MRL, validação de modelo, retry em HTTP 200 malformado, override de dimensão
 
 
 ## Documentação Principal
@@ -77,6 +90,9 @@
 - `SQLITE_GRAPHRAG_LOG_LEVEL` nível de filtro de rastreamento com valores de `error` a `trace`
 - `SQLITE_GRAPHRAG_LANG` idioma de saída da CLI com valores `en` ou `pt`
 - `SQLITE_GRAPHRAG_NAMESPACE` override de namespace respeitado por todos os comandos (corrigido em v1.0.51)
+- `OPENROUTER_API_KEY` chave de API para backend de embedding OpenRouter (v1.0.93); tratada via `secrecy::SecretString`
+- `SQLITE_GRAPHRAG_EMBEDDING_BACKEND` seleção persistente de backend de embedding (`auto`, `openrouter`, `llm`)
+- `SQLITE_GRAPHRAG_EMBEDDING_MODEL` modelo persistente de embedding para backend OpenRouter
 
 
 ## Entrada do Grafo
@@ -179,8 +195,8 @@ Chaves de API (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORTAM o spawn com AppError::
 ## Fatos Estáveis
 ### Identidade e metadados de versão
 - Nome do pacote `sqlite-graphrag` publicado no crates.io sob MIT OR Apache-2.0
-- Versão atual 1.0.91. v1.0.91 = isolamento de CWD em spawn (GAP-SPAWN-001), correção de recálculo de degree (BUG-17), 7 correções de enum em schema (BUG-15), correção de schema deep-research (BUG-16), cleanup de diretórios órfãos (GAP-SPAWN-002). MSRV Rust 1.88. 877+ testes passando. Binário 14.6 MiB
+- Versão atual 1.0.93. v1.0.93 = backend de embedding via API REST OpenRouter (ADR-0052, GAP-OR-INGEST), `--embedding-backend auto|openrouter|llm`, `--enrich-after` para ingest, BUG-OR-1 a BUG-OR-5, `EmbeddingBackendChoice` propagado para todos os 8 comandos. v1.0.91 = isolamento de CWD em spawn. v1.0.90 = backend OpenCode. v1.0.89 = schema drift. v1.0.87 = validação pre-flight. v1.0.79 = fundação LLM-only. MSRV Rust 1.88. Binário 14.6 MiB
 - Repositório `https://github.com/daniloaguiarbr/sqlite-graphrag` com CI em push e tag
-- Modelo de embeddings: delegado a subprocesso headless `claude code` (OAuth Anthropic), `codex` (OAuth ChatGPT Pro) ou `opencode` por chamada; sem modelo em processo. Subprocessos LLM rodam em diretório temporário isolado (v1.0.91)
+- Modelo de embeddings: delegado a API REST OpenRouter (v1.0.93, ~100-500ms) OU subprocesso headless `claude code` / `codex` / `opencode` (OAuth, ~20-60s) por chamada; sem modelo em processo
 - Camada de armazenamento `rusqlite` com SQLite bundled e módulo FTS5. Extensão `sqlite-vec` REMOVIDA na v1.0.76; similaridade vetorial é cosseno em Rust puro sobre embeddings BLOB
 - Até quatro instâncias simultâneas suportadas via semáforo de contagem com locks advisory `fs4`

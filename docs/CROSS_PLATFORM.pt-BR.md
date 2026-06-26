@@ -6,7 +6,7 @@
 - O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` roda apenas em Linux; a mesma asserção se aplica no Windows por construção (propagação de env é agnóstica de plataforma no helper)
 - Flag `--strict-env-clear` e env var `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` funcionam identicamente no Windows; apenas `PATH` (ou `Path` no Windows, que o helper normaliza) é encaminhado em modo estrito
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
-# SUPORTE CROSS PLATFORM
+# SUPORTE CROSS PLATFORM (v1.0.93 — Backend de Embedding OpenRouter + 986+ Testes)
 
 > Um binário de 14.6 MiB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 

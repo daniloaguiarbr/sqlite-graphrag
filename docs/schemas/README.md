@@ -100,7 +100,7 @@
 - The schema itself remains `additionalProperties: false` because variant-specific fields are intentionally NOT serialised to JSON; structured access to `job_type` and `namespace` requires agents to parse the quoted strings inside `message`
 
 ### Schema Changes in v1.0.84 (ADR-0042 / GAP-002)
-- Seven response schemas gained an OPTIONAL `backend_invoked: enum [claude, codex, opencode, none, auto]` field that reports which LLM backend the live embedding path actually invoked (opencode added in v1.0.90)
+- Seven response schemas gained an OPTIONAL `backend_invoked: enum [claude, codex, opencode, openrouter, none, auto]` field that reports which LLM backend the live embedding path actually invoked (opencode added in v1.0.90)
 - Affected envelopes: `embedding-status`, `remember`, `edit`, `recall`, `hybrid-search`, `ingest-summary`, `enrich-summary`
 - The field is omitted (not `null`) when no backend was invoked, keeping happy-path envelopes clean
 - Agents SHOULD treat `backend_invoked` as the ground truth for which CLI binary ran during the call
@@ -152,6 +152,13 @@
 - v1.0.89 (GAP-E2E-008, GAP-E2E-010) added `--db <PATH>` flag parity on 5 subcommands: `embedding-status`, `embedding-list`, `pending-list`, `codex-models`. No schema changes (the flag affects input parsing, not output envelope)
 - v1.0.89 (GAP-E2E-009) added `--dry-run` and `--confirm` flags to `migrate`. New `migrate-dry-run.schema.json` describes the structured dry-run report (pending_migrations[], pending_count, checksum_mismatches[], status)
 - v1.0.89 (GAP-E2E-011) added `--auto-describe` (default true) to `ingest`. No schema changes; affects how `description` field is populated in `ingest-file-event.schema.json` and `ingest-summary.schema.json` envelopes
+
+### Schema Changes in v1.0.93 (ADR-0052 / OpenRouter Embedding Backend)
+- Seven response schemas updated `backend_invoked` enum to include `openrouter` as a sixth variant: `claude | codex | opencode | openrouter | none | auto`
+- `openrouter` is emitted when embedding was computed via the OpenRouter REST API (`--embedding-backend openrouter`) instead of a headless LLM subprocess
+- Affected envelopes: `embedding-status`, `remember`, `edit`, `recall`, `hybrid-search`, `ingest-summary`, `enrich-summary`
+- No new schema files were added — the OpenRouter backend uses the same output envelope structure as existing backends
+- `ingest-summary.schema.json` now reflects the `--enrich-after` flag behavior: when active, the summary includes the enrich phase results inline
 
 ### Input Payload Schemas (Reference)
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`

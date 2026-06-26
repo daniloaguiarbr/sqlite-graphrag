@@ -53,6 +53,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0049](adr-0049-db-flag-scope-per-subcommand.md) | `--db` Flag Scope Per Subcommand | v1.0.89 | Accepted | [PT-BR](adr-0049-db-flag-scope-per-subcommand.pt-BR.md) |
 | [ADR-0050](adr-0050-embedding-deadlock-remediation.md) | Embedding Deadlock Remediation | v1.0.89 | Accepted | [PT-BR](adr-0050-embedding-deadlock-remediation.pt-BR.md) |
 | [ADR-0051](adr-0051-opencode-backend-integration.md) | OpenCode Backend Integration | v1.0.90 | Accepted | — |
+| [ADR-0052](adr-0052-openrouter-embedding-backend.md) | OpenRouter Embedding Backend | v1.0.93 | Accepted | [PT-BR](adr-0052-openrouter-embedding-backend.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -70,11 +71,12 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.88**: 2 ADRs (0046-0047) — BUG-11/12/13 hotfixes
 - **v1.0.89**: 3 ADRs (0048-0050) — schema + flag parity + embedding deadlock
 - **v1.0.90**: 1 ADR (0051) — OpenCode backend integration
+- **v1.0.93**: 1 ADR (0052) — OpenRouter embedding backend
 
 ## Bilíngue Status
 
-- **EN (English)**: 44/44 ADRs (100%)
-- **PT-BR (Português Brasileiro)**: 33/44 ADRs (75%)
+- **EN (English)**: 45/45 ADRs (100%)
+- **PT-BR (Português Brasileiro)**: 34/45 ADRs (76%)
 - **PT-BR pendente**: 11 ADRs (0007-0018, 0051) — criados antes do framework bilíngue ou pendentes de tradução
 
 ## Conventions
@@ -88,8 +90,8 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 
 ## Adding a New ADR
 
-1. Choose the next sequential number (next is ADR-0052)
-2. Create `adr-0052-slug.md` following the canonical structure
+1. Choose the next sequential number (next is ADR-0053)
+2. Create `adr-0053-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
 4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`
 5. Add PT-BR column link

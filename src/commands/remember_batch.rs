@@ -85,6 +85,7 @@ struct BatchSummary {
 pub fn run(
     args: RememberBatchArgs,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -174,6 +175,7 @@ pub fn run(
                 args.force_merge,
                 &paths,
                 llm_backend,
+                embedding_backend,
             ) {
                 Ok(event) => {
                     output::emit_json(&event)?;
@@ -208,6 +210,7 @@ pub fn run(
                 args.force_merge,
                 &paths,
                 llm_backend,
+                embedding_backend,
             ) {
                 Ok(event) => {
                     tx.commit()?;
@@ -243,6 +246,7 @@ pub fn run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_line(
     tx: &rusqlite::Transaction<'_>,
     namespace: &str,
@@ -251,6 +255,7 @@ fn process_line(
     force_merge: bool,
     paths: &AppPaths,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<BatchItemEvent, AppError> {
     let input: BatchInputLine = serde_json::from_str(line)
         .map_err(|e| AppError::Validation(format!("line {index}: invalid JSON: {e}")))?;
@@ -321,10 +326,11 @@ fn process_line(
         )?;
 
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-        match crate::embedder::embed_passage_with_choice(
+        match crate::embedder::embed_passage_with_embedding_choice(
             &paths.models,
             &input.body,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((embedding, _backend)) => {
                 memories::upsert_vec(
@@ -372,10 +378,11 @@ fn process_line(
 
         let snippet: String = input.body.chars().take(200).collect();
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-        match crate::embedder::embed_passage_with_choice(
+        match crate::embedder::embed_passage_with_embedding_choice(
             &paths.models,
             &input.body,
-            Some(llm_backend),
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((embedding, _backend)) => {
                 memories::upsert_vec(

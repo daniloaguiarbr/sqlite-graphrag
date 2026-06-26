@@ -1,668 +1,527 @@
-# Análise de Defeitos — sqlite-graphrag
+# Embedding Alternativo para sqlite-graphrag — Análise de Viabilidade
 
-
-## GAP-SPAWN-001: Herança de .mcp.json em Subprocessos de Embedding — RESOLVIDO (v1.0.91, 2026-06-23)
-
-### Resolução
-- `apply_cwd_isolation()` adicionado em `src/spawn/mod.rs` — aplica `current_dir(temp_dir)` e `CLAUDE_CONFIG_DIR=temp_dir` em TODOS os subprocessos LLM
-- 10 spawn sites corrigidos: `llm_embedding.rs` (3), `codex_spawn.rs` (1), `claude_runner.rs` (1), `opencode_runner.rs` (2), `ingest_claude.rs` (1), `enrich.rs` (1), preflight `workspace_root` (1)
-- Testes de regressão: `test_spawn_isolation_dir_creates_in_temp`, `test_apply_cwd_isolation_modifies_command`
-- 877 testes passando, ZERO clippy warnings, ZERO erros de formatação
-
+é proibido ter modelo default hardcode na open router, o modelo deve ser selecionado pelo  usuário ao digitar o comando
 
 ## Problema
-- O `sqlite-graphrag` falha silenciosamente ou com timeout ao executar embedding via subprocessos `codex exec` ou `claude -p`
-- O subprocesso LLM herda o `.mcp.json` do diretório de trabalho do chamador
-- Servidores MCP do projeto (ex: `pg-flowaiper`, `ssh-flowaiper-farmacia`) tentam inicializar dentro do subprocesso headless
-- O subprocesso headless NÃO precisa de NENHUM servidor MCP — ele só precisa gerar embeddings
+- O comando `remember` leva 20-60 segundos para salvar UMA memória
+- O comando `remember` com `--llm-backend none` leva 38 milissegundos
+- O embedding via subprocesso LLM é 3000x mais lento que o I/O SQLite puro
+- O `remember` com body longo e entidades pode ultrapassar 120 segundos
+- O `remember` atinge timeout e falha com exit 143 (SIGTERM)
 
 
 ## Consequências do Problema
-- Timeout de 60s no backend Codex porque o subprocesso tenta conectar ao PostgreSQL MCP antes de processar o prompt de embedding
-- Erro 401 no backend Claude porque o subprocesso herda config MCP que exige autenticação de servidores externos
-- O usuário precisa descobrir manualmente que deve prefixar `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` em TODA invocação
-- Primeira experiência do usuário com `remember` ou `recall` falha em QUALQUER projeto que tenha `.mcp.json` na árvore de diretórios
-- A workaround exige conhecimento interno da arquitetura — viola o princípio de menor surpresa (POLA)
-- O preflight guard `check_walkup_mcp_json` (v1.0.87) valida se o JSON é sintaticamente válido, mas NÃO impede que servidores MCP válidos causem interferência no subprocesso
-- Embedding falha com exit 11 e a memória é persistida sem embedding (`backend_invoked: "none"`) — degradação silenciosa de qualidade de busca semântica
+- Hooks de memória do Claude Code travam por 1-2 minutos a CADA turno
+- Sessões interativas sofrem latência inaceitável no salvamento
+- Memórias falham silenciosamente quando o timeout é atingido
+- O pipeline de `ingest` em massa fica proibitivamente lento
+- O `enrich --operation re-embed` leva horas para re-embedar centenas de memórias
+- A experiência do usuário degrada a CADA interação com o GraphRAG
 
 
-## Causa Raiz do Problema
-- CAUSA PRIMÁRIA: o subprocesso LLM (`codex exec` ou `claude -p`) faz walk-up do filesystem buscando `.mcp.json` na cadeia ancestral do CWD
-- CAUSA SECUNDÁRIA: o `sqlite-graphrag` executa o subprocesso com `Command::new()` SEM chamar `.current_dir()` — o subprocesso herda o CWD do chamador, que contém `.mcp.json` do projeto do usuário
-- CAUSA TERCIÁRIA: as flags de endurecimento passam `--mcp-config '{}'` para zerar servidores MCP, MAS o Claude Code 2.1.177+ ignora o inline `'{}'` e faz walk-up mesmo assim
-- CAUSA QUATERNÁRIA: o `check_mcp_config_inline` (`preflight.rs:276`) reescreve `'{}'` para tempfile com `{"mcpServers":{}}`, porém o walk-up do CWD PREVALECE sobre o `--mcp-config` quando ambos existem
-- CAUSA QUINÁRIA: `workspace_root: std::path::Path::new(".")` em `llm_embedding.rs:739` ancora o walk-up do preflight no CWD do chamador em vez de um diretório efêmero limpo
+## Causa Raiz
+- CADA embedding spawna um processo Node.js completo (`codex exec` ou `claude -p`)
+- O `codex exec` consome ~350 MB de RSS por instância
+- O `claude -p` consome ~200-400 MB de RSS por instância
+- CADA spawn paga cold-start: boot do Node.js (5-15 segundos)
+- CADA spawn paga autenticação: validação OAuth (1-3 segundos)
+- CADA spawn paga schema parsing: carregamento do `--output-schema` JSON
+- O LLM generativo GERA floats token-a-token via autoregressive decoding
+- Um encoder neural dedicado COMPUTA o vetor em UMA forward pass (~10-500ms)
+- A arquitetura atual usa um LLM generativo como calculadora de embedding
+- Usar LLM generativo para embedding é como usar um canhão para matar mosca
 
-### Evidência no Código-Fonte
 
-Arquivo `src/extract/llm_embedding.rs`:
-- Linha 739: `workspace_root: std::path::Path::new(".")` — o preflight ancora no CWD
-- Linhas 760-762: `env_clear()` limpa env vars, mas NÃO define `current_dir()`
-- Linha 769: `cmd.env("CLAUDE_CONFIG_DIR", &config_dir)` — só ativo quando env var manual existe
-
-Arquivo `src/spawn/preflight.rs`:
-- Linhas 330-371: `check_walkup_mcp_json` faz walk-up a partir de `workspace_root` (`.`) buscando `.mcp.json`
-- Linha 358-363: rejeita `.mcp.json` com `mcpServers` não-vazio — MAS só se o preflight NÃO for pulado
-- O guard detecta o problema mas a solução exige env var manual (`SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1`)
-
-### Cadeia Causal Completa
-
-```
-CWD do usuário contém .mcp.json
-        |
-        v
-sqlite-graphrag spawna subprocesso LLM com Command::new()
-        |
-        v
-subprocesso herda CWD do chamador (nenhum .current_dir() definido)
-        |
-        v
-claude/codex faz walk-up e encontra .mcp.json do projeto
-        |
-        v
-MCP servers do projeto (PostgreSQL, SSH, etc) tentam inicializar
-        |
-        v
-servidores MCP exigem rede, auth, ou portas indisponíveis no contexto headless
-        |
-        v
-timeout (codex 60s) OU 401 auth error (claude) OU conexão recusada
-        |
-        v
-embedding falha com exit 11
-        |
-        v
-memória NÃO é persistida OU é persistida sem embedding (backend_invoked: "none")
-        |
-        v
-recall e hybrid-search retornam resultados degradados ou vazios
-```
+## Relação Causa e Efeito
+- CAUSA: o embedding usa subprocess LLM generativo (Node.js headless)
+- EFEITO: cold-start de 5-15 segundos POR chamada de embedding
+- CAUSA: o cold-start de 5-15 segundos POR chamada
+- EFEITO: `remember` simples (1 chunk + 5 entidades) leva 20-60 segundos
+- CAUSA: `remember` leva 20-60 segundos
+- EFEITO: hooks de memória travam a sessão interativa do Claude Code
+- CAUSA: hooks de memória travam a sessão
+- EFEITO: o usuário percebe lentidão extrema e abandona o uso do GraphRAG
+- CAUSA: o LLM gera floats token-a-token (autoregressive)
+- EFEITO: latência de 10-30 segundos para gerar 64 números decimais
+- CAUSA: latência de 10-30 segundos para 64 floats
+- EFEITO: o bottleneck NÃO é o SQLite, NÃO é o chunking, é EXCLUSIVAMENTE o LLM
 
 
 ## Solução
-- O `sqlite-graphrag` DEVE isolar o CWD do subprocesso LLM para um diretório temporário limpo que NÃO contenha `.mcp.json`
-- Implementar `Command::new("codex").current_dir(temp_dir)` onde `temp_dir` é um diretório efêmero sem `.mcp.json` na cadeia ancestral
-- Complementar com `CLAUDE_CONFIG_DIR` apontando para diretório vazio para evitar herança de config user-level
-- Tornar esse comportamento o DEFAULT — sem exigir env vars manuais do usuário
-
-
-## Benefícios da Solução
-- Embedding funciona em primeira execução em QUALQUER projeto, independente da presença de `.mcp.json`
-- Elimina a necessidade do workaround `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config`
-- Reduz tempo de embedding removendo tentativas falhas de conexão a servidores MCP irrelevantes
-- O preflight guard `check_walkup_mcp_json` se torna redundante para o caso de interferência (mantém valor para diagnóstico)
-- Experiência zero-config para o usuário final
-- Alinhamento com a Lei Transversal de Timeout Explícito das rules-rust: o timeout de 60s deixa de ser desperdiçado com inicialização de MCP irrelevante
-- Alinhamento com POLA (Principle of Least Astonishment) das rules-rust: `remember` funciona sem surpresas
+- Separar o embedding do enrichment em duas fases sequenciais distintas
+- FASE 1 (embedding): usar modelo de embedding dedicado via API REST ou local
+- FASE 2 (enrichment): manter codex/claude/opencode headless para raciocínio
+- O embedding é uma operação matemática determinística que NÃO precisa de LLM generativo
+- O enrichment é uma operação de raciocínio que PRECISA de LLM generativo
+- São dois problemas fundamentalmente diferentes que NÃO devem compartilhar backend
 
 
 ## Como Solucionar
-
-### Passo 1 — Criar diretório efêmero no spawn
-- Em `src/extract/llm_embedding.rs`, antes de `Command::spawn()`
-- Criar diretório via `std::env::temp_dir().join(format!("sqlite-graphrag-spawn-{}", std::process::id()))`
-- O diretório DEVE estar em um path sem `.mcp.json` em NENHUM ancestral
-- Recomendação: `/tmp/sqlite-graphrag-spawn-<PID>/` — `/tmp` NUNCA terá `.mcp.json`
-
-### Passo 2 — Definir CWD do subprocesso
-```rust
-// ANTES (herda CWD do chamador — causa raiz do bug)
-let mut cmd = Command::new(&self.binary);
-cmd.arg("exec")
-    .env_clear()
-    .env("PATH", std::env::var("PATH").unwrap_or_default())
-    .env("HOME", std::env::var("HOME").unwrap_or_default())
-    // ... demais args
-    .spawn()
-
-// DEPOIS (isola CWD para diretório limpo)
-let spawn_dir = std::env::temp_dir()
-    .join(format!("sqlite-graphrag-spawn-{}", std::process::id()));
-std::fs::create_dir_all(&spawn_dir)?;
-
-let mut cmd = Command::new(&self.binary);
-cmd.current_dir(&spawn_dir)  // ISOLAMENTO: walk-up não encontra .mcp.json
-    .arg("exec")
-    .env_clear()
-    .env("PATH", std::env::var("PATH").unwrap_or_default())
-    .env("HOME", std::env::var("HOME").unwrap_or_default())
-    // ... demais args
-    .spawn()
-```
-
-### Passo 3 — Definir CLAUDE_CONFIG_DIR no env do subprocesso
-```rust
-// Para o backend Claude: definir CLAUDE_CONFIG_DIR para diretório limpo
-// SEMPRE, não apenas quando a env var manual existe
-cmd.current_dir(&spawn_dir)
-    .env("CLAUDE_CONFIG_DIR", &spawn_dir)
-    // ... demais args
-```
-
-### Passo 4 — Atualizar workspace_root do preflight
-```rust
-// ANTES (ancora no CWD do chamador)
-let preflight_args = PreFlightArgs {
-    workspace_root: std::path::Path::new("."),
-    // ...
-};
-
-// DEPOIS (ancora no diretório efêmero limpo)
-let preflight_args = PreFlightArgs {
-    workspace_root: &spawn_dir,
-    // ...
-};
-```
-
-### Passo 5 — Cleanup do diretório efêmero
-- Remover `spawn_dir` após o subprocesso terminar
-- O diretório é reutilizável entre invocações do mesmo processo (mesmo PID)
-- Cleanup no `Drop` ou via `scopeguard` para garantir remoção mesmo em panic
-
-### Passo 6 — Remover necessidade de env vars manuais
-- O `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1` NÃO deve ser necessário para uso normal
-- O `CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config` NÃO deve ser necessário para uso normal
-- Manter ambas as env vars como override manual para casos extremos, mas o default DEVE funcionar sem elas
-
-### Passo 7 — Aplicar a TODOS os spawn sites
-- `src/extract/llm_embedding.rs` — 3 funções: `invoke_claude`, `invoke_opencode`, `build_codex_embedding_command`
-- `src/commands/codex_spawn.rs` — spawn de codex para extração
-- `src/commands/claude_runner.rs` — spawn de claude para extração
-- `src/commands/opencode_runner.rs` — spawn de opencode para extração
-- `src/commands/ingest_claude.rs` — ingest com extração LLM
-- `src/commands/enrich.rs` — enrich com LLM
-
-### Passo 8 — Testes de regressão
-- Criar teste que valida que subprocesso com `.mcp.json` no CWD NÃO herda servidores MCP
-- Criar teste que valida que `current_dir` aponta para diretório efêmero sem `.mcp.json`
-- Atualizar testes existentes em `src/spawn/preflight.rs` que usam `workspace_root: dir.path()` para cobrir cenário de isolamento
+- Adicionar a dependência `reqwest` com `rustls-tls` ao `Cargo.toml` (~500 KB ao binário)
+- Implementar novos backends de embedding: `Ollama`, `OpenRouter`, `LlamaCpp`
+- Criar flag `--embedding-backend auto|openrouter|llm`
+- Criar flag `--embedding-model <ID>` (OBRIGATORIO com `--embedding-backend openrouter`)
+- Implementar adapter MRL que trunca o vetor retornado para 64 dimensões
+- Manter flag `--llm-backend codex|claude|opencode` EXCLUSIVA para enrichment
+- ZERO alteração no schema do banco de dados
+- ZERO migração SQL
+- ZERO ALTER TABLE
+- Os BLOBs de `f32` no `memory_embeddings` aceitam QUALQUER fonte com 64 dimensões
 
 
-## Evidência do Incidente (2026-06-23)
-
-### Ambiente
-- Projeto: `web_flowaiper_farmacia`
-- `.mcp.json` presente com servidor `pg-flowaiper` (PostgreSQL MCP stdio)
-- `sqlite-graphrag` v1.0.90
-- `codex-cli` v0.141.0
-- `claude` v2.1.186
-
-### Sequência de falhas observada
-- `--llm-backend codex --llm-model gpt-5.4-mini` — timeout após 60s (exit 11)
-- `--llm-backend claude --llm-model claude-sonnet-4-6` — 401 Invalid authentication credentials (exit 11)
-- `--llm-backend opencode --llm-model opencode/big-pickle` — mesmo 401 (exit 11)
-
-### Workaround que funcionou
-```bash
-SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/graphrag-empty-config \
-  sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini \
-  remember --name test --type note --description "x" --graph-stdin --force-merge
-```
-- `backend_invoked: "codex"` — sucesso em 81s
-
-### Prova de conceito do isolamento
-- `codex exec` funciona quando invocado diretamente SEM herdar `.mcp.json`
-- `SELECT 1` no MCP PostgreSQL funciona independentemente — o problema NÃO é de rede
-- O timeout ocorre DENTRO do subprocesso tentando inicializar servidores MCP, NÃO na geração de embedding
+## O Que é Embedding e Por Que 64 Dimensões
+- Embedding transforma texto em um vetor de números decimais (floats)
+- O tamanho do vetor é a dimensionalidade (dims)
+- O sqlite-graphrag usa 64 dims por padrão (configurável via `--embedding-dim`)
+- 64 dims com MRL (Matryoshka Representation Learning) oferece ~90% da qualidade de 768 dims
+- MRL treina os dims em ordem de importância: os PRIMEIROS carregam mais informação
+- Truncar de 1024 para 64 preserva a maioria do significado semântico
+- TODOS os vetores no banco DEVEM ter a MESMA dimensionalidade (64)
+- Misturar dimensionalidades QUEBRA a busca cosine silenciosamente
 
 
-## Relações Causa × Efeito
 
-| Causa | Efeito |
-|-------|--------|
-| `Command::new()` sem `.current_dir()` | Subprocesso herda CWD com `.mcp.json` |
-| Walk-up de `.mcp.json` pelo Claude/Codex | Servidores MCP do projeto inicializam no contexto headless |
-| Servidores MCP exigem rede/auth indisponível | Timeout ou erro 401 no subprocesso |
-| Timeout/erro 401 no subprocesso | Embedding falha com exit 11 |
-| Embedding falha | Memória persistida sem embedding (score 0.0) |
-| Memória sem embedding | `recall` e `hybrid-search` retornam resultados degradados |
-| Resultados degradados | Usuário perde confiança na ferramenta |
-| Workaround exige env vars manuais | Viola POLA e aumenta barreira de entrada |
-| `workspace_root: Path::new(".")` no preflight | Guard detecta mas não resolve o problema |
+===
+
+## Modelos Aprovados — API via OpenRouter
+
+### O Que Fazer
+- Usar a API REST do OpenRouter para gerar embeddings de 64 dimensões
+- Fazer chamada HTTP POST para `https://openrouter.ai/api/v1/embeddings`
+- Passar `"dimensions": 64` no body JSON quando o modelo suportar MRL
+- Truncar para 64 em Rust (`embedding[..64].to_vec()`) quando o modelo NÃO suportar MRL nativo
+
+### Por Que Fazer
+- Latência de ~100-500ms por batch (vs 20-60 segundos com subprocess LLM)
+- Speedup de 20-100x sobre o design atual
+- API unificada compatível com o formato OpenAI
+- Suporta batch (array de strings em uma chamada)
+- Um endpoint para múltiplos providers (OpenAI, Qwen, NVIDIA, Google)
+
+### Como Fazer
+- Configurar variável de ambiente `OPENROUTER_API_KEY`
+- Chamar via `reqwest::Client` async com `rustls-tls` (connection pooling, timeout 30s)
+- Parsear o campo `data[0].embedding` da resposta JSON
+- Truncar para 64 dims se necessário
+- Salvar o `Vec<f32>` no `memory_embeddings` BLOB
+
+### Gestão da API Key do OpenRouter (Padrão XDG)
+
+- A `OPENROUTER_API_KEY` NUNCA fica em arquivo `.env` no CWD
+- A chave é armazenada no XDG config do sqlite-graphrag com permissões restritas
+- O binário funciona após `cargo install` sem preparo prévio do `.env`
+
+### Hierarquia de Precedência da API Key
+- Camada 1: variável de ambiente `OPENROUTER_API_KEY` (CI, containers, scripts)
+- Camada 2: arquivo TOML em `~/.config/sqlite-graphrag/config.toml` (persistente)
+- Camada 3: flag CLI `--openrouter-api-key <valor>` (pontual, evitar em histórico)
+- Camada 1 vence Camada 2, Camada 2 vence Camada 3
+
+### Subcomandos de Gestão da Chave
+- `sqlite-graphrag config add-key --provider openrouter --from-stdin` (lê do stdin, evita histórico de shell)
+- `sqlite-graphrag config list-keys` (lista chaves mascaradas com fingerprint)
+- `sqlite-graphrag config remove-key <fingerprint>` (remove pela fingerprint)
+- `sqlite-graphrag config doctor` (diagnostica qual camada venceu)
+
+### Armazenamento no TOML XDG
+- Caminho Linux: `~/.config/sqlite-graphrag/config.toml`
+- Caminho macOS: `~/Library/Application Support/sqlite-graphrag/config.toml`
+- Caminho Windows: `%APPDATA%\sqlite-graphrag\config\config.toml`
+- Permissões do arquivo: `chmod 600` (somente o dono lê e escreve)
+- Permissões do diretório: `chmod 700` (somente o dono acessa)
+- Escrita atômica via `tempfile::NamedTempFile::persist` com `fsync`
+- Verificação de symlink antes de ler ou escrever (defesa contra symlink attack)
+
+### Formato do config.toml
+- `schema_version = 1`
+- `[[keys]]`
+- `provider = "openrouter"`
+- `value = "sk-or-v1-abc...xyz"` (chave completa, protegida por chmod 600)
+- `added_at = "2026-06-25T16:00:00Z"` (timestamp RFC3339)
+- `fingerprint = "a1b2c3d4e5f6g7h8"` (blake3 truncado, 16 hex)
+
+### Segurança da Chave em Memória
+- A chave em memória usa `secrecy::SecretString` (expõe via `ExposeSecret` apenas no ponto de uso)
+- O buffer é zerado ao sair do escopo via `zeroize::ZeroizeOnDrop`
+- A chave NUNCA aparece em logs, stderr ou output JSON
+- Mascaramento em output: `sk-or...xyz8` (4 primeiros + 4 últimos caracteres)
+
+### Chamada HTTP
+- Endpoint: `POST https://openrouter.ai/api/v1/embeddings`
+- Header: `Authorization: Bearer $OPENROUTER_API_KEY`
+- Header: `Content-Type: application/json`
+- Body (MRL nativo): `{"model": "qwen/qwen3-embedding-8b", "input": ["texto"], "dimensions": 64, "encoding_format": "float", "input_type": "search_document"}`
+- Body (NVIDIA): `{"model": "nvidia/llama-nemotron-embed-vl-1b-v2:free", "input": ["texto"], "dimensions": 64, "encoding_format": "float", "input_type": "passage"}`
+- Body (Mistral sem dims): `{"model": "mistralai/mistral-embed-2312", "input": ["texto"], "encoding_format": "float"}`
+- Resposta: `{"data": [{"embedding": [0.23, -0.87, ...64 floats...]}]}`
+- `encoding_format`: SEMPRE `"float"` — `"base64"` quebraria o parser f32
+- `input_type`: varia por modelo — ver tabela de compatibilidade acima
+- `dimensions`: omitido para modelos que rejeitam (Mistral, Perplexity com <128)
+
+### Modelos Verificados via OpenRouter (E2E: 2026-06-25)
+
+- PROIBIDO hardcodar modelo default — o usuário DEVE selecionar via `--embedding-model`
+- PROIBIDO usar IDs que nao existem na API — consultar esta lista ANTES de documentar
+
+### Ranking de Qualidade por Recall Score (dim=64 MRL, E2E 2026-06-25)
+- google/gemini-embedding-001: 0.892 (MELHOR)
+- google/gemini-embedding-2: 0.868
+- mistralai/mistral-embed-2312: 0.832
+- qwen/qwen3-embedding-8b: 0.814
+- qwen/qwen3-embedding-4b: 0.754
+- openai/text-embedding-3-small: 0.668
+- nvidia/llama-nemotron-embed-vl-1b-v2:free: 0.662
+- baai/bge-m3: 0.537
+- openai/text-embedding-3-large: 0.449
+- perplexity/pplx-embed-v1-0.6b: 0.415
+- NOTA: OpenAI large (0.449) performa PIOR que small (0.668) em dim=64 — embeddings de alta dimensionalidade (3072) perdem mais informação ao truncar para 64 dims
+- NOTA: TODOS os 10 modelos aceitaram dimensions: 64 nativamente na API, corrigindo informações anteriores sobre limitações de Perplexity e Mistral
+
+### IDs que NAO EXISTEM na API OpenRouter (verificado 2026-06-25)
+- `qwen/qwen3-embedding-0.6b` — "No endpoints found" (modelo registrado mas SEM providers ativos)
+- `nvidia/llama-3.1-nemotron-embed-8b` — "does not exist"
+- `nvidia/llama-nemotron-embed-8b` — "does not exist"
+- `nvidia/nemotron-embed-8b` — "does not exist"
+- `alibaba/qwen3-embedding-0.6b` — "does not exist"
+
+### Compatibilidade de `input_type` por modelo (verificado E2E)
+- Qwen3: aceita `search_document` e `search_query`
+- OpenAI: aceita `search_document` e `search_query`
+- NVIDIA Nemotron: REJEITA `search_document` — aceita APENAS `query` e `passage`
+- Perplexity: aceita `search_document` e `search_query`
+- Mistral: aceita `search_document` e `search_query`
+- BAAI: aceita `search_document` e `search_query`
+- Google Gemini: aceita `search_document` e `search_query`
+
+### Compatibilidade de `dimensions` por modelo (verificado E2E)
+- Qwen3 4B/8B: `dimensions: 64` nativo (MRL)
+- OpenAI 3-small/3-large: `dimensions: 64` nativo (MRL)
+- Google Gemini: `dimensions: 64` nativo (MRL)
+- NVIDIA Nemotron VL 1B: `dimensions: 64` nativo (API retorna 64 floats)
+- BAAI bge-m3: `dimensions: 64` nativo (API retorna 64 floats)
+- Perplexity: dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25) — truncamento em Rust NÃO foi necessário
+- Mistral: dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25) — truncamento em Rust NÃO foi necessário
 
 
-## Regras Rust Aplicáveis
-- Lei Transversal 4 — Timeout explícito em toda operação de subprocesso: o timeout de 60s é desperdiçado com inicialização de MCP irrelevante
-- Lei Transversal 5 — stdout dados / stderr logs / exit codes específicos: exit 11 é genérico demais para este caso
-- POLA — comportamento consistente com expectativa do leitor: `remember` deveria funcionar sem surpresas
-- Fail Fast — detecção de erro no ponto mais próximo da origem: o erro deveria ser detectado ANTES do spawn, não após 60s de timeout
-- KISS — escolher a solução mais direta: `current_dir(temp_dir)` é a correção mais simples e direta
+### Modelos Aprovados (NAO BERT, NAO ONNX)
+
+- Qwen3 Embedding 4B
+  - ID API: `qwen/qwen3-embedding-4b`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: $0.02 por milhão de tokens
+  - Arquitetura: Qwen3 decoder-only (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API
+  - Dimensão nativa: 2560
+  - input_type: aceita `search_document` e `search_query`
+  - Idiomas: 100+ incluindo português
+  - Uso: equilíbrio entre qualidade e custo
+
+- Qwen3 Embedding 8B
+  - ID API: `qwen/qwen3-embedding-8b`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: $0.01 por milhão de tokens
+  - Arquitetura: Qwen3 decoder-only (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API
+  - Dimensão nativa: 4096
+  - input_type: aceita `search_document` e `search_query`
+  - MTEB: 70.58 (primeiro lugar no leaderboard multilingual, junho 2025)
+  - Idiomas: 100+ incluindo português
+  - Uso: melhor qualidade disponível para embedding
+
+- NVIDIA Llama Nemotron Embed VL 1B V2
+  - ID API: `nvidia/llama-nemotron-embed-vl-1b-v2:free`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: GRATUITO (zero custo)
+  - Arquitetura: Llama 3.2 1B decoder-only com SigLip2 400M (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API (corrigido — antes dizia NAO)
+  - Dimensão nativa: 2048
+  - input_type: REJEITA `search_document` — aceita APENAS `query` e `passage`
+  - Capacidade: multimodal (texto + imagem)
+  - Uso: prototipação e testes sem custo
+
+- OpenAI text-embedding-3-small
+  - ID API: `openai/text-embedding-3-small`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando (score 0.24)
+  - Preço: $0.02 por milhão de tokens
+  - Arquitetura: proprietária OpenAI (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API (mínimo 1)
+  - Dimensão nativa: 1536
+  - input_type: aceita `search_document` e `search_query`
+  - MTEB: 62.26 (referência da indústria)
+  - Uso: compatibilidade máxima com ecossistema OpenAI
+
+- OpenAI text-embedding-3-large
+  - ID API: `openai/text-embedding-3-large`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: $0.13 por milhão de tokens
+  - Arquitetura: proprietária OpenAI (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API (mínimo 1)
+  - Dimensão nativa: 3072
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: máxima qualidade OpenAI quando custo não é restrição
+
+- Perplexity Embed V1 0.6B
+  - ID API: `perplexity/pplx-embed-v1-0.6b`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: $0.004 por milhão de tokens (MAIS BARATO)
+  - Arquitetura: decoder-only proprietária (NAO BERT)
+  - MRL: SIM, dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25)
+  - Dimensão nativa: 1024
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: menor custo por token disponível
+
+- Mistral Embed 2312
+  - ID API: `mistralai/mistral-embed-2312`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: $0.10 por milhão de tokens
+  - Arquitetura: Mistral decoder-only (NAO BERT)
+  - MRL: SIM, dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25)
+  - Dimensão nativa: 1024
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: ecossistema Mistral existente
+
+- BAAI bge-m3
+  - ID API: `baai/bge-m3`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando (score 0.16)
+  - Preço: ~$0.01 por milhão de tokens
+  - Arquitetura: encoder-only multilingual (NAO decoder-only)
+  - MRL: SIM, `dimensions: 64` nativo na API
+  - Dimensão nativa: 1024
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: embedding multilingual de alta qualidade
+
+- Google Gemini Embedding 001
+  - ID API: `google/gemini-embedding-001`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: ~$0.15 por milhão de tokens
+  - Arquitetura: proprietária Google (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API
+  - Dimensão nativa: 3072
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: ecossistema Google
+
+- Google Gemini Embedding 2
+  - ID API: `google/gemini-embedding-2`
+  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
+  - Preço: ~$0.12 por milhão de tokens
+  - Arquitetura: proprietária Google (NAO BERT)
+  - MRL: SIM, `dimensions: 64` nativo na API
+  - Dimensão nativa: 3072
+  - input_type: aceita `search_document` e `search_query`
+  - Uso: versão mais recente do ecossistema Google
 
 
-## BUG-14: Teste opencode_adapter_build_args assertava string incorreta — RESOLVIDO (v1.0.91, 2026-06-23)
+### Bugs Corrigidos na Auditoria E2E (2026-06-25)
+
+- BUG-OR-1: `input_type="search_document"` hardcoded quebrava NVIDIA Nemotron
+  - CAUSA: embedder.rs enviava `Some("search_document")` para TODOS os modelos
+  - EFEITO: NVIDIA retornava erro "Unsupported input_type"
+  - FIX: `model_default_input_type()` retorna `"passage"` para NVIDIA, `None` para Mistral, `"search_document"` para os demais
+  - ARQUIVO: `src/embedding_api.rs` e `src/embedder.rs`
+
+- BUG-OR-2: `model_supports_mrl()` retornava `false` para NVIDIA e BAAI
+  - CAUSA: a função verificava apenas Qwen, OpenAI e Gemini
+  - EFEITO: NVIDIA e BAAI nao recebiam `dimensions: 64` e a CLI truncava desnecessariamente em Rust
+  - FIX: adicionado `llama-nemotron-embed` e `bge-m3` ao check de MRL
+  - ARQUIVO: `src/embedding_api.rs`
+
+- BUG-OR-3: `qwen/qwen3-embedding-0.6b` listado como modelo aprovado mas NAO existe na API
+  - CAUSA: modelo registrado no OpenRouter mas sem endpoints ativos ("No endpoints found")
+  - EFEITO: chamadas retornavam timeout ou 404
+  - FIX: removido da lista de modelos aprovados, adicionado à lista de IDs inexistentes
+
+- BUG-OR-4: `nvidia/llama-3.1-nemotron-embed-8b` listado mas NAO existe na API
+  - CAUSA: ID incorreto — modelo nao registrado no OpenRouter
+  - EFEITO: chamadas retornavam "Model does not exist"
+  - FIX: removido da lista de modelos aprovados, adicionado à lista de IDs inexistentes
+
+- BUG-OR-5: HTTP 200 com corpo malformado causava falha imediata sem retry
+  - CAUSA: `execute_with_retry()` tratava HTTP 200 como sucesso incondicional e parse error abortava imediatamente
+  - EFEITO: quando OpenRouter retornava HTTP 200 com corpo de erro (sem campo `data`), a CLI falhava com exit 11 sem retentar
+  - EVIDENCIA: `qwen/qwen3-embedding-4b` falhou 1 de 2 vezes na auditoria E2E com "missing field `data`"
+  - FIX: parse error em HTTP 200 agora é tratado como transitório e retentado com backoff exponencial
+  - ARQUIVO: `src/embedding_api.rs` linhas 223-239
+
+
+==
+
+
+## GAP-OR-INGEST: RESOLVIDO em v1.0.93 — Comando `ingest` agora propaga `EmbeddingBackendChoice` e suporta `--enrich-after`
 
 ### Problema
-- O teste `opencode_adapter_build_args` em `tests/spawn_version_adapter.rs:106` assertava `args.contains(&"headless".to_string())`
-- O `OpencodeAdapter::build_args()` NUNCA retornou `"headless"` — retorna `["run", "--format", "json", "--dangerously-skip-permissions", prompt]`
-- Bug pré-existente desde v1.0.90 (commit 978e370) — o adapter foi refatorado mas o teste NÃO foi atualizado
+- O comando `ingest` NÃO recebe a flag global `--embedding-backend` da CLI
+- O comando `ingest` NÃO recebe a flag global `--embedding-model` da CLI
+- O `IngestArgs` NÃO tem campos `embedding_backend` nem `embedding_model`
+- O `main.rs` linha 430 passa APENAS `cli.llm_backend` para `ingest::run()`, ignorando `cli.embedding_backend` e `cli.embedding_model`
+- O `stage_file()` recebe `LlmBackendChoice` (linha 511) e chama `embed_passage_with_choice()` que aceita APENAS `LlmBackendChoice`
+- A função `embed_passage_with_embedding_choice()` (embedder.rs:404) já existe e aceita `EmbeddingBackendChoice`, mas o `ingest` NÃO a utiliza
+- O `ingest` NÃO executa enrich sequencial após embedding — o usuário precisa rodar `enrich` manualmente em invocação separada
+- PROIBIDO ter modelo default da OpenRouter hardcoded — o usuário DEVE selecionar o modelo de embedding ao digitar o comando
+
+### Consequências do Problema
+- O usuário NÃO consegue usar `ingest --embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b"` para embedding rápido via API REST
+- O `ingest` SEMPRE usa subprocess LLM headless (codex/claude/opencode) para embedding, com cold-start de 5-15s POR ARQUIVO
+- Em um ingest de 100 arquivos, o embedding via subprocess consome ~25 minutos (100 × 15s) versus ~20 segundos via API REST OpenRouter (100 × 200ms)
+- O grafo de conhecimento fica POBRE após ingest sem enrich — `deep-research` e `graph traverse` retornam poucos resultados
+- O usuário precisa lembrar de executar `enrich` manualmente após `ingest` — nenhuma orientação automática é fornecida
+- A flag `--embedding-backend openrouter` existe globalmente no CLI mas é silenciosamente IGNORADA pelo `ingest`
 
 ### Causa Raiz
-- O adapter originalmente usava `"headless"` como subcomando do OpenCode
-- A implementação foi alterada para usar `"run"` mas o teste permaneceu com a string antiga
-
-### Correção
-- `tests/spawn_version_adapter.rs:106`: `"headless"` substituído por `"run"`
-- 877 testes passando após a correção
-
-### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| Refatoração do adapter sem atualizar teste | Teste assertando string inexistente |
-| Teste falhando | Suite de testes reporta 1 failure |
-
-
-## GAP-SPAWN-002: Diretórios de spawn órfãos acumulam em /tmp — RESOLVIDO (v1.0.91, 2026-06-23)
-
-### Resolução
-- `cleanup_spawn_dir()` adicionado em `src/main.rs` — remove diretório de spawn do PID atual ao final da execução
-- Cleanup executado em TODOS os caminhos de saída: sucesso, erro e shutdown
-- `std::fs::remove_dir()` (não-recursivo) — seguro: falha silenciosamente se não estiver vazio
-
-### Problema
-- A função `spawn_isolation_dir()` cria diretórios `/tmp/sqlite-graphrag-spawn-{PID}/` para cada processo
-- Cada invocação da CLI cria um PID diferente e portanto um diretório diferente
-- Os diretórios NÃO são removidos automaticamente após o subprocesso terminar
-- Acúmulo observado: 240 diretórios vazios (40 bytes cada, 9.6 KB total)
-
-### Impacto
-- BAIXO: impacto de disco negligível (40 bytes por diretório)
-- Os diretórios são limpos automaticamente pelo sistema operacional no reboot (tmpfs)
-- Nenhum dado sensível nos diretórios (estão vazios)
-
-### Causa Raiz
-- `spawn_isolation_dir()` chama `create_dir_all()` mas NÃO implementa cleanup no Drop ou após spawn
-- O design original priorizou KISS sobre cleanup — o diretório é reutilizado dentro do mesmo PID via `create_dir_all` idempotente
+- CAUSA 1: Lacuna de propagação no `main.rs` — `cli.embedding_backend` e `cli.embedding_model` NÃO são passados para `ingest::run()`
+- CAUSA 2: `IngestArgs` foi definido ANTES da existência de `EmbeddingBackendChoice` (v1.0.79) e NUNCA foi atualizado para incluir as novas flags (v1.0.93)
+- CAUSA 3: `stage_file()` recebe `LlmBackendChoice` (parâmetro posicional) e chama `embed_passage_with_choice()` em vez de `embed_passage_with_embedding_choice()`
+- CAUSA 4: `embed_passages_parallel_local()` (embedder.rs:994) para chunks múltiplos NÃO tem variante que aceita `EmbeddingBackendChoice` — usa a chain LLM diretamente
+- CAUSA 5: o fluxo `ingest` → `enrich` é desacoplado por design (operações independentes), mas NÃO existe mecanismo de enrich sequencial automático após embedding
+- CAUSA 6: PROIBIDO ter modelo default da OpenRouter para impedir lock-in acidental — mas a ausência de validação obrigatória permite invocação sem `--embedding-model`
 
 ### Solução Proposta
-- Opção A: cleanup no final de `main()` via `std::fs::remove_dir()` (não recursivo, seguro para diretórios vazios)
-- Opção B: usar `tempfile::TempDir` com Drop automático (mais robusto mas muda a assinatura do helper)
-- Opção C: não corrigir — impacto negligível, tmpfs limpa no reboot
+- Propagar `EmbeddingBackendChoice` e `embedding_model` do `main.rs` para `ingest::run()`
+- Adicionar parâmetros `embedding_backend` e `embedding_model` ao `stage_file()` 
+- Substituir chamada a `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()` no `stage_file()`
+- Criar variante `embed_passages_parallel_with_embedding_choice()` para chunks múltiplos que aceita `EmbeddingBackendChoice`
+- Adicionar flag `--enrich-after` ao `ingest` para disparar `enrich --operation memory-bindings` automaticamente após a fase de embedding
+- VALIDAR que `--embedding-model` é OBRIGATÓRIO quando `--embedding-backend openrouter` — exit 78 se ausente
+- PROIBIDO ter modelo default da OpenRouter — forçar o usuário a informar explicitamente
+
+### Benefícios da Solução
+- Embedding via API REST OpenRouter reduz tempo de ingest de ~25 minutos para ~20 segundos em 100 arquivos
+- Enrich sequencial automático via `--enrich-after` elimina etapa manual esquecida pelo usuário
+- Grafo de conhecimento fica RICO após ingest com enrich — `deep-research` e `graph traverse` funcionam plenamente
+- Separação embedding (API REST ~200ms) de enrichment (LLM headless ~15s) permite paralelismo sem conflito de slots
+- Sem modelo default previne lock-in acidental em modelo específico — o usuário mantém controle total
+
+### Como Solucionar
+- PASSO 1: Alterar `ingest::run()` em `src/commands/ingest.rs` para receber `EmbeddingBackendChoice` e `Option<String>` (embedding_model)
+- PASSO 2: Alterar `main.rs` linha 430 para passar `cli.embedding_backend` e `cli.embedding_model` para `ingest::run()`
+- PASSO 3: Alterar `stage_file()` para receber `EmbeddingBackendChoice` e `LlmBackendChoice` (separados)
+- PASSO 4: Substituir `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()` no `stage_file()` linha 647
+- PASSO 5: Criar `embed_passages_parallel_with_embedding_choice()` no `embedder.rs` para chunks múltiplos com OpenRouter batch
+- PASSO 6: Adicionar validação: se `embedding_backend == Openrouter` e `embedding_model.is_none()` → exit 78 com mensagem clara
+- PASSO 7: Adicionar flag `--enrich-after` ao `IngestArgs` (default: false)
+- PASSO 8: Quando `--enrich-after` ativo, após conclusão do embedding de TODOS os arquivos, invocar `enrich --operation memory-bindings` com o `--llm-backend` selecionado
+- PASSO 9: Emitir evento NDJSON `{"event": "enrich_started"}` no stderr para feedback visual ao usuário
+- PASSO 10: Testes — verificar que `ingest --embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b" --enrich-after --llm-backend codex` completa embedding + enrich sequencialmente
 
 ### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| `create_dir_all()` sem cleanup | Diretórios vazios acumulam em `/tmp` |
-| PID diferente por invocação | Cada invocação cria diretório novo |
-| tmpfs limpa no reboot | Impacto limitado à sessão de uptime |
+- CAUSA: `main.rs` NÃO propaga `embedding_backend` → EFEITO: `ingest` IGNORA flag global silenciosamente
+- CAUSA: `IngestArgs` sem campo `embedding_backend` → EFEITO: `stage_file()` recebe APENAS `LlmBackendChoice`
+- CAUSA: `stage_file()` chama `embed_passage_with_choice()` → EFEITO: OpenRouter NUNCA é usado para embedding no ingest
+- CAUSA: sem `--enrich-after` → EFEITO: usuário ESQUECE de rodar `enrich` manualmente → grafo fica pobre
+- CAUSA: sem validação de `--embedding-model` obrigatório → EFEITO: invocação sem modelo pode falhar com erro genérico em vez de mensagem clara
+- CAUSA: embedding via subprocess LLM (cold-start 5-15s por arquivo) → EFEITO: ingest de 100 arquivos leva ~25 minutos
+- CAUSA: embedding via API REST OpenRouter (~200ms por arquivo) → EFEITO: ingest de 100 arquivos leva ~20 segundos
+
+### Arquivos Afetados
+- `src/main.rs` — linha 430: propagar `cli.embedding_backend` e `cli.embedding_model`
+- `src/commands/ingest.rs` — `run()` linha 1146: receber `EmbeddingBackendChoice`
+- `src/commands/ingest.rs` — `stage_file()` linha 502: receber `EmbeddingBackendChoice`
+- `src/commands/ingest.rs` — linhas 647 e 682: substituir funções de embedding
+- `src/embedder.rs` — criar `embed_passages_parallel_with_embedding_choice()`
+- `src/commands/ingest.rs` — `IngestArgs`: adicionar `--enrich-after`
 
 
-## BUG-15: Enum `backend_invoked` incompleta em 7 JSON schemas — RESOLVIDO (v1.0.91, 2026-06-23)
-
-### Problema
-- 7 JSON schemas em `docs/schemas/` declaravam `backend_invoked` com enum `["claude", "codex", "none"]`
-- O código em `src/commands/embedding.rs` e outros módulos retorna `"opencode"` e `"auto"` desde v1.0.90
-- Consumidores que validam contra schema rejeitariam respostas válidas com `backend_invoked: "opencode"` ou `"auto"`
-
-### Causa
-- OpenCode backend (v1.0.90) adicionou `"opencode"` ao enum de runtime mas NÃO atualizou os schemas
-- `"auto"` nunca foi incluído nos schemas originais (v1.0.82) embora exista no código desde a criação
-
-### Correção
-- 7 schemas atualizados de `["claude", "codex", "none"]` para `["claude", "codex", "opencode", "none", "auto"]`
-- Arquivos: `embedding-status`, `enrich-summary`, `hybrid-search`, `recall`, `remember`, `ingest-summary`, `edit`
-
-### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| OpenCode backend (v1.0.90) sem atualização de schemas | Schema rejeita `"opencode"` válido |
-| `"auto"` omitido desde v1.0.82 | Schema rejeita `"auto"` retornado pelo code path Auto |
-| Enum restritiva em 7 arquivos | Validação JSON Schema falha em 2 de 5 valores possíveis |
+### Resolução (v1.0.93)
+- `main.rs`: propagado `cli.embedding_backend` para TODOS os 8 comandos que usam embedding
+- `ingest.rs`: `stage_file()` agora recebe `EmbeddingBackendChoice` e chama `embed_passage_with_embedding_choice()` e `embed_passages_parallel_with_embedding_choice()`
+- `embedder.rs`: criadas `embed_passages_parallel_with_embedding_choice()` e `try_embed_query_with_embedding_choice()`
+- `IngestArgs`: adicionada flag `--enrich-after` que dispara `enrich --operation memory-bindings` sequencialmente
+- Compilação ZERO erros, Clippy ZERO warnings, 986+ testes passando
 
 
-## BUG-16: Campo `vec_degraded` ausente no schema `deep-research.schema.json` — RESOLVIDO (v1.0.91, 2026-06-23)
-- Severidade: MÉDIA
-- Impacto: validação estrita de JSON Schema falha para o output de `deep-research`
-- Descoberto por: suite `schema_contract_strict` (teste `schema_36_deep_research`)
+===
+
+
+## GAP-OR-PROPAGATION: RESOLVIDO em v1.0.93 — 5 comandos/operações IGNORAM `--embedding-backend openrouter` silenciosamente
 
 ### Problema
-- O struct `ResearchStats` em `src/commands/deep_research.rs:202` declara `vec_degraded: bool`
-- O campo é serializado SEMPRE (sem `skip_serializing_if`)
-- O schema `docs/schemas/deep-research.schema.json` NÃO declarava `vec_degraded` em `ResearchStats`
-- Schema usa `additionalProperties: false` (política Must-Validate)
-- Resultado: validador rejeita o output real com `AdditionalProperties { unexpected: ["vec_degraded"] }`
+- O v1.0.93 propagou `EmbeddingBackendChoice` para 8 comandos (remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research)
+- 5 comandos/operações que usam embedding CONTINUAM chamando a função OLD `embed_passage_with_choice()` que aceita APENAS `LlmBackendChoice`
+- O usuário configura `--embedding-backend openrouter` na linha de comando, mas 5 paths de código IGNORAM esta flag silenciosamente
+- NENHUM warning ou erro é emitido quando OpenRouter é ignorado — falha silenciosa
+
+### Consequências do Problema
+- `enrich --operation re-embed` com `--embedding-backend openrouter` gera embeddings via subprocess LLM (5-60s por memória) em vez de API REST (~200ms)
+- Re-embedding de 500 memórias via `enrich` leva ~4 horas via subprocess versus ~100 segundos via OpenRouter
+- `rename-entity` gera embedding de entidade via subprocess LLM mesmo com OpenRouter configurado — latência desnecessária de 5-15s por renomeação
+- `init` probe de dimensão SEMPRE usa subprocess LLM — impossível probar dim com OpenRouter
+- `ingest --mode claude-code` IGNORA `--embedding-backend openrouter` nos 4 call sites de embedding — todo o pipeline legado fica lento
+- `remember` com body > 512KB que gera chunks paralelos usa `embed_passages_parallel_local()` que NÃO suporta OpenRouter batch — perde a vantagem de latência do batch API REST (32 textos por request)
+- O usuário confia que `--embedding-backend openrouter` funciona globalmente, mas 5 paths silenciosamente degradam para subprocess LLM
 
 ### Causa Raiz
-- Campo `vec_degraded` adicionado ao struct Rust sem atualização correspondente no schema JSON
-- Suite `schema_contract_strict` requer feature `slow-tests` e NÃO roda no CI padrão
+- CAUSA 1 (enrich): `main.rs:507` passa APENAS `cli.llm_backend` para `enrich::run()` — NÃO propaga `cli.embedding_backend`
+- CAUSA 2 (enrich): `reembed_memory_vector()` em `enrich.rs:1446` chama `embed_passage_with_choice()` (OLD) que aceita APENAS `Option<LlmBackendChoice>` — a função `embed_passage_with_embedding_choice()` que aceita `EmbeddingBackendChoice` existe mas NÃO é utilizada
+- CAUSA 3 (rename-entity): `main.rs:501` passa APENAS `cli.llm_backend` para `rename_entity::run()` — NÃO propaga `cli.embedding_backend`
+- CAUSA 4 (rename-entity): `rename_entity.rs:98` chama `embed_passage_with_choice()` (OLD) para gerar embedding do novo nome da entidade
+- CAUSA 5 (init): `main.rs:422` chama `init::run(args)` SEM qualquer backend — NÃO propaga `cli.embedding_backend` nem `cli.llm_backend`
+- CAUSA 6 (init): `init.rs:132` chama `embed_passage_with_choice(&paths.models, "smoke test", None)` com `None` — SEMPRE usa subprocess LLM default
+- CAUSA 7 (ingest_claude): `ingest_claude.rs` tem 4 call sites que chamam `embed_passage_with_choice()` (OLD) — nenhum aceita `EmbeddingBackendChoice`
+- CAUSA 8 (remember chunks): `remember.rs:702` chama `embed_passages_parallel_local()` para chunks de body longo — esta função NÃO aceita `EmbeddingBackendChoice` e usa subprocess LLM diretamente
+- CAUSA RAIZ COMUM: as 5 lacunas compartilham a mesma causa raiz — a propagação de `EmbeddingBackendChoice` na v1.0.93 cobriu apenas os 8 comandos mais frequentes mas NÃO atualizou os paths secundários que também geram embeddings
 
-### Correção
-- Adicionado `"vec_degraded": { "type": "boolean" }` ao `ResearchStats` no schema
-- Adicionado `"vec_degraded"` ao array `required` do `ResearchStats`
-- Arquivo: `docs/schemas/deep-research.schema.json`
+### Solução
+- SUBGAP 1 (enrich): propagar `cli.embedding_backend` em `main.rs:507` para `enrich::run()` e alterar `reembed_memory_vector()` para chamar `embed_passage_with_embedding_choice()` em vez de `embed_passage_with_choice()`
+- SUBGAP 2 (rename-entity): propagar `cli.embedding_backend` em `main.rs:501` para `rename_entity::run()` e alterar `rename_entity.rs:98` para chamar `embed_passage_with_embedding_choice()`
+- SUBGAP 3 (init): propagar `cli.embedding_backend` em `main.rs:422` para `init::run()` e alterar `init.rs:132` para chamar `embed_passage_with_embedding_choice()` — probe usa OpenRouter quando disponível
+- SUBGAP 4 (ingest_claude): propagar `cli.embedding_backend` para o pipeline `ingest_claude.rs` e substituir os 4 call sites de `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()`
+- SUBGAP 5 (remember chunks): alterar `remember.rs:702` para chamar `embed_passages_parallel_with_embedding_choice()` (já existe no `embedder.rs:1083`) em vez de `embed_passages_parallel_local()`
 
-### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| Campo adicionado ao struct sem atualizar schema | Violação `additionalProperties: false` |
-| Suite de validação gated por feature flag | Bug não detectado no CI padrão |
-| Schema Must-Validate para deep-research | Validação estrita rejeita campo não declarado |
+### Benefícios da Solução
+- `enrich --operation re-embed` de 500 memórias cai de ~4 horas para ~100 segundos com OpenRouter
+- Consistência total: `--embedding-backend openrouter` funciona em TODOS os paths de embedding sem exceção
+- Zero falha silenciosa: o usuário confia que a flag global funciona universalmente
+- `remember` com body longo usa OpenRouter batch (32 textos por request) — latência de chunks cai de ~30s (2 chunks × 15s subprocess) para ~400ms (1 request batch)
+- `init` probe de dimensão funciona com OpenRouter — não requer subprocess LLM instalado para criar banco
+- `ingest --mode claude-code` obtém a mesma vantagem de latência de embedding que o modo padrão
 
-
-## BUG-17: `entities.degree` inflado por `increment_degree` em `remember` e `ingest` — RESOLVIDO (v1.0.91, 2026-06-23)
-
-### Severidade: ALTA
-
-### Sintoma
-- `graph stats` reporta `max_degree` diferente de `graph entities[].degree` para a mesma entidade
-- `graph stats` usa campo `degree` armazenado na tabela `entities` (inflado)
-- `graph entities` recalcula via subquery `COUNT(*) FROM relationships` (correto)
-- Exemplo: entidade `audit-r4` com 2 relações reais mostra `degree=3` na tabela (aparecia em 3 chamadas de `remember`)
-
-### Causa Raiz
-- `remember.rs:931` e `ingest.rs:862` chamavam `increment_degree()` dentro do loop de entidades
-- `increment_degree()` incrementa cegamente +1 por entidade por memória, MESMO quando a entidade NÃO participa de nenhuma relação naquela chamada
-- Além disso, o `increment_degree` rodava ANTES da inserção de relações — mesmo para entidades COM relações, o grau era calculado sem considerar as relações da chamada atual
-- Os subcomandos `link`, `unlink`, `delete-entity`, `merge-entities` usavam `recalculate_degree()` corretamente
-
-### Correção
-- `remember.rs`: removido `increment_degree` do loop de entidades; adicionado collect de `affected_entity_ids` (entidades + endpoints de relações); `recalculate_degree` chamado para TODAS as entidades afetadas DEPOIS da inserção de TODAS as relações
-- `ingest.rs`: mesma correção aplicada — `recalculate_degree` APÓS inserção de relações
-- GAP-17 warning (`max_entity_degree`) movido para DEPOIS do recálculo com grau correto
-- Verificação E2E: entidade `shared-entity` com 3 relações reais mostra `degree=3` em `graph stats`, `graph entities` E tabela `entities` — todos consistentes
-
-### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| `increment_degree` em vez de `recalculate_degree` | `degree` armazenado infla a cada `remember` sem relação real |
-| `recalculate_degree` antes da inserção de relações | Grau calculado sem considerar relações da chamada atual |
-| `graph stats` usa campo armazenado | `max_degree` inflado — dados de observabilidade incorretos |
-| `health` warnings de super-hub usam campo armazenado | Falsos positivos de `super_hub_warning` |
-| Divergência entre `graph stats` e `graph entities` | Inconsistência visível ao consumidor da API |
-
-
-## GAP-E2E-001: `forget` de memória já deletada retorna exit 0 — DECISÃO DE DESIGN (2026-06-24)
-
-### Problema
-- `forget --name <n>` em memória já soft-deleted retorna `{"action": "already_deleted", "forgotten": false}` com exit 0
-- Documentação e skill do GraphRAG indicam "exit 4 se ausente"
-- O comportamento é defensivo (informar sem falhar) mas diverge do contrato documentado
-
-### Causa Raiz
-- `commands/forget.rs` trata memória já deletada como caso de sucesso em vez de not-found
-- O envelope JSON contém `action: already_deleted` com informações úteis (deleted_at, namespace)
-- O exit code 0 impede que scripts usem `$?` para detectar que a operação foi no-op
-
-### Consequências
-- Scripts que fazem `forget` idempotente e checam exit code NÃO detectam a condição already-deleted
-- Consumidores LLM que confiam no exit code para routing de decisão perdem a sinalização
-- Divergência entre documentação e comportamento real causa confusão
+### Como Solucionar
+- PASSO 1: Alterar `enrich::run()` em `src/commands/enrich.rs` para receber `EmbeddingBackendChoice` como parâmetro adicional
+- PASSO 2: Alterar `reembed_memory_vector()` em `enrich.rs:1430` para receber e usar `EmbeddingBackendChoice`
+- PASSO 3: Propagar `cli.embedding_backend` em `main.rs:507` para `enrich::run()`
+- PASSO 4: Alterar `rename_entity::run()` em `src/commands/rename_entity.rs` para receber `EmbeddingBackendChoice`
+- PASSO 5: Propagar `cli.embedding_backend` em `main.rs:501` para `rename_entity::run()`
+- PASSO 6: Alterar `init::run()` em `src/commands/init.rs` para receber `EmbeddingBackendChoice` e `LlmBackendChoice`
+- PASSO 7: Propagar `cli.embedding_backend` e `cli.llm_backend` em `main.rs:422` para `init::run()`
+- PASSO 8: Alterar os 4 call sites em `ingest_claude.rs` para usar `embed_passage_with_embedding_choice()`
+- PASSO 9: Alterar `remember.rs:702` para chamar `embed_passages_parallel_with_embedding_choice()` em vez de `embed_passages_parallel_local()`
+- PASSO 10: Testes de integração verificando que `--embedding-backend openrouter` funciona em TODOS os 13 paths de embedding (8 existentes + 5 corrigidos)
 
 ### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| `forget.rs` retorna `Ok(())` para already-deleted | Exit code é 0 em vez de 4 |
-| Documentação diz "exit 4 se ausente" | Consumidores esperam exit 4 e não recebem |
-| Envelope JSON contém `action: already_deleted` | Informação está disponível mas só via parsing JSON |
+- CAUSA: `main.rs` NÃO propaga `embedding_backend` para `enrich::run()` → EFEITO: `enrich --operation re-embed` SEMPRE usa subprocess LLM
+- CAUSA: `reembed_memory_vector()` chama função OLD → EFEITO: OpenRouter NUNCA é usado para re-embedding
+- CAUSA: `main.rs` NÃO propaga `embedding_backend` para `rename_entity::run()` → EFEITO: renomeação de entidade SEMPRE usa subprocess LLM
+- CAUSA: `init::run()` NÃO recebe backends → EFEITO: probe de dimensão SEMPRE usa subprocess LLM default
+- CAUSA: `ingest_claude.rs` tem 4 call sites OLD → EFEITO: pipeline legado IGNORA OpenRouter
+- CAUSA: `remember` chunks usa `embed_passages_parallel_local()` → EFEITO: body longo NÃO usa OpenRouter batch
+- CAUSA RAIZ: propagação parcial de `EmbeddingBackendChoice` na v1.0.93 → EFEITO: 5 paths de embedding ficaram inconsistentes com os 8 paths corrigidos
 
-### Análise
-- O comportamento é DELIBERADO — `forget` é idempotente por design (análogo a `DELETE WHERE` em SQL)
-- O `action: already_deleted` no JSON provê feedback suficiente para consumidores programáticos
-- `not_found` (nenhuma row) retorna exit 4 corretamente
-- `already_deleted` (row com deleted_at setado) retorna exit 0 com informação útil
-- A documentação da skill GraphRAG deve ser atualizada para refletir que `already_deleted` é exit 0
+### Arquivos Afetados
+- `src/main.rs` — linhas 422, 501, 507: propagar `cli.embedding_backend` para init, rename-entity, enrich
+- `src/commands/enrich.rs` — `run()` linha 1684 e `reembed_memory_vector()` linha 1430: receber e usar `EmbeddingBackendChoice`
+- `src/commands/rename_entity.rs` — `run()` e linha 98: receber e usar `EmbeddingBackendChoice`
+- `src/commands/init.rs` — `run()` e linha 132: receber e usar `EmbeddingBackendChoice`
+- `src/commands/ingest_claude.rs` — 4 call sites de `embed_passage_with_choice()`: substituir por `embed_passage_with_embedding_choice()`
+- `src/commands/remember.rs` — linha 702: substituir `embed_passages_parallel_local()` por `embed_passages_parallel_with_embedding_choice()`
 
-### Resolução
-- DECISÃO DE DESIGN: manter exit 0 para `already_deleted` como comportamento idempotente
-- Atualizar documentação da skill para especificar: exit 4 para memória INEXISTENTE, exit 0 para already_deleted
-
-
-## GAP-E2E-002: Validação de `--type` no remember — FALSO POSITIVO (2026-06-24)
-
-### Investigação
-- `--type` usa `clap::ValueEnum` via enum `MemoryType` com 9 variantes tipadas
-- Clap REJEITA valores inválidos com exit 2 e lista `[possible values: user, feedback, ...]`
-- O teste original redirecionava stderr com `2>/dev/null` e não capturou a mensagem de erro do clap
-- O stdout vazio foi interpretado como "aceitou silenciosamente" quando na verdade clap abortou
-
-### Resolução
-- FALSO POSITIVO — a validação já existe e funciona corretamente via `clap::ValueEnum`
+### Severidade por Subgap
+- SUBGAP 1 (enrich re-embed): ALTA — afeta re-embedding em massa de centenas de memórias
+- SUBGAP 2 (rename-entity): BAIXA — operação rara, uma entidade por vez
+- SUBGAP 3 (init probe): BAIXA — roda UMA VEZ na criação do banco
+- SUBGAP 4 (ingest_claude): MEDIA — modo legado mas ainda em uso para extração de entidades via LLM
+- SUBGAP 5 (remember chunks): MEDIA — afeta bodies longos (>512KB) com múltiplos chunks
 
 
-## GAP-E2E-003: Auditoria E2E v1.0.91 round 2 — ZERO bugs reais (2026-06-24)
-
-### Escopo da Auditoria
-- Build: `cargo build --release` — OK (v1.0.91)
-- Testes automatizados: 1068 passando, 0 falhas, 1 ignorado
-- Clippy: ZERO warnings
-- Cargo doc: ZERO warnings
-- Cenários e2e manuais: 66 cenários executados
-
-### Cenários E2E Executados
-- CRUD completo: init, remember, read, read --with-graph, list, edit, rename, history, forget, restore
-- Validação de entrada: tipo inválido (exit 2 clap), nome vazio (exit 1), duplicata (exit 9)
-- Operações de grafo: link, traverse, related, merge-entities, reclassify, rename-entity, delete-entity
-- Busca: hybrid-search --fallback-fts-only
-- Manutenção: health, stats, vacuum, optimize, fts check/stats/rebuild, vec stats/orphan-list
-- Diagnóstico: debug-schema, namespace-detect, embedding status, slots status, codex-models, cache list
-- Batch: remember-batch (NDJSON), export (NDJSON), ingest --dry-run
-- Concorrência: 5 escritas paralelas — ZERO conflitos, ZERO corrupção
-- Idempotência: forget de memória já deletada = exit 0 (design correto)
-- Forget inexistente: exit 4 (correto)
-
-### Achados Investigados e Classificados
-- `debug-schema.schema_version: 120` vs `health.schema_version: 15` — NAO e bug: debug-schema usa `PRAGMA schema_version` (DDL counter), health usa `MAX(version) FROM refinery_schema_history` (migrações canônicas), ambos documentados
-- `remember-batch` campo `status` vs `action` — NAO e bug: batch usa campo `status` (created/updated), remember single usa `action`; design intencional com semântica distinta
-- `export` última linha com `name: null` — NAO e bug: trailer NDJSON `{summary: true}` padrão de design para todos subcomandos batch
-- `fts check` sem campo `status` — NAO e bug: campo correto é `action: "checked"` com `integrity_ok: true`
-- `backup` sem campo `status` — NAO e bug: campo correto é `action: "backed_up"` com `size_bytes`
-- `slots status` mostra slots órfãos após testes concorrentes — COMPORTAMENTO ESPERADO: slots baseados em file lock são limpos por timeout, não por gc imediato
-- `rename-entity --from --to` vs `--name --new-name` — NAO e bug: erro de instrumentação do teste, a CLI documenta `--name` e `--new-name` corretamente
-
-### Resolução
-- ZERO bugs reais encontrados
-- ZERO gaps de funcionalidade
-- ZERO regressões desde a auditoria anterior (GAP-E2E-001/002)
-- CLI v1.0.91 estável e íntegra com 1068 testes unitários + 66 cenários e2e manuais
+### Resolução (v1.0.93)
+- SUBGAP 1 (enrich): `enrich::run()` agora recebe `EmbeddingBackendChoice`; `reembed_memory_vector()` e `call_reembed()` propagam para `embed_passage_with_embedding_choice()`
+- SUBGAP 2 (rename-entity): `rename_entity::run()` agora recebe `EmbeddingBackendChoice`; call site linha 98 migrado
+- SUBGAP 3 (init): `init::run()` agora recebe `LlmBackendChoice` e `EmbeddingBackendChoice`; probe usa backend configurado
+- SUBGAP 4 (ingest_claude): `run_claude_ingest()` recebe ambos backends; 4 call sites migrados para `embed_passage_with_embedding_choice()`
+- SUBGAP 5 (remember chunks): `remember.rs:702` migrado de `embed_passages_parallel_local()` para `embed_passages_parallel_with_embedding_choice()`
+- BUG-OR-EXIT-CODE: 3 validações OpenRouter em `main.rs` agora emitem exit 78 (EX_CONFIG) em vez de exit 1
+- `main.rs`: propagação de `cli.embedding_backend` para TODOS os 13 comandos de embedding (8 originais + 5 corrigidos)
+- Compilação ZERO erros, Clippy ZERO warnings, 1059 testes passando
+- E2E: 10/10 modelos OpenRouter validados com TODAS as operações (init, remember, recall, hybrid-search, edit, ingest, enrich re-embed, rename-entity)
 
 
-## GAP-E2E-004 — Auditoria E2E Round 7 (2026-06-24)
-### Contexto
-- Versão: v1.0.91
-- Build: cargo build --release OK (0.20s, cached)
-- Clippy: ZERO warnings (--all-targets -D warnings)
-- Cargo doc: ZERO warnings (--no-deps)
-- Testes unitários: 1068 passando, ZERO falhando, 6 ignored
-- Doc-tests: 21 passando, 1 ignored
+====
 
-### Cenários E2E Manuais Executados (86 cenários)
-- Banco isolado /tmp/e2e-audit-v1091-c.sqlite namespace e2e-c
-- Init + Health (2 cenários): schema_version 15, integrity_ok true
-- Remember + Force-merge (4 cenários): create, update, big body 15KB, graph-stdin
-- Read + Read --with-graph (3 cenários): metadados, corpo, entidades vinculadas
-- List + List --include-deleted (2 cenários): contagem correta, soft-delete visível
-- Hybrid-search --fallback-fts-only (2 cenários): busca por texto, filtro por tipo
-- Graph stats + entities + traverse (3 cenários): node_count, edge_count, hops
-- Link + Unlink + --create-missing (3 cenários): aresta criada, deletada, auto-create
-- Related (1 cenário): travessia multi-hop
-- History (2 cenários): versionamento após edits e restore
-- Edit description (1 cenário): atualização sem re-embed
-- Rename + Rename-entity (2 cenários): memória e entidade renomeadas
-- Forget + Purge (3 cenários): soft-delete, purge --dry-run, purge real
-- Remember-batch NDJSON (2 cenários): batch create, trailer {summary: true}
-- Ingest --dry-run + Ingest real (3 cenários): mapeamento, indexação, busca
-- Merge-entities (1 cenário): merge 2 entidades em alvo existente
-- Delete-entity --cascade (2 cenários): cascade real, entidade já deletada exit 4
-- Reclassify + Reclassify --batch (2 cenários): entidade e batch
-- Reclassify-relation --batch (1 cenário): migração de relações
-- Normalize-entities (1 cenário): kebab-case normalizado
-- Cleanup-orphans (1 cenário): zero órfãos detectados
-- Prune-relations --dry-run (1 cenário): preview sem efeito
-- Prune-ner --all (1 cenário): NER bindings removidos
-- Optimize + Vacuum (2 cenários): status ok, fts_rebuilt
-- Debug-schema (1 cenário): schema_version 120, user_version 50
-- Namespace-detect (1 cenário): source explicit_flag
-- Backup + Sync-safe-copy (2 cenários): backed_up, status ok
-- Export NDJSON (1 cenário): 4 linhas incluindo trailer
-- Vec stats + Vec orphan-list (2 cenários): zero orphans
-- Embedding status + Slots status (2 cenários): schemas corretos
-- Pending list + Pending-embeddings list (2 cenários): schemas corretos
-- Cache list (1 cenário): listagem de modelo em cache
-- Codex-models (1 cenário): 4 modelos na whitelist
-- Completions bash (1 cenário): 3 ocorrências de sqlite-graphrag
-- Concorrência 5 escritas paralelas (1 cenário): todas 5 criadas
-- Validação entity name curto (1 cenário): exit 1 correto
-- Validação entity ALL_CAPS (1 cenário): exit 1 correto
-- Validação relação não canônica --strict-relations (1 cenário): exit 1 correto
-- Read inexistente (1 cenário): exit 4 correto
-- Forget inexistente (1 cenário): exit 4 correto
-- Remember duplicado sem force-merge (1 cenário): exit 9 correto
-- Link --max-entity-degree (1 cenário): warning sem bloquear
-- Stats (1 cenário): memories=14, entities=10, relationships=4
-- Migrate --dry-run (1 cenário): nenhuma migração pendente
-- Health final (1 cenário): integrity_ok true, schema_version 15
-
-### Achados Investigados e Classificados
-- `graph traverse` campo `hops` vs `nodes/edges` — NAO e bug: schema usa campo `hops[]` com entity, relation, direction, weight, depth; instrumentação do teste estava com campos errados
-- `stats` não aceita `--namespace` — NAO e bug: stats é estatística do banco inteiro, não por namespace; design correto
-- `cleanup-orphans` sem campo `action` — NAO e bug: schema usa `orphan_count` e `deleted`; não tem campo `action`
-- `optimize` e `vacuum` sem campo `action` — NAO e bug: optimize usa `status: "ok"`, vacuum usa `status: "ok"` com `size_before_bytes`/`size_after_bytes`
-- `purge` campo `purged: null` — NAO e bug: jaq query usou campo `purged`, mas schema real usa `total_purged` e `entries_purged`; instrumentação do teste errada
-- `health` campo `fts_degraded: null` — NAO e bug: campo correto é `fts_ok` ou ausente quando FTS está saudável; jaq query usou campo inexistente
-- `namespace-detect` campo `resolved: null` — NAO e bug: schema usa `namespace` e `source`, não `resolved`; instrumentação errada
-- `--db` como flag não-global — NAO e bug: design correto, `--db` é flag por subcomando; flags globais são `--llm-backend`, `--skip-embedding-on-failure`, etc
-
-### Resolução
-- ZERO bugs reais encontrados
-- ZERO gaps de funcionalidade
-- ZERO regressões desde a auditoria anterior (GAP-E2E-003)
-- 8 achados investigados: todos erros de instrumentação do teste (jaq queries com campos errados)
-- CLI v1.0.91 estável e íntegra com 1068 testes unitários + 86 cenários e2e manuais
-
-
-## GAP-E2E-005 — Auditoria E2E Round 8 (2026-06-24)
-
-### Contexto
-- Compilação: `cargo build --release` OK
-- Test suite: `cargo test` — ZERO failures (21 passed na última suite, 0 failed, 1 ignored)
-- Clippy: `cargo clippy -- -D warnings` — ZERO warnings
-- 60 cenários e2e manuais executados
-
-### Cenários Cobertos (60 fases)
-- Fases 1-5: init, health, migrate, remember CRUD, read, list, edit, history, rename
-- Fases 6-11: graph link, stats, entities, traverse, related, memory-entities forward/reverse, forget, restore, unlink
-- Fases 12-19: remember-batch (3 itens NDJSON), hybrid-search FTS-only, validação nome vazio (exit 1), tipo inválido (exit 2), duplicata sem force-merge (exit 9), force-merge OK, stats, namespace-detect
-- Fases 20-30: optimize, fts check/stats/rebuild, vec stats/orphan-list, cleanup-orphans, vacuum, purge dry-run, backup, export NDJSON, debug-schema, embedding status, pending list, pending-embeddings
-- Fases 31-40: merge-entities, reclassify, normalize-entities, slots status, read --with-graph, 5 escritas concorrentes, read por ID, list --include-deleted, reclassify-relation, prune-ner
-- Fases 41-50: delete-entity --cascade, graph stats pós-delete, ingest dry-run, ingest real, list pós-ingest, corpo 10KB (15 chunks), completions bash, health final
-- Fases 51-60: unicode roundtrip (PT/JP/CN/AR), clear-body, entidade nome longo (120 chars), --strict-relations rejeição, forget inexistente (exit 4), read namespace errado (exit 4), traverse entidade inexistente (exit 4), sync-safe-copy, health/stats finais
-
-### Achados Investigados
-- `rename` retorna `{memory_id, name, action, version}` — NÃO `old_name`/`new_name`: instrumentação errada, NÃO bug
-- `graph traverse` usa campo `from` — NÃO `root`: instrumentação errada, NÃO bug
-- `stats` usa `memories`/`entities`/`relationships` — NÃO `total_memories`/`total_entities`: instrumentação errada
-- `fts check` usa `integrity_ok` — NÃO `status`: instrumentação errada
-- `fts rebuild` usa `rows_indexed` — NÃO `status`: instrumentação errada
-- `purge` usa `purged_count` — NÃO `total_purged`: instrumentação errada
-- `backup` usa `action: backed_up` com `source`/`destination`/`size_bytes` — NÃO `status`: instrumentação errada
-- 100KB body timeout (>120s) — lentidão de chunking, NÃO bug; 10KB funciona em <30s com 15 chunks
-
-### Resolução
-- ZERO bugs reais encontrados
-- ZERO gaps de funcionalidade
-- ZERO regressões desde round 7 (GAP-E2E-004)
-- 8 achados: todos erros de instrumentação do teste (jaq queries com campos errados)
-- CLI v1.0.91 estável com test suite + 60 cenários e2e manuais adicionais (total acumulado: 146 cenários)
-
-
-## GAP-DOC-001: v1.0.90 ausente da seção Architecture nos llms*.txt — RESOLVIDO (2026-06-24)
-
-### Problema
-- Os 3 arquivos `llms.txt`, `llms-full.txt` e `llms.pt-BR.txt` tinham seção "v1.0.86 → v1.0.91 Architecture" com bullets para v1.0.86, v1.0.87, v1.0.88, v1.0.89 e v1.0.91
-- v1.0.90 (OpenCode backend, ADR-0051, 24-bug remediation) estava AUSENTE — pulada da lista
-
-### Causa Raiz
-- A seção de arquitetura foi atualizada para v1.0.91 sem adicionar o bullet de v1.0.90 que introduziu o terceiro backend LLM
-
-### Correção
-- Adicionado bullet de v1.0.90 em todos os 3 arquivos documentando OpenCode backend, flags, env vars e os 24 bugs/gaps remediados
-
-### Relações Causa x Efeito
-| Causa | Efeito |
-|-------|--------|
-| Seção atualizada de v1.0.89 direto para v1.0.91 | v1.0.90 ausente da documentação de arquitetura |
-| v1.0.90 introduziu backend OpenCode | Terceiro backend LLM sem documentação na spec sheet |
-
-
-## GAP-DOC-002: INDEX.md com referência errada a adr-0051 em vez de adr-0052 — RESOLVIDO (2026-06-24)
-
-### Problema
-- `docs/decisions/INDEX.md` linha 92 dizia "Create `adr-0051-slug.md`" enquanto linha 91 dizia "next is ADR-0052"
-- Erro de copy-paste que indicaria ao desenvolvedor criar arquivo com número duplicado
-
-### Correção
-- Corrigido para "Create `adr-0052-slug.md`"
-
-
-## GAP-DOC-003: HOW_TO_USE.md e HOW_TO_USE.pt-BR.md parados na v1.0.89 — RESOLVIDO (2026-06-24)
-
-### Problema
-- Título dizia "v1.0.89" — sem menção a v1.0.90 (OpenCode backend) ou v1.0.91 (CWD isolation)
-- Comando de instalação dizia `--version 1.0.89`
-- Seção Prerequisites listava apenas `claude` e `codex` — `opencode` ausente (adicionado v1.0.90)
-- "See Also" dizia "44 ADRs" — são 45 (ADR-0051 adicionado v1.0.90)
-- Faltavam seções documentando changes de v1.0.90 e v1.0.91
-
-### Correção
-- Título atualizado para v1.0.91 em ambos EN e PT-BR
-- Seções v1.0.90 e v1.0.91 adicionadas com todos os BUGs e GAPs
-- Install version atualizada para 1.0.91
-- Prerequisites: `opencode` adicionado como terceira opção
-- Contagem de ADRs corrigida para 45
-- Mesmas correções aplicadas em ambos os idiomas
-
-
-## GAP-DOC-004: cleanup_spawn_dir() não nomeada em HEADLESS_INVOCATION — RESOLVIDO (2026-06-24)
-
-### Problema
-- HEADLESS_INVOCATION.md e .pt-BR.md referenciavam GAP-SPAWN-002 apenas pelo ID
-- A função `cleanup_spawn_dir()` e sua localização em `src/main.rs` não eram nomeadas
-- AGENTS.md nomeava explicitamente, criando inconsistência
-
-### Correção
-- Texto expandido para incluir nome da função e localização em ambos os idiomas
-
-
-## GAP-DOC-005: schemas/README.md backend_invoked enum sem "auto" — RESOLVIDO (2026-06-24)
-
-### Problema
-- schemas/README.md linha 103 dizia `backend_invoked: enum [claude, codex, opencode, none]`
-- BUG-15 adicionou "auto" como quinto valor válido em 7 schemas
-- README não refletia o valor "auto"
-
-### Correção
-- Enum atualizada para `[claude, codex, opencode, none, auto]`
-
-
-## GAP-SKILL-001: PT skill CRUD seção comprimida e omitindo `edit --type` — RESOLVIDO (2026-06-24)
-
-### Problema
-- skill/sqlite-graphrag-pt/SKILL.md comprimia 4 bullets da seção CRUD em 1 linha com semicolons
-- Flag `edit --type <kind>` (alias de `--memory-type`) ausente na skill PT
-- EN skill tinha cobertura completa na linha 150 mas PT omitia
-
-### Correção
-- Seção CRUD Leitura expandida de 6 para 14 bullets com uma ideia por linha
-- Flag `--type <kind>` adicionada para mudar tipo de memória
-- Flags `--description`, `--force-reembed` separadas em bullets individuais
-
-
-## GAP-SKILL-002: Description usa "enforço" — termo inexistente em português padrão — RESOLVIDO (2026-06-24)
-
-### Problema
-- Campo description do frontmatter YAML usava "enforço OAuth-only"
-- "enforço" não é palavra válida em português brasileiro padrão
-
-### Correção
-- Substituído por "enforcement OAuth-only"
-
-
-## GAP-SKILL-003: Fórmulas CLI duplicavam conteúdo de seções anteriores — RESOLVIDO (2026-06-24)
-
-### Problema
-- Linhas "Manutenção semanal" e "Roteamento de exit code" na seção Fórmulas duplicavam conteúdo das seções "Pipeline de Manutenção" e "Códigos de Saída"
-- Word count PT ultrapassava 4000 palavras após expansão CRUD
-
-### Correção
-- Removidas 2 linhas duplicadas de ambas as skills (PT e EN)
-- Word count PT ajustado para 3974 (dentro do limite de 4000)

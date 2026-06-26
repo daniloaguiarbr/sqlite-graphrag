@@ -84,6 +84,16 @@ fn home_env_dir() -> Result<Option<PathBuf>, AppError> {
     Ok(Some(PathBuf::from(raw)))
 }
 
+/// Returns the XDG config directory for the application.
+pub fn config_dir() -> Result<PathBuf, AppError> {
+    let proj = ProjectDirs::from("", "", "sqlite-graphrag").ok_or_else(|| {
+        AppError::Io(std::io::Error::other(
+            "could not determine home directory for config",
+        ))
+    })?;
+    Ok(proj.config_dir().to_path_buf())
+}
+
 pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
     path.parent().ok_or_else(|| {
         AppError::Validation(format!(

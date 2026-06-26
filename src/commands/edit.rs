@@ -96,7 +96,11 @@ struct EditResponse {
     backend_invoked: Option<&'static str>,
 }
 
-pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<(), AppError> {
+pub fn run(
+    args: EditArgs,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<(), AppError> {
     use crate::constants::*;
 
     let inicio = std::time::Instant::now();
@@ -215,10 +219,11 @@ pub fn run(args: EditArgs, llm_backend: crate::cli::LlmBackendChoice) -> Result<
         // backend que efetivamente rodou para popular `backend_invoked`.
         let skip_embed = crate::embedder::should_skip_embedding_on_failure();
         let embedding: Option<(Vec<f32>, &'static str)> =
-            match crate::embedder::embed_passage_with_choice(
+            match crate::embedder::embed_passage_with_embedding_choice(
                 &paths.models,
                 &new_body,
-                Some(llm_backend),
+                embedding_backend,
+                llm_backend,
             ) {
                 Ok((emb, kind)) => Some((emb, kind.as_str())),
                 Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),

@@ -95,6 +95,27 @@
 
 Veja [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) para o plano de teste do Split do Backend Claude (ADR-0042). Veja [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) para o plano de teste da Remediação de Cinco Gaps (ADR-0043). Ambos os novos planos são snapshots do design de teste liberado.
 
+## Plano de Teste v1.0.93 — Backend de Embedding OpenRouter (ADR-0052, GAP-OR-INGEST)
+
+### Adições na Camada 1 (unit)
+- `model_default_input_type()`: 10 testes cobrindo seleção de `input_type` por modelo (fix BUG-OR-1 — NVIDIA Nemotron retorna `"passage"`, Mistral retorna `None`, demais retornam `"search_document"`)
+- `model_supports_mrl()`: testes cobrindo detecção MRL para todos os 10 modelos verificados incluindo NVIDIA e BAAI (fix BUG-OR-2)
+- `validate_model_id()`: testes cobrindo validação de ID de modelo contra os 10 modelos aprovados e rejeição de 5 IDs inexistentes (fixes BUG-OR-3, BUG-OR-4)
+- `execute_with_retry()`: teste cobrindo retry de corpo malformado em HTTP 200 (fix BUG-OR-5 — parse error em HTTP 200 tratado como transitório)
+
+### Adições na Camada 2 (integração)
+- `tests/openrouter_embedding.rs`: testes de integração baseados em wiremock cobrindo o fluxo completo de embedding via API REST OpenRouter — construção de request, truncamento MRL, `input_type` por modelo, chunking em batch (MAX_BATCH_SIZE=32), retry de erro e tratamento de chave API via `secrecy::SecretString`
+- Propagação de `EmbeddingBackendChoice`: testes verificando que `--embedding-backend openrouter` alcança todos os 8 comandos (remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research)
+- Flag `--enrich-after`: testes verificando que `ingest --enrich-after` dispara `enrich --operation memory-bindings` sequencialmente após a fase de embedding
+
+### Adições na Camada 7 (pós-publicação)
+- Round-trip de embedding OpenRouter: `remember` com `--embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b"` seguido de `recall` com as mesmas flags, verificando similaridade vetorial
+- Exit 78 na ausência de `--embedding-model` quando `--embedding-backend openrouter` está especificado
+
+### Delta na Camada 8 (smoke com LLM real)
+- Opcional: um teste smoke de embedding OpenRouter usando `OPENROUTER_API_KEY` real (opt-in via `SQLITE_GRAPHRAG_OPENROUTER_E2E=1`)
+- Orçamento: 1 chamada de API, menos de 5 segundos, latência esperada de embedding abaixo de 500ms
+
 ## Plano Histórico — Deltas do Plano v1.0.80 — G45, G53, G55 S2, G56, G58, ADR-0033, ADR-0034
 
 A release v1.0.80 (bump patch, sem migração de schema) adicionou os

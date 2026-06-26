@@ -130,6 +130,15 @@ pub fn emit_dry_run_backend(cli: &Cli) -> Result<(), AppError> {
             }
             backend_payload(&resolved, "opencode-explicit", cli, false)
         }
+        LlmBackendChoice::OpenRouter => DryRunBackendOutput {
+            action: "dry_run_backend",
+            backend: "openrouter",
+            binary: String::new(),
+            model: String::new(),
+            flavour: "openrouter",
+            chain: cli.llm_fallback.clone(),
+            strict_env_clear: is_strict_env_clear(),
+        },
     };
 
     emit_json_compact(&payload)?;
@@ -193,6 +202,7 @@ fn backend_payload(
         LlmBackendChoice::Codex => "codex",
         LlmBackendChoice::Claude => "claude",
         LlmBackendChoice::Opencode => "opencode",
+        LlmBackendChoice::OpenRouter => "openrouter",
         LlmBackendChoice::None => "none",
     };
 

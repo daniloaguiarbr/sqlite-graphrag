@@ -581,7 +581,11 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
 }
 
 /// Main entry point for `ingest --mode claude-code`.
-pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
+pub fn run_claude_ingest(
+    args: &IngestArgs,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(), AppError> {
     let started = Instant::now();
 
     if !args.dir.exists() {
@@ -1053,17 +1057,23 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
 
             // v1.0.89 (GAP-EMBED-PROPAGATION): honour --llm-backend via embed_passage_with_choice.
             let embedding_result = if chunks_info.len() <= 1 {
-                crate::embedder::embed_passage_with_choice(&paths.models, &body_text, None)
-                    .map(|(v, _)| v)
+                crate::embedder::embed_passage_with_embedding_choice(
+                    &paths.models,
+                    &body_text,
+                    embedding_backend,
+                    llm_backend,
+                )
+                .map(|(v, _)| v)
             } else {
                 let mut chunk_embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_info.len());
                 let mut multi_ok = true;
                 for chunk in &chunks_info {
                     let chunk_text = crate::chunking::chunk_text(&body_text, chunk);
-                    match crate::embedder::embed_passage_with_choice(
+                    match crate::embedder::embed_passage_with_embedding_choice(
                         &paths.models,
                         chunk_text,
-                        None,
+                        embedding_backend,
+                        llm_backend,
                     )
                     .map(|(v, _)| v)
                     {
@@ -1113,8 +1123,13 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                     Ok(aggregated)
                 } else {
                     // fallback: embed whole body for the memory-level vector
-                    crate::embedder::embed_passage_with_choice(&paths.models, &body_text, None)
-                        .map(|(v, _)| v)
+                    crate::embedder::embed_passage_with_embedding_choice(
+                        &paths.models,
+                        &body_text,
+                        embedding_backend,
+                        llm_backend,
+                    )
+                    .map(|(v, _)| v)
                 }
             };
 
@@ -1142,10 +1157,11 @@ pub fn run_claude_ingest(args: &IngestArgs) -> Result<(), AppError> {
                             entities::find_entity_id(&conn, &namespace, &ent.name)
                         {
                             let entity_text = ent.name.clone();
-                            match crate::embedder::embed_passage_with_choice(
+                            match crate::embedder::embed_passage_with_embedding_choice(
                                 &paths.models,
                                 &entity_text,
-                                None,
+                                embedding_backend,
+                                llm_backend,
                             )
                             .map(|(v, _)| v)
                             {

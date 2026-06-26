@@ -161,6 +161,50 @@ sqlite-graphrag health --json
 - Recipe "How to schedule purge and vacuum in cron or GitHub Actions"
 
 
+## How To Use OpenRouter For Fast Embedding (v1.0.93)
+### Problem
+- Subprocess LLM embedding takes 15-60 seconds per call due to process cold-start
+- Bulk ingest of 100+ documents takes hours with subprocess embedding
+- You want faster embedding without changing your existing database schema
+
+### Solution
+```bash
+# Set your OpenRouter API key
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+
+# Remember with OpenRouter (best quality: Google Gemini 001)
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "google/gemini-embedding-001" \
+  remember --name my-note --type note \
+  --description "fast embedding via OpenRouter" \
+  --body "content to embed" --json
+
+# Bulk ingest with OpenRouter + auto-enrich
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs --pattern "*.md" --recursive \
+  --enrich-after --llm-backend codex --json
+
+# Free tier: use NVIDIA Nemotron (no cost)
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "nvidia/llama-nemotron-embed-vl-1b-v2:free" \
+  recall "search query" --k 10 --json
+```
+
+### Explanation
+- `--embedding-backend openrouter` selects the REST API path (~200ms vs 15s subprocess)
+- `--embedding-model` is REQUIRED — there is no default model for OpenRouter
+- All 10 verified models produce 64-dim vectors via MRL — zero schema change
+- Top models by recall score: Google Gemini 001 (0.892), Mistral (0.832), Qwen 8B (0.814)
+- Free option: NVIDIA Nemotron produces decent quality (0.662) at zero cost
+- `--enrich-after` on ingest triggers entity extraction after embedding completes
+- OpenRouter config errors return exit code 78 (`EX_CONFIG`)
+
+### See Also
+- Recipe "How to bootstrap memory database in 60 seconds"
+- `docs/decisions/adr-0052-openrouter-embedding-backend.md`
+
+
 ## How To Start And Monitor The Daemon For Lower Latency — REMOVED (v1.0.76+; code deleted in v1.0.79)
 ### Problem (v1.0.74 and earlier)
 - Every `recall` and `remember` call paid a 1-second cold start to load the ONNX embedding model
@@ -2505,3 +2549,88 @@ sqlite-graphrag remember --name b --type note --body "..." \
 # Health check after batch
 sqlite-graphrag health --json | jaq '.counts'
 ```
+
+## How To Use OpenRouter For Fast Embedding (v1.0.93)
+
+### Problem
+
+Embedding via subprocess LLM (codex/claude/opencode) takes 15-60 seconds per
+call due to cold-start overhead. Bulk ingest of 100 files may take 25+ minutes.
+The subprocess model is also fragile under SIGTERM and requires OAuth sessions.
+
+### Solution
+
+Use `--embedding-backend openrouter` with a dedicated embedding model to call
+the OpenRouter REST API directly (~200ms per call). No subprocess, no OAuth,
+no cold-start. Export `OPENROUTER_API_KEY` and pass `--embedding-model`.
+
+### Setup
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+```
+
+### Remember with OpenRouter
+
+```bash
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-4b" \
+  remember --name my-decision --type decision \
+  --description "Architecture choice" \
+  --body "We chose OpenRouter for fast REST-based embeddings." \
+  --force-merge --json
+```
+
+### Ingest with OpenRouter and Auto-Enrich
+
+The `--enrich-after` flag triggers `enrich --operation memory-bindings`
+automatically after ingest completes — no second command needed.
+
+```bash
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs \
+  --recursive --pattern "*.md" \
+  --type document \
+  --enrich-after \
+  --json
+```
+
+### Recall with OpenRouter Query Embedding
+
+The query vector is also produced via OpenRouter — use the SAME model that
+was used during ingest to keep embedding space consistent.
+
+```bash
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  recall "architecture decision" --k 10 --json
+```
+
+### Model Selection Guide
+
+- Best quality: `google/gemini-embedding-001` (MTEB score ~0.93)
+- Best value: `qwen/qwen3-embedding-8b` (score ~0.68, $0.01/M tokens)
+- Zero cost: `nvidia/llama-nemotron-embed-vl-1b-v2:free` (score ~0.42)
+- OpenAI compatible: `openai/text-embedding-3-large` (score ~0.72)
+- Multilingual: `mistral/mistral-embed` or `baai/bge-m3`
+
+All models produce 64-dim vectors via MRL truncation. Zero schema change.
+Switching models mid-project requires re-embedding existing memories.
+
+### Variants
+
+- `--embedding-backend auto` — uses OpenRouter if `OPENROUTER_API_KEY` is
+  set, otherwise falls back to the subprocess LLM chain.
+- `--embedding-backend llm` — forces subprocess LLM (codex/claude), ignores
+  any OpenRouter key present in the environment.
+- Passing `--openrouter-api-key` inline overrides `OPENROUTER_API_KEY`.
+
+### See Also
+
+- `docs/HOW_TO_USE.md` → "What Changed in v1.0.93 — OpenRouter Embedding
+  Backend (GAP-OR-INGEST)"
+- Recipe "How to ingest a directory of markdown files into the graph"

@@ -9,13 +9,25 @@
 - Semantic distinction the fix resolves: `ANTHROPIC_API_KEY` (paid API key, PROHIBITED by ADR-0011), `ANTHROPIC_AUTH_TOKEN` (OAuth token for custom provider, PRESERVED), `OPENAI_API_KEY` (PROHIBITED), `OPENAI_BASE_URL` (PRESERVED), `ANTHROPIC_BASE_URL` (PRESERVED). The v1.0.69 mandate was correct; the v1.0.69 env-clear whitelist was overly broad
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale and `docs/MIGRATION.md#migrating-to-v1083` for operator upgrade steps
 - G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
-# sqlite-graphrag for AI Agents (v1.0.91)
+# sqlite-graphrag for AI Agents (v1.0.93)
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary.
-> v1.0.91 is **LLM-only and one-shot**: every `remember` / `ingest`
+> v1.0.93 is **LLM-only and one-shot**: every `remember` / `ingest`
 > spawns a headless claude code, codex, or opencode CLI subprocess
 > (OAuth, no MCP, no hooks). There is no daemon, no ONNX runtime,
 > no local embedding model.
+> New in v1.0.93: OpenRouter REST API added as a direct HTTP embedding backend via `--embedding-backend openrouter` (~200ms vs. ~15-20s headless subprocess).
+
+## New in v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
+- New embedding backend: OpenRouter REST API via `--embedding-backend openrouter --embedding-model MODEL`
+- Embedding via direct HTTP (~200ms) instead of headless LLM subprocess (~15-20s per call)
+- The user MUST specify `--embedding-model` when using OpenRouter — there is NO default model
+- Set API key via `OPENROUTER_API_KEY` env var or `--openrouter-api-key` flag
+- `EmbeddingBackendChoice` propagated to ALL 8 embedding commands: remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research
+- New `--enrich-after` flag on `ingest` — runs `enrich --operation memory-bindings` sequentially after ingestion
+- 10 OpenRouter models verified E2E: qwen3-embedding-4b, qwen3-embedding-8b, llama-nemotron-embed-vl-1b-v2:free, text-embedding-3-small, text-embedding-3-large, pplx-embed-v1-0.6b, mistral-embed-2312, bge-m3, gemini-embedding-001, gemini-embedding-2
+- 5 bug fixes: BUG-OR-1 (input_type per model), BUG-OR-2 (MRL detection), BUG-OR-3 (model validation), BUG-OR-4 (retry on HTTP 200 malformed), BUG-OR-5 (dimension override)
+- See ADR-0052 for architecture; `gaps.md` for causa-efeito tables
 
 ## New in v1.0.91 — Spawn CWD Isolation, Degree Fix, Schema Corrections
 - GAP-SPAWN-001 (CRITICAL): `apply_cwd_isolation()` added to `src/spawn/mod.rs` — sets `current_dir(temp_dir)` and `CLAUDE_CONFIG_DIR=temp_dir` on ALL 10 LLM subprocess spawn sites. Eliminates `.mcp.json` walk-up interference that caused timeout/401 in any project with MCP servers configured. Zero-config: no more `SQLITE_GRAPHRAG_SKIP_PREFLIGHT=1 CLAUDE_CONFIG_DIR=/tmp/...` workaround needed

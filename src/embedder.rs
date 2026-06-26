@@ -57,6 +57,12 @@ use tokio_util::sync::CancellationToken;
 /// (the v1.0.82 bug where requesting Claude could resolve to Codex).
 static CLAUDE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 static OPENCODE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
+static OPENROUTER_CLIENT: OnceLock<crate::embedding_api::OpenRouterClient> = OnceLock::new();
+
+/// v1.0.93: check whether the OpenRouter client has been initialised.
+pub fn is_openrouter_initialized() -> bool {
+    OPENROUTER_CLIENT.get().is_some()
+}
 static EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 
 /// Process-wide multi-thread tokio runtime for embedding I/O.
@@ -189,6 +195,21 @@ pub fn get_opencode_embedder(
     Ok(OPENCODE_EMBEDDER
         .get()
         .expect("OPENCODE_EMBEDDER initialised above"))
+}
+
+pub fn get_openrouter_embedder(
+    api_key: secrecy::SecretBox<String>,
+    model: &str,
+    dim: usize,
+) -> Result<&'static crate::embedding_api::OpenRouterClient, AppError> {
+    if let Some(c) = OPENROUTER_CLIENT.get() {
+        return Ok(c);
+    }
+    let client = crate::embedding_api::OpenRouterClient::new(api_key, model.to_string(), dim)?;
+    let _ = OPENROUTER_CLIENT.set(client);
+    Ok(OPENROUTER_CLIENT
+        .get()
+        .expect("OPENROUTER_CLIENT initialised above"))
 }
 
 /// ADR-0042 / GAP-002: route a single passage through the Claude
@@ -376,6 +397,21 @@ pub fn embed_passage_with_choice(
         Some(choice) => embed_with_fallback(models_dir, text, &choice.to_chain(), false),
     }
 }
+
+/// v1.0.93: embedding with `EmbeddingBackendChoice` awareness. When the
+/// embedding backend is `Openrouter` or `Auto` with a live client, the
+/// chain prepends `OpenRouter` before the LLM subprocess backends.
+pub fn embed_passage_with_embedding_choice(
+    models_dir: &Path,
+    text: &str,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(Vec<f32>, LlmBackendKind), AppError> {
+    let _slot_guard = acquire_llm_slot_for_embedding()?;
+    let chain = embedding_backend.to_chain(llm_backend);
+    embed_with_fallback(models_dir, text, &chain, false)
+}
+
 /// failure, returns a structured `FallbackReason` so the caller can
 /// surface `vec_degraded` instead of a hard exit 11.
 ///
@@ -404,6 +440,23 @@ pub fn try_embed_query_with_choice(
         Err(e) => Err(classify_embedding_error(e)),
     }
 }
+/// v1.0.93 (GAP-OR-INGEST): query embedding with `EmbeddingBackendChoice`
+/// awareness. Mirrors `try_embed_query_with_choice` but routes through
+/// `embed_passage_with_embedding_choice` so OpenRouter API is used when
+/// configured.
+pub fn try_embed_query_with_embedding_choice(
+    models_dir: &Path,
+    text: &str,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<(Vec<f32>, LlmBackendKind), FallbackReason> {
+    match embed_passage_with_embedding_choice(models_dir, text, embedding_backend, llm_backend) {
+        Ok((v, _backend)) if v.is_empty() => Err(FallbackReason::DimZero),
+        Ok((v, backend)) => Ok((v, backend)),
+        Err(e) => Err(classify_embedding_error(e)),
+    }
+}
+
 /// call. Reads the max-concurrency from
 /// `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` (default derived from
 /// `LLM_WORKER_RSS_MB` and available memory), and the wait timeout
@@ -651,6 +704,7 @@ pub fn try_embed_query_with_deterministic_fallback(
                 "codex" => Some(crate::cli::LlmBackendChoice::Claude),
                 "claude" => Some(crate::cli::LlmBackendChoice::Codex),
                 "opencode" => Some(crate::cli::LlmBackendChoice::Codex),
+                "openrouter" => Some(crate::cli::LlmBackendChoice::Codex),
                 _ => None,
             };
             if let Some(alt_choice) = alt {
@@ -812,6 +866,13 @@ pub fn embed_with_fallback(
         ) {
             Ok((v, resolved_kind)) => return Ok((v, resolved_kind)),
             Err(e) => {
+                // ADR-0011: Validation errors (OAuth-only enforcement) are
+                // FATAL — propagate immediately without trying the next
+                // backend. This prevents the fallback chain from swallowing
+                // OAuth violations via the trailing `None` sentinel.
+                if matches!(e, AppError::Validation(_)) {
+                    return Err(e);
+                }
                 tracing::warn!(
                     target: "embedding",
                     backend = ?backend,
@@ -844,6 +905,8 @@ pub enum LlmBackendKind {
     Claude,
     /// `opencode run` (v1.0.90).
     Opencode,
+    /// OpenRouter HTTP API (v1.0.93).
+    OpenRouter,
     /// No embedding — empty vector returned.
     None,
 }
@@ -856,6 +919,7 @@ impl LlmBackendKind {
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Opencode => "opencode",
+            Self::OpenRouter => "openrouter",
             Self::None => "none",
         }
     }
@@ -901,6 +965,21 @@ pub fn embed_via_backend(
                 "embed_via_backend: forcing opencode (GAP-OPENCODE-001)"
             );
             embed_via_opencode_local_resolved(models_dir, text, None, None)
+        }
+        LlmBackendKind::OpenRouter => {
+            tracing::debug!(
+                target: "embedder",
+                backend = "openrouter",
+                "embed_via_backend: using OpenRouter API (v1.0.93)"
+            );
+            let client = OPENROUTER_CLIENT.get().ok_or_else(|| {
+                AppError::Embedding(
+                    "OpenRouter client not initialised; call get_openrouter_embedder first".into(),
+                )
+            })?;
+            let rt = shared_runtime()?;
+            let vec = rt.block_on(client.embed_single(text, client.default_input_type()))?;
+            Ok((vec, LlmBackendKind::OpenRouter))
         }
     }
 }
@@ -965,6 +1044,7 @@ pub fn embed_via_backend_strict(
             );
             embed_via_opencode_local_resolved(models_dir, text, None, None)
         }
+        LlmBackendKind::OpenRouter => embed_via_backend(models_dir, text, backend),
     }
 }
 
@@ -999,6 +1079,36 @@ pub fn embed_passages_parallel_local(
 ) -> Result<Vec<Vec<f32>>, AppError> {
     let embedder = get_embedder(models_dir)?;
     embed_texts_parallel(embedder, texts, parallelism, batch_size)
+}
+
+/// v1.0.93 (GAP-OR-INGEST): embeds multiple passages with
+/// `EmbeddingBackendChoice` awareness. When the resolved chain starts
+/// with `OpenRouter` and the client is initialised, uses the HTTP batch
+/// API (`embed_batch`) instead of subprocess fan-out — no LLM slot
+/// consumed, ~200ms per batch vs ~15s per subprocess cold-start.
+/// Falls back to `embed_passages_parallel_local` for LLM backends.
+pub fn embed_passages_parallel_with_embedding_choice(
+    models_dir: &Path,
+    texts: &[String],
+    parallelism: usize,
+    batch_size: usize,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+    llm_backend: crate::cli::LlmBackendChoice,
+) -> Result<Vec<Vec<f32>>, AppError> {
+    let chain = embedding_backend.to_chain(llm_backend);
+    if chain.first() == Some(&LlmBackendKind::OpenRouter) && is_openrouter_initialized() {
+        let client = OPENROUTER_CLIENT.get().ok_or_else(|| {
+            AppError::Embedding(
+                "OpenRouter client not initialised; call get_openrouter_embedder first".into(),
+            )
+        })?;
+        let rt = shared_runtime()?;
+        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let vecs = rt.block_on(client.embed_batch(&refs, client.default_input_type()))?;
+        Ok(vecs)
+    } else {
+        embed_passages_parallel_local(models_dir, texts, parallelism, batch_size)
+    }
 }
 
 /// G56: in-process cache for entity embeddings keyed by `(model, text)`.

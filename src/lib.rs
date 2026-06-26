@@ -175,6 +175,9 @@ pub mod extract;
 /// `clap` definitions for the top-level `sqlite-graphrag` binary.
 pub mod cli;
 
+/// XDG-based API key management for OpenRouter and other providers.
+pub mod config;
+
 /// Subcommand handlers wired into the `clap` tree from [`cli`].
 pub mod commands;
 
@@ -183,6 +186,9 @@ pub mod constants;
 
 /// Local embedding generation (LLM-only, one-shot per invocation).
 pub mod embedder;
+
+/// HTTP client for the OpenRouter embeddings API (direct HTTP, no CLI subprocess).
+pub mod embedding_api;
 
 /// Canonical entity type taxonomy: 13 variants, ValueEnum + serde + rusqlite impls.
 pub mod entity_type;

@@ -8,13 +8,42 @@
 - No new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
 - Resolves GAP-058 partially: custom-provider env vars route around OAuth quota contention; `recall`/`hybrid-search` stay deterministic under official OAuth fatigue
-# HOW TO USE sqlite-graphrag (v1.0.91 — CWD Isolation, Degree Fix, OpenCode Backend, 1877+ tests)
+# HOW TO USE sqlite-graphrag (v1.0.93 — OpenRouter Embedding, GAP-OR-PROPAGATION, 1059 tests)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
 
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
+
+## What Changed in v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
+- New global flags: `--embedding-backend auto|openrouter|llm`, `--embedding-model MODEL`, `--openrouter-api-key KEY`
+- OpenRouter REST API embedding replaces subprocess LLM for vector generation (~200ms vs 15s per call)
+- `EmbeddingBackendChoice` propagated to ALL 13 embedding paths: `remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`, `enrich`, `init`, `rename-entity`, `ingest` (claude mode), `remember` (chunk embedding)
+- New `--enrich-after` flag for ingest triggers `enrich --operation memory-bindings` after embedding
+- The user MUST specify `--embedding-model` when using `--embedding-backend openrouter` — NO default model
+- Set API key via env var `OPENROUTER_API_KEY` or flag `--openrouter-api-key`
+- 10 models verified E2E: Qwen 4B/8B, NVIDIA Nemotron (free), OpenAI small/large, Perplexity, Mistral, BAAI bge-m3, Google Gemini 001/002
+- All models produce 64-dim vectors via MRL — zero schema change, zero migration
+- **GAP-OR-PROPAGATION** (v1.0.93): 5 additional embedding paths fixed — `enrich --operation re-embed`, `init` (dimension probe), `rename-entity`, `ingest --mode claude-code` (4 call sites), and `remember` (chunk parallel embedding) now all honour `--embedding-backend openrouter`
+- **BUG-OR-EXIT-CODE** (v1.0.93): OpenRouter config errors (missing API key, missing model, invalid key) now return exit code 78 (`EX_CONFIG`) instead of exit 1
+```bash
+# Setup
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+
+# Remember with OpenRouter
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  remember --name my-note --type note \
+  --description "fast embedding" --body "content" --json
+
+# Ingest with OpenRouter + auto-enrich
+sqlite-graphrag --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  ingest ./docs --pattern "*.md" --recursive \
+  --enrich-after --llm-backend codex --json
+```
+
 
 ## What Changed in v1.0.90, v1.0.91
 
@@ -76,7 +105,7 @@ Since v1.0.85.2, four releases introduced the LLM-heavy surface, the pre-flight 
 - **GAP-E2E-011 (P2)**: `ingest --auto-describe` (default true) extracts description from first meaningful body line (>20 chars, not a header). `extract_heuristic_description(body, path_hint)` falls back to file stem. `--no-auto-describe` opt-out. 5 new tests in `tests/ingest_auto_describe_regression.rs`
 - **GAP-E2E-002 (P3)**: `health --namespace <NS> --json` filters counts to a single namespace. 1 new test in `tests/health_namespace_regression.rs`
 - **GAP-E2E-001 (P2)**: Binary size 14.6 MiB documented in `Cargo.toml:6` (was 6 MB since v1.0.76). 1 new test in `tests/binary_size_documented_regression.rs`
-- Total: 1877 tests passing (843 lib + 1013 integration + 21 doc). Binary 15.3 MB ELF stripped
+- Total: 1059 tests passing. Binary 15.3 MB ELF stripped
 ## What v1.0.82 Changed (Five Gaps, Two Migrations, Four Subcommands)
 
 v1.0.82 is a **patch** bump that DOES carry two additive database migrations (`V014__pending_memories`, `V015__pending_embeddings`). The schema version advances from 13 to 15. Library consumers must pin to `=1.0.82` per the stability policy (ADR-0032). The 5 gaps closed: GAP-001 three-stage `remember` checkpoint queue (ADR-0036), GAP-002 shutdown JSON envelope at exit code 19 (ADR-0037), GAP-003 `--llm-backend` user-choice flag (ADR-0038), GAP-004 host-wide LLM slot semaphore via `fs4` (ADR-0039), GAP-005 stderr-capture fallback chain that mitigates the codex OAuth 401 incident of 2026-06-14 (ADR-0040).

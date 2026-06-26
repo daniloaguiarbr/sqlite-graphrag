@@ -50,6 +50,7 @@ struct RenameEntityResponse {
 pub fn run(
     args: RenameEntityArgs,
     llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<(), AppError> {
     let start = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -95,10 +96,11 @@ pub fn run(
     }
 
     let skip_embed = crate::embedder::should_skip_embedding_on_failure();
-    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_choice(
+    let embedding: Option<Vec<f32>> = match crate::embedder::embed_passage_with_embedding_choice(
         &paths.models,
         &new_name,
-        Some(llm_backend),
+        embedding_backend,
+        llm_backend,
     ) {
         Ok((emb, _backend)) => Some(emb),
         Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),

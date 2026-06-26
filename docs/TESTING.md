@@ -101,7 +101,15 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 - `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
 ## Current Test Suite Size
 
-847 lib tests, 1881 total tests passing via `cargo nextest -P ci` as of v1.0.89. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
+986+ lib tests passing via `cargo nextest -P ci` as of v1.0.93. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
+
+## What Changed in v1.0.90, v1.0.91, v1.0.92, v1.0.93
+- v1.0.90: OpenCode backend tests (875 lib tests)
+- v1.0.91: CWD isolation tests, degree recalculation tests (877 lib tests + 21 doc tests + 38 schema contract tests)
+- v1.0.92: Documentation-only release, no new tests
+- v1.0.93: OpenRouter embedding tests in `tests/openrouter_embedding.rs`; test count 986+ lib tests
+- Mock LLM scripts in `tests/mock-llm/` now cover `claude`, `codex`, `opencode` backends
+- OpenRouter embedding uses live API in E2E tests (not mocked) — requires `OPENROUTER_API_KEY`
 - `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists
 - `ensure_v013_tables_creates_when_phantom` — verifies repair when V013 is in history but tables are missing
 ### Coverage Rationale

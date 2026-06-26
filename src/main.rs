@@ -345,6 +345,56 @@ fn main() -> std::process::ExitCode {
     // GAP-LLM-FALLBACK: propagate --llm-fallback so to_chain() can read it.
     std::env::set_var("SQLITE_GRAPHRAG_LLM_FALLBACK", &cli.llm_fallback);
 
+    // v1.0.93: initialise OpenRouter embedding client when configured.
+    {
+        use sqlite_graphrag::cli::EmbeddingBackendChoice;
+        let wants_openrouter = matches!(
+            cli.embedding_backend,
+            EmbeddingBackendChoice::Auto | EmbeddingBackendChoice::Openrouter
+        );
+        if wants_openrouter {
+            if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter)
+                && cli.embedding_model.is_none()
+            {
+                let msg = "--embedding-backend openrouter requires --embedding-model (e.g. qwen/qwen3-embedding-8b)";
+                sqlite_graphrag::output::emit_error_json(78, msg);
+                sqlite_graphrag::output::emit_error(msg);
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                return std::process::ExitCode::from(78_u8);
+            }
+            if let Some(model) = cli.embedding_model.as_deref() {
+                if let Some(resolved) = sqlite_graphrag::config::resolve_api_key(
+                    "openrouter",
+                    cli.openrouter_api_key.as_deref(),
+                ) {
+                    let dim = cli.embedding_dim.unwrap_or(64) as usize;
+                    if let Err(e) = sqlite_graphrag::embedder::get_openrouter_embedder(
+                        resolved.value,
+                        model,
+                        dim,
+                    ) {
+                        tracing::warn!(error = %e, "failed to initialise OpenRouter embedding client");
+                        if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter) {
+                            sqlite_graphrag::output::emit_error_json(78, &e.to_string());
+                            sqlite_graphrag::output::emit_error(&e.to_string());
+                            let _ = std::io::Write::flush(&mut std::io::stdout());
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                            return std::process::ExitCode::from(78_u8);
+                        }
+                    }
+                } else if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter) {
+                    let msg = "--embedding-backend openrouter requires OPENROUTER_API_KEY env var, config.toml key, or --openrouter-api-key flag";
+                    sqlite_graphrag::output::emit_error_json(78, msg);
+                    sqlite_graphrag::output::emit_error(msg);
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                    return std::process::ExitCode::from(78_u8);
+                }
+            }
+        }
+    }
+
     // v1.0.84 (ADR-0042 / GAP-002): early-exit branch for `--dry-run-backend`.
     // Resolves the LLM backend that WOULD be invoked for embedding,
     // prints a compact JSON envelope, and exits 0 without spawning any
@@ -369,30 +419,30 @@ fn main() -> std::process::ExitCode {
 
     let result = match cli.command {
         Some(cmd) => match cmd {
-            sqlite_graphrag::cli::Commands::Init(args) => commands::init::run(args),
+            sqlite_graphrag::cli::Commands::Init(args) => {
+                commands::init::run(args, cli.llm_backend, cli.embedding_backend)
+            }
             sqlite_graphrag::cli::Commands::Remember(args) => {
-                commands::remember::run(args, cli.llm_backend)
+                commands::remember::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::RememberBatch(args) => {
-                commands::remember_batch::run(args, cli.llm_backend)
+                commands::remember_batch::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::Ingest(args) => {
-                commands::ingest::run(args, cli.llm_backend)
+                commands::ingest::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::Recall(args) => {
-                commands::recall::run(args, cli.llm_backend)
+                commands::recall::run(args, cli.llm_backend, cli.embedding_backend)
             }
-            // v1.0.82 (GAP-003): pass LlmBackendChoice (Copy) so the dispatch
-            // match arm can move `args` while still borrowing `cli`.
             sqlite_graphrag::cli::Commands::Edit(args) => {
-                commands::edit::run(args, cli.llm_backend)
+                commands::edit::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::History(args) => commands::history::run(args),
             sqlite_graphrag::cli::Commands::Restore(args) => {
-                commands::restore::run(args, cli.llm_backend)
+                commands::restore::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::HybridSearch(args) => {
-                commands::hybrid_search::run(args, cli.llm_backend)
+                commands::hybrid_search::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::Read(args) => commands::read::run(args),
             sqlite_graphrag::cli::Commands::List(args) => commands::list::run(args),
@@ -414,7 +464,7 @@ fn main() -> std::process::ExitCode {
             sqlite_graphrag::cli::Commands::Link(args) => commands::link::run(args),
             sqlite_graphrag::cli::Commands::Unlink(args) => commands::unlink::run(args),
             sqlite_graphrag::cli::Commands::DeepResearch(args) => {
-                commands::deep_research::run(args, cli.llm_backend)
+                commands::deep_research::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::Related(args) => commands::related::run(args),
             sqlite_graphrag::cli::Commands::Graph(args) => commands::graph_export::run(args),
@@ -450,13 +500,13 @@ fn main() -> std::process::ExitCode {
             }
             sqlite_graphrag::cli::Commands::Reclassify(args) => commands::reclassify::run(args),
             sqlite_graphrag::cli::Commands::RenameEntity(args) => {
-                commands::rename_entity::run(args, cli.llm_backend)
+                commands::rename_entity::run(args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::MergeEntities(args) => {
                 commands::merge_entities::run(args)
             }
             sqlite_graphrag::cli::Commands::Enrich(args) => {
-                commands::enrich::run(&args, cli.llm_backend)
+                commands::enrich::run(&args, cli.llm_backend, cli.embedding_backend)
             }
             sqlite_graphrag::cli::Commands::ReclassifyRelation(args) => {
                 commands::reclassify_relation::run(args)
@@ -474,6 +524,7 @@ fn main() -> std::process::ExitCode {
             sqlite_graphrag::cli::Commands::PendingEmbeddings(args) => {
                 commands::pending_embeddings::run(args)
             }
+            sqlite_graphrag::cli::Commands::Config(args) => commands::config_cmd::run(args),
         },
         None => Ok(()),
     };

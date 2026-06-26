@@ -5,6 +5,43 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.93] - 2026-06-25
+
+### Added
+- GAP-OR-INGEST: OpenRouter embedding backend — new `--embedding-backend auto|openrouter|llm`, `--embedding-model`, `--openrouter-api-key` global flags for REST API embedding (~200ms vs 15s subprocess LLM); `EmbeddingBackendChoice` propagated to ALL 8 embedding commands (remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research)
+- New `--enrich-after` flag for `ingest` — triggers `enrich --operation memory-bindings` sequentially after embedding phase
+- New modules: `src/embedding_api.rs` (OpenRouter REST client with batch, retry, MRL truncation), `src/config.rs` (XDG config for API key), `src/commands/config_cmd.rs`
+- New functions: `embed_passages_parallel_with_embedding_choice()`, `try_embed_query_with_embedding_choice()` in `embedder.rs`
+- 10 OpenRouter embedding models verified E2E: `qwen/qwen3-embedding-4b`, `qwen/qwen3-embedding-8b`, `nvidia/llama-nemotron-embed-vl-1b-v2:free`, `openai/text-embedding-3-small`, `openai/text-embedding-3-large`, `perplexity/pplx-embed-v1-0.6b`, `mistralai/mistral-embed-2312`, `baai/bge-m3`, `google/gemini-embedding-001`, `google/gemini-embedding-2`
+- GAP-OR-PROPAGATION fully resolved: `EmbeddingBackendChoice` propagated to all 13 embedding paths (8 original + 5 secondary)
+
+### Fixed
+- BUG-OR-1: `input_type="search_document"` hardcoded broke NVIDIA Nemotron; now per-model via `model_default_input_type()`
+- BUG-OR-2: `model_supports_mrl()` missed NVIDIA and BAAI; added `llama-nemotron-embed` and `bge-m3`
+- BUG-OR-3: `qwen/qwen3-embedding-0.6b` listed as approved but has no active endpoints on OpenRouter
+- BUG-OR-4: `nvidia/llama-3.1-nemotron-embed-8b` listed but does not exist on OpenRouter API
+- BUG-OR-5: HTTP 200 with malformed body caused immediate failure without retry; parse errors on 200 now treated as transient
+- GAP-OR-PROPAGATION: 5 remaining embedding paths now honour `--embedding-backend openrouter` — `enrich --operation re-embed` (`reembed_memory_vector` + `call_reembed` + `persist_enriched_body`), `rename-entity` (entity embedding), `init` (smoke test probe), `ingest --mode claude-code` (4 call sites in `ingest_claude.rs`), `remember` chunks (`embed_passages_parallel_local` → `embed_passages_parallel_with_embedding_choice`). `EmbeddingBackendChoice` propagated from `main.rs` to all 13 embedding paths (8 original + 5 fixed)
+- BUG-OR-EXIT-CODE: 3 OpenRouter config validations in `main.rs` emitted exit code 1 instead of 78 (EX_CONFIG) for config errors (`--embedding-backend openrouter` without `--embedding-model`, missing API key, client init failure). Fixed: all 3 now emit exit 78 via `ExitCode::from(78_u8)`
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings, 0 fmt diffs
+- Test suite: 1059 tests, 0 failures
+- E2E: 10/10 OpenRouter models passed all operations (init, remember, recall, hybrid-search, edit, ingest, enrich re-embed, rename-entity)
+- All gaps/bugs closed; 0 open
+
+
+## [1.0.92] - 2026-06-24
+
+### Added
+- GAP-DOC-CRUD-001 through GAP-DOC-CRUD-008: 8 documentation gaps remediated across COOKBOOK, HOW_TO_USE, AGENTS, HEADLESS_INVOCATION (EN+PT-BR); CRUD expansion with new recipes for forget, restore, edit, rename, purge, cleanup-orphans, vacuum
+- Skill audit: EN and PT-BR skill files updated with CRUD subcommand documentation
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings, 0 fmt diffs
+- All 8 doc gaps closed; 0 open
+
+
 ## [1.0.91] - 2026-06-23
 
 ### Fixed

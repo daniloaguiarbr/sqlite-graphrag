@@ -87,6 +87,8 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Execute `cargo test --lib lock::tests retry::circuit_breaker_tests` após modificar `lock.rs` ou `retry.rs` para exercitar os novos helpers de singleton e circuit breaker da v1.0.68
 - Execute `cargo test --test terminal_compile_windows` após modificar `src/terminal.rs` para confirmar que a superfície pública continua chamável; o job dedicado de CI `windows-build-check` roda a checagem completa de tipos cross-platform
 - Asserções de teste envolvendo timestamps DEVEM ser timezone-agnostic — parseie ISO via `chrono::DateTime::parse_from_rfc3339` e compare `timestamp()` contra `DateTime::UNIX_EPOCH` em vez de strings hardcoded `1970-01-01T00:00:00`; esta regra foi adicionada depois de um vazamento de `SQLITE_GRAPHRAG_DISPLAY_TZ` em v1.0.66/v1.0.67 que tornou três testes pré-existentes flaky
+- Testes de embedding OpenRouter vivem em `tests/openrouter_embedding.rs` usando `wiremock` para mocking HTTP; execute com `cargo test --test openrouter_embedding`
+- Testes E2E OpenRouter com API real são opt-in: defina `OPENROUTER_API_KEY` e `--embedding-model` para executar contra endpoint ao vivo; estes NÃO fazem parte da suíte padrão `cargo test`
 
 
 ## Documentação

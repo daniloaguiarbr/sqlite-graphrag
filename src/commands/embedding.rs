@@ -221,6 +221,7 @@ fn run_status(args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Resul
         LlmBackendChoice::Codex => "codex",
         LlmBackendChoice::Opencode => "opencode",
         LlmBackendChoice::None => "none",
+        LlmBackendChoice::OpenRouter => "openrouter",
         LlmBackendChoice::Auto => "auto",
     };
 

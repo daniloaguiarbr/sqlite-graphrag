@@ -31,7 +31,41 @@ pub enum LlmBackendChoice {
     Claude,
     Codex,
     Opencode,
+    OpenRouter,
     None,
+}
+
+/// v1.0.93: embedding backend selector. Separate from `--llm-backend` which
+/// controls enrichment (entity extraction, body enrichment) via subprocess.
+/// `auto` tries OpenRouter if API key is available, falls back to LLM subprocess.
+/// `openrouter` requires API key (exit 78 if absent).
+/// `llm` forces subprocess (codex/claude/opencode) — legacy behaviour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmbeddingBackendChoice {
+    Auto,
+    Openrouter,
+    Llm,
+}
+
+impl EmbeddingBackendChoice {
+    /// v1.0.93: produces a fallback chain that prepends OpenRouter when
+    /// the client is initialised. Falls back to the LLM subprocess chain.
+    pub fn to_chain(self, llm_choice: LlmBackendChoice) -> Vec<crate::embedder::LlmBackendKind> {
+        use crate::embedder::LlmBackendKind;
+        match self {
+            EmbeddingBackendChoice::Openrouter => vec![LlmBackendKind::OpenRouter],
+            EmbeddingBackendChoice::Llm => llm_choice.to_chain(),
+            EmbeddingBackendChoice::Auto => {
+                if crate::embedder::is_openrouter_initialized() {
+                    let mut chain = vec![LlmBackendKind::OpenRouter];
+                    chain.extend(llm_choice.to_chain());
+                    chain
+                } else {
+                    llm_choice.to_chain()
+                }
+            }
+        }
+    }
 }
 
 impl LlmBackendChoice {
@@ -55,6 +89,11 @@ impl LlmBackendChoice {
                 LlmBackendKind::Claude,
                 LlmBackendKind::None,
             ],
+            LlmBackendChoice::OpenRouter => vec![
+                LlmBackendKind::OpenRouter,
+                LlmBackendKind::Codex,
+                LlmBackendKind::None,
+            ],
             LlmBackendChoice::None => vec![LlmBackendKind::None],
             LlmBackendChoice::Auto => parse_fallback_chain(
                 &std::env::var("SQLITE_GRAPHRAG_LLM_FALLBACK")
@@ -72,6 +111,7 @@ fn parse_fallback_chain(s: &str) -> Vec<crate::embedder::LlmBackendKind> {
             "codex" => Some(LlmBackendKind::Codex),
             "claude" | "claude-code" => Some(LlmBackendKind::Claude),
             "opencode" => Some(LlmBackendKind::Opencode),
+            "openrouter" => Some(LlmBackendKind::OpenRouter),
             "none" => Some(LlmBackendKind::None),
             _ => {
                 tracing::warn!(
@@ -302,6 +342,33 @@ pub struct Cli {
         env = "SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT"
     )]
     pub llm_slot_no_wait: bool,
+
+    /// v1.0.93: embedding backend selector. `auto` tries OpenRouter API if key
+    /// available, falls back to LLM subprocess. `openrouter` requires API key.
+    /// `llm` forces subprocess. Honra env var `SQLITE_GRAPHRAG_EMBEDDING_BACKEND`.
+    #[arg(long, global = true, value_enum, default_value_t = EmbeddingBackendChoice::Auto, env = "SQLITE_GRAPHRAG_EMBEDDING_BACKEND")]
+    pub embedding_backend: EmbeddingBackendChoice,
+
+    /// v1.0.93: embedding model for OpenRouter API. OBRIGATORIO quando
+    /// `--embedding-backend openrouter`. Honra env var `SQLITE_GRAPHRAG_EMBEDDING_MODEL`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "MODEL",
+        env = "SQLITE_GRAPHRAG_EMBEDDING_MODEL"
+    )]
+    pub embedding_model: Option<String>,
+
+    /// v1.0.93: OpenRouter API key (prefer env var or config.toml over CLI flag
+    /// to avoid shell history exposure). Honra env var `OPENROUTER_API_KEY`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "KEY",
+        hide = true,
+        env = "OPENROUTER_API_KEY"
+    )]
+    pub openrouter_api_key: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -636,6 +703,8 @@ pub enum Commands {
     Completions(completions::CompletionsArgs),
     #[command(name = "debug-schema", hide = true)]
     DebugSchema(debug_schema::DebugSchemaArgs),
+    /// Manage API keys and diagnose provider configuration (v1.0.93)
+    Config(config_cmd::ConfigArgs),
 }
 // FIX-1 (v1.0.89): manual `Debug` impl so test panic messages that print
 // `{:?}` on a captured `Commands` variant compile without requiring every
@@ -694,6 +763,7 @@ impl std::fmt::Debug for Commands {
             Self::NamespaceDetect(_) => "NamespaceDetect",
             Self::Completions(_) => "Completions",
             Self::DebugSchema(_) => "DebugSchema",
+            Self::Config(_) => "Config",
         };
         f.write_str(name)
     }
