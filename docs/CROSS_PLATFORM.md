@@ -6,7 +6,7 @@
 - The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
 - `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
-# CROSS PLATFORM SUPPORT (v1.0.95 — OpenRouter Chat Enrich)
+# CROSS PLATFORM SUPPORT (v1.0.96 — Enrich Dead-Letter + REST Concurrency)
 
 > One 14.6 MiB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 
@@ -271,4 +271,14 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - The chain inspects `codex exec` stderr for the magic string `refresh_token_reused` (2026-06-14 incident) and routes to the next backend in `--llm-backend`
 - The detection is regex-based and operates on the raw stderr bytes; it does not depend on the `codex` CLI version or platform
 - The fallback writes the original failure to `tracing::warn!` (stderr) and persists the row in `pending_embeddings` if no backend succeeds
+
+
+## v1.0.96 Cross-Platform Behaviour
+### Bounded REST Fan-Out (GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)
+- The OpenRouter embedding fan-out in `embed_passages_parallel_with_embedding_choice` uses a bounded `tokio::task::JoinSet` — pure async, NO new dependency and NO platform-specific code. It runs identically on Linux glibc, aarch64 GNU, macOS Apple Silicon, Windows x86_64, and Windows ARM64
+- In-flight concurrency is clamped to 1..16 (Cloudflare-safe range) and set via `--rest-concurrency <N>` (default 8); the clamp is applied identically on every target
+- Chunk order is preserved by index across all targets; SQLite writes stay serialized via WAL + atomic claim, so the single-writer invariant holds on every filesystem (ext4, APFS, NTFS)
+### Enrich Dead-Letter Convergence (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
+- The `.enrich-queue.sqlite` dead-letter columns `error_class` / `next_retry_at`, the `idx_enrich_queue_eligible` index, and the `dead` terminal status are added by an IDEMPOTENT `ALTER TABLE` / `CREATE INDEX IF NOT EXISTS` that runs in-place on every platform with no operator action
+- `enrich --until-empty` (loop bounded by `--max-runtime` / `--max-attempts`) and `enrich --status --json` (read-only, no LLM, no singleton) behave identically across all five targets; exit codes and the JSON envelope are byte-identical by construction
 - Operator action `codex login` is required on every host where `codex` is the primary backend; the env-var-based refresh-token management is host-wide, not per-invocation

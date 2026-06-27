@@ -78,7 +78,7 @@ impl OpenRouterClient {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
-            .user_agent("sqlite-graphrag/1.0.93")
+            .user_agent("sqlite-graphrag/1.0.96")
             .build()
             .map_err(|e| AppError::Embedding(format!("failed to build HTTP client: {e}")))?;
 

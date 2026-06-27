@@ -99,9 +99,17 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
   - `auto_describe_ignores_short_and_blank_lines` — short lines (<21 chars) and blank lines are skipped
 - `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` — GAP-E2E-001. Verifies `Cargo.toml:6` description matches the actual binary size within ±5%
 - `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
+## v1.0.96 — Enrich Dead-Letter + OpenRouter REST Concurrency Tests (ADR-0055)
+
+- Dead-letter unit tests (`commands::enrich::tests`, 8 tests): rate-limit / timeout / db-busy classify as `Transient`; validation / parse classify as `HardFailure`; `open_queue_db` runs the `error_class` + `next_retry_at` `ALTER TABLE` idempotently; `record_item_failure` marks a HardFailure `dead`, a Transient `pending` with a future `next_retry_at` (via `compute_delay`), and a Transient past `--max-attempts` `dead`; dequeue skips future-retry rows and excludes `dead`
+- Embedding order test (`embedder::tests::reassemble_ordered_restores_input_order`): out-of-order `JoinSet` completion is reassembled by chunk index, restoring input order
+- Live concurrency test `tests/openrouter_live_concurrency.rs` (`#[ignore]`): run with `cargo test --test openrouter_live_concurrency -- --ignored --nocapture`; embeds 64 `docs/*.md` chunks at k=1 vs k=8 and proves order (cosine diagonal 0.9999, off-diagonal max 0.899, argmax 64/64). Requires `OPENROUTER_API_KEY`
+- E2E convergence: ingest 6 ADRs (`--mode none`) then `enrich --until-empty --rest-concurrency 8` drains `unbound_backlog` 6 → 0; the idempotent second pass does zero work (~6 ms)
+- Suite total: 1086 passed, 0 failed, 6 skipped (nextest)
+
 ## Current Test Suite Size
 
-986+ lib tests passing via `cargo nextest -P ci` as of v1.0.93; v1.0.95 adds `chat_api` wiremock unit tests plus the 13-model real-LLM test in `tests/openrouter_chat_real.rs`. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
+986+ lib tests passing via `cargo nextest -P ci` as of v1.0.93; v1.0.95 adds `chat_api` wiremock unit tests plus the 13-model real-LLM test in `tests/openrouter_chat_real.rs`; v1.0.96 brings the nextest total to 1086 passed, 0 failed, 6 skipped, adding 8 dead-letter unit tests, the embedder order test, and the `#[ignore]` live concurrency test. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
 
 ## What Changed in v1.0.90, v1.0.91, v1.0.92, v1.0.93, v1.0.94, v1.0.95
 - v1.0.90: OpenCode backend tests (875 lib tests)
@@ -110,6 +118,7 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 - v1.0.93: OpenRouter embedding tests in `tests/openrouter_embedding.rs`; test count 986+ lib tests
 - v1.0.94: Four-gap remediation — regression tests renamed (`init_default_dim_is_384`, `embed_timeout_default_is_300`) and a contract test asserting `enrich` without `--mode` is rejected (clap exit 2); green gate (cargo test exit 0)
 - v1.0.95: OpenRouter chat enrich tests — `chat_api.rs` wiremock unit tests (request shaping, content double-parse, usage.cost, retry/backoff 429/5xx/401, empty-content incompatibility), a `validate_mode_flags` contract test rejecting cross-mode flags under `--mode openrouter`, a `--openrouter-model` mandatory test (exit 1), and the real-LLM integration test `tests/openrouter_chat_real.rs` (#[ignore]) exercising 13 text models (13/13 compatible — 9 with `reasoning.enabled: false`, 4 via the reasoning-mandatory fallback); gate green (cargo test exit 0)
+- v1.0.96: Enrich dead-letter + OpenRouter REST concurrency — 8 dead-letter unit tests in `commands::enrich::tests` (Transient/HardFailure classification, idempotent ALTER of `error_class`/`next_retry_at`, `record_item_failure` routing, dequeue eligibility) plus `embedder::tests::reassemble_ordered_restores_input_order` and the live `tests/openrouter_live_concurrency.rs` (#[ignore]); nextest total 1086 passed, 0 failed, 6 skipped
 - Mock LLM scripts in `tests/mock-llm/` now cover `claude`, `codex`, `opencode` backends
 - OpenRouter embedding uses live API in E2E tests (not mocked) — requires `OPENROUTER_API_KEY`
 - `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists
@@ -463,6 +472,6 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 - Known flake: `pending-embeddings process reprocesses failed rows` requires a working OAuth session; gate it on `tests/mock-llm/codex` being on `PATH`
 - The new `fs4` crate (NOT `fs2`) is exercised in `src/llm_slots.rs::acquire_llm_slot`; the test `llm_slots_acquire_release_cross_process` runs 2 child processes that race for the same slot
 ### Test Plan Artifact
-- See `docs/TEST_PLAN_v1.0.82.md` for the 10-phase end-to-end validation plan
+- See `docs/TEST_PLAN.md` for the consolidated, per-version 10-phase end-to-end validation plan
 - The plan validates schema migrations V014 and V015, all 5 ADR decisions, the new exit code 19, and the codex OAuth 401 incident mitigation
-- Run via `bash docs/TEST_PLAN_v1.0.82.md`'s Phase 1 to Phase 10 sequentially with a fresh database per run
+- Run Phase 1 to Phase 10 from `docs/TEST_PLAN.md` sequentially with a fresh database per run (the standalone `TEST_PLAN_v1.0.82.md` snapshot was retired in v1.0.96)

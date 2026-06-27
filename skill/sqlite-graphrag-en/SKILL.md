@@ -144,7 +144,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - `--openrouter-model <MODEL>` — MANDATORY judge model for `--mode openrouter` (no default; absence exits 1 before any network call)
 - `--openrouter-base-url <URL>` — optional OpenRouter endpoint override for chat enrich
 - `--openrouter-timeout <SECS>` — chat enrich request timeout, default 300
-- `--llm-parallelism N` — embedding subprocess fan-out, default 4, clamp [1, 32]
+- `--llm-parallelism N` — embedding fan-out width, default 4, clamp [1, 32]; governs BOTH the subprocess fan-out AND the concurrent OpenRouter REST fan-out (bounded JoinSet), so `--llm-parallelism 8` yields effective concurrency 8 on the REST path; small single-batch inputs stay serial
 - `--max-concurrency N` — cap concurrent heavy invocations, clamp [1, 2×nCPUs]
 - `--llm-max-host-concurrency N` — cap host-wide LLM subprocess slots
 - `--llm-slot-wait-secs N` — wait for a free slot before aborting; `--llm-slot-no-wait` to fail fast
@@ -235,6 +235,14 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - PASS `--limit N --resume` for `re-embed`; `--retry-failed` to reprocess only failed items; `--dry-run` to preview
 - PASS `--min-output-chars N` to guard `body-enrich` output length; `--fallback-mode codex` to survive a Claude rate limit
 - NEVER run `enrich` in parallel against the same database; it acquires a per-namespace singleton
+- PASS `--until-empty` to loop scan->drain INTERNALLY until the eligible queue empties or `--max-runtime` expires, REPLACING the external bash drain loop
+- PASS `--max-runtime <SECONDS>` to cap the `--until-empty` wall-clock budget; default 3600
+- PASS `--max-attempts <N>` to bound Transient retries before an item turns `dead`; default 5, range 1..=20
+- PASS `--status` for a read-only JSON report of `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` and `waiting`; it calls NO LLM and acquires NO singleton
+- PASS `--rest-concurrency <N>` to set the REST fan-out for `--mode openrouter`; clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`
+- KNOW the dead-letter queue adds `error_class` and `next_retry_at` columns plus a terminal `dead` status: Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff, HardFailures (validation, parse) go terminal at once, and dequeue skips `dead` so the live set strictly shrinks toward convergence
+- STATUS formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json` (no LLM call, no singleton)
+- UNTIL-EMPTY formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --max-attempts 5 --rest-concurrency 8 --json`
 
 
 ## Write Then Enrich — Two Separate Steps
@@ -265,6 +273,25 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - RESTORE step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - RESTORE step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
 - RESTORE step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
+
+
+## Parallel Embedding and Enrich via OpenRouter — Multiprocessing
+- SCALE REST embedding with `--llm-parallelism N`: it splits texts into chunks and dispatches them across a bounded JoinSet of N concurrent OpenRouter requests, preserving input order by chunk index
+- SCALE REST enrich with `--rest-concurrency N` plus `--until-empty`: N concurrent `/chat/completions` calls drain the queue while the SQLite write stays serial via WAL plus atomic claim, the real bottleneck
+- CLAMP `--llm-parallelism` to 1..32 and `--rest-concurrency` to 1..16; KEEP both in the Cloudflare-safe 4..16 band for paid models; `:free` models cap at 20 req/min, so USE a low N
+- REMEMBER that multiple keys do NOT add capacity; the ceiling is the OpenRouter network plus the namespace singleton, NOT the key count
+- REMEMBER parallel step 1: `echo '{"body":"...","entities":[...],"relationships":[...]}' | sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none remember --name <n> --type decision --description "desc" --graph-stdin --force-merge --json`
+- REMEMBER parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --max-runtime 3600 --max-attempts 5 --json`
+- REMEMBER-BATCH parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 12 --llm-backend none remember-batch --transaction --json`
+- REMEMBER-BATCH parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --rest-concurrency 12 --until-empty --max-runtime 3600 --json`
+- INGEST parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model nvidia/llama-nemotron-embed-vl-1b-v2:free --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 6 --llm-backend none ingest ./docs --mode none --recursive --pattern "*.md" --type document --resume --json`
+- INGEST parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b:nitro --rest-concurrency 12 --until-empty --max-runtime 7200 --max-attempts 8 --json`
+- EDIT parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none edit --name <n> --body-file new.md --json`
+- EDIT parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
+- RESTORE parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none restore --name <n> --version 2 --json`
+- RESTORE parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
+- MONITOR convergence between steps with `enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json`; when `eligible_now` is 0 and `queue_pending` is 0, the queue has converged
+- INSPECT terminal items with `--status`: `queue_dead` lists HardFailures that will NEVER be reprocessed; treat them as data debt, not a transient error
 
 
 ## Read-Only OpenRouter Formulas

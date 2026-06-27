@@ -50,6 +50,7 @@
 | `enrich` (phase event) | `enrich-phase.schema.json` |
 | `enrich` (per-item event) | `enrich-item-event.schema.json` |
 | `enrich` (summary, updated v1.0.84, ADR-0042) | `enrich-summary.schema.json` |
+| `enrich --status` (v1.0.96, GAP-ENRICH-BACKLOG-CONVERGE) | `enrich-status.schema.json` |
 | `ingest` (per-file event) | `ingest-file-event.schema.json` |
 | `ingest` (summary, updated v1.0.84, ADR-0042) | `ingest-summary.schema.json` |
 | `ingest --mode claude-code` (phase event) | `ingest-claude-phase.schema.json` |
@@ -225,6 +226,7 @@
 | `enrich` (evento de fase) | `enrich-phase.schema.json` |
 | `enrich` (evento por item) | `enrich-item-event.schema.json` |
 | `enrich` (sumário, atualizado v1.0.84, ADR-0042) | `enrich-summary.schema.json` |
+| `enrich --status` (v1.0.96, GAP-ENRICH-BACKLOG-CONVERGE) | `enrich-status.schema.json` |
 | `ingest` (evento por arquivo) | `ingest-file-event.schema.json` |
 | `ingest` (sumário, atualizado v1.0.84, ADR-0042) | `ingest-summary.schema.json` |
 | `ingest --mode claude-code` (evento de fase) | `ingest-claude-phase.schema.json` |

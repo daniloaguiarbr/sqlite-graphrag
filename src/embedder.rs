@@ -1113,6 +1113,20 @@ pub fn embed_passages_parallel_local(
     embed_texts_parallel(embedder, texts, parallelism, batch_size)
 }
 
+/// GAP-OPENROUTER-REST-CONCURRENCY: result of one bounded fan-out chunk —
+/// the chunk index paired with the batch embedding result, used to restore
+/// input order after out-of-order `JoinSet` completion.
+type EmbedChunkResult = (usize, Result<Vec<Vec<f32>>, AppError>);
+
+/// GAP-OPENROUTER-REST-CONCURRENCY: reassembles the flat vector list in
+/// input order from chunk parts produced out-of-order by the bounded
+/// `JoinSet` fan-out. Sorts by chunk index, then flattens, so the result
+/// matches the original `texts` order exactly.
+fn reassemble_ordered(mut parts: Vec<(usize, Vec<Vec<f32>>)>) -> Vec<Vec<f32>> {
+    parts.sort_by_key(|(idx, _)| *idx);
+    parts.into_iter().flat_map(|(_, v)| v).collect()
+}
+
 /// v1.0.93 (GAP-OR-INGEST): embeds multiple passages with
 /// `EmbeddingBackendChoice` awareness. When the resolved chain starts
 /// with `OpenRouter` and the client is initialised, uses the HTTP batch
@@ -1135,8 +1149,51 @@ pub fn embed_passages_parallel_with_embedding_choice(
             )
         })?;
         let rt = shared_runtime()?;
-        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        let vecs = rt.block_on(client.embed_batch(&refs, client.default_input_type()))?;
+
+        // GAP-OPENROUTER-REST-CONCURRENCY: reuse the caller's `parallelism`
+        // as a bounded fan-out width, clamped to a Cloudflare-safe range.
+        // Small inputs stay serial — a single batch is one REST call, so the
+        // JoinSet overhead would only add latency.
+        let k = parallelism.clamp(1, 16);
+        if texts.len() <= 32 || k == 1 {
+            let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            let vecs = rt.block_on(client.embed_batch(&refs, client.default_input_type()))?;
+            return Ok(vecs);
+        }
+
+        // `client` is a `&'static OpenRouterClient` (OPENROUTER_CLIENT is a
+        // static OnceLock), so it is Copy + Send + 'static and moves freely
+        // into each spawned task. Chunk contents are cloned into owned
+        // `Vec<String>` because `texts` is only borrowed.
+        let vecs = rt.block_on(async move {
+            let mut set: JoinSet<EmbedChunkResult> = JoinSet::new();
+            let mut parts: Vec<(usize, Vec<Vec<f32>>)> = Vec::new();
+
+            for (idx, chunk) in texts.chunks(32).enumerate() {
+                if set.len() >= k {
+                    if let Some(joined) = set.join_next().await {
+                        let (cidx, res) = joined.map_err(|e| {
+                            AppError::Embedding(format!("embedding task join error: {e}"))
+                        })?;
+                        parts.push((cidx, res?));
+                    }
+                }
+                let owned: Vec<String> = chunk.to_vec();
+                set.spawn(async move {
+                    let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+                    let r = client.embed_batch(&refs, client.default_input_type()).await;
+                    (idx, r)
+                });
+            }
+
+            while let Some(joined) = set.join_next().await {
+                let (cidx, res) = joined
+                    .map_err(|e| AppError::Embedding(format!("embedding task join error: {e}")))?;
+                parts.push((cidx, res?));
+            }
+
+            Ok::<Vec<Vec<f32>>, AppError>(reassemble_ordered(parts))
+        })?;
         Ok(vecs)
     } else {
         embed_passages_parallel_local(models_dir, texts, parallelism, batch_size)
@@ -1598,6 +1655,30 @@ fn validate_dim(v: Vec<f32>) -> Result<Vec<f32>, AppError> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn reassemble_ordered_restores_input_order() {
+        // GAP-OPENROUTER-REST-CONCURRENCY: the bounded JoinSet fan-out
+        // completes chunks out of order, so parts arrive shuffled. The
+        // reassembly MUST restore the exact input order by chunk index.
+        let parts = vec![
+            (2, vec![vec![2.0_f32], vec![2.1]]),
+            (0, vec![vec![0.0], vec![0.1]]),
+            (1, vec![vec![1.0], vec![1.1]]),
+        ];
+        let out = reassemble_ordered(parts);
+        assert_eq!(
+            out,
+            vec![
+                vec![0.0_f32],
+                vec![0.1],
+                vec![1.0],
+                vec![1.1],
+                vec![2.0],
+                vec![2.1],
+            ]
+        );
+    }
 
     #[test]
     fn f32_to_bytes_roundtrip() {

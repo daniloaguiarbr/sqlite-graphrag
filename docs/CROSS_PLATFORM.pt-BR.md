@@ -6,7 +6,7 @@
 - O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` roda apenas em Linux; a mesma asserção se aplica no Windows por construção (propagação de env é agnóstica de plataforma no helper)
 - Flag `--strict-env-clear` e env var `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` funcionam identicamente no Windows; apenas `PATH` (ou `Path` no Windows, que o helper normaliza) é encaminhado em modo estrito
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
-# SUPORTE CROSS PLATFORM (v1.0.95 — Enrich via Chat OpenRouter)
+# SUPORTE CROSS PLATFORM (v1.0.96 — Dead-Letter do Enrich + Concorrência REST)
 
 > Um binário de 14.6 MiB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 
@@ -241,3 +241,13 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - Migração: execute `claude login` (Claude Pro/Max) ou `codex login` (ChatGPT Pro) uma vez em cada host e remova a env var do shell rc
 - Defesa em profundidade: `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` estão INTENCIONALMENTE AUSENTES das whitelists `env_clear` em toda plataforma; mesmo se um refactor futuro mover o guard OAuth-only, a variável nunca alcança o filho
 - Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa e `src/commands/claude_runner.rs:574-666` e `src/commands/codex_spawn.rs:684-758` para os quatro testes de conformidade OAuth-only em cada binário
+
+
+## Comportamento Cross-Platform da v1.0.96
+### Fan-Out REST Bounded (GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)
+- O fan-out de embedding OpenRouter em `embed_passages_parallel_with_embedding_choice` usa um `tokio::task::JoinSet` bounded — async puro, SEM dependência nova e SEM código específico de plataforma. Roda identicamente em Linux glibc, aarch64 GNU, macOS Apple Silicon, Windows x86_64 e Windows ARM64
+- A concorrência in-flight é limitada (clamp) a 1..16 (faixa Cloudflare-safe) e definida via `--rest-concurrency <N>` (default 8); o clamp é aplicado identicamente em todo target
+- A ordem dos chunks é preservada por índice em todos os targets; as escritas SQLite permanecem serializadas via WAL + claim atômico, então o invariante single-writer vale em todo filesystem (ext4, APFS, NTFS)
+### Convergência do Dead-Letter do Enrich (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
+- As colunas dead-letter `error_class` / `next_retry_at` de `.enrich-queue.sqlite`, o índice `idx_enrich_queue_eligible` e o status terminal `dead` são adicionados por `ALTER TABLE` IDEMPOTENTE / `CREATE INDEX IF NOT EXISTS` que roda in-place em toda plataforma sem ação do operador
+- `enrich --until-empty` (loop limitado por `--max-runtime` / `--max-attempts`) e `enrich --status --json` (read-only, sem LLM, sem singleton) comportam-se identicamente nos cinco targets; exit codes e o envelope JSON são byte a byte idênticos por construção

@@ -16,6 +16,26 @@
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 
+## What Changed in v1.0.96 — Enrich Dead-Letter + OpenRouter REST Fan-Out (GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)
+- **GAP-ENRICH-BACKLOG-CONVERGE**: the enrich queue gains a terminal `dead` status plus `error_class` and `next_retry_at` columns (idempotent `ALTER TABLE` + `idx_enrich_queue_eligible`). Transient outcomes (rate-limit/timeout/5xx) reschedule with exponential backoff; a HardFailure goes terminal at once; an item turns `dead` after `--max-attempts` Transient retries. The dequeue honours `next_retry_at` and excludes `dead`, so the live set strictly decreases and the backlog always converges.
+- `--until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime` (default 3600s) expires — it replaces the external bash retry loop. `--max-attempts <N>` (default 5, range 1..=20) is the Transient retry budget before `dead`.
+- `--status` prints a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It NEVER calls the LLM and NEVER acquires the singleton — safe to poll while a drain runs.
+- **GAP-OPENROUTER-REST-CONCURRENCY**: `--rest-concurrency <N>` (default 8, clamp 1..=16) caps a bounded `JoinSet` REST fan-out for `--mode openrouter` (distinct from `--llm-parallelism`). Embedding batches 32 passages with per-chunk order preserved; the SQLite write stays serialized via WAL + atomic claim (single-writer intact).
+- No migration; schema stays v15. nextest: 1086 passed, 0 failed, 6 skipped. See ADR-0055.
+
+```bash
+# Drain the enrich backlog until it converges (no external loop)
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+sqlite-graphrag enrich --operation memory-bindings \
+  --mode openrouter --openrouter-model "deepseek/deepseek-v4-flash:nitro" \
+  --until-empty --rest-concurrency 8 --json
+
+# Inspect the queue without running the LLM (no singleton, no tokens)
+sqlite-graphrag enrich --status \
+  --mode openrouter --openrouter-model "deepseek/deepseek-v4-flash:nitro" --json
+```
+
+
 ## What Changed in v1.0.95 — OpenRouter Enrich JUDGE (GAP-OR-ENRICH, ADR-0054)
 - **GAP-OR-ENRICH**: `enrich --mode openrouter` routes the JUDGE step to OpenRouter's `/chat/completions` REST endpoint. No local CLI subprocess is spawned. The SCAN→JUDGE→PERSIST pipeline is unchanged; only the JUDGE transport changes.
 - The four enrich modes are now: `claude-code`, `codex`, `opencode`, `openrouter`.
@@ -419,6 +439,9 @@ includes the schema and the response is larger).
 - `--codex-model-validate` (default true) checks `--codex-model` against the ChatGPT Pro OAuth accepted-model list BEFORE the subprocess is spawned. Use `--codex-model-fallback <MODEL>` to auto-substitute a known-good model instead of aborting.
 - `--dry-run` previews the candidate set without spawning any LLM. Output is NDJSON with one event per memory and a final summary.
 - `--resume` continues a previously interrupted batch from the queue DB. `--retry-failed` retries only the failed items.
+- `--until-empty` (v1.0.96) runs an internal scan→drain loop until the queue holds no eligible items or `--max-runtime <SECONDS>` (default 3600) expires — it replaces the external `while` retry loop. `--max-attempts <N>` (v1.0.96, default 5, range 1..=20) is the Transient retry budget; an item turns terminal `dead` after that budget or on the first HardFailure (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055).
+- `--status` (v1.0.96) prints a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It never calls the LLM and never acquires the singleton, so it is safe to poll while a drain is running.
+- `--rest-concurrency <N>` (v1.0.96, default 8, clamp 1..=16) caps the bounded `JoinSet` REST fan-out for `--mode openrouter`; it is distinct from `--llm-parallelism`. Embedding batches 32 passages with per-chunk order preserved while the SQLite write stays single-writer via WAL + atomic claim (GAP-OPENROUTER-REST-CONCURRENCY).
 ### `vec` — Vector Index Maintenance (G39)
 - `vec orphan-list --json` lists memory embedding rows whose `memory_id` no longer exists in the `memories` table. Each row reports the `vector_hash` (BLAKE3 of the embedding blob) for traceability.
 - `vec purge-orphan --yes --dry-run --json` previews the deletion count without removing anything.

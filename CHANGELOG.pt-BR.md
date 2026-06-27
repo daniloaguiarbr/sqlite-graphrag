@@ -3,6 +3,25 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.96] - 2026-06-27
+
+### Adicionado
+- GAP-ENRICH-BACKLOG-CONVERGE: `enrich` ganha disciplina de dead-letter para que o backlog SCAN→JUDGE→PERSIST convirja comprovadamente em vez de ser re-escaneado indefinidamente. A fila `.enrich-queue.sqlite` ganha duas colunas via `ALTER TABLE` idempotente (`error_class`, `next_retry_at`) e um novo status terminal `dead`. As falhas por item são classificadas reusando `AttemptOutcome` e `compute_delay` de `src/retry.rs`: Transient (rate-limit / timeout / 5xx) agenda um backoff via `next_retry_at`, HardFailure (validação / parse) é terminal. Um item vira `dead` após `--max-attempts` (padrão 5) retentativas Transient ou na primeira HardFailure; o dequeue passa a respeitar `next_retry_at` e excluir `dead`, garantindo um conjunto vivo estritamente decrescente
+- GAP-ENRICH-BACKLOG-CONVERGE: novos flags do `enrich` `--until-empty` (loop interno scan→drain que roda até a convergência, substituindo o loop de retry em bash externo), `--max-runtime <SECS>` (teto de tempo de parede que encerra o loop de forma limpa), `--max-attempts <N>` (orçamento de retentativas Transient antes de `dead`) e `--status` (relatório read-only de contagens de backlog/fila/dead que não chama o LLM nem adquire o singleton do enrich)
+- GAP-OPENROUTER-REST-CONCURRENCY: o embedding via OpenRouter deixa de ser serial entre lotes. `embed_passages_parallel_with_embedding_choice` (`src/embedder.rs`) agora faz fan-out das chamadas REST por lote com um `tokio::task::JoinSet` bounded (sem dependência nova), preservando a ordem de saída pelo índice de chunk e fazendo clamp das requisições em voo para `1..16` (a faixa segura para o Cloudflare). O `enrich` ganha `--rest-concurrency` (padrão 8 para `--mode openrouter`, clamp `1..16`)
+
+### Corrigido
+- GAP-ENRICH-BACKLOG-CONVERGE: o backlog do enrich não convergia — falhas transientes deixavam itens enfileirados sem estado terminal e sem agenda de retry, então execuções repetidas re-escaneavam os mesmos itens não processáveis indefinidamente. A classificação dead-letter mais o dequeue ciente de `next_retry_at` fazem o conjunto vivo encolher estritamente até zerar
+- GAP-OPENROUTER-REST-CONCURRENCY: o embedding OpenRouter emitia uma chamada REST por lote de cada vez, deixando a rede ociosa entre as idas e voltas em corpora multi-lote; o fan-out bounded com JoinSet sobrepõe as idas e voltas enquanto o caminho single-writer do SQLite permanece serializado via WAL + claim atômico
+
+### Notas de Auditoria
+- Build limpo: 0 erros; `cargo clippy --all-targets -- -D warnings` 0 warnings; `cargo fmt --check` 0 diferenças
+- Suíte de testes: `cargo nextest run` 1086 passou, 0 falhou, 6 pulados; inclui 9 testes novos para a v1.0.96 (8 em `commands::enrich::tests`: classificar rate-limit/timeout/dbbusy→Transient, validação/parse→HardFailure, `open_queue_db` ALTER idempotente, `record_item_failure` hard→dead / transient→pending+next_retry_at / transient-no-cap→dead, dequeue pula retry-futuro e dead; 1 em `embedder::tests`: `reassemble_ordered_restores_input_order`)
+- E2E: `enrich --status --json` retorna contagens read-only da fila (unbound_backlog, queue_pending/done/failed/dead/skipped, eligible_now, waiting) sem adquirir o singleton nem chamar o LLM; verificado contra uma `.enrich-queue.sqlite` legada migrada no lugar via ALTER idempotente (status `dead` populado)
+- Cobertura: `retry.rs` (AttemptOutcome/compute_delay reusados) 93%; os helpers novos em `enrich.rs`/`embedder.rs` são cobertos cada um pelos testes unitários dedicados acima. Os percentuais de arquivo inteiro de `enrich.rs`/`embedder.rs` permanecem na baseline pré-existente (os grandes caminhos legados de LLM/subprocesso exigem rede ao vivo e nunca foram cobertos por testes lib-only — não é regressão)
+- E2E ao vivo (OpenRouter real, 2026-06-27): GAP-OPENROUTER-REST-CONCURRENCY coberto pelo novo `tests/openrouter_live_concurrency.rs` (#[ignore], rode com --ignored) — 64 textos de `docs/*.md` embeddados com k=1 vs k=8; cosseno por índice diag_min 0,9999, off-diagonal máx 0,899, argmax 64/64 (ordem dos chunks preservada apesar da conclusão fora de ordem do `JoinSet`). Convergência do GAP-ENRICH-BACKLOG-CONVERGE coberta E2E ingerindo 6 ADRs de `docs/decisions` (`--mode none`) e então `enrich --until-empty --rest-concurrency 8`: unbound_backlog 6→0, os 6 vinculados, e uma 2ª passada idempotente faz 0 trabalho (items_total 0, 6ms)
+
+
 ## [1.0.95] - 2026-06-27
 
 ### Adicionado

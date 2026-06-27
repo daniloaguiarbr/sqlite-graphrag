@@ -1672,6 +1672,14 @@ cargo install --path . && sqlite-graphrag init
 - NÃO existe fix definitivo upstream; mitigação depende de `codex login` dirigido pelo operador
 
 
+## Novidades na v1.0.96 — Dead-Letter no Enrich + Fan-Out REST OpenRouter (ADR-0055)
+- Dead-letter (GAP-ENRICH-BACKLOG-CONVERGE): a fila do enrich ganha o status terminal `dead` mais as colunas `error_class` e `next_retry_at` (`ALTER TABLE` idempotente + `idx_enrich_queue_eligible`); o conjunto vivo decresce estritamente, então o backlog sempre converge.
+- Resultados Transient (rate-limit/timeout/5xx) agendam `next_retry_at` com backoff exponencial (reusando `AttemptOutcome` + `compute_delay` de `src/retry.rs`); um HardFailure (validação/parse) vira terminal imediatamente; um item vira `dead` após `--max-attempts` retries Transient ou na 1ª HardFailure.
+- `enrich --until-empty` roda um loop interno scan→drain até não restarem itens elegíveis ou `--max-runtime <SEGUNDOS>` (padrão 3600) expirar — substitui inteiramente o loop bash externo de retry. Agentes devem descartar o wrapper `while` e passar `--until-empty`.
+- `enrich --max-attempts <N>` (padrão 5, range 1..=20) é o orçamento de retries Transient antes de `dead`. `enrich --status` é um relatório read-only JSON da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) que NUNCA chama o LLM e NUNCA adquire o singleton — seguro para poll durante a execução.
+- `enrich --rest-concurrency <N>` (padrão 8, clamp 1..=16) limita o fan-out REST via `JoinSet` bounded para `--mode openrouter`; distinto de `--llm-parallelism`. O fan-out de embedding (GAP-OPENROUTER-REST-CONCURRENCY) processa lotes de 32 passagens com a ordem por chunk preservada; a escrita SQLite permanece serializada via WAL + claim atômico (single-writer intacto).
+- Sem migração; schema permanece em v15. nextest: 1086 passed, 0 failed, 6 skipped. Consulte ADR-0055.
+
 ## Novidades na v1.0.95 — Enriquecimento via OpenRouter Chat (ADR-0054)
 - `enrich --mode openrouter` roteia o JUDGE para REST `/chat/completions` sem subprocesso de CLI local; o pipeline SCAN para JUDGE para PERSIST permanece inalterado.
 - Flags: `--openrouter-model` (OBRIGATÓRIA; sem default; ausência sai com exit 1 antes de qualquer chamada de rede); `--openrouter-api-key` (env `OPENROUTER_API_KEY`); `--openrouter-timeout` (padrão 300s); `--openrouter-base-url` (opcional).

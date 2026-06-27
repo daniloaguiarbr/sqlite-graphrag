@@ -60,9 +60,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&path, &json)?;
             println!("Regenerated {} ({} bytes)", path.display(), json.len());
         }
+        "enrich-status" => {
+            let schema = schema_for!(sqlite_graphrag::commands::enrich::EnrichStatus);
+            let mut value = serde_json::to_value(&schema)?;
+
+            // Bump Draft para 2020-12.
+            if let Value::Object(map) = &mut value {
+                map.insert("$schema".into(), Value::String(DRAFT_2020_12.to_string()));
+            }
+
+            // Must-Ignore: percorre recursivamente todos os objects com `properties`.
+            apply_must_ignore(&mut value);
+
+            let json = serde_json::to_string_pretty(&value)?;
+            let path = PathBuf::from("docs/schemas/enrich-status.schema.json");
+            std::fs::write(&path, &json)?;
+            println!("Regenerated {} ({} bytes)", path.display(), json.len());
+        }
         other => {
             eprintln!("Unknown schema target: {other}");
-            eprintln!("Usage: dump_schema <health>");
+            eprintln!("Usage: dump_schema <health|enrich-status>");
             std::process::exit(2);
         }
     }

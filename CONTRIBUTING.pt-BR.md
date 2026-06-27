@@ -124,6 +124,10 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 
 ## Releases Recentes
 
+### v1.0.96 - 2026-06-27 — Dead-letter no Enrich e Fan-out REST Bounded (ADR-0055)
+- GAP-ENRICH-BACKLOG-CONVERGE: a fila `.enrich-queue.sqlite` ganha colunas `error_class` e `next_retry_at` (ALTER TABLE idempotente) mais o status terminal `dead`; falhas Transient reagendam com backoff exponencial (reusando `AttemptOutcome`/`compute_delay` de `src/retry.rs`), HardFailures vão a terminal imediatamente, e um item vira `dead` após `--max-attempts` (padrão 5) retries. Novo `enrich --until-empty` roda um loop interno scan→drain (limitado por `--max-runtime`, padrão 3600s) que substitui o loop de retry externo em bash; `enrich --status` é um relatório read-only JSON da fila que jamais chama o LLM nem adquire o singleton.
+- GAP-OPENROUTER-REST-CONCURRENCY: `embed_passages_parallel_with_embedding_choice` faz fan-out das chamadas REST de embedding OpenRouter via `tokio::task::JoinSet` bounded (`--rest-concurrency`, clamp 1..=16, padrão 8, sem nova dependência); lotes de 32 com ordem por índice de chunk preservada, escritas SQLite ainda serializadas via WAL + claim atômico (single-writer intacto).
+- Validação: nextest 1086 passed, 0 failed, 6 skipped; prova de ordem viva (cosseno diagonal 0.9999, off-diagonal max 0.899, argmax 64/64); ADR-0055 (EN+PT).
 ### v1.0.95 - 2026-06-27 — Enrich via Chat OpenRouter (ADR-0054)
 - GAP-OR-ENRICH: novo modo opt-in `enrich --mode openrouter` roteia a etapa JUDGE ao endpoint REST `/chat/completions` do OpenRouter, removendo a exigência de uma CLI `claude`/`codex`/`opencode` instalada localmente; os quatro modos de enrich agora são `claude-code`, `codex`, `opencode`, `openrouter`. Novo módulo `src/chat_api.rs` (`OpenRouterChatClient`) espelha `src/embedding_api.rs`; `--openrouter-model` é obrigatória com `--mode openrouter`.
 - Validação: SCAN→JUDGE→PERSIST inalterado, 13/13 modelos reais passam, sem migração (schema v15); `OPENROUTER_API_KEY` tratada via `secrecy`/zeroize, jamais logada ou passada a subprocesso.

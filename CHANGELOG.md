@@ -5,6 +5,25 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.96] - 2026-06-27
+
+### Added
+- GAP-ENRICH-BACKLOG-CONVERGE: `enrich` gains a dead-letter discipline so the SCAN→JUDGE→PERSIST backlog provably converges instead of being re-scanned forever. The `.enrich-queue.sqlite` queue gains two columns via idempotent `ALTER TABLE` (`error_class`, `next_retry_at`) and a new terminal status `dead`. Per-item failures are classified by reusing `AttemptOutcome` and `compute_delay` from `src/retry.rs`: Transient (rate-limit / timeout / 5xx) schedules a backoff via `next_retry_at`, HardFailure (validation / parse) is terminal. An item becomes `dead` after `--max-attempts` (default 5) Transient retries or on the first HardFailure; dequeue now respects `next_retry_at` and excludes `dead`, guaranteeing a strictly shrinking live set
+- GAP-ENRICH-BACKLOG-CONVERGE: new `enrich` flags `--until-empty` (internal scan→drain loop that runs to convergence, replacing the external bash retry loop), `--max-runtime <SECS>` (wall-clock ceiling that stops the loop cleanly), `--max-attempts <N>` (Transient retry budget before `dead`), and `--status` (read-only report of backlog/queue/dead counts that neither calls the LLM nor acquires the enrich singleton)
+- GAP-OPENROUTER-REST-CONCURRENCY: embedding via OpenRouter is no longer serial between batches. `embed_passages_parallel_with_embedding_choice` (`src/embedder.rs`) now fans out the per-batch REST calls with a bounded `tokio::task::JoinSet` (no new dependency), preserving output order by chunk index and clamping in-flight requests to `1..16` (the Cloudflare-safe range). `enrich` gains `--rest-concurrency` (default 8 for `--mode openrouter`, clamp `1..16`)
+
+### Fixed
+- GAP-ENRICH-BACKLOG-CONVERGE: the enrich backlog did not converge — transient failures left items queued with no terminal state and no retry schedule, so repeated runs re-scanned the same unprocessable items indefinitely. Dead-letter classification plus `next_retry_at`-aware dequeue makes the live set strictly shrink to empty
+- GAP-OPENROUTER-REST-CONCURRENCY: OpenRouter embedding issued one batch REST call at a time, leaving the network idle between round-trips on multi-batch corpora; bounded JoinSet fan-out overlaps the round-trips while the SQLite single-writer path stays serialized via WAL + atomic claim
+
+### Audit Notes
+- Build clean: 0 errors; `cargo clippy --all-targets -- -D warnings` 0 warnings; `cargo fmt --check` 0 diffs
+- Test suite: `cargo nextest run` 1086 passed, 0 failed, 6 skipped; includes 9 new tests for v1.0.96 (8 in `commands::enrich::tests`: classify rate-limit/timeout/dbbusy→Transient, validation/parse→HardFailure, `open_queue_db` ALTER idempotent, `record_item_failure` hard→dead / transient→pending+next_retry_at / transient-at-cap→dead, dequeue skips future-retry and dead; 1 in `embedder::tests`: `reassemble_ordered_restores_input_order`)
+- E2E: `enrich --status --json` returns read-only queue counts (unbound_backlog, queue_pending/done/failed/dead/skipped, eligible_now, waiting) without acquiring the singleton or calling the LLM; verified against a legacy `.enrich-queue.sqlite` migrated in-place via idempotent ALTER (status `dead` populated)
+- Coverage: `retry.rs` (reused AttemptOutcome/compute_delay) 93%; the new helpers in `enrich.rs`/`embedder.rs` are each covered by dedicated unit tests above. Whole-file percentages for `enrich.rs`/`embedder.rs` stay at the pre-existing baseline (large legacy LLM/subprocess paths require live network and were never covered by lib-only tests — not a regression)
+- Live E2E (real OpenRouter, 2026-06-27): GAP-OPENROUTER-REST-CONCURRENCY covered by new `tests/openrouter_live_concurrency.rs` (#[ignore], run with --ignored) — 64 `docs/*.md` texts embedded with k=1 vs k=8; per-index cosine diag_min 0.9999, off-diagonal max 0.899, argmax 64/64 (chunk order preserved across out-of-order `JoinSet` completion). GAP-ENRICH-BACKLOG-CONVERGE convergence covered E2E by ingesting 6 `docs/decisions` ADRs (`--mode none`) then `enrich --until-empty --rest-concurrency 8`: unbound_backlog 6→0, all 6 bound, idempotent second pass does 0 work (items_total 0, 6ms)
+
+
 ## [1.0.95] - 2026-06-27
 
 ### Added

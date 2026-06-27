@@ -93,7 +93,25 @@
 
 ## Planos Mais Recentes — v1.0.84 e v1.0.85
 
-Veja [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) para o plano de teste do Split do Backend Claude (ADR-0042). Veja [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) para o plano de teste da Remediação de Cinco Gaps (ADR-0043). Ambos os novos planos são snapshots do design de teste liberado.
+O plano de teste do Split do Backend Claude (ADR-0042) e o plano de teste da Remediação de Cinco Gaps (ADR-0043) estão consolidados neste documento; seus arquivos de snapshot independentes foram aposentados na v1.0.96.
+
+## Plano de Teste v1.0.96 — Dead-Letter do Enrich + Concorrência REST OpenRouter (ADR-0055, GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY)
+
+### Adições na Camada 1 (unit)
+- Classificação de outcome (`commands::enrich::tests`, 8 testes): rate-limit / timeout / db-busy mapeiam para `AttemptOutcome::Transient`; validação / parse mapeiam para `HardFailure`
+- `open_queue_db`: `ALTER TABLE` idempotente adicionando as colunas `error_class` e `next_retry_at` (re-execução é no-op)
+- `record_item_failure`: um HardFailure marca o item como `dead` imediatamente; um Transient marca como `pending` com `next_retry_at` futuro via `compute_delay`; um Transient além de `--max-attempts` marca como `dead`
+- Elegibilidade de dequeue: linhas com `next_retry_at` futuro são puladas e linhas `dead` são excluídas, logo o conjunto vivo é estritamente decrescente
+- Ordem do fan-out de embedding (`embedder::tests::reassemble_ordered_restores_input_order`): conclusão fora de ordem do `JoinSet` é remontada pelo índice de chunk, restaurando a ordem de entrada
+
+### Adições na Camada 2 (integração)
+- Convergência do dead-letter: ingest de 6 ADRs com `--mode none`, depois `enrich --until-empty --rest-concurrency 8` drena `unbound_backlog` 6 → 0
+- Segunda passada idempotente: re-executar `enrich --until-empty` faz zero trabalho (~6 ms) — nenhum item elegível resta
+
+### Delta na Camada 8 (smoke com LLM real)
+- `tests/openrouter_live_concurrency.rs` (`#[ignore]`, rodar com `cargo test --test openrouter_live_concurrency -- --ignored --nocapture`): embeda 64 chunks de `docs/*.md` em k=1 vs k=8
+- Prova de ordem: cosseno diagonal 0.9999, off-diagonal max 0.899, argmax 64/64 — ordem de chunk preservada apesar da conclusão fora de ordem do JoinSet
+- Total da suite: 1086 passed, 0 failed, 6 skipped via nextest
 
 ## Plano de Teste v1.0.95 — Enrich via Chat OpenRouter (ADR-0054, GAP-OR-ENRICH)
 

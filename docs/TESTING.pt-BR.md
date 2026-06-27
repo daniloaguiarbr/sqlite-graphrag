@@ -101,9 +101,17 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 - `embed_via_backend_returns_resolved_kind` — `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`
 - `setup_mock_path_emits_json` — `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado para emitir JSON (não JSONL)
 
+## v1.0.96 — Testes de Dead-Letter do Enrich + Concorrência REST OpenRouter (ADR-0055)
+
+- Testes unitários de dead-letter (`commands::enrich::tests`, 8 testes): rate-limit / timeout / db-busy classificam como `Transient`; validação / parse classificam como `HardFailure`; `open_queue_db` executa o `ALTER TABLE` de `error_class` + `next_retry_at` de forma idempotente; `record_item_failure` marca um HardFailure como `dead`, um Transient como `pending` com `next_retry_at` futuro (via `compute_delay`) e um Transient além de `--max-attempts` como `dead`; o dequeue pula linhas com retry futuro e exclui `dead`
+- Teste de ordem do embedding (`embedder::tests::reassemble_ordered_restores_input_order`): conclusão fora de ordem do `JoinSet` é remontada pelo índice de chunk, restaurando a ordem de entrada
+- Teste vivo de concorrência `tests/openrouter_live_concurrency.rs` (`#[ignore]`): rodar com `cargo test --test openrouter_live_concurrency -- --ignored --nocapture`; embeda 64 chunks de `docs/*.md` em k=1 vs k=8 e prova a ordem (cosseno diagonal 0.9999, off-diagonal max 0.899, argmax 64/64). Requer `OPENROUTER_API_KEY`
+- Convergência E2E: ingest de 6 ADRs (`--mode none`) depois `enrich --until-empty --rest-concurrency 8` drena `unbound_backlog` 6 → 0; a segunda passada idempotente faz zero trabalho (~6 ms)
+- Total da suite: 1086 passed, 0 failed, 6 skipped (nextest)
+
 ## Tamanho Atual da Suite de Testes
 
-986+ testes de lib passando via `cargo nextest -P ci` a partir de v1.0.93; a v1.0.95 adiciona testes unitários wiremock de `chat_api` mais o teste real-LLM de 13 modelos em `tests/openrouter_chat_real.rs`. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
+986+ testes de lib passando via `cargo nextest -P ci` a partir de v1.0.93; a v1.0.95 adiciona testes unitários wiremock de `chat_api` mais o teste real-LLM de 13 modelos em `tests/openrouter_chat_real.rs`; a v1.0.96 leva o total nextest a 1086 passed, 0 failed, 6 skipped, adicionando 8 testes unitários de dead-letter, o teste de ordem do embedder e o teste vivo de concorrência `#[ignore]`. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
 
 ## O Que Mudou nas versões v1.0.90, v1.0.91, v1.0.92, v1.0.93, v1.0.94, v1.0.95
 - v1.0.90: testes do backend OpenCode (875 testes de lib)
@@ -112,6 +120,7 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 - v1.0.93: testes de embedding OpenRouter em `tests/openrouter_embedding.rs`; contagem de testes 986+ testes de lib
 - v1.0.94: Remediação de quatro gaps — testes de regressão renomeados (`init_default_dim_is_384`, `embed_timeout_default_is_300`) e um teste de contrato afirmando que `enrich` sem `--mode` é rejeitado (clap exit 2); gate verde (cargo test exit 0)
 - v1.0.95: testes de enrich via chat OpenRouter — testes unitários wiremock em `chat_api.rs` (montagem de request, parse duplo do content, usage.cost, retry/backoff 429/5xx/401, incompatibilidade por content vazio), um teste de contrato `validate_mode_flags` que rejeita flags cruzadas sob `--mode openrouter`, um teste de `--openrouter-model` obrigatório (exit 1) e o teste de integração real-LLM `tests/openrouter_chat_real.rs` (#[ignore]) exercitando 13 modelos de texto (13/13 compatíveis — 9 com `reasoning.enabled: false`, 4 via o fallback reasoning-mandatory); gate verde (cargo test exit 0)
+- v1.0.96: dead-letter do enrich + concorrência REST OpenRouter — 8 testes unitários de dead-letter em `commands::enrich::tests` (classificação Transient/HardFailure, ALTER idempotente de `error_class`/`next_retry_at`, roteamento de `record_item_failure`, elegibilidade de dequeue) mais `embedder::tests::reassemble_ordered_restores_input_order` e o teste vivo `tests/openrouter_live_concurrency.rs` (#[ignore]); total nextest 1086 passed, 0 failed, 6 skipped
 - Scripts Mock LLM em `tests/mock-llm/` agora cobrem backends `claude`, `codex`, `opencode`
 - Embedding OpenRouter usa API ao vivo em testes E2E (não mockado) — requer `OPENROUTER_API_KEY`
 - `ensure_v013_tables_noop_when_tables_exist` — verifica no-op quando `memory_embeddings` já existe

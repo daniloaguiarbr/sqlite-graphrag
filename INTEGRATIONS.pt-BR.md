@@ -44,6 +44,14 @@
 - `--openrouter-base-url URL` — override opcional da base URL do OpenRouter
 - Novo módulo `src/chat_api.rs` (`OpenRouterChatClient`) espelha `src/embedding_api.rs`; SCAN→JUDGE→PERSIST inalterado, apenas o transporte do JUDGE muda; 13/13 modelos reais verificados; sem migração, schema v15
 
+## Novos Comandos e Flags (desde v1.0.96)
+- `enrich --until-empty` — loop interno scan→drain que roda até a fila não ter mais itens elegíveis ou `--max-runtime` expirar; substitui o loop de retry externo em bash (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
+- `--max-runtime <SEGUNDOS>` — teto wall-clock para `--until-empty` (padrão 3600)
+- `--max-attempts <N>` — orçamento de retries Transient antes de um item virar terminal `dead` (padrão 5, faixa 1..=20)
+- `--status` — relatório read-only JSON das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM e NÃO adquire o singleton — a saída determinística é ideal para integração com hooks/timers
+- `--rest-concurrency <N>` — fan-out REST bounded para os lotes de embedding em `--mode openrouter`; clamp 1..=16 (padrão 8), distinta de `--llm-parallelism`
+- Convergência por dead-letter: a fila `.enrich-queue.sqlite` ganha colunas `error_class` e `next_retry_at` (ALTER TABLE idempotente) mais o status terminal `dead`; falhas Transient (rate-limit/timeout/5xx) reagendam com backoff exponencial, HardFailures (validação/parse) vão a terminal imediatamente, e o dequeue exclui `dead` para o conjunto vivo decrescer estritamente
+
 ## Novos Comandos e Flags (desde v1.0.68)
 ### Ciclo de Vida de Processos (G28)
 - `enrich`, `ingest --mode claude-code` e `ingest --mode codex` agora adquirem um singleton por namespace antes de fazer trabalho real.  Uma segunda invocação concorrente no mesmo banco falha rápido com `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) em vez de empilhar árvores de subprocessos.

@@ -1693,6 +1693,14 @@ cargo install --path . && sqlite-graphrag init
 - There is NO definitive upstream fix; mitigation depends on operator-driven `codex login`
 
 
+## New in v1.0.96 — Enrich Dead-Letter + OpenRouter REST Fan-Out (ADR-0055)
+- Dead-letter (GAP-ENRICH-BACKLOG-CONVERGE): the enrich queue gains a terminal `dead` status plus `error_class` and `next_retry_at` columns (idempotent `ALTER TABLE` + `idx_enrich_queue_eligible`); the live set strictly decreases so the backlog always converges.
+- Transient outcomes (rate-limit/timeout/5xx) schedule `next_retry_at` with exponential backoff (reusing `AttemptOutcome` + `compute_delay` from `src/retry.rs`); a HardFailure (validation/parse) goes terminal immediately; an item turns `dead` after `--max-attempts` Transient retries or on the first HardFailure.
+- `enrich --until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime <SECONDS>` (default 3600) expires — it replaces the external bash retry loop entirely. Agents should drop the `while` wrapper and pass `--until-empty`.
+- `enrich --max-attempts <N>` (default 5, range 1..=20) is the Transient retry budget before `dead`. `enrich --status` is a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) that NEVER calls the LLM and NEVER acquires the singleton — safe to poll mid-run.
+- `enrich --rest-concurrency <N>` (default 8, clamp 1..=16) caps the bounded `JoinSet` REST fan-out for `--mode openrouter`; distinct from `--llm-parallelism`. Embedding fan-out (GAP-OPENROUTER-REST-CONCURRENCY) batches 32 passages with per-chunk order preserved; the SQLite write stays serialized via WAL + atomic claim (single-writer intact).
+- No migration; schema stays at v15. nextest: 1086 passed, 0 failed, 6 skipped. See ADR-0055.
+
 ## New in v1.0.95 — OpenRouter Chat Enrich (ADR-0054)
 - `enrich --mode openrouter` routes the JUDGE to REST `/chat/completions` with no local CLI subprocess; the SCAN to JUDGE to PERSIST pipeline is otherwise unchanged.
 - Flags: `--openrouter-model` (REQUIRED; no default; absence exits 1 before any network call); `--openrouter-api-key` (env `OPENROUTER_API_KEY`); `--openrouter-timeout` (default 300s); `--openrouter-base-url` (optional).

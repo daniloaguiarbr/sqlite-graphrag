@@ -93,7 +93,25 @@
 
 ## Latest Plans — v1.0.84 and v1.0.85
 
-See [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) for the Claude Backend Split test plan (ADR-0042). See [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) for the Five-Gap Remediation test plan (ADR-0043). Both new plans are snapshots of the released test design.
+The Claude Backend Split test plan (ADR-0042) and the Five-Gap Remediation test plan (ADR-0043) are consolidated into this document; their standalone snapshot files were retired in v1.0.96.
+
+## v1.0.96 Test Plan — Enrich Dead-Letter + OpenRouter REST Concurrency (ADR-0055, GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY)
+
+### Layer 1 (unit) additions
+- Outcome classification (`commands::enrich::tests`, 8 tests): rate-limit / timeout / db-busy map to `AttemptOutcome::Transient`; validation / parse map to `HardFailure`
+- `open_queue_db`: idempotent `ALTER TABLE` adding the `error_class` and `next_retry_at` columns (a re-run is a no-op)
+- `record_item_failure`: a HardFailure marks the item `dead` immediately; a Transient marks it `pending` with a future `next_retry_at` via `compute_delay`; a Transient past `--max-attempts` marks it `dead`
+- Dequeue eligibility: rows with a future `next_retry_at` are skipped and `dead` rows are excluded, so the live set is strictly decreasing
+- Embedding fan-out order (`embedder::tests::reassemble_ordered_restores_input_order`): out-of-order `JoinSet` completion is reassembled by chunk index, restoring input order
+
+### Layer 2 (integration) additions
+- Dead-letter convergence: ingest 6 ADRs with `--mode none`, then `enrich --until-empty --rest-concurrency 8` drains `unbound_backlog` 6 → 0
+- Idempotent second pass: re-running `enrich --until-empty` does zero work (~6 ms) — no eligible items remain
+
+### Layer 8 (real-LLM smoke) deltas
+- `tests/openrouter_live_concurrency.rs` (`#[ignore]`, run with `cargo test --test openrouter_live_concurrency -- --ignored --nocapture`): embeds 64 chunks from `docs/*.md` at k=1 vs k=8
+- Order proof: cosine diagonal 0.9999, off-diagonal max 0.899, argmax 64/64 — chunk order preserved despite out-of-order JoinSet completion
+- Suite total: 1086 passed, 0 failed, 6 skipped via nextest
 
 ## v1.0.95 Test Plan — OpenRouter Chat Enrich (ADR-0054, GAP-OR-ENRICH)
 

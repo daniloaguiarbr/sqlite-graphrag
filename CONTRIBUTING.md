@@ -132,6 +132,10 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 
 ## Recent Releases
 
+### v1.0.96 - 2026-06-27 — Enrich Dead-letter and Bounded REST Fan-out (ADR-0055)
+- GAP-ENRICH-BACKLOG-CONVERGE: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status; Transient failures reschedule with exponential backoff (reusing `AttemptOutcome`/`compute_delay` from `src/retry.rs`), HardFailures go terminal immediately, and an item becomes `dead` after `--max-attempts` (default 5) retries. New `enrich --until-empty` runs an internal scan→drain loop (capped by `--max-runtime`, default 3600s) that replaces the external bash retry loop; `enrich --status` is a read-only JSON queue report that never calls the LLM nor acquires the singleton.
+- GAP-OPENROUTER-REST-CONCURRENCY: `embed_passages_parallel_with_embedding_choice` fans out the OpenRouter embedding REST calls via a bounded `tokio::task::JoinSet` (`--rest-concurrency`, clamp 1..=16, default 8, no new dependency); batches of 32 with chunk-index ordering preserved, SQLite writes still serialized via WAL + atomic claim (single-writer intact).
+- Validation: nextest 1086 passed, 0 failed, 6 skipped; live ordering proof (cosine diagonal 0.9999, off-diagonal max 0.899, argmax 64/64); ADR-0055 (EN+PT).
 ### v1.0.95 - 2026-06-27 — OpenRouter Chat Enrich (ADR-0054)
 - GAP-OR-ENRICH: new opt-in `enrich --mode openrouter` routes the JUDGE step to the OpenRouter `/chat/completions` REST endpoint, removing the requirement for a locally installed `claude`/`codex`/`opencode` CLI; the four enrich modes are now `claude-code`, `codex`, `opencode`, `openrouter`. New module `src/chat_api.rs` (`OpenRouterChatClient`) mirrors `src/embedding_api.rs`; `--openrouter-model` is required with `--mode openrouter`.
 - Validation: SCAN→JUDGE→PERSIST unchanged, 13/13 real models pass, no migration (schema v15); `OPENROUTER_API_KEY` handled via `secrecy`/zeroize, never logged or passed to a subprocess.

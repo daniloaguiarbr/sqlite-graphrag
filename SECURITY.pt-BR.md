@@ -137,3 +137,11 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Ele reutiliza a MESMA `OPENROUTER_API_KEY` já documentada para o backend de embedding, com o MESMO tratamento: envolvida em `secrecy::SecretBox`, zeroizada no drop, JAMAIS logada, JAMAIS passada a qualquer subprocesso.
 - A chave flui apenas para o cliente HTTPS `reqwest` que aponta para `openrouter.ai`; não está na whitelist de env-clear e permanece apenas no processo pai.
 - Nenhuma nova superfície de credencial é introduzida além da já documentada para o backend de embedding OpenRouter.
+
+
+## v1.0.96 Fan-out REST Bounded e Convergência por Dead-letter (ADR-0055)
+- A v1.0.96 adiciona concorrência bounded ao path REST de embedding OpenRouter (`embed_passages_parallel_with_embedding_choice`); as requisições in-flight são clampadas em 1..=16 (padrão 8, faixa Cloudflare-safe) via `tokio::task::JoinSet`, SEM nova dependência.
+- O fan-out apenas paraleliza leituras HTTPS de saída para `openrouter.ai`; NÃO amplia a superfície de credencial ou de rede, e o MESMO tratamento de `OPENROUTER_API_KEY` (secrecy/zeroize, jamais logada, jamais passada a subprocesso) permanece inalterado.
+- Escritas SQLite permanecem serializadas via WAL mais claim atômico — o banco continua single-writer; a fila dead-letter (`error_class`, `next_retry_at`, terminal `dead`) apenas agenda retries e jamais contorna o lock de escrita.
+- `enrich --status` é read-only: inspeciona a fila sem chamada de LLM e sem adquirir o singleton, portanto é seguro integrar a hooks e timers.
+- Nenhum novo exit code e nenhuma nova superfície de credencial são introduzidos.

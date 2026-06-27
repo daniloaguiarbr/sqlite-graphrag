@@ -77,25 +77,35 @@ This section updates the framework to cover the documentation generated for the 
 - New ADR: ADR-0054 (openrouter-chat-enrich) — EN + PT-BR.
 - Updated in this release: README/CHANGELOG/AGENTS/INTEGRATIONS/SECURITY/CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, HEADLESS_INVOCATION, CROSS_PLATFORM, TESTING, TEST_PLAN, schemas/README (EN+PT); SKILL (EN+PT); docs/decisions/INDEX.md + ADR-0054.
 
-### Documentation Drift Status (as of v1.0.95)
+### v1.0.96 — Enrich Dead-Letter + REST Concurrency (ADR-0055)
+- New `enrich --until-empty` drives an internal scan->drain loop until the eligible queue empties or `--max-runtime` (default 3600s) expires, replacing the external bash drain loop; resolves GAP-ENRICH-BACKLOG-CONVERGE.
+- Dead-letter discipline: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status and the `idx_enrich_queue_eligible` index; Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff (reusing `AttemptOutcome`/`compute_delay` from `src/retry.rs`), HardFailures (validation, parse) go terminal at once, and an item turns `dead` after `--max-attempts` (default 5, range 1..=20) Transient retries or on the first HardFailure — the live set strictly shrinks toward convergence.
+- New flags: `--until-empty`, `--max-runtime <SECONDS>`, `--max-attempts <N>`, `--status` (read-only JSON counts: `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting` — calls NO LLM, acquires NO singleton), `--rest-concurrency <N>` (clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`).
+- REST fan-out (GAP-OPENROUTER-REST-CONCURRENCY): `embed_passages_parallel_with_embedding_choice` (`src/embedder.rs`) fans out OpenRouter REST calls per 32-chunk batch via a bounded `tokio::task::JoinSet` (NO new dependency); chunk order preserved by index, in-flight clamp 1..16 (Cloudflare-safe); SQLite writes stay serialized via WAL + atomic claim (single-writer intact).
+- New ADR: ADR-0055 (enrich-deadletter-rest-concurrency) — EN + PT-BR; docs/decisions/INDEX.md updated.
+- New schema: `docs/schemas/enrich-status.schema.json` (DERIVED per ADR-0048, regenerated via `dump_schema` — NEVER hand-edited).
+- Updated in this release: README/CHANGELOG/AGENTS/INTEGRATIONS/SECURITY/CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, HEADLESS_INVOCATION, CROSS_PLATFORM, TESTING, TEST_PLAN (EN+PT); SKILL (EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt.
+- Tests: 8 dead-letter unit tests in `commands::enrich::tests`, 1 ordering test in `embedder::tests` (`reassemble_ordered_restores_input_order`), live `tests/openrouter_live_concurrency.rs` (`#[ignore]`); nextest 1086 passed, 0 failed, 6 skipped.
+
+### Documentation Drift Status (as of v1.0.96)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.95 (100%) | v1.0.95 (100%) | Current |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `llms.txt` / `llms.pt-BR.txt` | v1.0.85.2 (outdated) | v1.0.85 (outdated) | BOTH outdated |
-| `llms-full.txt` | v1.0.79 (outdated) | N/A | EN outdated |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
-| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `README.md` / `README.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.96 (100%) | v1.0.96 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `llms-full.txt` | v1.0.96 (enrich dead-letter + REST concurrency) | N/A | Current |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
 | `docs/decisions/` (48 ADRs) | 100% (48/48) | 75% (36/48) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
 | `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |
 

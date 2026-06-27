@@ -89,6 +89,23 @@ sqlite-graphrag enrich --operation memory-bindings \
   --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json
 ```
 
+### v1.0.96 Update — Backlog Convergence and Read-Only Queue Status (ADR-0055)
+
+- `enrich --until-empty` replaces the external bash retry loop in headless invocation: a single process runs the internal scan→drain loop until the queue has no eligible items left or `--max-runtime <SECONDS>` (default 3600) expires. The dead-letter queue guarantees the live set strictly decreases — transient failures reschedule `next_retry_at` with backoff, an item turns `dead` after `--max-attempts` (default 5) transient retries or on the first hard failure, and `dead` rows are excluded from dequeue.
+- `enrich --status --json` is the read-only probe for hooks and timers: it reports the queue counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) and does NOT call the LLM and does NOT acquire the per-namespace singleton. A cron or systemd timer can poll it without contending with a running `enrich`.
+- `--rest-concurrency <N>` (clamp 1..=16, default 8) sets the in-flight REST fan-out for `--mode openrouter` embedding; raise it for OpenRouter throughput. It is distinct from `--llm-parallelism` (which caps local LLM subprocesses) and from `--max-attempts` (the retry budget).
+
+```bash
+# Headless backlog drain — no external while-loop, no subprocess for OpenRouter
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+sqlite-graphrag enrich --operation memory-bindings \
+  --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" \
+  --until-empty --max-runtime 1800 --max-attempts 5 --rest-concurrency 8 --json
+
+# Hook/timer probe — inspect the queue without spawning the LLM or taking the singleton
+sqlite-graphrag enrich --status --json | jaq '{eligible_now, waiting, dead: .queue_dead}'
+```
+
 ### Why NOT To Use `--bare`
 
 - `--bare` also cuts MCP, hooks, skills, plugins and auto memory

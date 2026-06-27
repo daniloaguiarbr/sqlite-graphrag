@@ -470,6 +470,32 @@ pub struct EnrichArgs {
     #[arg(long)]
     pub retry_failed: bool,
 
+    /// GAP-ENRICH-BACKLOG-CONVERGE: loop scan→drain internally until the queue
+    /// empties of eligible items or --max-runtime elapses; removes the need for
+    /// an external bash retry loop.
+    #[arg(long)]
+    pub until_empty: bool,
+
+    /// GAP-ENRICH-BACKLOG-CONVERGE: wall-clock ceiling in seconds for
+    /// --until-empty. Defaults to 3600 when omitted.
+    #[arg(long, value_name = "SECONDS")]
+    pub max_runtime: Option<u64>,
+
+    /// GAP-ENRICH-BACKLOG-CONVERGE: attempts per item before it becomes a
+    /// dead-letter (status='dead'). Range 1..=20. Default 5.
+    #[arg(long, value_name = "N", default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..=20))]
+    pub max_attempts: u32,
+
+    /// GAP-ENRICH-BACKLOG-CONVERGE: read-only mode — report queue and backlog
+    /// counts without calling the LLM or acquiring the singleton.
+    #[arg(long)]
+    pub status: bool,
+
+    /// GAP-ENRICH-BACKLOG-CONVERGE: REST concurrency for --mode openrouter
+    /// (clamp 1..=16, default 8). Distinct from the legacy --llm-parallelism.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=16))]
+    pub rest_concurrency: Option<u32>,
+
     // -- body-enrich specific flags (GAP-18) --
     /// Minimum output character count for body-enrich. Default: 500.
     #[arg(long, value_name = "CHARS", default_value_t = DEFAULT_BODY_ENRICH_MIN_CHARS)]
@@ -684,7 +710,128 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
         );
         CREATE INDEX IF NOT EXISTS idx_enrich_queue_status ON queue(status);",
     )?;
+    // GAP-ENRICH-BACKLOG-CONVERGE (v1.0.96): dead-letter columns. The legacy
+    // `.enrich-queue.sqlite` predates these columns and `CREATE TABLE IF NOT
+    // EXISTS` never alters an existing table, so add them idempotently here.
+    let mut has_error_class = false;
+    let mut has_next_retry_at = false;
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(queue)")?;
+        let names = stmt.query_map([], |r| r.get::<_, String>(1))?;
+        for name in names {
+            match name?.as_str() {
+                "error_class" => has_error_class = true,
+                "next_retry_at" => has_next_retry_at = true,
+                _ => {}
+            }
+        }
+    }
+    if !has_error_class {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN error_class TEXT")?;
+    }
+    if !has_next_retry_at {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN next_retry_at TEXT")?;
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_enrich_queue_eligible ON queue(status, next_retry_at)",
+    )?;
     Ok(conn)
+}
+
+// ---------------------------------------------------------------------------
+// GAP-ENRICH-BACKLOG-CONVERGE — dead-letter classification + queue failure sink
+// ---------------------------------------------------------------------------
+
+/// Read-only `enrich --status` report (no LLM, no singleton).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct EnrichStatus {
+    status_report: bool,
+    operation: String,
+    namespace: String,
+    unbound_backlog: usize,
+    queue_pending: i64,
+    queue_processing: i64,
+    queue_done: i64,
+    queue_failed: i64,
+    queue_skipped: i64,
+    queue_dead: i64,
+    eligible_now: i64,
+    waiting: i64,
+}
+
+/// Classifies an enrich item failure into a retry/dead-letter outcome.
+///
+/// Transient errors (rate-limit, timeout, db-busy, or a message that smells
+/// like a recoverable network/5xx hiccup) are rescheduled with backoff.
+/// Everything else — validation, parse, invalid body, unknown — is a permanent
+/// `HardFailure` routed to the dead-letter sink so the backlog can converge.
+fn classify_enrich_outcome(e: &AppError) -> crate::retry::AttemptOutcome {
+    use crate::retry::AttemptOutcome;
+    match e {
+        AppError::RateLimited { .. } | AppError::Timeout { .. } | AppError::DbBusy(_) => {
+            AttemptOutcome::Transient
+        }
+        _ => {
+            let msg = format!("{e}").to_lowercase();
+            if msg.contains("server error")
+                || msg.contains("timed out")
+                || msg.contains("timeout")
+                || msg.contains("connection")
+                || msg.contains("5xx")
+                || msg.contains("502")
+                || msg.contains("503")
+                || msg.contains("504")
+            {
+                AttemptOutcome::Transient
+            } else {
+                AttemptOutcome::HardFailure
+            }
+        }
+    }
+}
+
+/// Applies a failure outcome to a single queue row. Shared by the parallel
+/// worker and the serial loop (DRY). A `HardFailure`, or a transient failure
+/// whose attempt count reached `max_attempts`, lands in the dead-letter status
+/// (`status='dead'`) so it is never re-selected. A transient failure below the
+/// cap is rescheduled to `pending` with an exponential-backoff `next_retry_at`.
+/// Returns the [`crate::retry::AttemptOutcome`] so the caller can feed the
+/// existing circuit breaker.
+fn record_item_failure(
+    queue_conn: &rusqlite::Connection,
+    queue_id: i64,
+    attempt: i64,
+    max_attempts: u32,
+    err: &AppError,
+) -> crate::retry::AttemptOutcome {
+    use crate::retry::AttemptOutcome;
+    let outcome = classify_enrich_outcome(err);
+    let err_str = format!("{err}");
+    let error_class = match outcome {
+        AttemptOutcome::Transient => "transient",
+        AttemptOutcome::HardFailure => "permanent",
+        AttemptOutcome::Success => "success",
+    };
+
+    let terminal = matches!(outcome, AttemptOutcome::HardFailure) || attempt >= max_attempts as i64;
+    if terminal {
+        let _ = queue_conn.execute(
+            "UPDATE queue SET status='dead', error=?1, error_class=?2, done_at=datetime('now') WHERE id=?3",
+            rusqlite::params![err_str, error_class, queue_id],
+        );
+    } else {
+        let delay = crate::retry::compute_delay(
+            &crate::retry::RetryConfig::llm_rate_limit(),
+            attempt.max(0) as u32,
+        );
+        let secs = delay.as_secs().max(1);
+        let modifier = format!("+{secs} seconds");
+        let _ = queue_conn.execute(
+            "UPDATE queue SET status='pending', error=?1, error_class=?2, next_retry_at=datetime('now', ?3) WHERE id=?4",
+            rusqlite::params![err_str, error_class, modifier, queue_id],
+        );
+    }
+    outcome
 }
 
 // ---------------------------------------------------------------------------
@@ -1795,6 +1942,59 @@ pub fn run(
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_enrich(args)?;
 
+    // GAP-ENRICH-BACKLOG-CONVERGE: --status is a read-only report. It never
+    // calls the LLM, never initialises the OpenRouter client, and never
+    // acquires the job singleton, so it is safe to run while a real enrich is
+    // in flight (it only reads the queue DB and the unbound backlog).
+    if args.status {
+        let paths = AppPaths::resolve(args.db.as_deref())?;
+        ensure_db_ready(&paths)?;
+        let conn = open_rw(&paths.db)?;
+        let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+        let unbound_backlog = scan_unbound_memories(&conn, &namespace, None, &[])?.len();
+        let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
+        let count_status = |st: &str| -> i64 {
+            queue_conn
+                .query_row(
+                    "SELECT COUNT(*) FROM queue WHERE status=?1",
+                    rusqlite::params![st],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+        };
+        let eligible_now: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='pending' \
+                 AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let waiting: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='pending' \
+                 AND next_retry_at IS NOT NULL AND next_retry_at > datetime('now')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        emit_json(&EnrichStatus {
+            status_report: true,
+            operation: format!("{:?}", args.operation),
+            namespace: namespace.clone(),
+            unbound_backlog,
+            queue_pending: count_status("pending"),
+            queue_processing: count_status("processing"),
+            queue_done: count_status("done"),
+            queue_failed: count_status("failed"),
+            queue_skipped: count_status("skipped"),
+            queue_dead: count_status("dead"),
+            eligible_now,
+            waiting,
+        });
+        return Ok(());
+    }
+
     // v1.0.95 (ADR-0054): when the JUDGE is OpenRouter the model is mandatory
     // (no default) and the API key must resolve BEFORE any network or DB work.
     // The chat client singleton is initialised here so every per-item dispatch
@@ -2041,7 +2241,7 @@ pub fn run(
         tracing::info!(target: "enrich", count, "retrying failed items");
     }
 
-    if !args.resume && !args.retry_failed {
+    if !args.resume && !args.retry_failed && !args.until_empty {
         queue_conn
             .execute("DELETE FROM queue", [])
             .map_err(|e| AppError::Validation(format!("queue clear failed: {e}")))?;
@@ -2064,7 +2264,25 @@ pub fn run(
 
     // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
     // Clamp enforces the range even if the caller bypasses clap validation.
-    let parallelism = args.llm_parallelism.clamp(1, 32) as usize;
+    let parallelism = if args.mode == EnrichMode::OpenRouter {
+        let rest = args.rest_concurrency.unwrap_or(8).clamp(1, 16) as usize;
+        tracing::info!(
+            target: "enrich",
+            concurrency = rest,
+            source = "rest_concurrency",
+            "OpenRouter REST concurrency (clamp 1..=16)"
+        );
+        rest
+    } else {
+        let p = args.llm_parallelism.clamp(1, 32) as usize;
+        tracing::info!(
+            target: "enrich",
+            concurrency = p,
+            source = "llm_parallelism",
+            "LLM subprocess parallelism (clamp 1..=32)"
+        );
+        p
+    };
     if parallelism > 1 {
         tracing::info!(
             target: "enrich",
@@ -2146,28 +2364,52 @@ pub fn run(
         EnrichMode::OpenRouter => args.openrouter_model.as_deref(),
     };
 
-    // G19: when parallelism > 1, spawn bounded worker threads.
-    // Each worker opens its own DB connections (WAL supports concurrent readers + serialized writers).
-    // The queue DB claim is atomic via UPDATE...RETURNING — no external lock needed.
-    if parallelism > 1 {
-        let stdout_mu = parking_lot::Mutex::new(());
-        let budget = args.max_cost_usd;
-        let operation = args.operation.clone();
-        let mode = args.mode.clone();
-        let min_oc = args.min_output_chars;
-        let max_oc = args.max_output_chars;
-        let prompt_tpl = args.prompt_template.as_deref().map(|p| p.to_path_buf());
-
-        struct WorkerResult {
-            completed: usize,
-            failed: usize,
-            skipped: usize,
-            cost: f64,
-            oauth: bool,
+    // GAP-ENRICH-BACKLOG-CONVERGE: --until-empty wraps the scan→populate→drain
+    // cycle in an internal loop so the external bash retry loop is unnecessary.
+    // Without --until-empty the loop body runs exactly once (legacy behaviour).
+    let until_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(args.max_runtime.unwrap_or(3600));
+    loop {
+        if args.until_empty {
+            // Re-scan and re-enqueue eligible candidates each iteration.
+            // INSERT OR IGNORE never resurrects a dead-letter row (item_key is
+            // UNIQUE), so the backlog converges instead of looping forever.
+            let rescan = scan_operation(&conn, &namespace, args)?;
+            let rescan_item_type = match args.operation {
+                EnrichOperation::EntityDescriptions => "entity",
+                _ => "memory",
+            };
+            for key in &rescan {
+                let _ = queue_conn.execute(
+                    "INSERT OR IGNORE INTO queue (item_key, item_type, status) VALUES (?1, ?2, 'pending')",
+                    rusqlite::params![key, rescan_item_type],
+                );
+            }
         }
+        let completed_before = completed;
 
-        let results: Vec<WorkerResult> = std::thread::scope(|s| {
-            let handles: Vec<_> = (0..parallelism)
+        // G19: when parallelism > 1, spawn bounded worker threads.
+        // Each worker opens its own DB connections (WAL supports concurrent readers + serialized writers).
+        // The queue DB claim is atomic via UPDATE...RETURNING — no external lock needed.
+        if parallelism > 1 {
+            let stdout_mu = parking_lot::Mutex::new(());
+            let budget = args.max_cost_usd;
+            let operation = args.operation.clone();
+            let mode = args.mode.clone();
+            let min_oc = args.min_output_chars;
+            let max_oc = args.max_output_chars;
+            let prompt_tpl = args.prompt_template.as_deref().map(|p| p.to_path_buf());
+
+            struct WorkerResult {
+                completed: usize,
+                failed: usize,
+                skipped: usize,
+                cost: f64,
+                oauth: bool,
+            }
+
+            let results: Vec<WorkerResult> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..parallelism)
                 .map(|worker_id| {
                     let stdout_mu = &stdout_mu;
                     let paths = &paths;
@@ -2218,16 +2460,18 @@ pub fn run(
                                     break;
                                 }
                             }
-                            let pending: Option<(i64, String, String)> = w_queue
+                            let pending: Option<(i64, String, String, i64)> = w_queue
                                 .query_row(
                                     "UPDATE queue SET status='processing', attempt=attempt+1 \
-                                     WHERE id = (SELECT id FROM queue WHERE status='pending' ORDER BY id LIMIT 1) \
-                                     RETURNING id, item_key, item_type",
+                                     WHERE id = (SELECT id FROM queue WHERE status='pending' \
+                                                   AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
+                                                 ORDER BY id LIMIT 1) \
+                                     RETURNING id, item_key, item_type, attempt",
                                     [],
-                                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                                 )
                                 .ok();
-                            let (queue_id, item_key, _item_type) = match pending {
+                            let (queue_id, item_key, _item_type, attempt_current) = match pending {
                                 Some(p) => p,
                                 None => break,
                             };
@@ -2322,12 +2566,12 @@ pub fn run(
                                         }
                                     }
                                     w_failed += 1;
-                                    let _ = w_queue.execute("UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2", rusqlite::params![err_str, queue_id]);
+                                    let outcome = record_item_failure(&w_queue, queue_id, attempt_current, args.max_attempts, &e);
                                     let _guard = stdout_mu.lock();
                                     emit_json(&ItemEvent { item: &item_key, status: "failed", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: Some(err_str), index: current_index, total });
-                                    // G28-D: count hard failure against breaker.
-                                    let breaker_opened = w_breaker
-                                        .record(crate::retry::AttemptOutcome::HardFailure);
+                                    // G28-D: feed the classified outcome to the breaker (transient
+                                    // failures do not count toward opening it).
+                                    let breaker_opened = w_breaker.record(outcome);
                                     if breaker_opened {
                                         tracing::error!(target: "enrich",
                                             consecutive_failures = w_breaker.consecutive_failures(),
@@ -2342,137 +2586,68 @@ pub fn run(
                     })
                 })
                 .collect();
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or(WorkerResult {
-                        completed: 0,
-                        failed: 0,
-                        skipped: 0,
-                        cost: 0.0,
-                        oauth: false,
+                handles
+                    .into_iter()
+                    .map(|h| {
+                        h.join().unwrap_or(WorkerResult {
+                            completed: 0,
+                            failed: 0,
+                            skipped: 0,
+                            cost: 0.0,
+                            oauth: false,
+                        })
                     })
-                })
-                .collect()
-        });
+                    .collect()
+            });
 
-        for r in &results {
-            completed += r.completed;
-            failed += r.failed;
-            skipped += r.skipped;
-            cost_total += r.cost;
-            if r.oauth && !oauth_detected {
-                oauth_detected = true;
-            }
-        }
-    } else {
-        // Serial path (parallelism == 1) — original loop
-        loop {
-            if crate::shutdown_requested() {
-                tracing::info!(target: "enrich", "shutdown requested, stopping enrichment");
-                break;
-            }
-
-            // Budget check
-            if let Some(budget) = args.max_cost_usd {
-                if !oauth_detected && cost_total >= budget {
-                    tracing::warn!(target: "enrich", spent = cost_total, budget, "budget exceeded, stopping");
-                    break;
+            for r in &results {
+                completed += r.completed;
+                failed += r.failed;
+                skipped += r.skipped;
+                cost_total += r.cost;
+                if r.oauth && !oauth_detected {
+                    oauth_detected = true;
                 }
             }
+        } else {
+            // Serial path (parallelism == 1) — original loop
+            loop {
+                if crate::shutdown_requested() {
+                    tracing::info!(target: "enrich", "shutdown requested, stopping enrichment");
+                    break;
+                }
 
-            // Dequeue next pending item
-            let pending: Option<(i64, String, String)> = queue_conn
-                .query_row(
-                    "UPDATE queue SET status='processing', attempt=attempt+1 \
-                 WHERE id = (SELECT id FROM queue WHERE status='pending' ORDER BY id LIMIT 1) \
-                 RETURNING id, item_key, item_type",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .ok();
+                // Budget check
+                if let Some(budget) = args.max_cost_usd {
+                    if !oauth_detected && cost_total >= budget {
+                        tracing::warn!(target: "enrich", spent = cost_total, budget, "budget exceeded, stopping");
+                        break;
+                    }
+                }
 
-            let (queue_id, item_key, item_type) = match pending {
-                Some(p) => p,
-                None => break,
-            };
+                // Dequeue next pending item
+                let pending: Option<(i64, String, String, i64)> = queue_conn
+                    .query_row(
+                        "UPDATE queue SET status='processing', attempt=attempt+1 \
+                 WHERE id = (SELECT id FROM queue WHERE status='pending' \
+                               AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
+                             ORDER BY id LIMIT 1) \
+                 RETURNING id, item_key, item_type, attempt",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .ok();
 
-            let item_started = Instant::now();
-            let current_index = completed + failed + skipped;
+                let (queue_id, item_key, item_type, attempt_current) = match pending {
+                    Some(p) => p,
+                    None => break,
+                };
 
-            let call_result = match args.operation {
-                EnrichOperation::MemoryBindings => call_memory_bindings(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::EntityDescriptions => call_entity_description(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::BodyEnrich => call_body_enrich(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                    args.min_output_chars,
-                    args.max_output_chars,
-                    args.prompt_template.as_deref(),
-                    args.preserve_threshold,
-                    &paths,
-                    llm_backend,
-                    embedding_backend,
-                ),
-                EnrichOperation::ReEmbed => call_reembed(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    &paths,
-                    llm_backend,
-                    embedding_backend,
-                ),
-                EnrichOperation::WeightCalibrate => call_weight_calibrate(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::RelationReclassify => call_relation_reclassify(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => {
-                    call_entity_connect(
+                let item_started = Instant::now();
+                let current_index = completed + failed + skipped;
+
+                let call_result = match args.operation {
+                    EnrichOperation::MemoryBindings => call_memory_bindings(
                         &conn,
                         &namespace,
                         &item_key,
@@ -2482,114 +2657,185 @@ pub fn run(
                         provider_model,
                         provider_timeout,
                         &args.mode,
-                    )
-                }
-                EnrichOperation::EntityTypeValidate => call_entity_type_validate(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::DescriptionEnrich => call_description_enrich(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::DomainClassify => call_domain_classify(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::GraphAudit => call_graph_audit(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::DeepResearchSynth => call_deep_research_synth(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-                EnrichOperation::BodyExtract => call_body_extract(
-                    &conn,
-                    &namespace,
-                    &item_key,
-                    provider_binary
-                        .as_deref()
-                        .expect("provider binary required"),
-                    provider_model,
-                    provider_timeout,
-                    &args.mode,
-                ),
-            };
-
-            match call_result {
-                Ok(EnrichItemResult::Done {
-                    memory_id,
-                    entity_id,
-                    entities,
-                    rels,
-                    chars_before,
-                    chars_after,
-                    cost,
-                    is_oauth,
-                }) => {
-                    if is_oauth && !oauth_detected {
-                        oauth_detected = true;
-                        tracing::info!(target: "enrich", "OAuth subscription detected — cost_usd omitted from output");
+                    ),
+                    EnrichOperation::EntityDescriptions => call_entity_description(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::BodyEnrich => call_body_enrich(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                        args.min_output_chars,
+                        args.max_output_chars,
+                        args.prompt_template.as_deref(),
+                        args.preserve_threshold,
+                        &paths,
+                        llm_backend,
+                        embedding_backend,
+                    ),
+                    EnrichOperation::ReEmbed => call_reembed(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        &paths,
+                        llm_backend,
+                        embedding_backend,
+                    ),
+                    EnrichOperation::WeightCalibrate => call_weight_calibrate(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::RelationReclassify => call_relation_reclassify(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => {
+                        call_entity_connect(
+                            &conn,
+                            &namespace,
+                            &item_key,
+                            provider_binary
+                                .as_deref()
+                                .expect("provider binary required"),
+                            provider_model,
+                            provider_timeout,
+                            &args.mode,
+                        )
                     }
-                    backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
+                    EnrichOperation::EntityTypeValidate => call_entity_type_validate(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::DescriptionEnrich => call_description_enrich(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::DomainClassify => call_domain_classify(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::GraphAudit => call_graph_audit(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::DeepResearchSynth => call_deep_research_synth(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                    EnrichOperation::BodyExtract => call_body_extract(
+                        &conn,
+                        &namespace,
+                        &item_key,
+                        provider_binary
+                            .as_deref()
+                            .expect("provider binary required"),
+                        provider_model,
+                        provider_timeout,
+                        &args.mode,
+                    ),
+                };
 
-                    // Persist depends on the operation
-                    let persist_err: Option<String> = match args.operation {
-                        EnrichOperation::MemoryBindings => {
-                            // Bindings already persisted inside call_memory_bindings
-                            None
+                match call_result {
+                    Ok(EnrichItemResult::Done {
+                        memory_id,
+                        entity_id,
+                        entities,
+                        rels,
+                        chars_before,
+                        chars_after,
+                        cost,
+                        is_oauth,
+                    }) => {
+                        if is_oauth && !oauth_detected {
+                            oauth_detected = true;
+                            tracing::info!(target: "enrich", "OAuth subscription detected — cost_usd omitted from output");
                         }
-                        EnrichOperation::EntityDescriptions => {
-                            // Description already persisted inside call_entity_description
-                            None
-                        }
-                        EnrichOperation::BodyEnrich => {
-                            // Body already persisted inside call_body_enrich
-                            None
-                        }
-                        _ => {
-                            // All G27 operations persist inside their call_* function
-                            None
-                        }
-                    };
+                        backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
 
-                    if let Err(e) = queue_conn.execute(
+                        // Persist depends on the operation
+                        let persist_err: Option<String> = match args.operation {
+                            EnrichOperation::MemoryBindings => {
+                                // Bindings already persisted inside call_memory_bindings
+                                None
+                            }
+                            EnrichOperation::EntityDescriptions => {
+                                // Description already persisted inside call_entity_description
+                                None
+                            }
+                            EnrichOperation::BodyEnrich => {
+                                // Body already persisted inside call_body_enrich
+                                None
+                            }
+                            _ => {
+                                // All G27 operations persist inside their call_* function
+                                None
+                            }
+                        };
+
+                        if let Err(e) = queue_conn.execute(
                     "UPDATE queue SET status='done', memory_id=?1, entity_id=?2, entities=?3, rels=?4, cost_usd=?5, elapsed_ms=?6, done_at=datetime('now') WHERE id=?7",
                     rusqlite::params![
                         memory_id,
@@ -2604,28 +2850,139 @@ pub fn run(
                         tracing::warn!(target: "enrich", error = %e, "queue done update failed");
                     }
 
-                    if persist_err.is_none() {
-                        completed += 1;
-                        if !is_oauth {
-                            cost_total += cost;
+                        if persist_err.is_none() {
+                            completed += 1;
+                            if !is_oauth {
+                                cost_total += cost;
+                            }
+                            emit_json(&ItemEvent {
+                                item: &item_key,
+                                status: "done",
+                                memory_id,
+                                entity_id,
+                                entities: Some(entities),
+                                rels: Some(rels),
+                                chars_before,
+                                chars_after,
+                                cost_usd: if is_oauth { None } else { Some(cost) },
+                                elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                                error: None,
+                                index: current_index,
+                                total,
+                            });
+                        } else {
+                            failed += 1;
+                            emit_json(&ItemEvent {
+                                item: &item_key,
+                                status: "failed",
+                                memory_id: None,
+                                entity_id: None,
+                                entities: None,
+                                rels: None,
+                                chars_before: None,
+                                chars_after: None,
+                                cost_usd: None,
+                                elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                                error: persist_err,
+                                index: current_index,
+                                total,
+                            });
                         }
+                    }
+                    Ok(EnrichItemResult::Skipped { reason }) => {
+                        skipped += 1;
+                        if let Err(e) = queue_conn.execute(
+                    "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                    rusqlite::params![reason, queue_id],
+                ) {
+                        tracing::warn!(target: "enrich", error = %e, "queue skipped update failed");
+                    }
                         emit_json(&ItemEvent {
                             item: &item_key,
-                            status: "done",
-                            memory_id,
-                            entity_id,
-                            entities: Some(entities),
-                            rels: Some(rels),
-                            chars_before,
-                            chars_after,
-                            cost_usd: if is_oauth { None } else { Some(cost) },
+                            status: "skipped",
+                            memory_id: None,
+                            entity_id: None,
+                            entities: None,
+                            rels: None,
+                            chars_before: None,
+                            chars_after: None,
+                            cost_usd: None,
                             elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
                             error: None,
                             index: current_index,
                             total,
                         });
-                    } else {
+                    }
+                    Ok(EnrichItemResult::PreservationFailed {
+                        score,
+                        threshold,
+                        chars_before,
+                        chars_after,
+                    }) => {
+                        // G29 Passo 4: the LLM rewrite diverged too far from
+                        // the original body. Count as a soft failure (not
+                        // `failed`) so the queue surfaces it as a quality
+                        // issue, not a transport error. The reason is
+                        // structured so the operator can audit why a body
+                        // was rejected.
+                        skipped += 1;
+                        let reason = format!(
+                        "preservation_failed: jaccard={score:.3} threshold={threshold:.3} (orig={chars_before} chars, new={chars_after} chars)"
+                    );
+                        if let Err(qe) = queue_conn.execute(
+                        "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
+                        rusqlite::params![reason, queue_id],
+                    ) {
+                        tracing::warn!(target: "enrich", error = %qe, "queue preservation_failed update failed");
+                    }
+                        emit_json(&ItemEvent {
+                            item: &item_key,
+                            status: "preservation_failed",
+                            memory_id: None,
+                            entity_id: None,
+                            entities: None,
+                            rels: None,
+                            chars_before: Some(chars_before),
+                            chars_after: Some(chars_after),
+                            cost_usd: None,
+                            elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
+                            error: Some(reason),
+                            index: current_index,
+                            total,
+                        });
+                    }
+                    Err(e) => {
+                        let err_str = format!("{e}");
+                        if matches!(e, AppError::RateLimited { .. }) {
+                            if crate::retry::is_kill_switch_active() {
+                                tracing::warn!(target: "enrich", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
+                            } else if std::time::Instant::now() >= rate_limit_deadline {
+                                tracing::error!(target: "enrich", total_elapsed_secs = enrich_started.elapsed().as_secs(), "rate-limit retry deadline (1h) exhausted");
+                            } else {
+                                let half = backoff_secs / 2;
+                                let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
+                                let actual_wait = half + jitter;
+                                tracing::warn!(target: "enrich", delay_secs = actual_wait, error_kind = "rate_limited", "rate limited, backing off");
+                                if let Err(qe) = queue_conn.execute(
+                                    "UPDATE queue SET status='pending' WHERE id=?1",
+                                    rusqlite::params![queue_id],
+                                ) {
+                                    tracing::warn!(target: "enrich", error = %qe, "queue pending update failed");
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(actual_wait));
+                                backoff_secs = (backoff_secs * 2).min(900);
+                                continue;
+                            }
+                        }
+
                         failed += 1;
+                        let _outcome = record_item_failure(
+                            &queue_conn,
+                            queue_id,
+                            attempt_current,
+                            args.max_attempts,
+                            &e,
+                        );
                         emit_json(&ItemEvent {
                             item: &item_key,
                             status: "failed",
@@ -2637,126 +2994,42 @@ pub fn run(
                             chars_after: None,
                             cost_usd: None,
                             elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                            error: persist_err,
+                            error: Some(err_str),
                             index: current_index,
                             total,
                         });
                     }
                 }
-                Ok(EnrichItemResult::Skipped { reason }) => {
-                    skipped += 1;
-                    if let Err(e) = queue_conn.execute(
-                    "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
-                    rusqlite::params![reason, queue_id],
-                ) {
-                        tracing::warn!(target: "enrich", error = %e, "queue skipped update failed");
-                    }
-                    emit_json(&ItemEvent {
-                        item: &item_key,
-                        status: "skipped",
-                        memory_id: None,
-                        entity_id: None,
-                        entities: None,
-                        rels: None,
-                        chars_before: None,
-                        chars_after: None,
-                        cost_usd: None,
-                        elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                        error: None,
-                        index: current_index,
-                        total,
-                    });
-                }
-                Ok(EnrichItemResult::PreservationFailed {
-                    score,
-                    threshold,
-                    chars_before,
-                    chars_after,
-                }) => {
-                    // G29 Passo 4: the LLM rewrite diverged too far from
-                    // the original body. Count as a soft failure (not
-                    // `failed`) so the queue surfaces it as a quality
-                    // issue, not a transport error. The reason is
-                    // structured so the operator can audit why a body
-                    // was rejected.
-                    skipped += 1;
-                    let reason = format!(
-                        "preservation_failed: jaccard={score:.3} threshold={threshold:.3} (orig={chars_before} chars, new={chars_after} chars)"
-                    );
-                    if let Err(qe) = queue_conn.execute(
-                        "UPDATE queue SET status='skipped', error=?1, done_at=datetime('now') WHERE id=?2",
-                        rusqlite::params![reason, queue_id],
-                    ) {
-                        tracing::warn!(target: "enrich", error = %qe, "queue preservation_failed update failed");
-                    }
-                    emit_json(&ItemEvent {
-                        item: &item_key,
-                        status: "preservation_failed",
-                        memory_id: None,
-                        entity_id: None,
-                        entities: None,
-                        rels: None,
-                        chars_before: Some(chars_before),
-                        chars_after: Some(chars_after),
-                        cost_usd: None,
-                        elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                        error: Some(reason),
-                        index: current_index,
-                        total,
-                    });
-                }
-                Err(e) => {
-                    let err_str = format!("{e}");
-                    if matches!(e, AppError::RateLimited { .. }) {
-                        if crate::retry::is_kill_switch_active() {
-                            tracing::warn!(target: "enrich", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, skipping rate-limit retry");
-                        } else if std::time::Instant::now() >= rate_limit_deadline {
-                            tracing::error!(target: "enrich", total_elapsed_secs = enrich_started.elapsed().as_secs(), "rate-limit retry deadline (1h) exhausted");
-                        } else {
-                            let half = backoff_secs / 2;
-                            let jitter = if half == 0 { 0 } else { fastrand::u64(0..half) };
-                            let actual_wait = half + jitter;
-                            tracing::warn!(target: "enrich", delay_secs = actual_wait, error_kind = "rate_limited", "rate limited, backing off");
-                            if let Err(qe) = queue_conn.execute(
-                                "UPDATE queue SET status='pending' WHERE id=?1",
-                                rusqlite::params![queue_id],
-                            ) {
-                                tracing::warn!(target: "enrich", error = %qe, "queue pending update failed");
-                            }
-                            std::thread::sleep(std::time::Duration::from_secs(actual_wait));
-                            backoff_secs = (backoff_secs * 2).min(900);
-                            continue;
-                        }
-                    }
 
-                    failed += 1;
-                    if let Err(qe) = queue_conn.execute(
-                    "UPDATE queue SET status='failed', error=?1, done_at=datetime('now') WHERE id=?2",
-                    rusqlite::params![err_str, queue_id],
-                ) {
-                        tracing::warn!(target: "enrich", error = %qe, "queue failed update failed");
-                    }
-                    emit_json(&ItemEvent {
-                        item: &item_key,
-                        status: "failed",
-                        memory_id: None,
-                        entity_id: None,
-                        entities: None,
-                        rels: None,
-                        chars_before: None,
-                        chars_after: None,
-                        cost_usd: None,
-                        elapsed_ms: Some(item_started.elapsed().as_millis() as u64),
-                        error: Some(err_str),
-                        index: current_index,
-                        total,
-                    });
-                }
+                let _ = item_type; // used via queue schema only
             }
+        } // end else (serial path)
 
-            let _ = item_type; // used via queue schema only
+        if !args.until_empty {
+            break;
         }
-    } // end else (serial path)
+        let eligible_remaining: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='pending' \
+                 AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let progressed = completed > completed_before;
+        if std::time::Instant::now() >= until_deadline {
+            tracing::info!(target: "enrich", "until-empty: max-runtime reached, stopping");
+            break;
+        }
+        if !progressed && eligible_remaining == 0 {
+            tracing::info!(target: "enrich", "until-empty: converged (no eligible items remain)");
+            break;
+        }
+        if eligible_remaining == 0 {
+            // Remaining pending items are waiting on backoff; nap and re-check.
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    } // end until-empty loop
 
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     let _ = queue_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -2774,7 +3047,16 @@ pub fn run(
     });
 
     if failed == 0 {
-        let _ = std::fs::remove_file(DEFAULT_QUEUE_DB);
+        // GAP-ENRICH-BACKLOG-CONVERGE: keep the queue file when dead-letter rows
+        // exist so `enrich --status` can still report them on the next run.
+        let dead: i64 = queue_conn
+            .query_row("SELECT COUNT(*) FROM queue WHERE status='dead'", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+        if dead == 0 {
+            let _ = std::fs::remove_file(DEFAULT_QUEUE_DB);
+        }
     }
 
     Ok(())
@@ -4753,5 +5035,210 @@ JSONL
     fn body_enrich_schema_is_valid_json() {
         let _: serde_json::Value = serde_json::from_str(BODY_ENRICH_SCHEMA)
             .expect("BODY_ENRICH_SCHEMA must be valid JSON");
+    }
+
+    // -- GAP-ENRICH-BACKLOG-CONVERGE: dead-letter + backoff tests ------------
+
+    fn open_temp_queue() -> (Connection, String) {
+        let path = format!(
+            "/tmp/test-enrich-dl-{}-{}.sqlite",
+            std::process::id(),
+            fastrand::u64(..)
+        );
+        let conn = open_queue_db(&path).expect("queue db must open");
+        (conn, path)
+    }
+
+    fn insert_pending(conn: &Connection, key: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status) VALUES (?1, 'memory', 'pending')",
+            rusqlite::params![key],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn classify_rate_limit_is_transient() {
+        let e = AppError::RateLimited {
+            detail: "429".into(),
+        };
+        assert_eq!(
+            classify_enrich_outcome(&e),
+            crate::retry::AttemptOutcome::Transient
+        );
+    }
+
+    #[test]
+    fn classify_timeout_and_dbbusy_are_transient() {
+        let t = AppError::Timeout {
+            operation: "judge".into(),
+            duration_secs: 30,
+        };
+        let b = AppError::DbBusy("locked".into());
+        assert_eq!(
+            classify_enrich_outcome(&t),
+            crate::retry::AttemptOutcome::Transient
+        );
+        assert_eq!(
+            classify_enrich_outcome(&b),
+            crate::retry::AttemptOutcome::Transient
+        );
+    }
+
+    #[test]
+    fn classify_validation_and_parse_are_hard_failure() {
+        let v = AppError::Validation("failed to parse entities array: bad".into());
+        assert_eq!(
+            classify_enrich_outcome(&v),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+    }
+
+    #[test]
+    fn open_queue_db_alter_is_idempotent() {
+        let path = format!(
+            "/tmp/test-enrich-idem-{}-{}.sqlite",
+            std::process::id(),
+            fastrand::u64(..)
+        );
+        // First open creates the table + dead-letter columns.
+        let _ = open_queue_db(&path).expect("first open");
+        // Second open must not error on the already-present columns.
+        let conn = open_queue_db(&path).expect("second open is idempotent");
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(queue)").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert!(cols.iter().any(|c| c == "error_class"));
+        assert!(cols.iter().any(|c| c == "next_retry_at"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn record_item_failure_hard_marks_dead() {
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-hard");
+        let outcome = record_item_failure(
+            &conn,
+            id,
+            1,
+            5,
+            &AppError::Validation("invalid body".into()),
+        );
+        assert_eq!(outcome, crate::retry::AttemptOutcome::HardFailure);
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM queue WHERE id=?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "dead");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn record_item_failure_transient_reschedules_pending() {
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-transient");
+        let outcome = record_item_failure(
+            &conn,
+            id,
+            1,
+            5,
+            &AppError::RateLimited {
+                detail: "429".into(),
+            },
+        );
+        assert_eq!(outcome, crate::retry::AttemptOutcome::Transient);
+        let (status, future): (String, i64) = conn
+            .query_row(
+                "SELECT status, (next_retry_at > datetime('now')) FROM queue WHERE id=?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "pending");
+        assert_eq!(future, 1, "next_retry_at must be in the future");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn record_item_failure_transient_at_cap_marks_dead() {
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-cap");
+        // attempt == max_attempts forces dead-letter even for a transient error.
+        let outcome = record_item_failure(
+            &conn,
+            id,
+            5,
+            5,
+            &AppError::RateLimited {
+                detail: "429".into(),
+            },
+        );
+        assert_eq!(outcome, crate::retry::AttemptOutcome::Transient);
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM queue WHERE id=?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "dead");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dequeue_skips_future_retry_and_dead() {
+        let (conn, path) = open_temp_queue();
+        // Eligible now.
+        let eligible = insert_pending(&conn, "mem-eligible");
+        // Pending but scheduled in the future.
+        let waiting = insert_pending(&conn, "mem-waiting");
+        conn.execute(
+            "UPDATE queue SET next_retry_at=datetime('now', '+3600 seconds') WHERE id=?1",
+            rusqlite::params![waiting],
+        )
+        .unwrap();
+        // Dead-letter must never be selected.
+        let dead = insert_pending(&conn, "mem-dead");
+        conn.execute(
+            "UPDATE queue SET status='dead' WHERE id=?1",
+            rusqlite::params![dead],
+        )
+        .unwrap();
+
+        let claimed: Option<i64> = conn
+            .query_row(
+                "UPDATE queue SET status='processing', attempt=attempt+1 \
+                 WHERE id = (SELECT id FROM queue WHERE status='pending' \
+                               AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
+                             ORDER BY id LIMIT 1) \
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        assert_eq!(claimed, Some(eligible));
+
+        // A second claim finds nothing eligible (waiting is future, dead excluded).
+        let second: Option<i64> = conn
+            .query_row(
+                "UPDATE queue SET status='processing', attempt=attempt+1 \
+                 WHERE id = (SELECT id FROM queue WHERE status='pending' \
+                               AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
+                             ORDER BY id LIMIT 1) \
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        assert_eq!(second, None);
+        let _ = std::fs::remove_file(&path);
     }
 }

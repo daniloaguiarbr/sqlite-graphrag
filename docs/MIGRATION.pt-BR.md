@@ -1,3 +1,38 @@
+# MIGRANDO PARA v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
+
+> Este guia cobre a atualização para v1.0.96. Nenhuma migração roda no banco principal; o schema permanece em v15. O banco de fila separado `.enrich-queue.sqlite` é migrado in-place automaticamente no primeiro `enrich` — sem ação do operador. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
+
+### O Que Mudou
+- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (default 5) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
+- **GAP-OPENROUTER-REST-CONCURRENCY**: o embedding REST para `--mode openrouter` faz fan-out por lote com um `tokio::task::JoinSet` bounded (sem dependência nova), com clamp in-flight 1..16 (faixa Cloudflare-safe). A ordem dos chunks é preservada por índice; as escritas SQLite permanecem serializadas via WAL + claim atômico (single-writer intacto).
+
+### Migração da Fila — Automática e In-Place
+- As colunas e o índice de `.enrich-queue.sqlite` são adicionados por `ALTER TABLE` IDEMPOTENTE / `CREATE INDEX IF NOT EXISTS` na primeira invocação de `enrich`. Bancos de fila pré-existentes são migrados in-place automaticamente — NENHUMA ação do operador necessária.
+- O `graphrag.sqlite` principal não é tocado: o schema permanece em v15; nenhum `ALTER TABLE` roda contra ele.
+
+### Flags Novas do enrich
+- `--until-empty` — loop interno scan→drain até a fila esvaziar de itens elegíveis ou `--max-runtime` expirar; substitui o loop bash externo.
+- `--max-runtime <SECONDS>` — teto wall-clock para `--until-empty`; default 3600.
+- `--max-attempts <N>` — orçamento de retries transientes antes de `dead`; default 5; range 1..=20.
+- `--status` — relatório JSON read-only das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM, NÃO adquire o singleton.
+- `--rest-concurrency <N>` — concorrência REST para `--mode openrouter`; clamp 1..=16; default 8; distinta de `--llm-parallelism`.
+
+### Nada Quebra
+- Nenhuma migração do banco principal; o schema permanece em v15.
+- Invocações existentes `enrich --mode claude-code|codex|opencode|openrouter` não são afetadas — as flags novas são aditivas e as colunas dead-letter usam NULL como default para linhas em voo.
+
+```bash
+# Levar o backlog à convergência de forma headless (sem loop externo)
+sqlite-graphrag enrich --operation memory-bindings --mode openrouter \
+  --openrouter-model MODEL --until-empty --max-runtime 1800 \
+  --max-attempts 5 --rest-concurrency 8 --json
+
+# Inspecionar a fila sem spawnar o LLM nem adquirir o singleton
+sqlite-graphrag enrich --status --json
+```
+
 # MIGRANDO PARA v1.0.95 — Enrich via Chat OpenRouter (ADR-0054)
 
 > Este guia cobre a atualização para v1.0.95. Nenhuma migração de banco executa. O schema permanece em v15. Reinstale com `cargo install sqlite-graphrag --locked --force`.

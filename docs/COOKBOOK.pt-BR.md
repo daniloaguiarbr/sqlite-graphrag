@@ -2166,6 +2166,8 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Retomar após interrupção: `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --resume --json`
 - Usar Codex em vez de Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`
 - Enriquecer via OpenRouter REST sem CLI local: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model <model> --json` — `--openrouter-model` é obrigatório (sem default; ausência sai com exit 1 antes de qualquer chamada de rede) e a chave vem de `OPENROUTER_API_KEY`; o JUDGE roda sobre `/chat/completions` com `json_schema` strict, e `--openrouter-timeout` tem padrão de 300s (`--openrouter-base-url` opcional)
+- Drenar o backlog até convergir (v1.0.96, sem loop externo): `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --until-empty --rest-concurrency 8 --json` — `--until-empty` escaneia e drena até não restarem itens elegíveis ou `--max-runtime` (padrão 3600s) expirar; a fila dead-letter (`error_class`/`next_retry_at`, terminal `dead` após `--max-attempts`, padrão 5) garante que o conjunto vivo decresce estritamente
+- Inspecionar a fila sem rodar o LLM (v1.0.96): `sqlite-graphrag enrich --status --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json` — contagens read-only (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); nunca spawna o LLM e nunca adquire o singleton, então é seguro fazer poll durante o drain
 - Rodar com workers LLM em paralelo: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 

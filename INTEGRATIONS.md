@@ -44,6 +44,14 @@
 - `--openrouter-base-url URL` — optional override of the OpenRouter base URL
 - New module `src/chat_api.rs` (`OpenRouterChatClient`) mirrors `src/embedding_api.rs`; SCAN→JUDGE→PERSIST unchanged, only the JUDGE transport differs; 13/13 real models verified; no migration, schema v15
 
+## New Commands and Flags (since v1.0.96)
+- `enrich --until-empty` — internal scan→drain loop that runs until the queue holds no eligible items or `--max-runtime` expires; replaces the external bash retry loop (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
+- `--max-runtime <SECONDS>` — wall-clock ceiling for `--until-empty` (default 3600)
+- `--max-attempts <N>` — Transient retry budget before an item becomes terminal `dead` (default 5, range 1..=20)
+- `--status` — read-only JSON report of the queue counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); does NOT call the LLM and does NOT acquire the singleton — its deterministic output is ideal for hook/timer integration
+- `--rest-concurrency <N>` — bounded REST fan-out for `--mode openrouter` embedding batches; clamp 1..=16 (default 8), distinct from `--llm-parallelism`
+- Dead-letter convergence: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status; Transient failures (rate-limit/timeout/5xx) reschedule with exponential backoff, HardFailures (validation/parse) go terminal immediately, and dequeue excludes `dead` so the live set strictly decreases
+
 ## New Commands and Flags (since v1.0.68)
 ### Process Lifecycle (G28)
 - `enrich`, `ingest --mode claude-code`, and `ingest --mode codex` now acquire a per-namespace singleton before doing real work.  A second concurrent invocation against the same database fails fast with `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) instead of stacking up subprocess trees.

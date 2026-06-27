@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Read-only `enrich --status` report (no LLM, no singleton).",
+  "properties": {
+    "eligible_now": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "queue_dead": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "queue_done": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "queue_failed": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "queue_pending": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "queue_processing": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "queue_skipped": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "status_report": {
+      "type": "boolean"
+    },
+    "unbound_backlog": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "waiting": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "eligible_now",
+    "namespace",
+    "operation",
+    "queue_dead",
+    "queue_done",
+    "queue_failed",
+    "queue_pending",
+    "queue_processing",
+    "queue_skipped",
+    "status_report",
+    "unbound_backlog",
+    "waiting"
+  ],
+  "title": "EnrichStatus",
+  "type": "object"
+}

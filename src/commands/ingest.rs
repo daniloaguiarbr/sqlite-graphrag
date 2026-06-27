@@ -1820,6 +1820,11 @@ pub fn run(
             max_output_chars: 2000,
             preserve_check: true,
             prompt_template: None,
+            until_empty: false,
+            max_runtime: None,
+            max_attempts: 5,
+            status: false,
+            rest_concurrency: None,
         };
         match super::enrich::run(&enrich_args, llm_backend, embedding_backend) {
             Ok(()) => {
