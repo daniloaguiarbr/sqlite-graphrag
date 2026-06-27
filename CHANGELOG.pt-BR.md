@@ -3,6 +3,20 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.94] - 2026-06-26
+
+### Corrigido
+- GAP-EMBED-DIM-64: `DEFAULT_EMBEDDING_DIM` elevado de 64 para 384 (`constants.rs`); o init eager do OpenRouter em `main.rs` agora usa `constants::embedding_dim()` em vez do literal `unwrap_or(64)`. Bancos novos via `init` gravam `dim=384` no `schema_meta`, casando o corpus de produção; bancos legados em 64 preservados via precedência `schema_meta.dim` (sem re-embed forçado). O default 64 foi escolha deliberada do G42/v1.0.79 para reduzir custo de token autoregressivo no caminho codex — irrelevante agora que o OpenRouter REST é o padrão (truncamento MRL no servidor)
+- GAP-EMBED-TIMEOUT-300: `DEFAULT_EMBED_TIMEOUT_SECS` elevado de 120 para 300 (`llm_embedding.rs`), alinhando o subprocesso de embedding com `ingest`/`enrich`/`opencode`/`llm_backend` que já usavam 300 (intenção do G42/BLOCO-4)
+- GAP-HEADLESS-DEFAULT: `enrich --mode` agora é OBRIGATÓRIO (removido `default_value = "claude-code"`); omitir é rejeitado pelo clap (exit 2), evitando spawn acidental de `claude -p` que herda o `.mcp.json` do projeto e falha
+- GAP-OR-ENTITY-EMBED: o embedding de entidades em `remember`/`remember-batch`/`ingest` agora honra `--embedding-backend`/`--llm-backend` roteando via `embed_passages_parallel_with_embedding_choice` (OpenRouter REST), com curto-circuito de chain `none` que retorna vetores vazios sem spawnar subprocesso. A chave de cache de entidade agora reflete o backend (`openrouter:{dim}`) para evitar colisão entre vetores codex e OpenRouter. `remember` com entidades novas cai de ~119s (timeout codex) para ~0,9s (OpenRouter REST)
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy (`-D warnings`), 0 diferenças de fmt
+- Suíte de testes: `cargo test` exit 0, 0 falhas
+- E2E: `init` grava `dim=384`; `enrich` rejeita `--mode` ausente; `remember` + entidade nova via OpenRouter = 913ms com `backend_invoked=openrouter`
+
+
 ## [1.0.93] - 2026-06-25
 
 ### Adicionado

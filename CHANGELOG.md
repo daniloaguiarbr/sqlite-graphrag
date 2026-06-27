@@ -5,6 +5,20 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.94] - 2026-06-26
+
+### Fixed
+- GAP-EMBED-DIM-64: `DEFAULT_EMBEDDING_DIM` raised from 64 to 384 (`constants.rs`); `main.rs` OpenRouter eager init now uses `constants::embedding_dim()` instead of hardcoded `unwrap_or(64)`. New databases via `init` stamp `dim=384` in `schema_meta`, matching the production corpus; legacy 64-dim databases preserved via `schema_meta.dim` precedence (no forced re-embed). The 64 default was a deliberate G42/v1.0.79 choice to cut autoregressive token cost on the codex embedding path — moot now that OpenRouter REST is the default (MRL truncation is server-side)
+- GAP-EMBED-TIMEOUT-300: `DEFAULT_EMBED_TIMEOUT_SECS` raised from 120 to 300 (`llm_embedding.rs`), aligning the embedding subprocess with `ingest`/`enrich`/`opencode`/`llm_backend` which already used 300 (G42/BLOCO-4 intent)
+- GAP-HEADLESS-DEFAULT: `enrich --mode` is now REQUIRED (removed `default_value = "claude-code"`); omitting it is rejected by clap (exit 2), preventing accidental `claude -p` spawns that inherit the project `.mcp.json` and fail
+- GAP-OR-ENTITY-EMBED: entity embedding in `remember`/`remember-batch`/`ingest` now honours `--embedding-backend`/`--llm-backend` by routing through `embed_passages_parallel_with_embedding_choice` (OpenRouter REST), with a `none`-chain short-circuit returning empty vectors without spawning a subprocess. The entity cache key is now backend-aware (`openrouter:{dim}`) to avoid collision between codex and OpenRouter vectors. `remember` with new entities drops from ~119s (codex timeout) to ~0.9s (OpenRouter REST)
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings (`-D warnings`), 0 fmt diffs
+- Test suite: `cargo test` exit 0, 0 failures
+- E2E: `init` stamps `dim=384`; `enrich` rejects missing `--mode`; `remember` + new entity via OpenRouter = 913ms with `backend_invoked=openrouter`
+
+
 ## [1.0.93] - 2026-06-25
 
 ### Added

@@ -123,3 +123,10 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - JAMAIS dependa do encaminhamento de `ANTHROPIC_AUTH_TOKEN` quando o host é compartilhado com processos não confiáveis; prefira `--strict-env-clear` para que credenciais permaneçam apenas no processo pai
 - JAMAIS faça commit de valores `OPENROUTER_API_KEY` no repositório ou em forks derivados
 - SEMPRE use a flag `--openrouter-api-key` em vez da variável de ambiente em hosts compartilhados
+
+
+## v1.0.94 Hardening do Modo Headless (ADR-0053)
+- A v1.0.94 torna `enrich --mode` OBRIGATÓRIO (removido o default `claude-code`); omitir é rejeitado pelo clap com exit 2.
+- Isso evita um spawn acidental de `claude -p` que herdaria o `.mcp.json` do projeto do chamador e executaria servidores MCP não confiáveis em contexto headless.
+- Nenhum novo exit code e nenhuma nova variável de ambiente são introduzidos; a mudança é apenas uma superfície de default mais segura.
+- Modos válidos são `claude-code`, `codex`, `opencode`; escolha o que casa com seu `--llm-backend`.

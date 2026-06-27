@@ -728,6 +728,8 @@ fn stage_file(
         &paths.models,
         &entity_texts,
         llm_parallelism,
+        embedding_backend,
+        llm_backend,
     ) {
         Ok((entity_embeddings, embed_cache_stats)) => {
             if embed_cache_stats.hits > 0 {

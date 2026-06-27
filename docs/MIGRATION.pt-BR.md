@@ -1,3 +1,62 @@
+# MIGRANDO PARA v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
+
+> Este guia cobre a atualização de v1.0.93 para v1.0.94. Nenhuma migração de banco executa. O schema permanece em v15.
+
+## v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
+
+### O Que Mudou
+- **GAP-OR-ENTITY-EMBED**: O embedding de entidades em `remember`/`remember-batch`/`ingest` agora honra `--embedding-backend`/`--llm-backend`, roteando via OpenRouter REST. `remember` com entidades novas cai de ~119s para ~0,9s (`embedder.rs`, `remember.rs:771`).
+- **GAP-EMBED-DIM-64**: `DEFAULT_EMBEDDING_DIM` elevado de 64 para **384** (`constants.rs:29`). Bancos novos criados via `init` gravam `dim=384` no `schema_meta`. Bancos legados em dim 64 são preservados via precedência `schema_meta.dim` — sem re-embed forçado.
+- **GAP-EMBED-TIMEOUT-300**: `DEFAULT_EMBED_TIMEOUT_SECS` elevado de 120 para **300** (`llm_embedding.rs:43`).
+- **GAP-HEADLESS-DEFAULT**: `enrich --mode` agora é **OBRIGATÓRIO** (removido `default_value = "claude-code"` em `enrich.rs:379`). Omitir `--mode` é rejeitado pelo clap (exit 2), prevenindo spawn acidental de `claude -p` com o `.mcp.json` do projeto.
+
+### Mudança Quebrante — `enrich --mode` agora é obrigatório
+
+**Antes (v1.0.93 — falha na v1.0.94 com exit 2):**
+```bash
+sqlite-graphrag enrich --operation memory-bindings --mode codex --json
+```
+
+**Depois (v1.0.94):**
+```bash
+# Escolha o mode correspondente ao seu --llm-backend
+sqlite-graphrag enrich --operation memory-bindings --mode codex --json
+# ou
+sqlite-graphrag enrich --operation memory-bindings --mode claude-code --json
+# ou
+sqlite-graphrag enrich --operation memory-bindings --mode opencode --json
+```
+
+**Pareamento canônico:**
+| `--llm-backend` | `--mode` |
+|-----------------|----------|
+| `codex`         | `codex`  |
+| `claude`        | `claude-code` |
+| `opencode`      | `opencode` |
+
+### Quem É Afetado
+- Todos os usuários que executam `enrich --operation ...` (qualquer operação) sem `--mode`. Atualize todas as invocações antes de fazer o upgrade.
+- Scripts de automação, pipelines de CI ou jobs agendados que chamam `enrich`.
+
+### Como Fazer o Upgrade
+1. Audite todas as chamadas a `enrich`: `rg "enrich --operation" seus-scripts/ | rg -v -- "--mode"`
+2. Adicione `--mode <valor>` correspondente ao seu `--llm-backend` (veja a tabela de pareamento acima).
+3. Sem migração de banco — schema permanece em v15.
+4. Bancos legados em dim 64 funcionam sem alteração; bancos novos usam dim 384 por padrão.
+
+### Notas de Migração
+- **Sem migração de schema**: schema permanece em v15; nenhum `ALTER TABLE` executa.
+- **Default de dim alterado 64 → 384**: afeta apenas bancos criados com v1.0.94+. Bancos existentes mantêm o dim registrado via precedência `schema_meta.dim`.
+- **Timeout de embed alterado 120s → 300s**: nenhuma ação necessária; operações longas agora têm mais margem.
+
+### Rollback
+Reverta para v1.0.93 reinstalando o binário anterior. Nenhuma alteração de banco a desfazer — schema e dim são preservados no `schema_meta`.
+
+```bash
+# Inspecionar dim registrado em um banco
+sqlite-graphrag stats --json | jaq '.schema_meta'
+```
+
 # MIGRANDO PARA v1.0.93 — Backend de Embedding OpenRouter (GAP-OR-INGEST)
 
 > Este guia cobre a atualização de v1.0.92 para v1.0.93. Nenhuma migração de banco executa. O schema permanece em v15. O comportamento é ADITIVO.
@@ -681,7 +740,7 @@ Se você tem um corpus grande, re-embede com o loop one-shot canônico (G42/S9, 
 ```bash
 # Re-embedar memórias sem linha vetorial, 5 por invocação.
 # Repita (loop externo) até o resumo reportar 0 itens completados.
-sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --mode codex --json
 ```
 
 Para forçar UMA memória a re-embedar sem tocar no body, use `edit --force-reembed` (v1.0.79):
@@ -715,7 +774,7 @@ A primeira chamada leva 1-3 segundos (spawn de subprocesso LLM). Chamadas subseq
 | `vec_memories`, `vec_entities`, `vec_chunks` são virtual tables sqlite-vec | `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` são tabelas BLOB-backed regulares |
 | Modelo fastembed: `multilingual-e5-small` (local, determinístico) | Modelo LLM: `claude-sonnet-4-6` (claude) ou `gpt-5.4` (codex) (round-trip de rede) |
 | Primeiro `init` baixa 1.1 GB de pesos ONNX | Primeiro `init` faz um round-trip LLM de 1-3 s |
-| Dimensionalidade de embedding fixa em 384 | Default 64 desde a v1.0.79, configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos migrados mantêm a 384 registrada em todo comando (G43) e continuam pesquisáveis; `enrich --operation re-embed` re-embeda na dim ativa |
+| Dimensionalidade de embedding fixa em 384 | Default 64 desde a v1.0.79, configurável via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (faixa [8, 4096]); bancos migrados mantêm a 384 registrada em todo comando (G43) e continuam pesquisáveis; `enrich --operation re-embed --mode codex` re-embeda na dim ativa |
 
 ## Rollback
 

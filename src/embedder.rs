@@ -1155,12 +1155,46 @@ pub fn embed_entity_texts_cached(
     models_dir: &Path,
     texts: &[String],
     parallelism: usize,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+    llm_backend: crate::cli::LlmBackendChoice,
 ) -> Result<(Vec<Vec<f32>>, EmbedCacheStats), AppError> {
     if texts.is_empty() {
         return Ok((Vec::new(), EmbedCacheStats::default()));
     }
-    let embedder = get_embedder(models_dir)?;
-    let model = embedder.lock().model_label();
+    // GAP-OR-ENTITY-EMBED: resolve the SAME chain the chunk path uses so the
+    // entity embedding honours `--embedding-backend`/`--llm-backend` instead
+    // of always forcing the codex subprocess (the old G56 code path).
+    let chain = embedding_backend.to_chain(llm_backend);
+
+    // `none` short-circuit: when the resolved chain is exactly `[None]`
+    // (`--embedding-backend llm --llm-backend none`) skip every backend and
+    // return empty vectors WITHOUT spawning a subprocess. Empties are never
+    // cached so a later call with a real backend in the same process is not
+    // poisoned; they count as misses for stats parity with the chunk path.
+    if chain.as_slice() == [LlmBackendKind::None] {
+        let out: Vec<Vec<f32>> = texts.iter().map(|_| Vec::new()).collect();
+        return Ok((
+            out,
+            EmbedCacheStats {
+                requested: texts.len(),
+                hits: 0,
+                misses: texts.len(),
+            },
+        ));
+    }
+
+    // Cache model label reflects the EFFECTIVE embedding backend. When the
+    // chain actually routes through OpenRouter, vectors carry that model's
+    // dim/MRL profile and must never collide with codex-produced vectors;
+    // for the local path we keep the prior `model_label()` so the in-process
+    // cache key is unchanged (no regression — this cache is process-local).
+    let routed_openrouter =
+        chain.first() == Some(&LlmBackendKind::OpenRouter) && is_openrouter_initialized();
+    let model = if routed_openrouter {
+        format!("openrouter:{}", crate::constants::embedding_dim())
+    } else {
+        get_embedder(models_dir)?.lock().model_label()
+    };
     let cache = entity_embed_cache();
     let mut hits: Vec<Option<Arc<Vec<f32>>>> = vec![None; texts.len()];
     let mut miss_indices: Vec<usize> = Vec::with_capacity(texts.len());
@@ -1178,11 +1212,16 @@ pub fn embed_entity_texts_cached(
     let miss_count = miss_indices.len();
     if miss_count > 0 {
         let miss_texts: Vec<String> = miss_indices.iter().map(|&i| texts[i].clone()).collect();
-        let miss_vecs = embed_texts_parallel(
-            embedder,
+        // GAP-OR-ENTITY-EMBED: route misses through the backend-aware batch
+        // helper (same one the chunk path uses). With OpenRouter this hits the
+        // REST `embed_batch` (~200ms) instead of the codex subprocess (~120s).
+        let miss_vecs = embed_passages_parallel_with_embedding_choice(
+            models_dir,
             &miss_texts,
             parallelism,
             entity_embed_batch_size(),
+            embedding_backend,
+            llm_backend,
         )?;
         let mut guard = cache.lock();
         for (slot, &orig_idx) in miss_indices.iter().enumerate() {

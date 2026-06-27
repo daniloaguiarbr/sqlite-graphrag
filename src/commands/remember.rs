@@ -772,6 +772,8 @@ pub fn run(
             &paths.models,
             &entity_texts,
             args.llm_parallelism as usize,
+            embedding_backend,
+            llm_backend,
         ) {
             Ok(r) => r,
             Err(e) if skip_embed => {

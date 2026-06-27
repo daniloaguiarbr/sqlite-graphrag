@@ -121,3 +121,10 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - JAMAIS bypass `cargo audit` warnings without opening a tracked security advisory
 - JAMAIS set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; the spawn will abort with exit 1
 - JAMAIS rely on `ANTHROPIC_AUTH_TOKEN` forwarding when the host is shared with untrusted processes; prefer `--strict-env-clear` so credentials stay in the parent process only
+
+
+## v1.0.94 Headless Mode Hardening (ADR-0053)
+- v1.0.94 makes `enrich --mode` REQUIRED (removed the `claude-code` default); omitting it is rejected by clap with exit 2.
+- This prevents an accidental `claude -p` spawn that would inherit the caller project `.mcp.json` and execute untrusted MCP servers in a headless context.
+- No new exit code and no new environment variable are introduced; the change is a safer default surface only.
+- Valid modes are `claude-code`, `codex`, `opencode`; pick the one matching your `--llm-backend`.

@@ -131,6 +131,10 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 - Final publication to crates.io is done manually with `cargo publish --locked`
 
 ## Recent Releases
+
+### v1.0.94 - 2026-06-26 — Four-Gap Remediation (ADR-0053)
+- Fixed GAP-OR-ENTITY-EMBED (entity embedding honours `--embedding-backend`/`--llm-backend`; `remember` with new entities ~119s -> ~0.9s), GAP-EMBED-DIM-64 (default dim 64 -> 384), GAP-EMBED-TIMEOUT-300 (embedding timeout 120s -> 300s), GAP-HEADLESS-DEFAULT (`enrich --mode` now required, clap exit 2 when omitted).
+- Validation: `cargo fmt --check` 0 diffs, `cargo clippy -- -D warnings` 0 warnings, `cargo test` exit 0; ADR-0053 (EN+PT), documentation synced across root, docs/, skill/ and llms.
 ### v1.0.83 - 2026-06-17 — Custom-Provider Credential Preservation (ADR-0041)
 - **Custom Anthropic-compatible providers** now work end-to-end: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CLAUDE_CODE_ENTRYPOINT`, `DISABLE_TELEMETRY`, and `OTEL_EXPORTER_OTLP_ENDPOINT` flow from the orchestrator process to the `claude -p` / `codex exec` subprocess. Provider MiniMax/api.minimax.io (the trigger of this release), OpenRouter, AWS Bedrock custom routes, and corporate Anthropic-compatible gateways are now first-class.
 - **OAuth-only mandate intact** as defence in depth: the guards in `claude_runner.rs`, `codex_spawn.rs`, and `ingest_claude.rs` still reject `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` with `AppError::Validation` (exit 1). The eight pre-existing `#[serial_test::serial(env)]` tests in `claude_runner.rs` and `codex_spawn.rs` remain green.

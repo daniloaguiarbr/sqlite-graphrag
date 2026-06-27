@@ -1668,3 +1668,22 @@ cargo install --path . && sqlite-graphrag init
 - AÇÃO DO OPERADOR após upgrade: `codex login` para refrescar o refresh token OAuth
 - A cadeia de fallback de captura de stderr em ADR-0040 detecta `refresh_token_reused` e roteia para o próximo backend em `--llm-backend`
 - NÃO existe fix definitivo upstream; mitigação depende de `codex login` dirigido pelo operador
+
+
+## Novidades na v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
+- A dimensão de embedding padrão agora é 384 (era 64); `init` grava `dim=384`. Bancos legados em 64 continuam funcionando via `schema_meta.dim`.
+- `enrich --mode` é OBRIGATÓRIO (`claude-code`|`codex`|`opencode`); omitir é rejeitado com exit 2 (evita spawn acidental de `claude -p` herdando `.mcp.json`).
+- O embedding de entidades em `remember`/`remember-batch`/`ingest` honra `--embedding-backend`/`--llm-backend`; `remember` com entidades novas ~119s para ~0,9s sob OpenRouter.
+- Timeout do subprocesso de embedding 120s para 300s.
+
+## Novidades da v1.0.83 até a v1.0.93 (Backfill)
+- v1.0.83: preservação de env de provider Anthropic-compatível customizado (ADR-0041) — MiniMax/OpenRouter/gateways corporativos sem quebrar OAuth-only.
+- v1.0.84: split real do backend Claude (ADR-0042) — `--llm-backend claude` invoca claude, nunca codex; `backend_invoked` em 7 envelopes JSON; `--dry-run-backend`.
+- v1.0.85: remediação de cinco gaps (ADR-0043) — `FallbackReason` estendido para 7 variantes com `reason_code`; fallback determinístico em OAuthQuota/SlotExhausted.
+- v1.0.87: camada de validação pre-flight (ADR-0045) — 7 guards barram cada spawn LLM; exit code 16; `SQLITE_GRAPHRAG_SKIP_PREFLIGHT`.
+- v1.0.88: hotfixes BUG-11/12/13 (ADR-0046/0047) — propagação de preflight, stderr de linha única, validação de nome de entidade em `link --create-missing`.
+- v1.0.89: schema como artefato derivado + paridade de flags + remediação de deadlock de embedding (ADR-0048/0049/0050).
+- v1.0.90: integração do backend OpenCode (ADR-0051) — terceiro backend LLM; `--llm-backend opencode`, `--mode opencode`; fallback `codex -> claude -> opencode -> none`.
+- v1.0.91: isolamento de CWD de spawn (GAP-SPAWN-001) — subprocessos LLM não herdam mais `.mcp.json`; recálculo de grau (BUG-17); correções de enum de schema.
+- v1.0.92: remediação de documentação (8 gaps), auditoria de skills, expansão CRUD.
+- v1.0.93: backend de embedding OpenRouter (ADR-0052) — `--embedding-backend openrouter` via REST, 10 modelos verificados, exit 78 para erros de config.

@@ -7,7 +7,7 @@
 
 - Leia a versão em inglês em [INTEGRATIONS.md](INTEGRATIONS.md)
 - Cada receita abaixo está pronta para copiar e custa zero para executar
-- **v1.0.79: todo build é apenas LLM e one-shot.** A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth). O daemon, o runtime ONNX e a feature `embedding-legacy` foram totalmente removidos; os embeddings são em lote, paralelos (`--llm-parallelism`) e com 64 dimensões por padrão (`--embedding-dim`, faixa [8, 4096]).
+- **v1.0.79: todo build é apenas LLM e one-shot.** A geração de embedding delega para um subprocesso headless `claude code` ou `codex` (OAuth). O daemon, o runtime ONNX e a feature `embedding-legacy` foram totalmente removidos; os embeddings são em lote, paralelos (`--llm-parallelism`) e com 384 dimensões por padrão (`--embedding-dim`, faixa [8, 4096]).
 
 
 ## Aliases de Flags CLI (desde v1.0.35)
@@ -27,7 +27,7 @@
 - Para extração de entidades/relacionamentos curada por LLM use `ingest --mode claude-code` ou `ingest --mode codex`.
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
-## Novos Comandos e Flags (desde v1.0.93)
+## Novos Comandos e Flags (desde v1.0.94)
 - `--embedding-backend auto|openrouter|llm` — seleciona o backend de embedding (flag global)
 - `--embedding-model MODEL` — seleciona o modelo de embedding para OpenRouter (flag global, OBRIGATÓRIO com openrouter)
 - `--openrouter-api-key KEY` — chave de API para OpenRouter (flag global)
@@ -119,7 +119,7 @@
 - O subcomando `daemon` foi DEPRECIADO na v1.0.76 e TOTALMENTE REMOVIDO na v1.0.79 (antecipando o cronograma da v1.1.0).  O subprocesso LLM é o "model loader"; a CLI é 100% one-shot com zero IPC.
 
 ## Novos Comandos e Flags (v1.0.79 — pipeline de embedding G42)
-- Flag global `--embedding-dim <N>` define a dimensionalidade do embedding (padrão 64, faixa [8, 4096]); precedência: flag > env `SQLITE_GRAPHRAG_EMBEDDING_DIM` > o `dim` gravado em `schema_meta` > 64; bancos 384-dim existentes continuam funcionando sem mudança
+- Flag global `--embedding-dim <N>` define a dimensionalidade do embedding (padrão 384, faixa [8, 4096]); precedência: flag > env `SQLITE_GRAPHRAG_EMBEDDING_DIM` > o `dim` gravado em `schema_meta` > 384; bancos 384-dim existentes continuam funcionando sem mudança
 - `--llm-parallelism <N>` agora disponível em `remember` (padrão 4), `ingest` (padrão 2) e `edit` — fan-out limitado via `Semaphore` + `JoinSet`, permits com clamp [1, 32]
 - `enrich --operation re-embed --limit N --resume` é o caminho canônico de re-embed one-shot (ex.: após mudar `--embedding-dim`)
 - `edit --force-reembed` regenera o embedding de uma memória sem alterar o corpo
@@ -469,8 +469,8 @@
 - Dica de ouro é reusar o mesmo namespace entre todos os modelos roteados para contexto coeso
 
 
-### Backend de Embedding OpenRouter (v1.0.93)
-- Desde v1.0.93, sqlite-graphrag pode usar OpenRouter como backend dedicado de embedding via REST API
+### Backend de Embedding OpenRouter (v1.0.94)
+- Desde v1.0.94, sqlite-graphrag pode usar OpenRouter como backend dedicado de embedding via REST API
 - Use `--embedding-backend openrouter --embedding-model MODEL` para embedding em ~200ms em vez de 15s via subprocesso
 - 10 modelos verificados: Qwen 4B/8B, NVIDIA Nemotron (gratuito), OpenAI small/large, Perplexity, Mistral, BAAI, Google Gemini
 - Defina a chave de API via variável de ambiente `OPENROUTER_API_KEY` ou flag `--openrouter-api-key`

@@ -100,8 +100,8 @@ pub fn run(
         "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('model', ?1)",
         rusqlite::params![crate::constants::SQLITE_GRAPHRAG_VERSION],
     )?;
-    // G43: pre-v1.0.79 this hardcoded '384', stamping NEW databases with a
-    // dimensionality that contradicts the active default (64 since G42/S1).
+    // G43: pre-v1.0.79 this hardcoded '384' as a literal, bypassing the
+    // active default (now 384 again, matching the production corpus).
     // INSERT OR IGNORE preserves the recorded dim on re-init of an existing
     // database; the active dim (env > database > default) fills new ones.
     conn.execute(
@@ -225,14 +225,16 @@ mod tests {
     }
 
     #[test]
-    fn init_default_dim_is_64() {
-        // G42/S1 (v1.0.79): the default dimensionality dropped from 384
-        // to 64 (MRL, arXiv 2205.13147). The active dim may differ when
-        // an env override or an existing database sets it.
+    fn init_default_dim_is_384() {
+        // The default dimensionality is 384 to match the production corpus
+        // (multilingual-e5-small); MRL (arXiv 2205.13147) truncation, when
+        // needed, happens server-side via the OpenRouter REST backend. The
+        // active dim may differ when an env override or an existing database
+        // sets it (precedence env > database > default).
         assert_eq!(
             crate::constants::DEFAULT_EMBEDDING_DIM,
-            64,
-            "default dim must be 64 in the LLM-only build"
+            384,
+            "default dim must be 384 to match the production corpus"
         );
     }
 

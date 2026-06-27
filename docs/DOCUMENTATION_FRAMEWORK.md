@@ -63,7 +63,12 @@ This section updates the framework to cover the documentation generated for the 
 - New env var: `SQLITE_GRAPHRAG_EMBEDDING_BACKEND`
 - Documented in: ALL 12 root .md files, ALL 24 docs/ .md files, 7 schema JSON files, `docs/schemas/README.md`, `docs/decisions/INDEX.md`
 
-### Documentation Drift Status (as of v1.0.93)
+### v1.0.94 — Four-Gap Remediation (ADR-0053)
+- `DEFAULT_EMBEDDING_DIM` 64 -> 384; `DEFAULT_EMBED_TIMEOUT_SECS` 120 -> 300; entity embedding honours `--embedding-backend`/`--llm-backend`; `enrich --mode` now required (clap exit 2 when omitted).
+- New ADR: ADR-0053 (EN + PT-BR); ADR-0051 PT-BR translation added (closes the only post-framework bilingual gap); docs/decisions/INDEX.md updated.
+- Updated: README, INTEGRATIONS, SECURITY, CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING (EN+PT); DOCUMENTATION_FRAMEWORK; SKILL (EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt.
+
+### Documentation Drift Status (as of v1.0.94)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|

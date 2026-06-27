@@ -1576,7 +1576,14 @@ fn contract_39_enrich() {
     // dry-run mode: emits phase events + preview item events + summary without calling LLM.
     let out = env
         .cmd()
-        .args(["enrich", "--operation", "memory-bindings", "--dry-run"])
+        .args([
+            "enrich",
+            "--operation",
+            "memory-bindings",
+            "--mode",
+            "codex",
+            "--dry-run",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1655,4 +1662,36 @@ fn contract_39_enrich() {
     );
     assert!(phase_scan_found, "enrich must emit a 'scan' phase event");
     assert!(summary_found, "enrich must emit a summary line");
+}
+
+// ---------------------------------------------------------------------------
+// 39b — enrich requires --mode (GAP-HEADLESS-DEFAULT: no default provider)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn contract_39b_enrich_requires_mode() {
+    let env = Env::new();
+    env.init();
+
+    // Omitting --mode must be rejected by clap (exit 2), never silently
+    // defaulting to a provider that spawns a headless CLI.
+    let out = env
+        .cmd()
+        .args(["enrich", "--operation", "memory-bindings", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !out.status.success(),
+        "enrich without --mode must fail; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "enrich without --mode must exit 2 (clap parsing error); stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

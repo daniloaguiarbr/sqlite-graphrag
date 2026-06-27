@@ -1,3 +1,62 @@
+# MIGRATING TO v1.0.94 — Four-Gap Remediation (ADR-0053)
+
+> This guide covers upgrading from v1.0.93 to v1.0.94. No database migration runs. Schema remains at v15.
+
+## v1.0.94 — Four-Gap Remediation (ADR-0053)
+
+### What Changed
+- **GAP-OR-ENTITY-EMBED**: Entity embedding in `remember`/`remember-batch`/`ingest` now honours `--embedding-backend`/`--llm-backend`, routing via OpenRouter REST. `remember` with new entities drops from ~119s to ~0.9s (`embedder.rs`, `remember.rs:771`).
+- **GAP-EMBED-DIM-64**: `DEFAULT_EMBEDDING_DIM` raised from 64 to **384** (`constants.rs:29`). New databases created via `init` write `dim=384` in `schema_meta`. Legacy databases at dim 64 are preserved via `schema_meta.dim` precedence — no forced re-embed.
+- **GAP-EMBED-TIMEOUT-300**: `DEFAULT_EMBED_TIMEOUT_SECS` raised from 120 to **300** (`llm_embedding.rs:43`).
+- **GAP-HEADLESS-DEFAULT**: `enrich --mode` is now **REQUIRED** (removed `default_value = "claude-code"` in `enrich.rs:379`). Omitting `--mode` is rejected by clap (exit 2), preventing accidental spawn of `claude -p` with the project `.mcp.json`.
+
+### Breaking Change — `enrich --mode` is now required
+
+**Before (v1.0.93 — fails in v1.0.94 with exit 2):**
+```bash
+sqlite-graphrag enrich --operation memory-bindings --mode codex --json
+```
+
+**After (v1.0.94):**
+```bash
+# Choose the mode matching your --llm-backend
+sqlite-graphrag enrich --operation memory-bindings --mode codex --json
+# or
+sqlite-graphrag enrich --operation memory-bindings --mode claude-code --json
+# or
+sqlite-graphrag enrich --operation memory-bindings --mode opencode --json
+```
+
+**Canonical pairing:**
+| `--llm-backend` | `--mode` |
+|-----------------|----------|
+| `codex`         | `codex`  |
+| `claude`        | `claude-code` |
+| `opencode`      | `opencode` |
+
+### Who Is Affected
+- All users running `enrich --operation ...` (any operation) without `--mode`. Update all invocations before upgrading.
+- Automation scripts, CI pipelines, or scheduled jobs that call `enrich`.
+
+### How to Upgrade
+1. Audit all `enrich` calls: `rg "enrich --operation" your-scripts/ | rg -v -- "--mode"`
+2. Add `--mode <value>` matching your `--llm-backend` to each invocation (see pairing table above).
+3. No database migration — schema stays at v15.
+4. Legacy dim-64 databases work unchanged; new databases default to dim 384.
+
+### Migration Notes
+- **No schema migration**: schema remains v15; no `ALTER TABLE` runs.
+- **Default dim changed 64 → 384**: affects only new databases created with v1.0.94+. Existing databases retain their recorded dim via `schema_meta.dim` precedence.
+- **Embed timeout changed 120s → 300s**: no user action needed; longer operations now have more headroom.
+
+### Rollback
+Roll back to v1.0.93 by reinstalling the previous binary. No database changes to undo — schema and dim are preserved in `schema_meta`.
+
+```bash
+# Inspect recorded dim in a database
+sqlite-graphrag stats --json | jaq '.schema_meta'
+```
+
 # MIGRATING TO v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
 
 > This guide covers upgrading from v1.0.92 to v1.0.93. No database migration runs. Schema remains at v15. Behavior is ADDITIVE.
@@ -723,7 +782,7 @@ EXITS, so the job survives any external supervisor window:
 ```bash
 # Re-embed memories without a vector row, 5 per invocation.
 # Repeat (external loop) until the summary reports 0 completed items.
-sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --mode codex --json
 ```
 
 To force ONE memory to re-embed without touching its body, use
@@ -762,7 +821,7 @@ but the LLM side may cache the embedding model internally.
 | `vec_memories`, `vec_entities`, `vec_chunks` are sqlite-vec virtual tables | `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` are regular BLOB-backed tables |
 | Fastembed model: `multilingual-e5-small` (local, deterministic) | LLM model: `claude-sonnet-4-6` (claude) or `gpt-5.4` (codex) (network round-trip) |
 | First `init` downloads 1.1 GB of ONNX weights | First `init` does a 1-3 s LLM round-trip |
-| Embedding dimensionality fixed at 384 | Default 64 since v1.0.79, configurable via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (range [8, 4096]); migrated databases keep their recorded 384 on every command (G43) and stay searchable; `enrich --operation re-embed` re-embeds at the active dim |
+| Embedding dimensionality fixed at 384 | Default 64 since v1.0.79, configurable via `SQLITE_GRAPHRAG_EMBEDDING_DIM` (range [8, 4096]); migrated databases keep their recorded 384 on every command (G43) and stay searchable; `enrich --operation re-embed --mode codex` re-embeds at the active dim |
 
 ## Rollback
 

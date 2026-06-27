@@ -1311,7 +1311,14 @@ fn schema_39_enrich() {
 
     let saida = env
         .cmd()
-        .args(["enrich", "--operation", "memory-bindings", "--dry-run"])
+        .args([
+            "enrich",
+            "--operation",
+            "memory-bindings",
+            "--mode",
+            "codex",
+            "--dry-run",
+        ])
         .output()
         .expect("enrich failed");
     assert!(

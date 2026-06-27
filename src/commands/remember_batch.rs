@@ -416,6 +416,8 @@ fn process_line(
             &paths.models,
             std::slice::from_ref(&entity_text),
             1,
+            embedding_backend,
+            llm_backend,
         ) {
             Ok((entity_embedding_vec, _stats)) => {
                 if let Some(entity_embedding) = entity_embedding_vec.into_iter().next() {

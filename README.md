@@ -7,7 +7,7 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 > Persistent memory for AI agents in a single Rust binary with built-in GraphRAG.
-> **Current release: v1.0.93 — OpenRouter embedding backend, full EmbeddingBackendChoice propagation and 5 BUG-OR fixes.** Every build embeds through `claude -p`, `codex exec`, `opencode run` (OAuth) or OpenRouter REST API (`--embedding-backend openrouter`). No daemon, no ONNX runtime, ~14.6 MiB binary. v1.0.93 adds `--embedding-backend auto|openrouter|llm` with `--embedding-model` for REST API embeddings (~200ms vs 15s subprocess LLM), propagates `EmbeddingBackendChoice` to ALL 13 embedding paths (GAP-OR-PROPAGATION), fixes exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE), and verifies 10 embedding models E2E. Library consumers must pin to `=1.0.93`; see the `Stability Policy` below.
+> **Current release: v1.0.94 — OpenRouter embedding backend, full EmbeddingBackendChoice propagation and 5 BUG-OR fixes.** Every build embeds through `claude -p`, `codex exec`, `opencode run` (OAuth) or OpenRouter REST API (`--embedding-backend openrouter`). No daemon, no ONNX runtime, ~14.6 MiB binary. v1.0.94 adds `--embedding-backend auto|openrouter|llm` with `--embedding-model` for REST API embeddings (~200ms vs 15s subprocess LLM), propagates `EmbeddingBackendChoice` to ALL 13 embedding paths (GAP-OR-PROPAGATION), fixes exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE), and verifies 10 embedding models E2E. Library consumers must pin to `=1.0.94`; see the `Stability Policy` below.
 
 - Read this document in [Portuguese (pt-BR)](README.pt-BR.md).
 
@@ -23,7 +23,7 @@
 - **Upgrading from v1.0.79 to v1.0.80?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.80 adds the CI `semver-checks` job (informational), the Windows pre-warm steps (ADR-0033), and the panic-free third-signal exit (ADR-0034). Library consumers must pin to `=1.0.80`; see the `Stability Policy` below.
 - **Upgrading from v1.0.80 / v1.0.81 to v1.0.82?** Two new migrations run automatically on first `init`/`migrate`: `V014__pending_memories` (pending `remember` checkpoint queue) and `V015__pending_embeddings` (pending embedding retry queue). After upgrading, run `codex login` once to refresh the OAuth refresh token — the 2026-06-14 incident showed that `codex exec` returning HTTP 401 `refresh_token_reused` is now caught by the new fallback chain (ADR-0040) and routed to the next backend in `--llm-backend codex,claude`. See [docs/MIGRATION.md](docs/MIGRATION.md) for the full 6-step procedure including rollback.
 - **Upgrading from v1.0.82 / v1.0.83 to v1.0.85?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.84 (ADR-0042, GAP-002) added the real Claude backend split via `LlmEmbeddingBuilder` so `--llm-backend claude` invokes `claude` and never `codex`, the `backend_invoked` field in 7 JSON envelopes, the `vec_degraded_reason` field in `hybrid-search` and `recall`, the global `--dry-run-backend` flag for CI pre-flight, and `apply_env_whitelist_for_claude` for hardened providers. v1.0.85 (ADR-0043) extended `FallbackReason` from 3 to 7 variants with a `reason_code` discriminator (catches quota exhaustion, slot exhaustion, backend mismatch, dim zero, cancellation, timeout), `try_embed_query_with_deterministic_fallback` retries the alternative backend on `OAuthQuota` and sleeps 750ms on `SlotExhausted`, and `LlmEmbedding::invoke_claude` now captures 12-14 `anthropic-ratelimit-*-remaining` headers BEFORE checking the subprocess exit (G45-CR5). v1.0.85.1 (hotfix) restored the FTS5 failsafe for --llm-backend none (GAP-004, ADR-0043 hotfix). v1.0.85.2 (hotfix) made --dry-run-backend work standalone (BUG-001, ADR-0044), propagated resolved_kind from embed_via_backend so backend_invoked is populated in all 7 envelopes (BUG-002), and aligned the test mock JSON shape (BUG-003). Library consumers must pin to `=1.0.85.2`; see the `Stability Policy` below.
-- **Upgrading from v1.0.91 / v1.0.92 to v1.0.93?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.93 adds the OpenRouter embedding backend (`--embedding-backend openrouter`), propagates `EmbeddingBackendChoice` to all 13 embedding paths (GAP-OR-PROPAGATION), fixes exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE), and validates 10 embedding models E2E. Library consumers must pin to `=1.0.93`.
+- **Upgrading from v1.0.91 / v1.0.92 to v1.0.94?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.94 adds the OpenRouter embedding backend (`--embedding-backend openrouter`), propagates `EmbeddingBackendChoice` to all 13 embedding paths (GAP-OR-PROPAGATION), fixes exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE), and validates 10 embedding models E2E. Library consumers must pin to `=1.0.94`.
 - **Upgrading from v1.0.85 / v1.0.86 / v1.0.87 / v1.0.88 / v1.0.89 / v1.0.90 to v1.0.91?** No database migration required; just `cargo install sqlite-graphrag --locked --force`. v1.0.91 fixes GAP-SPAWN-001 (LLM subprocesses no longer inherit `.mcp.json` — embedding works zero-config in any project), BUG-17 (`entities.degree` inflation replaced by `recalculate_degree`), BUG-15 (7 schema enums), BUG-16 (`deep-research` schema), GAP-SPAWN-002 (orphan dir cleanup) and BUG-14 (test fix). Library consumers must pin to `=1.0.91`.
 
 ```bash
@@ -35,7 +35,7 @@ sqlite-graphrag --version
 ## What is it?
 ### sqlite-graphrag delivers durable memory for AI agents
 - Stores memories, entities and relationships inside a single SQLite file under 25 MB
-- **Build (v1.0.93):** LLM-only and one-shot — embeddings are generated by spawning `claude -p`, `codex exec`, `opencode run` with OAuth, or via OpenRouter REST API (`--embedding-backend openrouter`); no local model, no daemon, no ONNX runtime, ~14.6 MiB binary. LLM subprocesses run in an isolated temp directory (GAP-SPAWN-001) so `.mcp.json` from the caller's project is never inherited
+- **Build (v1.0.94):** LLM-only and one-shot — embeddings are generated by spawning `claude -p`, `codex exec`, `opencode run` with OAuth, or via OpenRouter REST API (`--embedding-backend openrouter`); no local model, no daemon, no ONNX runtime, ~14.6 MiB binary. LLM subprocesses run in an isolated temp directory (GAP-SPAWN-001) so `.mcp.json` from the caller's project is never inherited
 - **Legacy build:** REMOVED in v1.0.79 — the `embedding-legacy` feature and the local fastembed/ONNX path no longer exist
 - Combines FTS5 full-text search with pure-Rust cosine similarity into a hybrid Reciprocal Rank Fusion ranker
 - Stores and traverses an explicit entity graph with typed edges for multi-hop recall across memories
@@ -145,7 +145,7 @@ sqlite-graphrag recall "graphrag" --k 5 --json
 
 
 ## Version Highlights
-- **v1.0.93**: OpenRouter embedding backend (GAP-OR-INGEST) — `--embedding-backend auto|openrouter|llm` with `--embedding-model` for REST API embeddings (~200ms vs 15s subprocess LLM); `EmbeddingBackendChoice` propagated to ALL 13 embedding paths including enrich, init, rename-entity, ingest_claude and remember chunks (GAP-OR-PROPAGATION); exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE); `--enrich-after` flag for ingest; 10 models verified E2E (Qwen, OpenAI, Google Gemini, NVIDIA, Mistral, BAAI, Perplexity); 5 BUG-OR fixes; 1059 tests, 0 failures
+- **v1.0.94**: OpenRouter embedding backend (GAP-OR-INGEST) — `--embedding-backend auto|openrouter|llm` with `--embedding-model` for REST API embeddings (~200ms vs 15s subprocess LLM); `EmbeddingBackendChoice` propagated to ALL 13 embedding paths including enrich, init, rename-entity, ingest_claude and remember chunks (GAP-OR-PROPAGATION); exit code 78 for OpenRouter config errors (BUG-OR-EXIT-CODE); `--enrich-after` flag for ingest; 10 models verified E2E (Qwen, OpenAI, Google Gemini, NVIDIA, Mistral, BAAI, Perplexity); 5 BUG-OR fixes; 1059 tests, 0 failures
 - `v1.0.92`: 8-gap documentation remediation, skill audit, CRUD expansion
 - **v1.0.91**: Spawn CWD isolation (GAP-SPAWN-001) — LLM subprocesses run in an isolated temp directory so `.mcp.json` from the caller's project is never inherited; `entities.degree` inflation fix (BUG-17) via `recalculate_degree`; 7 JSON schema enum fixes (BUG-15); `deep-research` schema fix (BUG-16); orphan spawn dir cleanup (GAP-SPAWN-002); 877+ tests, 0 failures
 - **v1.0.90**: OpenCode backend integration (GAP-OPENCODE-001/002) — third LLM backend alongside codex and claude; `--llm-backend opencode`, `--mode opencode` for ingest/enrich, `--opencode-binary/model/timeout` flags, env vars `SQLITE_GRAPHRAG_OPENCODE_*`; fallback chain extended to `codex → claude → opencode → none`; Windows compilation fix (BUG-WINDOWS-001); embedding timeout hardcode fix (BUG-TIMEOUT-HARDCODE-001); `list` pagination fix (BUG-LIST-TOTAL-COUNT-001); 24 total bug/gap fixes; 875+ tests, 0 failures
@@ -272,7 +272,7 @@ sqlite-graphrag remember \
   --llm-parallelism 4 \
   --body-stdin < notes.md
 ```
-### OpenRouter Embedding Backend (v1.0.93)
+### OpenRouter Embedding Backend (v1.0.94)
 - Use `--embedding-backend openrouter` with `--embedding-model` for fast REST API embeddings (~200ms per call vs 15s subprocess)
 - The user MUST specify `--embedding-model` — no default model is hardcoded
 - Set `OPENROUTER_API_KEY` env var or pass `--openrouter-api-key`
@@ -294,7 +294,7 @@ sqlite-graphrag --embedding-backend openrouter \
   recall "search query" --k 10 --json
 ```
 - Supported models: `qwen/qwen3-embedding-8b` (best quality), `nvidia/llama-nemotron-embed-vl-1b-v2:free` (zero cost), `google/gemini-embedding-001` (highest scores), `openai/text-embedding-3-large`, and 6 more
-- All models produce 64-dimension vectors via MRL truncation — compatible with existing databases
+- All models produce 384-dimension vectors by default via MRL truncation — compatible with existing databases
 ### Read, forget, edit and rename using positional name argument
 <!-- skip-test: forget soft-deletes the memory mid-block, which then invalidates the subsequent edit/rename. The block is a lifecycle illustration, not a runnable script. -->
 ```bash
@@ -592,8 +592,8 @@ sqlite-graphrag history integration-tests-postgres --no-body --json
 | `SQLITE_GRAPHRAG_LLM_FALLBACK` | Comma-separated fallback chain for `--llm-backend auto`. Tokens: `codex`, `claude`, `none`. Maps to `--llm-fallback` CLI flag (v1.0.89) | `codex,claude,none` | `claude,none` |
 | `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY` | Maximum concurrent LLM subprocesses host-wide. Maps to `--llm-max-host-concurrency` CLI flag (v1.0.89) | `4` | `8` |
 | `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT` | When set, abort immediately instead of waiting for an LLM slot. Accepts `1`/`true`/`yes`/`on`. Maps to `--llm-slot-no-wait` CLI flag (v1.0.89) | unset (wait) | `1` |
-| `OPENROUTER_API_KEY` | API key for OpenRouter embedding backend (v1.0.93); also accepted via `--openrouter-api-key` flag or XDG config | unset | `sk-or-v1-...` |
-| `SQLITE_GRAPHRAG_EMBEDDING_BACKEND` | Default embedding backend selection (v1.0.93); values: `auto`, `openrouter`, `llm`. Maps to `--embedding-backend` CLI flag | `auto` | `openrouter` |
+| `OPENROUTER_API_KEY` | API key for OpenRouter embedding backend (v1.0.94); also accepted via `--openrouter-api-key` flag or XDG config | unset | `sk-or-v1-...` |
+| `SQLITE_GRAPHRAG_EMBEDDING_BACKEND` | Default embedding backend selection (v1.0.94); values: `auto`, `openrouter`, `llm`. Maps to `--embedding-backend` CLI flag | `auto` | `openrouter` |
 | `ORT_DYLIB_PATH` | HISTORICAL (≤ v1.0.75) — no build loads ONNX since v1.0.76; the variable is ignored | — | — |
 
 
@@ -656,7 +656,7 @@ RUN cargo install --path .
 ### Measured on a 1000-memory database
 - Embedding latency is dominated by the headless LLM round-trip (~1-3 s per batched call); pure reads (`read`, `list`, `graph`) stay in the low milliseconds
 - Since v1.0.79 LLM calls are BATCHED (calibration bases of 8 chunks / 25 entity names at dim 64, dim-adaptive — G44) and PARALLEL (`--llm-parallelism`, bounded `Semaphore` + `JoinSet`), so a 39-item memory embeds in 4-5 calls instead of 39 serialized spawns
-- `--embedding-dim 64` (the default) cuts the LLM output per vector ~6x compared to the old 384-dim payload
+- `--embedding-dim 384` (the default since v1.0.94) matches the production corpus; under OpenRouter REST the MRL truncation is server-side at no token cost
 - `init` performs no model download — it only creates the database and validates that a `claude`/`codex` CLI is reachable
 - **Build (v1.0.79):** each embedding call spawns `claude -p` or `codex exec` — RSS is ~350 MB per LLM worker (the 1100 MB ONNX model load no longer exists in any build)
 

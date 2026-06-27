@@ -368,7 +368,7 @@ fn main() -> std::process::ExitCode {
                     "openrouter",
                     cli.openrouter_api_key.as_deref(),
                 ) {
-                    let dim = cli.embedding_dim.unwrap_or(64) as usize;
+                    let dim = sqlite_graphrag::constants::embedding_dim();
                     if let Err(e) = sqlite_graphrag::embedder::get_openrouter_embedder(
                         resolved.value,
                         model,

@@ -1689,3 +1689,22 @@ cargo install --path . && sqlite-graphrag init
 - OPERATOR ACTION after upgrade: `codex login` to refresh the OAuth refresh token
 - The stderr-capture fallback chain in ADR-0040 detects `refresh_token_reused` and routes to the next backend in `--llm-backend`
 - There is NO definitive upstream fix; mitigation depends on operator-driven `codex login`
+
+
+## New in v1.0.94 — Four-Gap Remediation (ADR-0053)
+- Default embedding dimension is now 384 (was 64); `init` stamps `dim=384`. Legacy 64-dim databases keep working via `schema_meta.dim`.
+- `enrich --mode` is REQUIRED (`claude-code`|`codex`|`opencode`); omitting it is rejected with exit 2 (prevents accidental `claude -p` spawn inheriting `.mcp.json`).
+- Entity embedding in `remember`/`remember-batch`/`ingest` honours `--embedding-backend`/`--llm-backend`; `remember` with new entities ~119s to ~0.9s under OpenRouter.
+- Embedding subprocess timeout 120s to 300s.
+
+## New in v1.0.83 through v1.0.93 (Backfill)
+- v1.0.83: custom Anthropic-compatible provider env preservation (ADR-0041) — MiniMax/OpenRouter/corporate gateways without breaking OAuth-only.
+- v1.0.84: real Claude backend split (ADR-0042) — `--llm-backend claude` invokes claude, never codex; `backend_invoked` in 7 JSON envelopes; `--dry-run-backend`.
+- v1.0.85: five-gap remediation (ADR-0043) — `FallbackReason` extended to 7 variants with `reason_code`; deterministic fallback on OAuthQuota/SlotExhausted.
+- v1.0.87: pre-flight validation layer (ADR-0045) — 7 guards gate every LLM spawn; exit code 16; `SQLITE_GRAPHRAG_SKIP_PREFLIGHT`.
+- v1.0.88: hotfixes BUG-11/12/13 (ADR-0046/0047) — preflight propagation, single stderr line, entity-name validation on `link --create-missing`.
+- v1.0.89: schema as derived artifact + flag parity + embedding deadlock remediation (ADR-0048/0049/0050).
+- v1.0.90: OpenCode backend integration (ADR-0051) — third LLM backend; `--llm-backend opencode`, `--mode opencode`; fallback `codex -> claude -> opencode -> none`.
+- v1.0.91: spawn CWD isolation (GAP-SPAWN-001) — LLM subprocesses no longer inherit `.mcp.json`; degree recalculation (BUG-17); schema enum fixes.
+- v1.0.92: documentation remediation (8 gaps), skill audit, CRUD expansion.
+- v1.0.93: OpenRouter embedding backend (ADR-0052) — `--embedding-backend openrouter` via REST, 10 verified models, exit 78 for config errors.

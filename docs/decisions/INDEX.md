@@ -52,8 +52,9 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0048](adr-0048-schema-as-derived-artifact.md) | Schema as Derived Artifact (schemars + Must-Ignore) | v1.0.89 | Accepted | [PT-BR](adr-0048-schema-as-derived-artifact.pt-BR.md) |
 | [ADR-0049](adr-0049-db-flag-scope-per-subcommand.md) | `--db` Flag Scope Per Subcommand | v1.0.89 | Accepted | [PT-BR](adr-0049-db-flag-scope-per-subcommand.pt-BR.md) |
 | [ADR-0050](adr-0050-embedding-deadlock-remediation.md) | Embedding Deadlock Remediation | v1.0.89 | Accepted | [PT-BR](adr-0050-embedding-deadlock-remediation.pt-BR.md) |
-| [ADR-0051](adr-0051-opencode-backend-integration.md) | OpenCode Backend Integration | v1.0.90 | Accepted | — |
+| [ADR-0051](adr-0051-opencode-backend-integration.md) | OpenCode Backend Integration | v1.0.90 | Accepted | [PT-BR](adr-0051-opencode-backend-integration.pt-BR.md) |
 | [ADR-0052](adr-0052-openrouter-embedding-backend.md) | OpenRouter Embedding Backend | v1.0.93 | Accepted | [PT-BR](adr-0052-openrouter-embedding-backend.pt-BR.md) |
+| [ADR-0053](adr-0053-v1094-four-gap-remediation.md) | v1.0.94 Four-Gap Remediation | v1.0.94 | Accepted | [PT-BR](adr-0053-v1094-four-gap-remediation.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -72,12 +73,13 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.89**: 3 ADRs (0048-0050) — schema + flag parity + embedding deadlock
 - **v1.0.90**: 1 ADR (0051) — OpenCode backend integration
 - **v1.0.93**: 1 ADR (0052) — OpenRouter embedding backend
+- **v1.0.94**: 1 ADR (0053) — four-gap remediation (default dim 384, timeout 300s, enrich --mode required, entity embedding honours backends)
 
 ## Bilíngue Status
 
-- **EN (English)**: 45/45 ADRs (100%)
-- **PT-BR (Português Brasileiro)**: 34/45 ADRs (76%)
-- **PT-BR pendente**: 11 ADRs (0007-0018, 0051) — criados antes do framework bilíngue ou pendentes de tradução
+- **EN (English)**: 47/47 ADRs (100%)
+- **PT-BR (Português Brasileiro)**: 35/47 ADRs (74%)
+- **PT-BR pendente**: 12 ADRs (0007-0018) — criados antes do mandato bilíngue (legado histórico)
 
 ## Conventions
 
@@ -90,7 +92,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 
 ## Adding a New ADR
 
-1. Choose the next sequential number (next is ADR-0053)
+1. Choose the next sequential number (next is ADR-0054)
 2. Create `adr-0053-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
 4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`

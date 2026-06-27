@@ -354,7 +354,7 @@ impl std::fmt::Display for EnrichMode {
     about = "Enrich graph memories and entities using an LLM provider",
     after_long_help = "EXAMPLES:\n  \
     # Add missing entity bindings to all unbound memories\n  \
-    sqlite-graphrag enrich --operation memory-bindings --mode claude-code\n\n  \
+    sqlite-graphrag enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini\n\n  \
     # Fill entity descriptions (dry-run preview, no tokens spent)\n  \
     sqlite-graphrag enrich --operation entity-descriptions --dry-run --json\n\n  \
     # Expand short memory bodies (GAP-18)\n  \
@@ -375,8 +375,8 @@ pub struct EnrichArgs {
     #[arg(long, short = 'o', value_enum, value_name = "OPERATION")]
     pub operation: EnrichOperation,
 
-    /// LLM provider to use. Default: claude-code (OAuth-first).
-    #[arg(long, value_enum, default_value = "claude-code")]
+    /// LLM provider to use. Required (no default).
+    #[arg(long, value_enum)]
     pub mode: EnrichMode,
 
     /// Maximum number of items to process in this run. Omit for all.

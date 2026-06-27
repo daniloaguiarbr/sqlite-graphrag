@@ -1,4 +1,4 @@
-# sqlite-graphrag (v1.0.93 LLM-Only One-Shot)
+# sqlite-graphrag (v1.0.94 LLM-Only One-Shot)
 
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary (LLM-only, one-shot)
@@ -27,7 +27,7 @@ cargo install --locked sqlite-graphrag
 - The default build is LLM-only and one-shot. See [ADR-0019](docs/decisions/adr-0019-llm-only-one-shot.md) for the full architectural rationale.
 - Daemon: deprecated in v1.0.76 and FULLY REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The CLI is 100% one-shot with zero IPC; the LLM subprocess is the "model loader".
 - `embedding-legacy`, `ner-legacy` and `full` features: REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). The v1.0.74 fastembed + ort + tokenizers + sqlite-vec pipeline no longer exists; every build is LLM-only.
-- Embedding pipeline (G42, v1.0.79): default dimensionality 64 (`--embedding-dim`, `SQLITE_GRAPHRAG_EMBEDDING_DIM`, range [8, 4096]; precedence flag > env > `schema_meta.dim` > 64; existing 384-dim databases keep working unchanged); batched LLM calls (calibration bases of 8 chunks / 25 entity names at dim 64, adapted as clamp(base×64/dim, 1, base) — G44); bounded parallelism via `--llm-parallelism` on `remember` (default 4), `ingest` (default 2) and `edit`; `kill_on_drop` plus `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300s) on every subprocess; canonical re-embed via `enrich --operation re-embed` and `edit --force-reembed`; `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` model override.
+- Embedding pipeline (G42, v1.0.79): default dimensionality 384 (`--embedding-dim`, `SQLITE_GRAPHRAG_EMBEDDING_DIM`, range [8, 4096]; precedence flag > env > `schema_meta.dim` > 384; existing 384-dim databases keep working unchanged); batched LLM calls (calibration bases of 8 chunks / 25 entity names at dim 64, adapted as clamp(base×64/dim, 1, base) — G44); bounded parallelism via `--llm-parallelism` on `remember` (default 4), `ingest` (default 2) and `edit`; `kill_on_drop` plus `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` (default 300s) on every subprocess; canonical re-embed via `enrich --operation re-embed` and `edit --force-reembed`; `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` model override.
 - Migration from v1.0.74/v1.0.75: `sqlite-graphrag migrate --to-llm-only --drop-vec-tables --db <path>` is the one-shot upgrade. Combines checksum rewrite with V013 vec-table drop.
 - OAuth enforcement: the spawn of `claude -p` or `codex exec` ABORTS with `AppError::Validation` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set in the environment. See [ADR-0025](docs/decisions/adr-0025-oauth-only-embedding.md).
 - Cosine similarity is now pure Rust: see [ADR-0020](docs/decisions/adr-0020-pure-rust-cosine.md) for the algorithm. BLOB-backed embeddings replace vec0: see [ADR-0022](docs/decisions/adr-0022-blob-embeddings.md).
@@ -41,13 +41,19 @@ cargo install --locked sqlite-graphrag
 - v1.0.90 OpenCode backend integration (ADR-0051, GAP-OPENCODE-001/002): third LLM backend `opencode run` alongside `codex exec` and `claude -p`. New `--llm-backend opencode`, `--mode opencode` for ingest/enrich, `--opencode-binary/model/timeout` flags and `SQLITE_GRAPHRAG_OPENCODE_*` env vars. Fallback chain extended to `codex → claude → opencode → none`. `spawn_opencode()` without RLIMIT_AS (Bun runtime crash fix). 24-bug remediation including `--skip-embedding-on-failure` activation (BUG-SKIP-EMBED), `--llm-fallback` dead-flag fix (GAP-LLM-FALLBACK-DEAD-FLAG), FTS desync in batch/enrich (BUG-BATCH-FTS-DESYNC, BUG-ENRICH-DESC-FTS-DESYNC), Windows cross-compilation (BUG-WINDOWS-001), embedding timeout hardcode (BUG-TIMEOUT-HARDCODE-001), `list` pagination (BUG-LIST-TOTAL-COUNT-001), `--yes` enforcement on 3 destructive commands (BUG-YES-FLAG-IGNORED). 875+ tests passing
 - v1.0.91 spawn CWD isolation (GAP-SPAWN-001): `spawn_isolation_dir()` and `apply_cwd_isolation()` in `src/spawn/mod.rs` set `current_dir` to an ephemeral temp directory and `CLAUDE_CONFIG_DIR` to the same dir for ALL 10 production spawn sites. LLM subprocesses no longer inherit `.mcp.json` from the caller's project — embedding works zero-config in any directory. `cleanup_spawn_dir()` removes the temp dir at process exit (GAP-SPAWN-002). BUG-17 fixed `entities.degree` inflation: `increment_degree()` replaced by `recalculate_degree()` after all relationships are inserted. BUG-15 fixed 7 JSON schemas with missing `"opencode"` and `"auto"` in `backend_invoked` enum. BUG-16 fixed `deep-research.schema.json` missing `vec_degraded` field
 
+## v1.0.94 Architecture (Four-Gap Remediation, ADR-0053)
+- Default embedding dimension raised from 64 to 384 (`constants.rs`); fresh `init` stamps `dim=384`; legacy 64-dim databases preserved via `schema_meta.dim`
+- `enrich --mode` is now REQUIRED (`claude-code`|`codex`|`opencode`); omitting it is rejected with clap exit 2 (prevents accidental `claude -p` spawn inheriting `.mcp.json`)
+- Entity embedding in `remember`/`remember-batch`/`ingest` honours `--embedding-backend`/`--llm-backend`; `remember` with new entities drops from ~119s to ~0.9s under OpenRouter
+- Embedding subprocess timeout raised from 120s to 300s
+
 ## v1.0.93 Architecture (OpenRouter Embedding Backend)
 - v1.0.93 adds optional OpenRouter REST API embedding backend via `--embedding-backend auto|openrouter|llm` global flag (ADR-0052, GAP-OR-INGEST)
 - `EmbeddingBackendChoice` enum (`Auto`, `Openrouter`, `Llm`) is separate from `LlmBackendChoice` — embedding backend selection is independent of LLM backend for extraction/enrichment
 - `--embedding-model MODEL` selects the OpenRouter model; NO default — user MUST specify when using `--embedding-backend openrouter`
 - `OPENROUTER_API_KEY` env var or `--openrouter-api-key` flag provides the API key (handled via `secrecy::SecretString` with zeroize-on-drop, NEVER logged)
 - Direct REST API via `reqwest+rustls-tls` to `POST https://openrouter.ai/api/v1/embeddings` — ~100-500ms vs 20-60s subprocess LLM cold-start
-- MRL (Matryoshka Representation Learning) truncation to configured `--embedding-dim` (default 64); `dimensions` parameter sent when the model supports MRL
+- MRL (Matryoshka Representation Learning) truncation to configured `--embedding-dim` (default 384); `dimensions` parameter sent when the model supports MRL
 - 10 verified models: `qwen/qwen3-embedding-4b`, `qwen/qwen3-embedding-8b`, `nvidia/llama-nemotron-embed-vl-1b-v2:free`, `openai/text-embedding-3-small`, `openai/text-embedding-3-large`, `perplexity/pplx-embed-v1-0.6b`, `mistralai/mistral-embed-2312`, `baai/bge-m3`, `google/gemini-embedding-001`, `google/gemini-embedding-2`
 - `EmbeddingBackendChoice` propagated to ALL 8 embedding commands: `remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`
 - `--enrich-after` flag on `ingest` triggers `enrich --operation memory-bindings` sequentially after all files are ingested
@@ -259,7 +265,7 @@ API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) ABORT the spawn with AppError::Vali
 | --- | --- | --- | --- |
 | `SQLITE_GRAPHRAG_DB_PATH` | Path override for the SQLite database file | `./graphrag.sqlite` in the invocation directory | `/data/graphrag.sqlite` |
 | `SQLITE_GRAPHRAG_CACHE_DIR` | Directory for cache and lock files (model cache only on builds ≤ v1.0.75) | XDG cache dir | `~/.cache/sqlite-graphrag` |
-| `SQLITE_GRAPHRAG_EMBEDDING_DIM` | Embedding dimensionality override (v1.0.79); precedence: `--embedding-dim` flag > this env > `schema_meta.dim` > 64; range [8, 4096] | `64` (new databases) | `384` |
+| `SQLITE_GRAPHRAG_EMBEDDING_DIM` | Embedding dimensionality override (v1.0.79); precedence: `--embedding-dim` flag > this env > `schema_meta.dim` > 384; range [8, 4096] | `64` (new databases) | `384` |
 | `SQLITE_GRAPHRAG_CLAUDE_EMBED_MODEL` | Model override for `claude -p` embedding calls (v1.0.79) | CLI default model | `claude-haiku-4-5-20251001` |
 | `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` | Timeout per LLM embedding subprocess call (v1.0.79) | `300` | `600` |
 | `SQLITE_GRAPHRAG_LANG` | CLI output language as `en` or `pt` | `en` | `pt` |

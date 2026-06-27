@@ -103,11 +103,12 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
 
 986+ lib tests passing via `cargo nextest -P ci` as of v1.0.93. Use `--test-threads=2` for local development; the `ci` profile in `.config/nextest.toml` controls parallelism in CI.
 
-## What Changed in v1.0.90, v1.0.91, v1.0.92, v1.0.93
+## What Changed in v1.0.90, v1.0.91, v1.0.92, v1.0.93, v1.0.94
 - v1.0.90: OpenCode backend tests (875 lib tests)
 - v1.0.91: CWD isolation tests, degree recalculation tests (877 lib tests + 21 doc tests + 38 schema contract tests)
 - v1.0.92: Documentation-only release, no new tests
 - v1.0.93: OpenRouter embedding tests in `tests/openrouter_embedding.rs`; test count 986+ lib tests
+- v1.0.94: Four-gap remediation — regression tests renamed (`init_default_dim_is_384`, `embed_timeout_default_is_300`) and a contract test asserting `enrich` without `--mode` is rejected (clap exit 2); green gate (cargo test exit 0)
 - Mock LLM scripts in `tests/mock-llm/` now cover `claude`, `codex`, `opencode` backends
 - OpenRouter embedding uses live API in E2E tests (not mocked) — requires `OPENROUTER_API_KEY`
 - `ensure_v013_tables_noop_when_tables_exist` — verifies no-op when `memory_embeddings` already exists

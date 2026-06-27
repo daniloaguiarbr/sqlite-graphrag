@@ -66,7 +66,7 @@ Em modo estrito, apenas `PATH` é preservado. As vars de custom-provider ficam n
 | --- | --- | --- |
 | `exit 11` com `401 Invalid authentication credentials` | v1.0.82 ou anterior; env_clear descartou o token | Atualizar para v1.0.83 (`cargo install sqlite-graphrag --version 1.0.83 --force`) |
 | `exit 1` com `OAuth-only mandate violated` | `ANTHROPIC_API_KEY` está setada; guard rejeita | Unsetar `ANTHROPIC_API_KEY`; usar `ANTHROPIC_AUTH_TOKEN` em vez |
-| Embedding sucede mas `recall` não retorna nada | Provider retornou dimensionalidade diferente da do banco | Rodar `sqlite-graphrag enrich --operation re-embed --limit 100` para refrescar embeddings na dim ativa do provider |
+| Embedding sucede mas `recall` não retorna nada | Provider retornou dimensionalidade diferente da do banco | Rodar `sqlite-graphrag enrich --operation re-embed --limit 100 --mode codex` para refrescar embeddings na dim ativa do provider |
 | Token aparece em logs do stderr | (nunca deve acontecer; teste de auditoria enforça) | Reportar bug com captura do stderr; o teste no-leak `audit_no_token_leak_in_subprocess_stderr` enforça esse invariante |
 
 
@@ -194,7 +194,7 @@ sqlite-graphrag --embedding-backend openrouter \
 ### Explanation
 - `--embedding-backend openrouter` seleciona o caminho REST API (~200ms vs 15s subprocesso)
 - `--embedding-model` é OBRIGATÓRIO — não há modelo padrão para OpenRouter
-- Todos os 10 modelos verificados produzem vetores de 64 dimensões via MRL — zero mudança de schema
+- Todos os 10 modelos verificados produzem vetores de 384 dimensões via MRL — zero mudança de schema
 - Top modelos por recall score: Google Gemini 001 (0,892), Mistral (0,832), Qwen 8B (0,814)
 - Opção gratuita: NVIDIA Nemotron produz qualidade razoável (0,662) sem custo
 - `--enrich-after` no ingest dispara extração de entidades após o embedding completar
@@ -217,6 +217,11 @@ sqlite-graphrag --embedding-backend openrouter \
 - Receita "Como Bootstrapar O Banco De Memória Em 60 Segundos"
 - Receita "Como Fazer Benchmark De hybrid-search Contra recall Vetorial Puro"
 
+
+## Como Atualizar Para a v1.0.94 (Remediação de Quatro Gaps)
+- Sem migração de banco; schema permanece em v15. Basta `cargo install sqlite-graphrag --locked --force`.
+- QUEBRANTE: toda invocação de `enrich` agora exige `--mode` (`claude-code`|`codex`|`opencode`). Atualize scripts para `enrich --operation memory-bindings --mode codex`.
+- A dimensão de embedding padrão agora é 384. Bancos novos usam 384; bancos legados em 64 mantêm a dim registrada. Re-embede na dim ativa com `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation re-embed --limit 100 --resume --mode codex --json`.
 
 ## Como Atualizar De v1.0.74 Ou v1.0.75 Para v1.0.76 (Apenas LLM)
 ### Problema
@@ -2619,7 +2624,7 @@ sqlite-graphrag \
 - Compatível OpenAI: `openai/text-embedding-3-large` (score ~0,72)
 - Multilíngue: `mistral/mistral-embed` ou `baai/bge-m3`
 
-Todos os modelos produzem vetores de 64 dimensões via truncação MRL. Zero
+Todos os modelos produzem vetores de 384 dimensões via truncação MRL. Zero
 mudança de schema. Trocar de modelo no meio do projeto exige re-embedding das
 memórias existentes.
 

@@ -1,3 +1,11 @@
+## O Que Mudou na v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
+- **GAP-OR-ENTITY-EMBED**: O embedding de entidades em `remember`/`remember-batch`/`ingest` agora honra `--embedding-backend openrouter`, roteando via OpenRouter REST. `remember` com entidades novas cai de ~119s para ~0,9s.
+- **GAP-EMBED-DIM-64**: `DEFAULT_EMBEDDING_DIM` elevado de 64 para **384** (`constants.rs:29`). Bancos novos usam dim 384 por padrão. Bancos legados em dim 64 são preservados via `schema_meta.dim` — sem re-embed forçado.
+- **GAP-EMBED-TIMEOUT-300**: `DEFAULT_EMBED_TIMEOUT_SECS` elevado de 120 para **300** (`llm_embedding.rs:43`).
+- **GAP-HEADLESS-DEFAULT**: `enrich --mode` agora é **OBRIGATÓRIO** (`default_value = "claude-code"` removido em `enrich.rs:379`). Omitir `--mode` → clap exit 2. Adicione `--mode codex` / `--mode claude-code` / `--mode opencode` a todas as invocações de `enrich --operation`.
+
+**Mudança quebrante**: `enrich --operation <op>` agora requer `--mode <valor>`. Consulte o [guia de MIGRAÇÃO](MIGRATION.pt-BR.md) para a tabela de pareamento canônico.
+
 ## O Que Mudou na v1.0.93 — Backend de Embedding OpenRouter (GAP-OR-INGEST)
 - Novos flags globais: `--embedding-backend auto|openrouter|llm`, `--embedding-model MODEL`, `--openrouter-api-key KEY`
 - Embedding via API REST OpenRouter substitui subprocess LLM para geração de vetores (~200ms vs 15s por chamada)
@@ -6,7 +14,7 @@
 - O usuário DEVE especificar `--embedding-model` ao usar `--embedding-backend openrouter` — SEM modelo padrão
 - Defina chave API via env var `OPENROUTER_API_KEY` ou flag `--openrouter-api-key`
 - 10 modelos verificados E2E: Qwen 4B/8B, NVIDIA Nemotron (gratuito), OpenAI small/large, Perplexity, Mistral, BAAI bge-m3, Google Gemini 001/002
-- Todos os modelos produzem vetores de 64 dims via MRL — zero mudança de schema, zero migração
+- Todos os modelos produzem vetores de 384 dims via MRL — zero mudança de schema, zero migração
 - **GAP-OR-PROPAGATION** (v1.0.93): 5 paths de embedding adicionais corrigidos — `enrich --operation re-embed`, `init` (probe de dimensão), `rename-entity`, `ingest --mode claude-code` (4 call sites) e `remember` (embedding paralelo de chunks) agora honram `--embedding-backend openrouter`
 - **BUG-OR-EXIT-CODE** (v1.0.93): Erros de configuração OpenRouter (chave ausente, modelo ausente, chave inválida) agora retornam exit code 78 (`EX_CONFIG`) em vez de exit 1
 ```bash
@@ -357,7 +365,7 @@ Veja [MIGRATION.md](MIGRATION.md) para o passo a passo completo. A versão curta
 Para um corpus grande, use o loop one-shot canônico de re-embed (G42/S9, v1.0.79) — cada invocação processa um lote pequeno e encerra:
 
 ```bash
-sqlite-graphrag enrich --operation re-embed --limit 5 --resume --json
+sqlite-graphrag enrich --operation re-embed --limit 5 --resume --mode codex --json
 ```
 
 Nota: a receita antiga `edit --description "<mesmo>"` nunca re-embedou nada (edições somente de descrição são no-op para embeddings); use `edit --force-reembed` para uma única memória.

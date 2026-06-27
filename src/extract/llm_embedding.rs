@@ -37,10 +37,10 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-/// Default per-LLM-call timeout in seconds. Consistent with the
-/// `--claude-timeout` / `--codex-timeout` defaults used by ingest.
-/// Override via `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`.
-const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 120;
+/// Default per-LLM-call timeout in seconds. Set to 300 to align with the
+/// ingest, enrich, opencode and llm_backend defaults, which already use a
+/// 300-second per-call budget. Override via `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS`.
+const DEFAULT_EMBED_TIMEOUT_SECS: u64 = 300;
 
 fn embed_timeout() -> std::time::Duration {
     let secs = std::env::var("SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS")
@@ -1240,8 +1240,8 @@ mod tests {
     }
 
     #[test]
-    fn embed_timeout_default_is_120() {
-        assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 120);
+    fn embed_timeout_default_is_300() {
+        assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 300);
     }
 
     #[test]

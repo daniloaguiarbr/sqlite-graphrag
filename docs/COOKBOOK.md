@@ -66,7 +66,7 @@ In strict mode, only `PATH` is preserved. The custom-provider vars stay in the p
 | --- | --- | --- |
 | `exit 11` with `401 Invalid authentication credentials` | v1.0.82 or earlier; env_clear stripped the token | Upgrade to v1.0.83 (`cargo install sqlite-graphrag --version 1.0.83 --force`) |
 | `exit 1` with `OAuth-only mandate violated` | `ANTHROPIC_API_KEY` is set; guard rejects it | Unset `ANTHROPIC_API_KEY`; use `ANTHROPIC_AUTH_TOKEN` instead |
-| Embedding succeeds but `recall` returns nothing | Provider returned different dimensionality than the database | Run `sqlite-graphrag enrich --operation re-embed --limit 100` to refresh embeddings at the active provider's dim |
+| Embedding succeeds but `recall` returns nothing | Provider returned different dimensionality than the database | Run `sqlite-graphrag enrich --operation re-embed --limit 100 --mode codex` to refresh embeddings at the active provider's dim |
 | Token appears in stderr logs | (should never happen; audit test enforces) | File a bug with stderr capture; the no-leak test `audit_no_token_leak_in_subprocess_stderr` enforces this invariant |
 
 
@@ -194,7 +194,7 @@ sqlite-graphrag --embedding-backend openrouter \
 ### Explanation
 - `--embedding-backend openrouter` selects the REST API path (~200ms vs 15s subprocess)
 - `--embedding-model` is REQUIRED — there is no default model for OpenRouter
-- All 10 verified models produce 64-dim vectors via MRL — zero schema change
+- All 10 verified models produce 384-dim vectors via MRL — zero schema change
 - Top models by recall score: Google Gemini 001 (0.892), Mistral (0.832), Qwen 8B (0.814)
 - Free option: NVIDIA Nemotron produces decent quality (0.662) at zero cost
 - `--enrich-after` on ingest triggers entity extraction after embedding completes
@@ -221,6 +221,11 @@ sqlite-graphrag --embedding-backend openrouter \
 - Recipe "How to bootstrap memory database in 60 seconds"
 - Recipe "How to benchmark hybrid-search against pure vec search"
 
+
+## How To Upgrade To v1.0.94 (Four-Gap Remediation)
+- No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force`.
+- BREAKING: every `enrich` invocation now requires `--mode` (`claude-code`|`codex`|`opencode`). Update scripts to `enrich --operation memory-bindings --mode codex`.
+- The default embedding dimension is now 384. Fresh databases use 384; legacy 64-dim databases keep their recorded dim. Re-embed at the active dim with `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation re-embed --limit 100 --resume --mode codex --json`.
 
 ## How To Upgrade From v1.0.74 Or v1.0.75 To v1.0.76 (LLM-Only)
 ### Problem
@@ -2618,7 +2623,7 @@ sqlite-graphrag \
 - OpenAI compatible: `openai/text-embedding-3-large` (score ~0.72)
 - Multilingual: `mistral/mistral-embed` or `baai/bge-m3`
 
-All models produce 64-dim vectors via MRL truncation. Zero schema change.
+All models produce 384-dim vectors via MRL truncation. Zero schema change.
 Switching models mid-project requires re-embedding existing memories.
 
 ### Variants

@@ -105,11 +105,12 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 
 986+ testes de lib passando via `cargo nextest -P ci` a partir de v1.0.93. Use `--test-threads=2` para desenvolvimento local; o profile `ci` em `.config/nextest.toml` controla paralelismo em CI.
 
-## O Que Mudou nas versões v1.0.90, v1.0.91, v1.0.92, v1.0.93
+## O Que Mudou nas versões v1.0.90, v1.0.91, v1.0.92, v1.0.93, v1.0.94
 - v1.0.90: testes do backend OpenCode (875 testes de lib)
 - v1.0.91: testes de isolamento de CWD, testes de recálculo de grau (877 testes de lib + 21 doc tests + 38 testes de contrato de schema)
 - v1.0.92: release apenas de documentação, sem novos testes
 - v1.0.93: testes de embedding OpenRouter em `tests/openrouter_embedding.rs`; contagem de testes 986+ testes de lib
+- v1.0.94: Remediação de quatro gaps — testes de regressão renomeados (`init_default_dim_is_384`, `embed_timeout_default_is_300`) e um teste de contrato afirmando que `enrich` sem `--mode` é rejeitado (clap exit 2); gate verde (cargo test exit 0)
 - Scripts Mock LLM em `tests/mock-llm/` agora cobrem backends `claude`, `codex`, `opencode`
 - Embedding OpenRouter usa API ao vivo em testes E2E (não mockado) — requer `OPENROUTER_API_KEY`
 - `ensure_v013_tables_noop_when_tables_exist` — verifica no-op quando `memory_embeddings` já existe

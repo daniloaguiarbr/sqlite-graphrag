@@ -17,15 +17,16 @@
 //! converted to MiB. The result is capped at `MAX_CONCURRENT_CLI_INSTANCES`
 //! and floored at 1.
 
-/// Default embedding vector dimensionality (v1.0.79, G42/S1).
+/// Default embedding vector dimensionality.
 ///
-/// Lowered from 384 to 64: with the LLM-only backend (v1.0.76+) each float
-/// costs ~8 autoregressive output tokens, so 384 dims ≈ 3072 tokens per
-/// vector at 50-100 tokens/s (30-60s per vector). 64 dims retain 90%+
-/// retrieval quality for corpora under 100k memories (Matryoshka
-/// Representation Learning, arXiv 2205.13147) while cutting generation
-/// time ~6x. The historical 384 value matched `multilingual-e5-small`.
-pub const DEFAULT_EMBEDDING_DIM: usize = 64;
+/// Restored to 384 to match the production corpus: existing vectors were
+/// generated against `multilingual-e5-small` (384 dims), so a lower default
+/// would silently mismatch live data. With the OpenRouter REST backend the
+/// Matryoshka (MRL, arXiv 2205.13147) truncation happens server-side, so
+/// 384 dims carry no per-float autoregressive output cost. Legacy databases
+/// keep their recorded dimensionality via `schema_meta.dim`; the active dim
+/// follows the precedence env > database > default (see [`embedding_dim`]).
+pub const DEFAULT_EMBEDDING_DIM: usize = 384;
 
 /// Active embedding dimensionality for this process. `0` means unresolved.
 static ACTIVE_EMBEDDING_DIM: std::sync::atomic::AtomicUsize =

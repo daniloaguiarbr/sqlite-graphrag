@@ -1,527 +1,575 @@
-# Embedding Alternativo para sqlite-graphrag — Análise de Viabilidade
-
-é proibido ter modelo default hardcode na open router, o modelo deve ser selecionado pelo  usuário ao digitar o comando
-
-## Problema
-- O comando `remember` leva 20-60 segundos para salvar UMA memória
-- O comando `remember` com `--llm-backend none` leva 38 milissegundos
-- O embedding via subprocesso LLM é 3000x mais lento que o I/O SQLite puro
-- O `remember` com body longo e entidades pode ultrapassar 120 segundos
-- O `remember` atinge timeout e falha com exit 143 (SIGTERM)
+# Gaps — sqlite-graphrag
 
 
-## Consequências do Problema
-- Hooks de memória do Claude Code travam por 1-2 minutos a CADA turno
-- Sessões interativas sofrem latência inaceitável no salvamento
-- Memórias falham silenciosamente quando o timeout é atingido
-- O pipeline de `ingest` em massa fica proibitivamente lento
-- O `enrich --operation re-embed` leva horas para re-embedar centenas de memórias
-- A experiência do usuário degrada a CADA interação com o GraphRAG
+## GAP-OR-ENTITY-EMBED: RESOLVIDO em v1.0.94 — Entity embedding em `remember`/`remember-batch`/`ingest` IGNORA os backends e força codex (timeout de 120s)
 
+Resíduo do GAP-OR-PROPAGATION (marcado RESOLVIDO em v1.0.93, presente no git/CHANGELOG)
+A propagação de `EmbeddingBackendChoice` cobriu o caminho de CHUNKS, mas DEIXOU DE FORA o caminho de ENTIDADES
 
-## Causa Raiz
-- CADA embedding spawna um processo Node.js completo (`codex exec` ou `claude -p`)
-- O `codex exec` consome ~350 MB de RSS por instância
-- O `claude -p` consome ~200-400 MB de RSS por instância
-- CADA spawn paga cold-start: boot do Node.js (5-15 segundos)
-- CADA spawn paga autenticação: validação OAuth (1-3 segundos)
-- CADA spawn paga schema parsing: carregamento do `--output-schema` JSON
-- O LLM generativo GERA floats token-a-token via autoregressive decoding
-- Um encoder neural dedicado COMPUTA o vetor em UMA forward pass (~10-500ms)
-- A arquitetura atual usa um LLM generativo como calculadora de embedding
-- Usar LLM generativo para embedding é como usar um canhão para matar mosca
-
-
-## Relação Causa e Efeito
-- CAUSA: o embedding usa subprocess LLM generativo (Node.js headless)
-- EFEITO: cold-start de 5-15 segundos POR chamada de embedding
-- CAUSA: o cold-start de 5-15 segundos POR chamada
-- EFEITO: `remember` simples (1 chunk + 5 entidades) leva 20-60 segundos
-- CAUSA: `remember` leva 20-60 segundos
-- EFEITO: hooks de memória travam a sessão interativa do Claude Code
-- CAUSA: hooks de memória travam a sessão
-- EFEITO: o usuário percebe lentidão extrema e abandona o uso do GraphRAG
-- CAUSA: o LLM gera floats token-a-token (autoregressive)
-- EFEITO: latência de 10-30 segundos para gerar 64 números decimais
-- CAUSA: latência de 10-30 segundos para 64 floats
-- EFEITO: o bottleneck NÃO é o SQLite, NÃO é o chunking, é EXCLUSIVAMENTE o LLM
-
-
-## Solução
-- Separar o embedding do enrichment em duas fases sequenciais distintas
-- FASE 1 (embedding): usar modelo de embedding dedicado via API REST ou local
-- FASE 2 (enrichment): manter codex/claude/opencode headless para raciocínio
-- O embedding é uma operação matemática determinística que NÃO precisa de LLM generativo
-- O enrichment é uma operação de raciocínio que PRECISA de LLM generativo
-- São dois problemas fundamentalmente diferentes que NÃO devem compartilhar backend
-
-
-## Como Solucionar
-- Adicionar a dependência `reqwest` com `rustls-tls` ao `Cargo.toml` (~500 KB ao binário)
-- Implementar novos backends de embedding: `Ollama`, `OpenRouter`, `LlamaCpp`
-- Criar flag `--embedding-backend auto|openrouter|llm`
-- Criar flag `--embedding-model <ID>` (OBRIGATORIO com `--embedding-backend openrouter`)
-- Implementar adapter MRL que trunca o vetor retornado para 64 dimensões
-- Manter flag `--llm-backend codex|claude|opencode` EXCLUSIVA para enrichment
-- ZERO alteração no schema do banco de dados
-- ZERO migração SQL
-- ZERO ALTER TABLE
-- Os BLOBs de `f32` no `memory_embeddings` aceitam QUALQUER fonte com 64 dimensões
-
-
-## O Que é Embedding e Por Que 64 Dimensões
-- Embedding transforma texto em um vetor de números decimais (floats)
-- O tamanho do vetor é a dimensionalidade (dims)
-- O sqlite-graphrag usa 64 dims por padrão (configurável via `--embedding-dim`)
-- 64 dims com MRL (Matryoshka Representation Learning) oferece ~90% da qualidade de 768 dims
-- MRL treina os dims em ordem de importância: os PRIMEIROS carregam mais informação
-- Truncar de 1024 para 64 preserva a maioria do significado semântico
-- TODOS os vetores no banco DEVEM ter a MESMA dimensionalidade (64)
-- Misturar dimensionalidades QUEBRA a busca cosine silenciosamente
-
-
-
-===
-
-## Modelos Aprovados — API via OpenRouter
-
-### O Que Fazer
-- Usar a API REST do OpenRouter para gerar embeddings de 64 dimensões
-- Fazer chamada HTTP POST para `https://openrouter.ai/api/v1/embeddings`
-- Passar `"dimensions": 64` no body JSON quando o modelo suportar MRL
-- Truncar para 64 em Rust (`embedding[..64].to_vec()`) quando o modelo NÃO suportar MRL nativo
-
-### Por Que Fazer
-- Latência de ~100-500ms por batch (vs 20-60 segundos com subprocess LLM)
-- Speedup de 20-100x sobre o design atual
-- API unificada compatível com o formato OpenAI
-- Suporta batch (array de strings em uma chamada)
-- Um endpoint para múltiplos providers (OpenAI, Qwen, NVIDIA, Google)
-
-### Como Fazer
-- Configurar variável de ambiente `OPENROUTER_API_KEY`
-- Chamar via `reqwest::Client` async com `rustls-tls` (connection pooling, timeout 30s)
-- Parsear o campo `data[0].embedding` da resposta JSON
-- Truncar para 64 dims se necessário
-- Salvar o `Vec<f32>` no `memory_embeddings` BLOB
-
-### Gestão da API Key do OpenRouter (Padrão XDG)
-
-- A `OPENROUTER_API_KEY` NUNCA fica em arquivo `.env` no CWD
-- A chave é armazenada no XDG config do sqlite-graphrag com permissões restritas
-- O binário funciona após `cargo install` sem preparo prévio do `.env`
-
-### Hierarquia de Precedência da API Key
-- Camada 1: variável de ambiente `OPENROUTER_API_KEY` (CI, containers, scripts)
-- Camada 2: arquivo TOML em `~/.config/sqlite-graphrag/config.toml` (persistente)
-- Camada 3: flag CLI `--openrouter-api-key <valor>` (pontual, evitar em histórico)
-- Camada 1 vence Camada 2, Camada 2 vence Camada 3
-
-### Subcomandos de Gestão da Chave
-- `sqlite-graphrag config add-key --provider openrouter --from-stdin` (lê do stdin, evita histórico de shell)
-- `sqlite-graphrag config list-keys` (lista chaves mascaradas com fingerprint)
-- `sqlite-graphrag config remove-key <fingerprint>` (remove pela fingerprint)
-- `sqlite-graphrag config doctor` (diagnostica qual camada venceu)
-
-### Armazenamento no TOML XDG
-- Caminho Linux: `~/.config/sqlite-graphrag/config.toml`
-- Caminho macOS: `~/Library/Application Support/sqlite-graphrag/config.toml`
-- Caminho Windows: `%APPDATA%\sqlite-graphrag\config\config.toml`
-- Permissões do arquivo: `chmod 600` (somente o dono lê e escreve)
-- Permissões do diretório: `chmod 700` (somente o dono acessa)
-- Escrita atômica via `tempfile::NamedTempFile::persist` com `fsync`
-- Verificação de symlink antes de ler ou escrever (defesa contra symlink attack)
-
-### Formato do config.toml
-- `schema_version = 1`
-- `[[keys]]`
-- `provider = "openrouter"`
-- `value = "sk-or-v1-abc...xyz"` (chave completa, protegida por chmod 600)
-- `added_at = "2026-06-25T16:00:00Z"` (timestamp RFC3339)
-- `fingerprint = "a1b2c3d4e5f6g7h8"` (blake3 truncado, 16 hex)
-
-### Segurança da Chave em Memória
-- A chave em memória usa `secrecy::SecretString` (expõe via `ExposeSecret` apenas no ponto de uso)
-- O buffer é zerado ao sair do escopo via `zeroize::ZeroizeOnDrop`
-- A chave NUNCA aparece em logs, stderr ou output JSON
-- Mascaramento em output: `sk-or...xyz8` (4 primeiros + 4 últimos caracteres)
-
-### Chamada HTTP
-- Endpoint: `POST https://openrouter.ai/api/v1/embeddings`
-- Header: `Authorization: Bearer $OPENROUTER_API_KEY`
-- Header: `Content-Type: application/json`
-- Body (MRL nativo): `{"model": "qwen/qwen3-embedding-8b", "input": ["texto"], "dimensions": 64, "encoding_format": "float", "input_type": "search_document"}`
-- Body (NVIDIA): `{"model": "nvidia/llama-nemotron-embed-vl-1b-v2:free", "input": ["texto"], "dimensions": 64, "encoding_format": "float", "input_type": "passage"}`
-- Body (Mistral sem dims): `{"model": "mistralai/mistral-embed-2312", "input": ["texto"], "encoding_format": "float"}`
-- Resposta: `{"data": [{"embedding": [0.23, -0.87, ...64 floats...]}]}`
-- `encoding_format`: SEMPRE `"float"` — `"base64"` quebraria o parser f32
-- `input_type`: varia por modelo — ver tabela de compatibilidade acima
-- `dimensions`: omitido para modelos que rejeitam (Mistral, Perplexity com <128)
-
-### Modelos Verificados via OpenRouter (E2E: 2026-06-25)
-
-- PROIBIDO hardcodar modelo default — o usuário DEVE selecionar via `--embedding-model`
-- PROIBIDO usar IDs que nao existem na API — consultar esta lista ANTES de documentar
-
-### Ranking de Qualidade por Recall Score (dim=64 MRL, E2E 2026-06-25)
-- google/gemini-embedding-001: 0.892 (MELHOR)
-- google/gemini-embedding-2: 0.868
-- mistralai/mistral-embed-2312: 0.832
-- qwen/qwen3-embedding-8b: 0.814
-- qwen/qwen3-embedding-4b: 0.754
-- openai/text-embedding-3-small: 0.668
-- nvidia/llama-nemotron-embed-vl-1b-v2:free: 0.662
-- baai/bge-m3: 0.537
-- openai/text-embedding-3-large: 0.449
-- perplexity/pplx-embed-v1-0.6b: 0.415
-- NOTA: OpenAI large (0.449) performa PIOR que small (0.668) em dim=64 — embeddings de alta dimensionalidade (3072) perdem mais informação ao truncar para 64 dims
-- NOTA: TODOS os 10 modelos aceitaram dimensions: 64 nativamente na API, corrigindo informações anteriores sobre limitações de Perplexity e Mistral
-
-### IDs que NAO EXISTEM na API OpenRouter (verificado 2026-06-25)
-- `qwen/qwen3-embedding-0.6b` — "No endpoints found" (modelo registrado mas SEM providers ativos)
-- `nvidia/llama-3.1-nemotron-embed-8b` — "does not exist"
-- `nvidia/llama-nemotron-embed-8b` — "does not exist"
-- `nvidia/nemotron-embed-8b` — "does not exist"
-- `alibaba/qwen3-embedding-0.6b` — "does not exist"
-
-### Compatibilidade de `input_type` por modelo (verificado E2E)
-- Qwen3: aceita `search_document` e `search_query`
-- OpenAI: aceita `search_document` e `search_query`
-- NVIDIA Nemotron: REJEITA `search_document` — aceita APENAS `query` e `passage`
-- Perplexity: aceita `search_document` e `search_query`
-- Mistral: aceita `search_document` e `search_query`
-- BAAI: aceita `search_document` e `search_query`
-- Google Gemini: aceita `search_document` e `search_query`
-
-### Compatibilidade de `dimensions` por modelo (verificado E2E)
-- Qwen3 4B/8B: `dimensions: 64` nativo (MRL)
-- OpenAI 3-small/3-large: `dimensions: 64` nativo (MRL)
-- Google Gemini: `dimensions: 64` nativo (MRL)
-- NVIDIA Nemotron VL 1B: `dimensions: 64` nativo (API retorna 64 floats)
-- BAAI bge-m3: `dimensions: 64` nativo (API retorna 64 floats)
-- Perplexity: dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25) — truncamento em Rust NÃO foi necessário
-- Mistral: dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25) — truncamento em Rust NÃO foi necessário
-
-
-### Modelos Aprovados (NAO BERT, NAO ONNX)
-
-- Qwen3 Embedding 4B
-  - ID API: `qwen/qwen3-embedding-4b`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: $0.02 por milhão de tokens
-  - Arquitetura: Qwen3 decoder-only (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API
-  - Dimensão nativa: 2560
-  - input_type: aceita `search_document` e `search_query`
-  - Idiomas: 100+ incluindo português
-  - Uso: equilíbrio entre qualidade e custo
-
-- Qwen3 Embedding 8B
-  - ID API: `qwen/qwen3-embedding-8b`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: $0.01 por milhão de tokens
-  - Arquitetura: Qwen3 decoder-only (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API
-  - Dimensão nativa: 4096
-  - input_type: aceita `search_document` e `search_query`
-  - MTEB: 70.58 (primeiro lugar no leaderboard multilingual, junho 2025)
-  - Idiomas: 100+ incluindo português
-  - Uso: melhor qualidade disponível para embedding
-
-- NVIDIA Llama Nemotron Embed VL 1B V2
-  - ID API: `nvidia/llama-nemotron-embed-vl-1b-v2:free`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: GRATUITO (zero custo)
-  - Arquitetura: Llama 3.2 1B decoder-only com SigLip2 400M (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API (corrigido — antes dizia NAO)
-  - Dimensão nativa: 2048
-  - input_type: REJEITA `search_document` — aceita APENAS `query` e `passage`
-  - Capacidade: multimodal (texto + imagem)
-  - Uso: prototipação e testes sem custo
-
-- OpenAI text-embedding-3-small
-  - ID API: `openai/text-embedding-3-small`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando (score 0.24)
-  - Preço: $0.02 por milhão de tokens
-  - Arquitetura: proprietária OpenAI (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API (mínimo 1)
-  - Dimensão nativa: 1536
-  - input_type: aceita `search_document` e `search_query`
-  - MTEB: 62.26 (referência da indústria)
-  - Uso: compatibilidade máxima com ecossistema OpenAI
-
-- OpenAI text-embedding-3-large
-  - ID API: `openai/text-embedding-3-large`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: $0.13 por milhão de tokens
-  - Arquitetura: proprietária OpenAI (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API (mínimo 1)
-  - Dimensão nativa: 3072
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: máxima qualidade OpenAI quando custo não é restrição
-
-- Perplexity Embed V1 0.6B
-  - ID API: `perplexity/pplx-embed-v1-0.6b`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: $0.004 por milhão de tokens (MAIS BARATO)
-  - Arquitetura: decoder-only proprietária (NAO BERT)
-  - MRL: SIM, dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25)
-  - Dimensão nativa: 1024
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: menor custo por token disponível
-
-- Mistral Embed 2312
-  - ID API: `mistralai/mistral-embed-2312`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: $0.10 por milhão de tokens
-  - Arquitetura: Mistral decoder-only (NAO BERT)
-  - MRL: SIM, dimensions: 64 aceito nativamente pela API (E2E verificado 2026-06-25)
-  - Dimensão nativa: 1024
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: ecossistema Mistral existente
-
-- BAAI bge-m3
-  - ID API: `baai/bge-m3`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando (score 0.16)
-  - Preço: ~$0.01 por milhão de tokens
-  - Arquitetura: encoder-only multilingual (NAO decoder-only)
-  - MRL: SIM, `dimensions: 64` nativo na API
-  - Dimensão nativa: 1024
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: embedding multilingual de alta qualidade
-
-- Google Gemini Embedding 001
-  - ID API: `google/gemini-embedding-001`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: ~$0.15 por milhão de tokens
-  - Arquitetura: proprietária Google (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API
-  - Dimensão nativa: 3072
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: ecossistema Google
-
-- Google Gemini Embedding 2
-  - ID API: `google/gemini-embedding-2`
-  - E2E: VERIFICADO OK (2026-06-25) — remember + recall funcionando
-  - Preço: ~$0.12 por milhão de tokens
-  - Arquitetura: proprietária Google (NAO BERT)
-  - MRL: SIM, `dimensions: 64` nativo na API
-  - Dimensão nativa: 3072
-  - input_type: aceita `search_document` e `search_query`
-  - Uso: versão mais recente do ecossistema Google
-
-
-### Bugs Corrigidos na Auditoria E2E (2026-06-25)
-
-- BUG-OR-1: `input_type="search_document"` hardcoded quebrava NVIDIA Nemotron
-  - CAUSA: embedder.rs enviava `Some("search_document")` para TODOS os modelos
-  - EFEITO: NVIDIA retornava erro "Unsupported input_type"
-  - FIX: `model_default_input_type()` retorna `"passage"` para NVIDIA, `None` para Mistral, `"search_document"` para os demais
-  - ARQUIVO: `src/embedding_api.rs` e `src/embedder.rs`
-
-- BUG-OR-2: `model_supports_mrl()` retornava `false` para NVIDIA e BAAI
-  - CAUSA: a função verificava apenas Qwen, OpenAI e Gemini
-  - EFEITO: NVIDIA e BAAI nao recebiam `dimensions: 64` e a CLI truncava desnecessariamente em Rust
-  - FIX: adicionado `llama-nemotron-embed` e `bge-m3` ao check de MRL
-  - ARQUIVO: `src/embedding_api.rs`
-
-- BUG-OR-3: `qwen/qwen3-embedding-0.6b` listado como modelo aprovado mas NAO existe na API
-  - CAUSA: modelo registrado no OpenRouter mas sem endpoints ativos ("No endpoints found")
-  - EFEITO: chamadas retornavam timeout ou 404
-  - FIX: removido da lista de modelos aprovados, adicionado à lista de IDs inexistentes
-
-- BUG-OR-4: `nvidia/llama-3.1-nemotron-embed-8b` listado mas NAO existe na API
-  - CAUSA: ID incorreto — modelo nao registrado no OpenRouter
-  - EFEITO: chamadas retornavam "Model does not exist"
-  - FIX: removido da lista de modelos aprovados, adicionado à lista de IDs inexistentes
-
-- BUG-OR-5: HTTP 200 com corpo malformado causava falha imediata sem retry
-  - CAUSA: `execute_with_retry()` tratava HTTP 200 como sucesso incondicional e parse error abortava imediatamente
-  - EFEITO: quando OpenRouter retornava HTTP 200 com corpo de erro (sem campo `data`), a CLI falhava com exit 11 sem retentar
-  - EVIDENCIA: `qwen/qwen3-embedding-4b` falhou 1 de 2 vezes na auditoria E2E com "missing field `data`"
-  - FIX: parse error em HTTP 200 agora é tratado como transitório e retentado com backoff exponencial
-  - ARQUIVO: `src/embedding_api.rs` linhas 223-239
-
-
-==
-
-
-## GAP-OR-INGEST: RESOLVIDO em v1.0.93 — Comando `ingest` agora propaga `EmbeddingBackendChoice` e suporta `--enrich-after`
 
 ### Problema
-- O comando `ingest` NÃO recebe a flag global `--embedding-backend` da CLI
-- O comando `ingest` NÃO recebe a flag global `--embedding-model` da CLI
-- O `IngestArgs` NÃO tem campos `embedding_backend` nem `embedding_model`
-- O `main.rs` linha 430 passa APENAS `cli.llm_backend` para `ingest::run()`, ignorando `cli.embedding_backend` e `cli.embedding_model`
-- O `stage_file()` recebe `LlmBackendChoice` (linha 511) e chama `embed_passage_with_choice()` que aceita APENAS `LlmBackendChoice`
-- A função `embed_passage_with_embedding_choice()` (embedder.rs:404) já existe e aceita `EmbeddingBackendChoice`, mas o `ingest` NÃO a utiliza
-- O `ingest` NÃO executa enrich sequencial após embedding — o usuário precisa rodar `enrich` manualmente em invocação separada
-- PROIBIDO ter modelo default da OpenRouter hardcoded — o usuário DEVE selecionar o modelo de embedding ao digitar o comando
+- O `remember`, o `remember-batch` e o `ingest` com entidades via `--graph-stdin` levam cerca de 120 segundos
+- A lentidão ocorre MESMO passando `--llm-backend none` e `--embedding-backend openrouter`
+- O embedding das ENTIDADES NÃO respeita a flag de backend escolhida pelo usuário
+- O caminho de entidades usa codex headless em vez de OpenRouter REST
+- O comando atinge o timeout interno de 120 segundos e degrada ou falha
+- Evidência real medida: o `remember` registrou `elapsed_ms: 119468` (cerca de 119 segundos)
+- O bug só DISPARA quando há entidades NOVAS (cache miss); sem entidades novas não há entity embedding
+
 
 ### Consequências do Problema
-- O usuário NÃO consegue usar `ingest --embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b"` para embedding rápido via API REST
-- O `ingest` SEMPRE usa subprocess LLM headless (codex/claude/opencode) para embedding, com cold-start de 5-15s POR ARQUIVO
-- Em um ingest de 100 arquivos, o embedding via subprocess consome ~25 minutos (100 × 15s) versus ~20 segundos via API REST OpenRouter (100 × 200ms)
-- O grafo de conhecimento fica POBRE após ingest sem enrich — `deep-research` e `graph traverse` retornam poucos resultados
-- O usuário precisa lembrar de executar `enrich` manualmente após `ingest` — nenhuma orientação automática é fornecida
-- A flag `--embedding-backend openrouter` existe globalmente no CLI mas é silenciosamente IGNORADA pelo `ingest`
+- Cada `remember` com entidades trava a sessão por cerca de 2 minutos
+- O hook Stop de memória bloqueia o encerramento do turno por cerca de 2 minutos
+- Memórias com grafo de entidades ficam inviáveis de salvar interativamente
+- O usuário percebe que o `remember` faz TUDO JUNTO, e não em fases separadas
+- A separação embedding via OpenRouter versus enrichment via codex é violada na prática
+- Sob fadiga ou limite de OAuth do codex, o entity embedding pode FALHAR por completo
+- Toda fórmula que coloca `--llm-backend codex` em `remember`/`remember-batch`/`ingest`/`edit`/`restore` está ERRADA
+- O codex pertence EXCLUSIVAMENTE ao `enrich`, NUNCA ao caminho de escrita
+- O bug torna o `--llm-backend none` inócuo no caminho de entidades de qualquer forma
+- Corrigir a fórmula para `none` é NECESSÁRIO mas NÃO SUFICIENTE nos 3 comandos afetados
+
+
+### Auditoria de Cobertura das 8 Operações
+- A CLI tem DOIS roteadores de embedding com comportamento divergente
+- O roteador de PASSAGE e QUERY respeita os backends via `embed_passage_with_embedding_choice`
+- O roteador de ENTIDADES ignora os backends via `embed_entity_texts_cached` que chama `get_embedder`
+- AFETADO: `remember` chama `embed_entity_texts_cached` em `src/commands/remember.rs:771`
+- AFETADO: `remember-batch` chama `embed_entity_texts_cached` em `src/commands/remember_batch.rs:415`
+- AFETADO: `ingest` chama `embed_entity_texts_cached` em `src/commands/ingest.rs:727`
+- NÃO AFETADO: `restore` re-embeda só o body via `embed_passage_with_embedding_choice` em `restore.rs:173`
+- NÃO AFETADO: `edit` re-embeda só o body via caminho correto em `edit.rs:222`, zero entity calls
+- NÃO AFETADO: `recall` embeda a query via `try_embed_query_with_embedding_choice` em `recall.rs:179`
+- NÃO AFETADO: `hybrid-search` embeda a query via caminho correto em `hybrid_search.rs:233`
+- NÃO AFETADO: `deep-research` embeda a query via caminho correto em `deep_research.rs:312`
+- NÃO AFETADO: `rename-entity` embeda via `embed_passage_with_embedding_choice` em `rename_entity.rs:99`
+- A lista correta e final de afetados é EXATAMENTE: `remember`, `remember-batch`, `ingest`
+- Correção do diagnóstico anterior: `edit` e `restore` foram suspeitados por engano e NÃO sofrem o bug
+- Correção do diagnóstico anterior: `ingest` é afetado e NÃO constava no diagnóstico inicial
+- Distinção importante: o BUG de entidade atinge 3 comandos; a regra de NÃO usar codex na escrita vale para os 5 de escrita
+
 
 ### Causa Raiz
-- CAUSA 1: Lacuna de propagação no `main.rs` — `cli.embedding_backend` e `cli.embedding_model` NÃO são passados para `ingest::run()`
-- CAUSA 2: `IngestArgs` foi definido ANTES da existência de `EmbeddingBackendChoice` (v1.0.79) e NUNCA foi atualizado para incluir as novas flags (v1.0.93)
-- CAUSA 3: `stage_file()` recebe `LlmBackendChoice` (parâmetro posicional) e chama `embed_passage_with_choice()` em vez de `embed_passage_with_embedding_choice()`
-- CAUSA 4: `embed_passages_parallel_local()` (embedder.rs:994) para chunks múltiplos NÃO tem variante que aceita `EmbeddingBackendChoice` — usa a chain LLM diretamente
-- CAUSA 5: o fluxo `ingest` → `enrich` é desacoplado por design (operações independentes), mas NÃO existe mecanismo de enrich sequencial automático após embedding
-- CAUSA 6: PROIBIDO ter modelo default da OpenRouter para impedir lock-in acidental — mas a ausência de validação obrigatória permite invocação sem `--embedding-model`
+- `src/commands/remember.rs:771` chama `embed_entity_texts_cached(&paths.models, &entity_texts, parallelism)`
+- A chamada NÃO passa `embedding_backend` nem `llm_backend`
+- `src/embedder.rs:1154` define `embed_entity_texts_cached(models_dir, texts, parallelism)` SEM parâmetros de backend
+- A função invoca `get_embedder()` em `src/embedder.rs:1162`
+- A função invoca `embed_texts_parallel()` em `src/embedder.rs:1181`
+- `get_embedder()` executa `LlmEmbedding::detect_available()` e instancia o embedder LLM (codex)
+- O entity embedding SEMPRE roteia para codex, ignorando a escolha do usuário
+- `src/extract/llm_embedding.rs:43` define `DEFAULT_EMBED_TIMEOUT_SECS: u64 = 120`
+- Entidades novas geram cache miss e esperam o codex até o timeout de 120 segundos
+- O caminho de CHUNKS já respeita os backends via `embed_passage_with_embedding_choice`
+- A chamada de chunks fica em `src/commands/remember.rs:653-708` e passa ambos os backends
+- O caminho de PASSAGE roteia por `embedding_backend.to_chain(llm_backend)` em `src/embedder.rs:411`
+- O caminho de ENTIDADES é o código ANTIGO de G56 (v1.0.80), nunca migrado na v1.0.93
+- O teste `src/embedder.rs:2045 none_backend_returns_empty_vector_without_calling_llm` prova que o backend `none` pula o LLM
+- O entity path NÃO usa esse mecanismo de `none`, então a flag não tem efeito ali
+
 
 ### Solução Proposta
-- Propagar `EmbeddingBackendChoice` e `embedding_model` do `main.rs` para `ingest::run()`
-- Adicionar parâmetros `embedding_backend` e `embedding_model` ao `stage_file()` 
-- Substituir chamada a `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()` no `stage_file()`
-- Criar variante `embed_passages_parallel_with_embedding_choice()` para chunks múltiplos que aceita `EmbeddingBackendChoice`
-- Adicionar flag `--enrich-after` ao `ingest` para disparar `enrich --operation memory-bindings` automaticamente após a fase de embedding
-- VALIDAR que `--embedding-model` é OBRIGATÓRIO quando `--embedding-backend openrouter` — exit 78 se ausente
-- PROIBIDO ter modelo default da OpenRouter — forçar o usuário a informar explicitamente
+- Propagar `embedding_backend` e `llm_backend` para o embedding de entidades
+- Rotear o entity embedding pelo MESMO mecanismo do caminho de chunks
+- Com `openrouter`, reusar `OpenRouterEmbeddingClient::embed_batch` que JÁ existe em `src/embedding_api.rs:131`
+- O `embed_batch` JÁ envia `input` como array e aplica `dimensions` MRL em lote
+- Com `none`, pular o embedding e gravar linha em `pending_embeddings`, como o chunk path já faz
+- Eliminar a divergência entre o caminho de chunks e o de entidades, aplicando DRY
+- Remover qualquer fórmula com `--llm-backend codex` em `remember`/`remember-batch`/`ingest`/`edit`/`restore`
+- Manter `--llm-backend codex --llm-model gpt-5.4-mini` EXCLUSIVAMENTE no `enrich`
+
 
 ### Benefícios da Solução
-- Embedding via API REST OpenRouter reduz tempo de ingest de ~25 minutos para ~20 segundos em 100 arquivos
-- Enrich sequencial automático via `--enrich-after` elimina etapa manual esquecida pelo usuário
-- Grafo de conhecimento fica RICO após ingest com enrich — `deep-research` e `graph traverse` funcionam plenamente
-- Separação embedding (API REST ~200ms) de enrichment (LLM headless ~15s) permite paralelismo sem conflito de slots
-- Sem modelo default previne lock-in acidental em modelo específico — o usuário mantém controle total
+- O `remember` com entidades cai de cerca de 120 segundos para centenas de milissegundos
+- O `remember-batch` e o `ingest` herdam o mesmo ganho de tempo no entity embedding
+- Os hooks de memória deixam de travar a sessão a cada turno
+- A separação embedding via OpenRouter versus enrichment via codex passa a valer de fato
+- O `--llm-backend none` volta a ter efeito no caminho de entidades
+- O caminho de escrita deixa de depender do OAuth do codex
+- Os dois caminhos de embedding ficam unificados, reduzindo a superfície de bug
+- A CLI, os hooks e o CLAUDE.md ficam consistentes sobre operações separadas
+
 
 ### Como Solucionar
-- PASSO 1: Alterar `ingest::run()` em `src/commands/ingest.rs` para receber `EmbeddingBackendChoice` e `Option<String>` (embedding_model)
-- PASSO 2: Alterar `main.rs` linha 430 para passar `cli.embedding_backend` e `cli.embedding_model` para `ingest::run()`
-- PASSO 3: Alterar `stage_file()` para receber `EmbeddingBackendChoice` e `LlmBackendChoice` (separados)
-- PASSO 4: Substituir `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()` no `stage_file()` linha 647
-- PASSO 5: Criar `embed_passages_parallel_with_embedding_choice()` no `embedder.rs` para chunks múltiplos com OpenRouter batch
-- PASSO 6: Adicionar validação: se `embedding_backend == Openrouter` e `embedding_model.is_none()` → exit 78 com mensagem clara
-- PASSO 7: Adicionar flag `--enrich-after` ao `IngestArgs` (default: false)
-- PASSO 8: Quando `--enrich-after` ativo, após conclusão do embedding de TODOS os arquivos, invocar `enrich --operation memory-bindings` com o `--llm-backend` selecionado
-- PASSO 9: Emitir evento NDJSON `{"event": "enrich_started"}` no stderr para feedback visual ao usuário
-- PASSO 10: Testes — verificar que `ingest --embedding-backend openrouter --embedding-model "qwen/qwen3-embedding-8b" --enrich-after --llm-backend codex` completa embedding + enrich sequencialmente
+- Alterar a assinatura de `embed_entity_texts_cached` para receber `embedding_backend` e `llm_backend`
+- Despachar internamente para o mecanismo de `embed_*_with_embedding_choice` já existente
+- Reusar `OpenRouterEmbeddingClient::embed_batch` em `src/embedding_api.rs:131` para o lote REST de entidades
+- Atualizar o chamador em `src/commands/remember.rs:771` para passar os dois backends
+- Atualizar o chamador em `src/commands/remember_batch.rs:415` para passar os dois backends
+- Atualizar o chamador em `src/commands/ingest.rs:727` para passar os dois backends
+- NÃO tocar em `edit` nem `restore`: eles não re-embedam entidades e já estão corretos
+- Honrar `--skip-embedding-on-failure` no novo caminho, como já ocorre no chunk path
+- Consultar context7 sobre `reqwest` antes de tocar na chamada REST
+- Adicionar teste objetivo: `remember --graph-stdin --llm-backend none` completa em menos de 2 segundos
+- Adicionar teste de regressão: entity embedding com `none` grava `pending_embeddings` sem chamar LLM
+- NUNCA reintroduzir codex no caminho de escrita
+
 
 ### Relações Causa x Efeito
-- CAUSA: `main.rs` NÃO propaga `embedding_backend` → EFEITO: `ingest` IGNORA flag global silenciosamente
-- CAUSA: `IngestArgs` sem campo `embedding_backend` → EFEITO: `stage_file()` recebe APENAS `LlmBackendChoice`
-- CAUSA: `stage_file()` chama `embed_passage_with_choice()` → EFEITO: OpenRouter NUNCA é usado para embedding no ingest
-- CAUSA: sem `--enrich-after` → EFEITO: usuário ESQUECE de rodar `enrich` manualmente → grafo fica pobre
-- CAUSA: sem validação de `--embedding-model` obrigatório → EFEITO: invocação sem modelo pode falhar com erro genérico em vez de mensagem clara
-- CAUSA: embedding via subprocess LLM (cold-start 5-15s por arquivo) → EFEITO: ingest de 100 arquivos leva ~25 minutos
-- CAUSA: embedding via API REST OpenRouter (~200ms por arquivo) → EFEITO: ingest de 100 arquivos leva ~20 segundos
+- CAUSA: `embed_entity_texts_cached` não recebe `embedding_backend` nem `llm_backend`
+- EFEITO: o entity embedding ignora a escolha de backend do usuário
+- CAUSA: o entity embedding ignora a escolha e cai em `get_embedder()`
+- EFEITO: `get_embedder()` instancia o embedder LLM codex
+- CAUSA: o codex é invocado para embedar entidades novas em cache miss
+- EFEITO: o comando espera o timeout interno de 120 segundos
+- CAUSA: o timeout de 120 segundos é atingido a cada escrita com entidades novas
+- EFEITO: o hook de memória trava a sessão por cerca de 2 minutos por turno
+- CAUSA: a v1.0.93 migrou o chunk path mas não o entity path
+- EFEITO: a separação embedding versus enrichment vale só para chunks
+- CAUSA: o `--llm-backend none` não alcança o caminho de entidades
+- EFEITO: a flag de separação fica inócua e o usuário observa tudo junto
+- CAUSA: apenas `remember`, `remember-batch` e `ingest` chamam o entity path
+- EFEITO: somente esses 3 comandos sofrem o timeout, os outros 5 não
+
 
 ### Arquivos Afetados
-- `src/main.rs` — linha 430: propagar `cli.embedding_backend` e `cli.embedding_model`
-- `src/commands/ingest.rs` — `run()` linha 1146: receber `EmbeddingBackendChoice`
-- `src/commands/ingest.rs` — `stage_file()` linha 502: receber `EmbeddingBackendChoice`
-- `src/commands/ingest.rs` — linhas 647 e 682: substituir funções de embedding
-- `src/embedder.rs` — criar `embed_passages_parallel_with_embedding_choice()`
-- `src/commands/ingest.rs` — `IngestArgs`: adicionar `--enrich-after`
+- `src/embedder.rs:1154` — `embed_entity_texts_cached` com assinatura sem backends
+- `src/embedder.rs:1162` — `get_embedder` invocado dentro do entity path
+- `src/embedder.rs:1181` — `embed_texts_parallel` que opera sobre LlmEmbedding codex
+- `src/embedder.rs:141` — `get_embedder` que instancia LlmEmbedding via `detect_available`
+- `src/commands/remember.rs:771` — chamador afetado que não passa os backends
+- `src/commands/remember_batch.rs:415` — chamador afetado que não passa os backends
+- `src/commands/ingest.rs:727` — chamador afetado que não passa os backends
+- `src/extract/llm_embedding.rs:43` — `DEFAULT_EMBED_TIMEOUT_SECS = 120`
+- `src/embedding_api.rs:131` — `embed_batch` REST OpenRouter a ser reusado
+- `src/commands/edit.rs:222` — NÃO afetado, re-embeda só o body pelo caminho correto
+- `src/commands/restore.rs:173` — NÃO afetado, re-embeda só o body pelo caminho correto
 
 
-### Resolução (v1.0.93)
-- `main.rs`: propagado `cli.embedding_backend` para TODOS os 8 comandos que usam embedding
-- `ingest.rs`: `stage_file()` agora recebe `EmbeddingBackendChoice` e chama `embed_passage_with_embedding_choice()` e `embed_passages_parallel_with_embedding_choice()`
-- `embedder.rs`: criadas `embed_passages_parallel_with_embedding_choice()` e `try_embed_query_with_embedding_choice()`
-- `IngestArgs`: adicionada flag `--enrich-after` que dispara `enrich --operation memory-bindings` sequencialmente
-- Compilação ZERO erros, Clippy ZERO warnings, 986+ testes passando
+### Evidências e Verificação
+- Evidência de execução: o `remember` retornou `elapsed_ms: 119468`
+- Evidência de código: a assinatura de `embed_entity_texts_cached` não tem parâmetros de backend
+- Evidência de auditoria: só 3 dos 8 comandos chamam `embed_entity_texts_cached`
+- Evidência de auditoria: `edit` e `restore` têm zero chamadas ao entity path
+- Evidência de reuso: `embed_batch` em `src/embedding_api.rs:131` já faz lote REST com `input` array e `dimensions`
+- Evidência de documentação: a OpenRouter Embeddings API aceita `input` em array e `dimensions`
+- Confiança alta porque a análise se baseia em fatos do código, não em inferência
+- Limite declarado: o bug não foi reproduzido de propósito para evitar o timeout de 120 segundos
 
 
-===
+### Pesquisa de Referência
+- context7 `/seanmonstar/reqwest` trustScore 9.7 confirma POST JSON com bearer para REST
+- duckduckgo confirma OpenRouter Embeddings API com `input` array e `dimensions` MRL
+- achado de reuso: `OpenRouterEmbeddingClient::embed_batch` já implementa o lote REST necessário
+- rules rust graphrag `rules-rust-cli-one-shot` exigem CLI que nasce, executa e morre, sem daemon
+- rules graphrag DRY e KISS orientam reusar o chunk path e eliminar o caminho duplicado
+- rules graphrag tratam erro como contrato de tipo, modelando o backend no sistema de tipos
 
 
-## GAP-OR-PROPAGATION: RESOLVIDO em v1.0.93 — 5 comandos/operações IGNORAM `--embedding-backend openrouter` silenciosamente
+## GAP-EMBED-TIMEOUT-300: RESOLVIDO em v1.0.94 — Timeout de embedding LLM é de 120s, curto e inconsistente; subir para 300s
+
+O `DEFAULT_EMBED_TIMEOUT_SECS` ficou para trás quando ingest, enrich e opencode adotaram 300s
+O embedding LLM é o ÚNICO subprocesso headless que ainda usa 120s na CLI inteira
+
 
 ### Problema
-- O v1.0.93 propagou `EmbeddingBackendChoice` para 8 comandos (remember, remember-batch, ingest, recall, edit, restore, hybrid-search, deep-research)
-- 5 comandos/operações que usam embedding CONTINUAM chamando a função OLD `embed_passage_with_choice()` que aceita APENAS `LlmBackendChoice`
-- O usuário configura `--embedding-backend openrouter` na linha de comando, mas 5 paths de código IGNORAM esta flag silenciosamente
-- NENHUM warning ou erro é emitido quando OpenRouter é ignorado — falha silenciosa
+- O timeout por chamada de embedding LLM é de apenas 120 segundos
+- Esse valor é o ÚNICO subprocesso LLM da CLI que não usa 300 segundos
+- O `ingest`, o `enrich`, o `opencode` e o `llm_backend` já usam 300 segundos
+- O comentário do código afirma ser consistente com os defaults do `ingest`
+- O comentário está factualmente ERRADO porque o `ingest` usa 300 e não 120
+- O codex headless tem cold start e latência variável por chamada
+- Lotes de entidades novas geram mais vetores e estouram os 120 segundos
+- O usuário pediu subir o default de 120 para 300 segundos
+
 
 ### Consequências do Problema
-- `enrich --operation re-embed` com `--embedding-backend openrouter` gera embeddings via subprocess LLM (5-60s por memória) em vez de API REST (~200ms)
-- Re-embedding de 500 memórias via `enrich` leva ~4 horas via subprocess versus ~100 segundos via OpenRouter
-- `rename-entity` gera embedding de entidade via subprocess LLM mesmo com OpenRouter configurado — latência desnecessária de 5-15s por renomeação
-- `init` probe de dimensão SEMPRE usa subprocess LLM — impossível probar dim com OpenRouter
-- `ingest --mode claude-code` IGNORA `--embedding-backend openrouter` nos 4 call sites de embedding — todo o pipeline legado fica lento
-- `remember` com body > 512KB que gera chunks paralelos usa `embed_passages_parallel_local()` que NÃO suporta OpenRouter batch — perde a vantagem de latência do batch API REST (32 textos por request)
-- O usuário confia que `--embedding-backend openrouter` funciona globalmente, mas 5 paths silenciosamente degradam para subprocess LLM
+- Embeddings de lotes grandes abortam por timeout antes de terminar
+- O entity embedding de `remember`, `remember-batch` e `ingest` falha mais cedo
+- A operação retorna exit 11 de falha de embedding sob lote pesado
+- O cold start do codex consome parte dos 120 segundos sem produzir vetor
+- A inconsistência de 120 versus 300 confunde quem lê o código
+- O comentário desatualizado induz o leitor a um pressuposto falso
+- Sob carga, o caminho de escrita degrada de forma evitável
+- O limite curto interage com o GAP-OR-ENTITY-EMBED e agrava a lentidão
+
 
 ### Causa Raiz
-- CAUSA 1 (enrich): `main.rs:507` passa APENAS `cli.llm_backend` para `enrich::run()` — NÃO propaga `cli.embedding_backend`
-- CAUSA 2 (enrich): `reembed_memory_vector()` em `enrich.rs:1446` chama `embed_passage_with_choice()` (OLD) que aceita APENAS `Option<LlmBackendChoice>` — a função `embed_passage_with_embedding_choice()` que aceita `EmbeddingBackendChoice` existe mas NÃO é utilizada
-- CAUSA 3 (rename-entity): `main.rs:501` passa APENAS `cli.llm_backend` para `rename_entity::run()` — NÃO propaga `cli.embedding_backend`
-- CAUSA 4 (rename-entity): `rename_entity.rs:98` chama `embed_passage_with_choice()` (OLD) para gerar embedding do novo nome da entidade
-- CAUSA 5 (init): `main.rs:422` chama `init::run(args)` SEM qualquer backend — NÃO propaga `cli.embedding_backend` nem `cli.llm_backend`
-- CAUSA 6 (init): `init.rs:132` chama `embed_passage_with_choice(&paths.models, "smoke test", None)` com `None` — SEMPRE usa subprocess LLM default
-- CAUSA 7 (ingest_claude): `ingest_claude.rs` tem 4 call sites que chamam `embed_passage_with_choice()` (OLD) — nenhum aceita `EmbeddingBackendChoice`
-- CAUSA 8 (remember chunks): `remember.rs:702` chama `embed_passages_parallel_local()` para chunks de body longo — esta função NÃO aceita `EmbeddingBackendChoice` e usa subprocess LLM diretamente
-- CAUSA RAIZ COMUM: as 5 lacunas compartilham a mesma causa raiz — a propagação de `EmbeddingBackendChoice` na v1.0.93 cobriu apenas os 8 comandos mais frequentes mas NÃO atualizou os paths secundários que também geram embeddings
+- `src/extract/llm_embedding.rs:43` define `DEFAULT_EMBED_TIMEOUT_SECS: u64 = 120`
+- O comentário em `src/extract/llm_embedding.rs:40-42` diz ser consistente com o `ingest`
+- O `ingest` define `DEFAULT_TIMEOUT: u64 = 300` em `src/commands/ingest.rs:967`
+- O `enrich` define `DEFAULT_TIMEOUT: u64 = 300` em `src/commands/enrich.rs:1618`
+- O `opencode_runner` define `DEFAULT_OPENCODE_TIMEOUT_SECS: u64 = 300` em `opencode_runner.rs:13`
+- O `llm_backend` define `timeout_secs: Some(300)` em `src/extract/llm_backend.rs:40` e `:71`
+- A constante de embedding nunca foi migrada quando os demais subiram para 300
+- Houve um drift histórico que deixou só o embedding em 120 segundos
+- A função `embed_timeout()` em `llm_embedding.rs:45` lê o default 120 como fallback
+- A precedência é `timeout_override` da instância depois env var depois o default
+- O override de instância existe via `LlmEmbeddingBuilder::override_timeout` em `:190`
+- O env var `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` existe mas o default é a causa
+- O clamp aceita o intervalo de 10 a 3600 segundos, então 300 é válido
 
-### Solução
-- SUBGAP 1 (enrich): propagar `cli.embedding_backend` em `main.rs:507` para `enrich::run()` e alterar `reembed_memory_vector()` para chamar `embed_passage_with_embedding_choice()` em vez de `embed_passage_with_choice()`
-- SUBGAP 2 (rename-entity): propagar `cli.embedding_backend` em `main.rs:501` para `rename_entity::run()` e alterar `rename_entity.rs:98` para chamar `embed_passage_with_embedding_choice()`
-- SUBGAP 3 (init): propagar `cli.embedding_backend` em `main.rs:422` para `init::run()` e alterar `init.rs:132` para chamar `embed_passage_with_embedding_choice()` — probe usa OpenRouter quando disponível
-- SUBGAP 4 (ingest_claude): propagar `cli.embedding_backend` para o pipeline `ingest_claude.rs` e substituir os 4 call sites de `embed_passage_with_choice()` por `embed_passage_with_embedding_choice()`
-- SUBGAP 5 (remember chunks): alterar `remember.rs:702` para chamar `embed_passages_parallel_with_embedding_choice()` (já existe no `embedder.rs:1083`) em vez de `embed_passages_parallel_local()`
+
+### Solução Proposta
+- Alterar `DEFAULT_EMBED_TIMEOUT_SECS` de 120 para 300 em `llm_embedding.rs:43`
+- Corrigir o comentário desatualizado para refletir o alinhamento real com 300
+- Manter o env var `SQLITE_GRAPHRAG_EMBED_TIMEOUT_SECS` como override do default
+- Manter o clamp de 10 a 3600 segundos que já comporta 300 sem mudança
+- Manter o escalonamento por lote de 15 segundos por item adicional intacto
+- NÃO criar flag nova porque o mecanismo de override já existe e basta
+
 
 ### Benefícios da Solução
-- `enrich --operation re-embed` de 500 memórias cai de ~4 horas para ~100 segundos com OpenRouter
-- Consistência total: `--embedding-backend openrouter` funciona em TODOS os paths de embedding sem exceção
-- Zero falha silenciosa: o usuário confia que a flag global funciona universalmente
-- `remember` com body longo usa OpenRouter batch (32 textos por request) — latência de chunks cai de ~30s (2 chunks × 15s subprocess) para ~400ms (1 request batch)
-- `init` probe de dimensão funciona com OpenRouter — não requer subprocess LLM instalado para criar banco
-- `ingest --mode claude-code` obtém a mesma vantagem de latência de embedding que o modo padrão
+- Lotes pesados de entidades passam a caber dentro do limite de tempo
+- O embedding LLM deixa de abortar cedo sob cold start do codex
+- A CLI fica consistente com 300 segundos em todos os subprocessos LLM
+- O comentário do código passa a descrever a realidade do `ingest`
+- A confusão entre 120 e 300 some do código e da leitura
+- O caminho de escrita degrada menos sob carga real de produção
+- A correção é mínima e cirúrgica em uma única constante
+
 
 ### Como Solucionar
-- PASSO 1: Alterar `enrich::run()` em `src/commands/enrich.rs` para receber `EmbeddingBackendChoice` como parâmetro adicional
-- PASSO 2: Alterar `reembed_memory_vector()` em `enrich.rs:1430` para receber e usar `EmbeddingBackendChoice`
-- PASSO 3: Propagar `cli.embedding_backend` em `main.rs:507` para `enrich::run()`
-- PASSO 4: Alterar `rename_entity::run()` em `src/commands/rename_entity.rs` para receber `EmbeddingBackendChoice`
-- PASSO 5: Propagar `cli.embedding_backend` em `main.rs:501` para `rename_entity::run()`
-- PASSO 6: Alterar `init::run()` em `src/commands/init.rs` para receber `EmbeddingBackendChoice` e `LlmBackendChoice`
-- PASSO 7: Propagar `cli.embedding_backend` e `cli.llm_backend` em `main.rs:422` para `init::run()`
-- PASSO 8: Alterar os 4 call sites em `ingest_claude.rs` para usar `embed_passage_with_embedding_choice()`
-- PASSO 9: Alterar `remember.rs:702` para chamar `embed_passages_parallel_with_embedding_choice()` em vez de `embed_passages_parallel_local()`
-- PASSO 10: Testes de integração verificando que `--embedding-backend openrouter` funciona em TODOS os 13 paths de embedding (8 existentes + 5 corrigidos)
+- Trocar o literal 120 por 300 em `src/extract/llm_embedding.rs:43`
+- Reescrever o comentário das linhas 40 a 42 para citar 300 corretamente
+- Atualizar o teste `assert_eq!(DEFAULT_EMBED_TIMEOUT_SECS, 120)` em `:1244` para 300
+- Revisar o teste de escalonamento por lote em `:1516` que depende da base
+- Validar com build, clippy, fmt e a suíte de testes sem falhas
+- Confirmar que o clamp de 10 a 3600 segue aceitando o novo default 300
+- Consultar context7 sobre `tokio::time::timeout` antes de tocar no consumo
+- Registrar a mudança no CHANGELOG do projeto na próxima release
+
 
 ### Relações Causa x Efeito
-- CAUSA: `main.rs` NÃO propaga `embedding_backend` para `enrich::run()` → EFEITO: `enrich --operation re-embed` SEMPRE usa subprocess LLM
-- CAUSA: `reembed_memory_vector()` chama função OLD → EFEITO: OpenRouter NUNCA é usado para re-embedding
-- CAUSA: `main.rs` NÃO propaga `embedding_backend` para `rename_entity::run()` → EFEITO: renomeação de entidade SEMPRE usa subprocess LLM
-- CAUSA: `init::run()` NÃO recebe backends → EFEITO: probe de dimensão SEMPRE usa subprocess LLM default
-- CAUSA: `ingest_claude.rs` tem 4 call sites OLD → EFEITO: pipeline legado IGNORA OpenRouter
-- CAUSA: `remember` chunks usa `embed_passages_parallel_local()` → EFEITO: body longo NÃO usa OpenRouter batch
-- CAUSA RAIZ: propagação parcial de `EmbeddingBackendChoice` na v1.0.93 → EFEITO: 5 paths de embedding ficaram inconsistentes com os 8 paths corrigidos
+- CAUSA: o default de embedding ficou em 120 quando o resto subiu para 300
+- EFEITO: o embedding LLM é o único subprocesso com limite mais curto
+- CAUSA: o codex headless tem cold start e latência variável por chamada
+- EFEITO: parte dos 120 segundos é gasta antes de gerar qualquer vetor
+- CAUSA: lotes de entidades novas geram muitos vetores em uma chamada
+- EFEITO: a chamada estoura os 120 segundos e aborta com exit 11
+- CAUSA: o comentário cita o `ingest` mas o `ingest` usa 300, não 120
+- EFEITO: o leitor do código assume consistência que não existe
+- CAUSA: o limite curto soma com o GAP-OR-ENTITY-EMBED que força codex
+- EFEITO: a escrita com entidades novas fica lenta e frágil ao mesmo tempo
+
 
 ### Arquivos Afetados
-- `src/main.rs` — linhas 422, 501, 507: propagar `cli.embedding_backend` para init, rename-entity, enrich
-- `src/commands/enrich.rs` — `run()` linha 1684 e `reembed_memory_vector()` linha 1430: receber e usar `EmbeddingBackendChoice`
-- `src/commands/rename_entity.rs` — `run()` e linha 98: receber e usar `EmbeddingBackendChoice`
-- `src/commands/init.rs` — `run()` e linha 132: receber e usar `EmbeddingBackendChoice`
-- `src/commands/ingest_claude.rs` — 4 call sites de `embed_passage_with_choice()`: substituir por `embed_passage_with_embedding_choice()`
-- `src/commands/remember.rs` — linha 702: substituir `embed_passages_parallel_local()` por `embed_passages_parallel_with_embedding_choice()`
-
-### Severidade por Subgap
-- SUBGAP 1 (enrich re-embed): ALTA — afeta re-embedding em massa de centenas de memórias
-- SUBGAP 2 (rename-entity): BAIXA — operação rara, uma entidade por vez
-- SUBGAP 3 (init probe): BAIXA — roda UMA VEZ na criação do banco
-- SUBGAP 4 (ingest_claude): MEDIA — modo legado mas ainda em uso para extração de entidades via LLM
-- SUBGAP 5 (remember chunks): MEDIA — afeta bodies longos (>512KB) com múltiplos chunks
-
-
-### Resolução (v1.0.93)
-- SUBGAP 1 (enrich): `enrich::run()` agora recebe `EmbeddingBackendChoice`; `reembed_memory_vector()` e `call_reembed()` propagam para `embed_passage_with_embedding_choice()`
-- SUBGAP 2 (rename-entity): `rename_entity::run()` agora recebe `EmbeddingBackendChoice`; call site linha 98 migrado
-- SUBGAP 3 (init): `init::run()` agora recebe `LlmBackendChoice` e `EmbeddingBackendChoice`; probe usa backend configurado
-- SUBGAP 4 (ingest_claude): `run_claude_ingest()` recebe ambos backends; 4 call sites migrados para `embed_passage_with_embedding_choice()`
-- SUBGAP 5 (remember chunks): `remember.rs:702` migrado de `embed_passages_parallel_local()` para `embed_passages_parallel_with_embedding_choice()`
-- BUG-OR-EXIT-CODE: 3 validações OpenRouter em `main.rs` agora emitem exit 78 (EX_CONFIG) em vez de exit 1
-- `main.rs`: propagação de `cli.embedding_backend` para TODOS os 13 comandos de embedding (8 originais + 5 corrigidos)
-- Compilação ZERO erros, Clippy ZERO warnings, 1059 testes passando
-- E2E: 10/10 modelos OpenRouter validados com TODAS as operações (init, remember, recall, hybrid-search, edit, ingest, enrich re-embed, rename-entity)
+- `src/extract/llm_embedding.rs:43` — `DEFAULT_EMBED_TIMEOUT_SECS = 120` a virar 300
+- `src/extract/llm_embedding.rs:40-42` — comentário desatualizado que cita o `ingest`
+- `src/extract/llm_embedding.rs:45` — `embed_timeout()` que usa o default como fallback
+- `src/extract/llm_embedding.rs:409-414` — `instance_embed_timeout` com a precedência de 3 níveis
+- `src/extract/llm_embedding.rs:776` — spawn single-call que aplica o timeout
+- `src/extract/llm_embedding.rs:920` — spawn batch via stdin que aplica o timeout
+- `src/extract/llm_embedding.rs:1002` — spawn batch via arg que aplica o timeout
+- `src/extract/llm_embedding.rs:1244` — teste que afirma o default igual a 120
+- `src/extract/llm_embedding.rs:1516` — teste de escalonamento por lote sobre a base
+- `src/commands/ingest.rs:967` — referência de 300 que prova a inconsistência
+- `src/commands/enrich.rs:1618` — referência de 300 que prova a inconsistência
+- `src/commands/opencode_runner.rs:13` — referência de 300 que prova a inconsistência
+- `src/extract/llm_backend.rs:40` — referência de 300 que prova a inconsistência
 
 
-====
+### Operações da CLI Que Usam Esse Timeout
+- O timeout governa TODO embedding roteado para LLM headless codex, claude ou opencode
+- AFETADO: `remember` dispara entity embedding LLM e usa o timeout de 120
+- AFETADO: `remember-batch` dispara entity embedding LLM e usa o timeout de 120
+- AFETADO: `ingest` dispara entity embedding LLM e usa o timeout de 120
+- CONDICIONAL: `recall` usa o timeout só se `--llm-backend` for codex, claude ou opencode
+- CONDICIONAL: `hybrid-search` usa o timeout só com backend LLM no embedding da query
+- CONDICIONAL: `deep-research` usa o timeout só com backend LLM no embedding da query
+- CONDICIONAL: `edit --body` e `restore` usam o timeout só com backend LLM no re-embed
+- NÃO AFETADO com openrouter: o caminho REST usa o timeout de 30s em `embedding_api.rs:15`
+- Distinção: o timeout de 120 vale para o subprocesso LLM, não para o REST OpenRouter
 
+
+### Evidências e Verificação
+- Evidência de código: só `llm_embedding.rs:43` usa 120 entre todos os subprocessos LLM
+- Evidência de inconsistência: `ingest`, `enrich`, `opencode` e `llm_backend` usam 300
+- Evidência de comentário falso: o texto cita o `ingest` que na verdade usa 300
+- Evidência de mecanismo: `tokio::time::timeout` envolve `cmd.output()` em 3 pontos de spawn
+- Evidência de override pronto: builder, env var e clamp de 10 a 3600 já existem
+- Confiança alta porque a auditoria varreu todas as constantes de timeout do `src`
+- Limite declarado: o estouro real de lote não foi reproduzido para evitar o timeout
+
+
+### Pesquisa de Referência
+- context7 `/websites/rs_tokio` trustScore 9.7 confirma `tokio::time::timeout` com `Elapsed`
+- duckduckgo confirma que `codex exec` headless tem cold start e latência variável
+- GraphRAG `headless-comparacao-patterns` mostra os patterns headless usando `timeout 300`
+- rules rust graphrag exigem evidência de código e validação completa antes de fechar
+- rules graphrag DRY orientam reusar o override existente sem criar flag nova
+
+
+## GAP-HEADLESS-DEFAULT: RESOLVIDO em v1.0.94 — CLI headless definida como padrão; `enrich --mode` tem default `claude-code` que spawna `claude -p`
+
+A flag `--mode` do `enrich` escolhe a CLI headless de extração sozinha, sem o usuário pedir
+O default `claude-code` spawna `claude -p`, que herda o `.mcp.json` do CWD e falha
+
+
+### Problema
+- O `enrich` tem DOIS seletores de backend independentes e separados
+- O `--llm-backend` controla o embedding de entidades do `enrich`
+- O `--mode` controla a extração de entidades e relações do `enrich`
+- A flag `--mode` tem default embutido igual a `claude-code`
+- Omitir `--mode` faz o `enrich` spawnar `claude -p` por conta própria
+- Passar `--llm-backend codex` NÃO altera o `--mode`, que segue em `claude-code`
+- O usuário não escolhe a CLI headless, mas ela já vem escolhida
+- A política exigida é proibir CLI headless definida como padrão
+- O usuário deve informar a CLI headless e o modelo em TODO comando
+
+
+### Consequências do Problema
+- O `enrich --operation memory-bindings` falhou em 58 de 58 itens
+- 51 itens falharam com `claude -p exited with code Some(1)`
+- 7 itens falharam com `Argument list too long (os error 7)`
+- O subprocesso `claude -p` herda o CWD com `.mcp.json` do projeto
+- O `.mcp.json` herdado quebra o `claude -p` mesmo com preflight desligado
+- Corpos de memória maiores que 150 KB estouram o ARG_MAX do Linux
+- A fase `validate` mostrou `binary_path: claude` mesmo passando `--llm-backend codex`
+- O usuário acredita usar codex, mas o `enrich` usa claude por baixo
+- O enrichment pós-escrita não gera bindings para nenhuma memória do namespace
+
+
+### Causa Raiz
+- `src/commands/enrich.rs:379` declara `#[arg(long, value_enum, default_value = "claude-code")]`
+- O campo `mode: EnrichMode` em `enrich.rs:380` recebe esse default headless
+- O default faz o clap preencher `--mode` com `claude-code` quando ausente
+- O enum `EnrichMode` em `enrich.rs:330-339` tem `ClaudeCode`, `Codex` e `Opencode`
+- O enum NÃO tem variante neutra que force escolha explícita do usuário
+- O comentário em `enrich.rs:378` declara o default como `claude-code (OAuth-first)`
+- O exemplo em `enrich.rs:357` ensina `--mode claude-code` como uso padrão
+- O `claude-code` resolve o binário `claude` e o invoca como `claude -p`
+- O `claude -p` é um subprocesso que herda o CWD e o `.mcp.json` do projeto
+- O `--llm-backend` e o `--mode` são caminhos de código distintos e independentes
+- Mudar `--llm-backend` para codex não troca o provider de extração do `--mode`
+- O default headless mascara a escolha real e induz erro de uso silencioso
+
+
+### Solução Proposta
+- Remover o `default_value = "claude-code"` da flag `--mode` em `enrich.rs:379`
+- Tornar a flag `--mode` OBRIGATÓRIA, sem default embutido
+- Forçar o usuário a informar a CLI headless e o modelo em todo comando
+- Aplicar a mesma política a qualquer flag que selecione CLI headless
+- Reavaliar o `--llm-backend` com default `auto` sob a mesma regra
+- Seguir o padrão do campo `operation` que já é obrigatório sem default
+- NÃO criar nova variante de enum porque a obrigatoriedade do clap basta
+
+
+### Benefícios da Solução
+- O `enrich` deixa de spawnar `claude -p` por conta própria
+- O usuário escolhe codex e modelo de forma explícita e consciente
+- O clap rejeita o comando sem `--mode` com erro claro e fail-fast
+- O erro de uso aparece antes da execução, não após 58 falhas em runtime
+- A herança do `.mcp.json` pelo `claude -p` deixa de ocorrer por acidente
+- A CLI passa a refletir a política de provider e modelo sempre explícitos
+- A confusão entre `--llm-backend` e `--mode` perde o efeito silencioso
+
+
+### Como Solucionar
+- Trocar `#[arg(long, value_enum, default_value = "claude-code")]` por `#[arg(long, value_enum)]` em `enrich.rs:379`
+- Manter o tipo `mode: EnrichMode` como campo obrigatório, não `Option`
+- Corrigir o comentário em `enrich.rs:378` para remover a menção a default
+- Atualizar o exemplo em `enrich.rs:357` para `--mode codex --codex-model gpt-5.4-mini`
+- Revisar o log em `enrich.rs:1946` que assume `mode = "claude-code"`
+- Avaliar se o `--llm-backend` default `auto` deve virar obrigatório também
+- Atualizar testes que dependem do default `claude-code` do `--mode`
+- Consultar context7 sobre clap antes de tocar no atributo do argumento
+- Validar com build, clippy, fmt e a suíte de testes sem falhas
+- Registrar a mudança no CHANGELOG do projeto na próxima release
+
+
+### Relações Causa x Efeito
+- CAUSA: a flag `--mode` tem default `claude-code` embutido
+- EFEITO: omitir `--mode` spawna `claude -p` sem o usuário pedir
+- CAUSA: o `claude -p` herda o CWD com o `.mcp.json` do projeto
+- EFEITO: 51 itens falham com `claude -p exited with code Some(1)`
+- CAUSA: corpos grandes são passados como argumento ao `claude -p`
+- EFEITO: 7 itens falham com `Argument list too long (os error 7)`
+- CAUSA: `--llm-backend` e `--mode` são seletores independentes
+- EFEITO: passar `--llm-backend codex` não troca o provider de extração
+- CAUSA: o default headless mascara a escolha real do provider
+- EFEITO: o usuário pensa usar codex, mas o `enrich` usa claude
+- CAUSA: o default só falha em runtime, item a item
+- EFEITO: o erro aparece tarde, após 58 de 58 falhas
+
+
+### Arquivos Afetados
+- `src/commands/enrich.rs:379` — `default_value = "claude-code"` a ser removido
+- `src/commands/enrich.rs:380` — campo `mode: EnrichMode` que recebe o default
+- `src/commands/enrich.rs:378` — comentário que declara o default headless
+- `src/commands/enrich.rs:330-339` — enum `EnrichMode` sem variante neutra
+- `src/commands/enrich.rs:357` — exemplo que ensina `--mode claude-code`
+- `src/commands/enrich.rs:375` — campo `operation` obrigatório que serve de modelo correto
+- `src/commands/enrich.rs:1946` — log que assume `mode = "claude-code"`
+- `src/commands/enrich.rs:1615-1632` — validação de conflito de flags por `--mode`
+- `src/commands/ingest.rs:222` — NÃO afetado, default é `IngestMode::None` local sem LLM
+
+
+### Operações da CLI Afetadas
+- AFETADO: `enrich --operation memory-bindings` usa o `--mode` default headless
+- AFETADO: `enrich --operation entity-descriptions` usa o `--mode` default headless
+- AFETADO: `enrich --operation body-enrich` usa o `--mode` default headless
+- CONDICIONAL: `enrich --operation re-embed` usa o `--mode` só na parte de extração LLM
+- NÃO AFETADO: `ingest --mode` tem default `IngestMode::None`, local e sem LLM
+- Distinção: o default headless é exclusivo do `enrich`, não do `ingest`
+- Distinção: o `--llm-backend` global é seletor separado do `--mode` do `enrich`
+
+
+### Evidências e Verificação
+- Evidência de código: `enrich.rs:379` é o único arg de `--mode` com default headless
+- Evidência empírica: 58 de 58 itens falharam com o `--mode` default `claude-code`
+- Evidência de erro 1: 51 itens com `claude -p exited with code Some(1)`
+- Evidência de erro 2: 7 itens com `Argument list too long (os error 7)`
+- Evidência de correção: `--mode codex --codex-model gpt-5.4-mini` resolveu `binary_path` para codex
+- Evidência de padrão: o campo `operation` sem default já é obrigatório no clap
+- Confiança alta porque a falha foi observada e a correção foi verificada na sessão
+- Limite declarado: a correção do código não foi aplicada, apenas documentada
+
+
+### Pesquisa de Referência
+- context7 `/websites/rs_clap` trustScore 9.7 confirma argumento obrigatório sem `default_value`
+- duckduckgo confirma `claude -p` headless e herança de configuração via CWD do projeto
+- duckduckgo retornou a doc oficial de Claude Code headless e a issue de `.mcp.json` por CWD
+- GraphRAG não tem memória duplicada deste gap, scores de hybrid-search abaixo de 0,02
+- rules rust graphrag exigem evidência de código e validação completa antes de fechar
+- rules graphrag tratam erro de uso como contrato, preferindo fail-fast no parser
+
+
+## GAP-EMBED-DIM-64: RESOLVIDO em v1.0.94 — Default de embedding é 64; DEVE ser 384 para criar banco, embedar e operar
+
+O `DEFAULT_EMBEDDING_DIM` é 64, incompatível com o corpus de produção indexado em 384
+O cliente OpenRouter congela o dim no startup com `unwrap_or(64)`, antes de abrir o banco
+
+
+### Problema
+- O default de dimensionalidade de embedding da CLI é 64
+- O banco de produção `graphrag.sqlite` está indexado em 384 dimensões
+- Toda operação SEM `--embedding-dim 384` gera vetor de 64 dimensões
+- O vetor de 64 colide com os vetores de 384 já gravados no banco
+- A busca knn aborta com exit 11 informando 64 dims, esperava 384
+- A flag `--embedding-dim 384` virou obrigatória em TODO comando de embedding
+- A env var `SQLITE_GRAPHRAG_EMBEDDING_DIM` NÃO cobre o caminho OpenRouter
+- A política exigida é o default ser 384 para banco, embedding e operações
+
+
+### Consequências do Problema
+- Cada `recall`, `hybrid-search` e `deep-research` falha sem a flag explícita
+- Cada `remember`, `remember-batch` e `ingest` grava vetor de 64 sem a flag
+- Um banco novo via `init` sem a flag nasce com dim 64 gravado
+- Esse banco fica incompatível com qualquer corpus 384 de produção
+- O usuário precisa repetir `--embedding-dim 384` em toda invocação
+- Esquecer a flag uma vez corrompe a consistência dimensional do índice
+- A env var sozinha não conserta porque o caminho OpenRouter a ignora
+- Os hooks e fórmulas tiveram que cravar a flag manualmente para não quebrar
+- A confusão entre env e flag induz erro de uso silencioso e tardio
+
+
+### Causa Raiz
+- `src/constants.rs:28` define `DEFAULT_EMBEDDING_DIM: usize = 64`
+- O comentário em `constants.rs:22-27` rebaixou de 384 para 64 na v1.0.79
+- O motivo declarado foi custo de tokens autoregressivos no backend LLM-only
+- `src/constants.rs:43` resolve a precedência env, depois banco, depois default 64
+- `src/main.rs:371` inicializa o cliente OpenRouter com `cli.embedding_dim.unwrap_or(64)`
+- Esse `unwrap_or(64)` é um literal cravado que NÃO chama `constants::embedding_dim()`
+- O bloco `main.rs:348-380` roda no startup global, antes do dispatch do subcomando
+- A conexão do banco que popula o dim ativo só abre DEPOIS, no subcomando
+- O cliente OpenRouter já nasceu fixo em 64 antes de o banco informar 384
+- `src/embedder.rs:208` passa o dim a `OpenRouterClient::new(api_key, model, dim)`
+- `src/embedding_api.rs:92` congela `self.dim` na construção do cliente
+- `src/embedding_api.rs:110-111` envia `dimensions: Some(self.dim)` na requisição REST
+- O OpenRouter aplica truncamento MRL ao dim pedido e devolve vetor de 64
+- `src/embedding_api.rs:177-187` valida e trunca o vetor retornado contra `self.dim`
+- A env var só é lida por `constants::embedding_dim()`, NÃO pelo init eager OpenRouter
+- A flag preenche `cli.embedding_dim` E vira env em `main.rs:188`, cobrindo os dois caminhos
+- `src/commands/init.rs:108-109` grava o dim ativo no `schema_meta` ao criar o banco
+- Sem a flag, `init` grava 64 e estampa o banco novo com dimensionalidade errada
+- `src/commands/init.rs:230-235` tem teste que trava o default em 64
+
+
+### Solução Proposta
+- Elevar `DEFAULT_EMBEDDING_DIM` de 64 para 384 em `constants.rs:28`
+- Trocar o `unwrap_or(64)` por `constants::embedding_dim()` em `main.rs:371`
+- Fazer o init eager do OpenRouter consultar a precedência env, banco e default
+- Garantir que o cliente OpenRouter herde o dim do banco aberto quando existir
+- Manter a flag `--embedding-dim` como override consciente para migração de corpus
+- Manter o clamp de 8 a 4096 que já comporta 384 sem mudança
+- Atualizar o teste de init que afirma o default 64 para 384
+- NÃO criar flag nova porque o mecanismo de precedência já existe
+
+
+### Benefícios da Solução
+- O `recall`, o `hybrid-search` e o `deep-research` funcionam sem flag manual
+- O `remember`, o `remember-batch` e o `ingest` gravam vetor de 384 por default
+- Um banco novo via `init` nasce em 384, compatível com produção
+- A env var e o banco passam a alimentar também o cliente OpenRouter
+- O usuário deixa de repetir `--embedding-dim 384` em todo comando
+- O erro de mismatch exit 11 some do uso padrão da CLI
+- A consistência dimensional do índice fica protegida por default seguro
+- A flag passa a ser exceção de migração, não obrigação diária
+
+
+### Como Solucionar
+- Trocar `pub const DEFAULT_EMBEDDING_DIM: usize = 64;` por `= 384;` em `constants.rs:28`
+- Reescrever o comentário `constants.rs:22-27` para refletir o default 384
+- Trocar `cli.embedding_dim.unwrap_or(64)` por `crate::constants::embedding_dim()` em `main.rs:371`
+- Avaliar reordenar o init OpenRouter para após a abertura do banco
+- Atualizar `assert` do default em `src/commands/init.rs:230-235` para 384
+- Auditar testes que dependem do default 64 em `constants.rs` e `init.rs`
+- Confirmar que o clamp de 8 a 4096 segue aceitando 384
+- Consultar context7 sobre clap antes de tocar no parser do argumento
+- Validar com build, clippy, fmt e a suíte de testes sem falhas
+- Registrar a mudança e o impacto de re-embed no CHANGELOG da release
+
+
+### Relações Causa x Efeito
+- CAUSA: `DEFAULT_EMBEDDING_DIM` é 64 e o corpus é 384
+- EFEITO: vetor gerado sem flag colide com o índice e dá exit 11
+- CAUSA: `main.rs:371` usa `unwrap_or(64)` cravado, não a precedência
+- EFEITO: o cliente OpenRouter nasce em 64 ignorando o banco
+- CAUSA: o init do OpenRouter é eager no startup, antes da conexão
+- EFEITO: o dim do banco 384 chega tarde demais para o cliente
+- CAUSA: a env var só é lida por `constants::embedding_dim()`
+- EFEITO: a env sozinha não corrige o caminho OpenRouter
+- CAUSA: a flag preenche `cli.embedding_dim` e também vira env
+- EFEITO: só a flag cobre os dois caminhos e por isso virou obrigatória
+- CAUSA: `init` grava o dim ativo no `schema_meta` sem flag
+- EFEITO: banco novo nasce em 64 e fica incompatível com produção
+
+
+### Arquivos Afetados
+- `src/constants.rs:28` — `DEFAULT_EMBEDDING_DIM = 64` a virar 384
+- `src/constants.rs:22-27` — comentário que justifica o rebaixamento a 64
+- `src/constants.rs:43-51` — `embedding_dim()` com precedência env, banco, default
+- `src/main.rs:371` — `cli.embedding_dim.unwrap_or(64)` cravado no init OpenRouter
+- `src/main.rs:185-188` — flag global que materializa a env var de dim
+- `src/cli.rs:227-235` — flag `embedding_dim: Option<u64>` documentada como default 64
+- `src/embedder.rs:208` — `get_openrouter_embedder` que repassa o dim ao cliente
+- `src/embedding_api.rs:77-92` — `OpenRouterClient::new` que congela `self.dim`
+- `src/embedding_api.rs:110-111` — envio de `dimensions: Some(self.dim)` na requisição
+- `src/embedding_api.rs:177-187` — validação e truncamento contra `self.dim`
+- `src/commands/init.rs:108-109` — grava o dim ativo no `schema_meta` do banco novo
+- `src/commands/init.rs:230-235` — teste que trava o default em 64
+- `src/storage/connection.rs` — popula o dim ativo lendo o `schema_meta` ao abrir
+
+
+### Operações da CLI Afetadas
+- AFETADO: `init` estampa o banco novo com o default 64 sem flag
+- AFETADO: `remember` e `remember-batch` geram vetor de 64 sem flag
+- AFETADO: `ingest` grava chunks e entidades em 64 sem flag
+- AFETADO: `recall`, `hybrid-search` e `deep-research` embedam a query em 64
+- AFETADO: `edit --body` e `restore` re-embedam o body em 64 sem flag
+- AFETADO: `rename-entity` re-embeda a entidade em 64 sem flag
+- AFETADO: `enrich --operation re-embed` regenera vetores no dim ativo
+- Distinção: o caminho OpenRouter só respeita a FLAG, não a env isolada
+- Distinção: o caminho LLM local respeita a env via `constants::embedding_dim()`
+
+
+### Evidências e Verificação
+- Evidência de código: `constants.rs:28` define o default 64 explicitamente
+- Evidência de código: `main.rs:371` usa `unwrap_or(64)` cravado no init OpenRouter
+- Evidência de ordem: o bloco `main.rs:348-380` roda no startup antes do subcomando
+- Evidência de congelamento: `embedding_api.rs:92` fixa `self.dim` na construção
+- Evidência de requisição: `embedding_api.rs:110-111` envia `dimensions: Some(self.dim)`
+- Evidência empírica: o banco real responde exit 11 com 64 dims, esperava 384
+- Evidência de init: `init.rs:108-109` grava o dim ativo no `schema_meta`
+- Confiança alta porque a auditoria varreu constants, main, embedder e init
+- Limite declarado: a correção do código não foi aplicada, apenas documentada
+
+
+### Pesquisa de Referência
+- context7 `/clap-rs/clap` trustScore 7.1 confirma flag opcional com override de default
+- duckduckgo confirma MRL em arXiv 2205.13147, base do truncamento de dimensões
+- duckduckgo mostra que truncar dimensões reduz precisão semântica do embedding
+- referência histórica: 384 casava o modelo `multilingual-e5-small` do corpus
+- GraphRAG `skill-embedding-dim-384-flag-obrigatoria-2026-06-26` registra a flag obrigatória
+- rules rust graphrag exigem evidência de código e validação completa antes de fechar
+- rules graphrag tratam default inseguro como contrato quebrado e preferem default correto
