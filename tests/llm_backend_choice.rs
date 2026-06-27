@@ -42,30 +42,38 @@ fn cmd_base(tmp: &TempDir) -> Command {
     c
 }
 
-/// GAP-003 acceptance: `--llm-backend=none` short-circuits the LLM
-/// call. The `remember` handler must still persist the body and the
-/// response must surface `action: "created"` even when no embedding
-/// was produced. The empty `embedding` slot in the response is the
-/// signal to `pending_embeddings` retry paths (deferred).
+/// BUG-11 (v1.0.88, ADR-0046) contract: a fallback chain of only
+/// `[None]` without `skip_on_failure` MUST abort rather than persist a
+/// memory with an invisible zero-dimensional embedding. So `remember
+/// --llm-backend none` with no embedding backend available fails with
+/// exit 11 and "no LLM backends available; fallback chain exhausted".
+/// This supersedes the pre-BUG-11 GAP-003 (v1.0.82) contract, which
+/// expected a silent empty-embedding success.
 #[test]
 #[serial]
-fn llm_backend_none_persists_memory_without_embedding() {
+fn llm_backend_none_without_embedding_aborts_exit11() {
     let tmp = TempDir::new().expect("tempdir");
-    cmd_base(&tmp)
+    let assert = cmd_base(&tmp)
         .arg("remember")
         .arg("--name")
         .arg("smoke-none")
         .arg("--type")
         .arg("note")
         .arg("--description")
-        .arg("GAP-003 none backend")
+        .arg("BUG-11 none backend")
         .arg("--body")
         .arg("body without LLM call")
         .arg("--llm-backend")
         .arg("none")
         .arg("--json")
         .assert()
-        .success();
+        .failure()
+        .code(11);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("no LLM backends available"),
+        "expected the BUG-11 fallback-exhausted guard, got stderr: {stderr}"
+    );
 }
 
 /// GAP-003 acceptance: `--llm-backend=codex` is accepted on the CLI
@@ -97,14 +105,17 @@ fn llm_backend_codex_is_accepted_on_command_line() {
     assert!(parsed.is_ok(), "stdout must be valid JSON, got: {stdout}");
 }
 
-/// GAP-003 acceptance: `SQLITE_GRAPHRAG_LLM_BACKEND=none` env var
-/// takes effect when `--llm-backend` flag is omitted, matching the
-/// documented precedence (CLI flag > env var > default `auto`).
+/// BUG-11 (v1.0.88, ADR-0046) contract via env var: the
+/// `SQLITE_GRAPHRAG_LLM_BACKEND=none` precedence still routes to the
+/// `None` backend, which — with no embedding backend available — aborts
+/// with exit 11 instead of persisting a zero-dimensional embedding.
+/// Confirms the precedence (CLI flag > env var > default `auto`) reaches
+/// the same BUG-11 guard as the explicit flag.
 #[test]
 #[serial]
-fn llm_backend_none_via_env_var() {
+fn llm_backend_none_via_env_var_aborts() {
     let tmp = TempDir::new().expect("tempdir");
-    cmd_base(&tmp)
+    let assert = cmd_base(&tmp)
         .env("SQLITE_GRAPHRAG_LLM_BACKEND", "none")
         .arg("remember")
         .arg("--name")
@@ -112,12 +123,18 @@ fn llm_backend_none_via_env_var() {
         .arg("--type")
         .arg("note")
         .arg("--description")
-        .arg("GAP-003 env override")
+        .arg("BUG-11 env override")
         .arg("--body")
         .arg("body via env var")
         .arg("--json")
         .assert()
-        .success();
+        .failure()
+        .code(11);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("no LLM backends available"),
+        "expected the BUG-11 fallback-exhausted guard, got stderr: {stderr}"
+    );
 }
 
 /// GAP-003 acceptance: invalid values are rejected at clap parse time

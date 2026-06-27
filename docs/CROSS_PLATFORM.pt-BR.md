@@ -6,7 +6,7 @@
 - O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` roda apenas em Linux; a mesma asserção se aplica no Windows por construção (propagação de env é agnóstica de plataforma no helper)
 - Flag `--strict-env-clear` e env var `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` funcionam identicamente no Windows; apenas `PATH` (ou `Path` no Windows, que o helper normaliza) é encaminhado em modo estrito
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
-# SUPORTE CROSS PLATFORM (v1.0.93 — Backend de Embedding OpenRouter + 986+ Testes)
+# SUPORTE CROSS PLATFORM (v1.0.95 — Enrich via Chat OpenRouter)
 
 > Um binário de 14.6 MiB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 
@@ -15,7 +15,7 @@
 
 
 ## Nota Arquitetural da v1.0.76
-- O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) spawnado por chamada. Desde a v1.0.90, opencode é o terceiro backend com prioridade de auto-detect `codex > claude > opencode > none`.
+- O build padrão é apenas LLM e one-shot. Não há runtime ONNX para distribuir, não há `libonnxruntime.so` para empacotar, e não há modelo `multilingual-e5-small` para baixar. A geração de embedding delega para um subprocesso headless `claude code`, `codex` ou `opencode` (OAuth) spawnado por chamada. Desde a v1.0.90, opencode é o terceiro backend com prioridade de auto-detect `codex > claude > opencode > none`. Desde a v1.0.95, o `enrich --mode openrouter` também extrai entidades pelo endpoint REST OpenRouter `/chat/completions`, sem exigir nenhuma CLI local — eliminando a dependência de subprocesso para o enrichment, não apenas para o embedding.
 - A feature `embedding-legacy` foi REMOVIDA na v1.0.79 (antecipando o cronograma da v1.1.0). Todo build é LLM-only; o pipeline fastembed + ort + tokenizers e o contrato ONNX ARM64 GNU não se aplicam mais.
 - A tabela cross-platform abaixo descreve o build LLM-only, que agora é o único build.
 

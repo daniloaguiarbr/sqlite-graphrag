@@ -36,6 +36,14 @@
 - Exit code 78 (`EX_CONFIG`) para erros de configuração OpenRouter (chave API ausente, modelo ausente, chave inválida)
 - 10 modelos verificados E2E com dim=64 MRL: `google/gemini-embedding-001` (0.892), `google/gemini-embedding-2` (0.868), `mistralai/mistral-embed-2312` (0.832), `qwen/qwen3-embedding-8b` (0.814), `qwen/qwen3-embedding-4b` (0.754), `openai/text-embedding-3-small` (0.668), `nvidia/llama-nemotron-embed-vl-1b-v2:free` (0.662), `baai/bge-m3` (0.537), `openai/text-embedding-3-large` (0.449), `perplexity/pplx-embed-v1-0.6b` (0.415)
 
+## Novos Comandos e Flags (desde v1.0.95)
+- `enrich --mode openrouter` — novo modo opt-in que roteia a etapa JUDGE ao REST `/chat/completions` do OpenRouter (sem CLI local); os quatro modos agora são `claude-code`, `codex`, `opencode`, `openrouter` (GAP-OR-ENRICH, ADR-0054)
+- `--openrouter-model MODEL` — OBRIGATÓRIA com `--mode openrouter`; omiti-la sai com exit 1 antes de qualquer chamada de rede
+- `--openrouter-api-key KEY` — chave de API do cliente de chat (env `OPENROUTER_API_KEY`); reutiliza a chave do backend de embedding com o mesmo tratamento `secrecy`/zeroize
+- `--openrouter-timeout SECS` — timeout da requisição de chat (padrão 300s)
+- `--openrouter-base-url URL` — override opcional da base URL do OpenRouter
+- Novo módulo `src/chat_api.rs` (`OpenRouterChatClient`) espelha `src/embedding_api.rs`; SCAN→JUDGE→PERSIST inalterado, apenas o transporte do JUDGE muda; 13/13 modelos reais verificados; sem migração, schema v15
+
 ## Novos Comandos e Flags (desde v1.0.68)
 ### Ciclo de Vida de Processos (G28)
 - `enrich`, `ingest --mode claude-code` e `ingest --mode codex` agora adquirem um singleton por namespace antes de fazer trabalho real.  Uma segunda invocação concorrente no mesmo banco falha rápido com `AppError::JobSingletonLocked { job_type, namespace }` (exit 75) em vez de empilhar árvores de subprocessos.

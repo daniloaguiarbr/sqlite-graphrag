@@ -128,3 +128,10 @@ Read this document in [Portuguese (pt-BR)](SECURITY.pt-BR.md).
 - This prevents an accidental `claude -p` spawn that would inherit the caller project `.mcp.json` and execute untrusted MCP servers in a headless context.
 - No new exit code and no new environment variable are introduced; the change is a safer default surface only.
 - Valid modes are `claude-code`, `codex`, `opencode`; pick the one matching your `--llm-backend`.
+
+
+## v1.0.95 OpenRouter Chat Key Handling (ADR-0054)
+- v1.0.95 adds `enrich --mode openrouter`, which routes the JUDGE step to OpenRouter `/chat/completions` over HTTPS (`src/chat_api.rs`) instead of spawning a local CLI.
+- It reuses the SAME `OPENROUTER_API_KEY` already documented for the embedding backend, with the SAME handling: wrapped in `secrecy::SecretBox`, zeroized on drop, NEVER logged, NEVER passed to any subprocess.
+- The key flows only into the `reqwest` HTTPS client targeting `openrouter.ai`; it is not in the env-clear whitelist and stays in the parent process only.
+- No new credential surface is introduced beyond what is already documented for the OpenRouter embedding backend.

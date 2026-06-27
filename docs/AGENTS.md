@@ -331,7 +331,7 @@ Agents that try to set them will see a clear validation error.
 ### New Commands
 - `reclassify-relation --from-relation <old> --to-relation <new> --batch --json` — renames relationship types in bulk across the graph; single-edge mode via `--source A --target B`; optional `--filter-source-type` and `--filter-target-type` for targeted batch; handles UNIQUE collisions via `UPDATE OR IGNORE` + `DELETE` merge; `--dry-run` previews count
 - `normalize-entities --yes --json` — normalizes all entity names to lowercase kebab-case ASCII, auto-merging collisions (e.g., `Claude Code` + `claude-code` become one node); `--dry-run` previews
-- `enrich --operation <op> --mode claude-code --json` — LLM-augmented graph quality pipeline; 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions), `body-enrich` (expand short bodies); queue DB for resume/retry; `--dry-run` previews without spawning LLM; `--llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32) to reduce wall-clock time; output is NDJSON
+- `enrich --operation <op> --mode <claude-code|codex|opencode|openrouter> --json` — LLM-augmented graph quality pipeline; 3 operations: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (generate descriptions), `body-enrich` (expand short bodies); queue DB for resume/retry; `--dry-run` previews without spawning LLM; `--llm-parallelism <N>` spawns N parallel LLM worker threads (default 1, max 32) to reduce wall-clock time; output is NDJSON. `--mode openrouter` routes the JUDGE over REST `/chat/completions` (no local subprocess) and requires `--openrouter-model`
 ### Deep Research Improvements
 - `deep-research` now computes a separate embedding per sub-query — decomposition was cosmetic in v1.0.64
 - `deep-research` fuses KNN + FTS5 + graph pools via RRF instead of hardcoded 0.5 for FTS results
@@ -942,6 +942,7 @@ let output = Command::new("sqlite-graphrag")
 - Response field `extraction_method` reports `url-regex` or `none:extraction-failed`; `gliner-<variant>+regex` and `regex-only` are HISTORICAL values (≤ v1.0.75)
 - USE `--enable-ner` only when URL entity extraction is valuable
 - PREFER `--mode claude-code` / `--mode codex` or `--graph-stdin` with LLM-curated entities for semantic extraction quality
+- USE `--mode openrouter` when no local LLM CLI is installed (trade-off: bills tokens against `OPENROUTER_API_KEY` vs the zero-token OAuth of the CLI backends); requires `--openrouter-model`
 ### FORBIDDEN — ingest Anti-patterns
 - NEVER use `fd | xargs sqlite-graphrag remember` when `ingest` exists
 - NEVER omit `--recursive` expecting automatic descent
@@ -971,6 +972,7 @@ let output = Command::new("sqlite-graphrag")
 - USE `--mode none` (default) for body-only ingestion without extraction
 - `--mode gliner` is DEPRECATED since v1.0.79 (URL-regex only; emits a `tracing::warn!`); use `--mode claude-code` or `--mode codex` for semantic extraction
 - USE `--mode claude-code` for LLM-curated extraction via locally installed Claude Code CLI
+- USE `--mode openrouter` (in `enrich`) when no local LLM CLI is installed — the JUDGE runs over REST `/chat/completions`; trade-off: bills tokens against `OPENROUTER_API_KEY` vs the zero-token OAuth of `claude-code`/`codex`/`opencode`
 - Claude Code mode requires `claude` binary >= 2.1.0 in PATH with active Pro/Max subscription
 - USE `--resume` to continue a previously interrupted claude-code ingest from the queue DB
 - USE `--retry-failed` to retry only failed files from a previous run
@@ -1690,6 +1692,12 @@ cargo install --path . && sqlite-graphrag init
 - The stderr-capture fallback chain in ADR-0040 detects `refresh_token_reused` and routes to the next backend in `--llm-backend`
 - There is NO definitive upstream fix; mitigation depends on operator-driven `codex login`
 
+
+## New in v1.0.95 — OpenRouter Chat Enrich (ADR-0054)
+- `enrich --mode openrouter` routes the JUDGE to REST `/chat/completions` with no local CLI subprocess; the SCAN to JUDGE to PERSIST pipeline is otherwise unchanged.
+- Flags: `--openrouter-model` (REQUIRED; no default; absence exits 1 before any network call); `--openrouter-api-key` (env `OPENROUTER_API_KEY`); `--openrouter-timeout` (default 300s); `--openrouter-base-url` (optional).
+- Request uses `response_format` `json_schema` with `strict:true` plus `provider.require_parameters:true`; `reasoning.enabled:false` with a reasoning-mandatory fallback; cost is read from `usage.cost` (the `usage:{include:true}` form is deprecated).
+- All 13/13 verified models pass. No migration; schema stays at v15. The four `enrich` modes are now `claude-code`, `codex`, `opencode`, `openrouter`.
 
 ## New in v1.0.94 — Four-Gap Remediation (ADR-0053)
 - Default embedding dimension is now 384 (was 64); `init` stamps `dim=384`. Legacy 64-dim databases keep working via `schema_meta.dim`.

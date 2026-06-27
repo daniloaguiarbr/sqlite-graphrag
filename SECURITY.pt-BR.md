@@ -130,3 +130,10 @@ Leia este documento em [inglês (EN)](SECURITY.md).
 - Isso evita um spawn acidental de `claude -p` que herdaria o `.mcp.json` do projeto do chamador e executaria servidores MCP não confiáveis em contexto headless.
 - Nenhum novo exit code e nenhuma nova variável de ambiente são introduzidos; a mudança é apenas uma superfície de default mais segura.
 - Modos válidos são `claude-code`, `codex`, `opencode`; escolha o que casa com seu `--llm-backend`.
+
+
+## v1.0.95 Tratamento de Chave de Chat OpenRouter (ADR-0054)
+- A v1.0.95 adiciona `enrich --mode openrouter`, que roteia a etapa JUDGE ao `/chat/completions` do OpenRouter via HTTPS (`src/chat_api.rs`) em vez de spawnar uma CLI local.
+- Ele reutiliza a MESMA `OPENROUTER_API_KEY` já documentada para o backend de embedding, com o MESMO tratamento: envolvida em `secrecy::SecretBox`, zeroizada no drop, JAMAIS logada, JAMAIS passada a qualquer subprocesso.
+- A chave flui apenas para o cliente HTTPS `reqwest` que aponta para `openrouter.ai`; não está na whitelist de env-clear e permanece apenas no processo pai.
+- Nenhuma nova superfície de credencial é introduzida além da já documentada para o backend de embedding OpenRouter.

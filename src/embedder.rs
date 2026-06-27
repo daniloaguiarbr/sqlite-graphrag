@@ -59,6 +59,11 @@ static CLAUDE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 static OPENCODE_EMBEDDER: OnceLock<Mutex<LlmEmbedding>> = OnceLock::new();
 static OPENROUTER_CLIENT: OnceLock<crate::embedding_api::OpenRouterClient> = OnceLock::new();
 
+/// v1.0.95 (ADR-0054): process-wide OpenRouter chat-completions client for
+/// the `enrich` JUDGE. Distinct from `OPENROUTER_CLIENT` (embeddings) because
+/// the chat client binds a text model, not an embedding model.
+static OPENROUTER_CHAT_CLIENT: OnceLock<crate::chat_api::OpenRouterChatClient> = OnceLock::new();
+
 /// v1.0.93: check whether the OpenRouter client has been initialised.
 pub fn is_openrouter_initialized() -> bool {
     OPENROUTER_CLIENT.get().is_some()
@@ -210,6 +215,33 @@ pub fn get_openrouter_embedder(
     Ok(OPENROUTER_CLIENT
         .get()
         .expect("OPENROUTER_CLIENT initialised above"))
+}
+
+/// v1.0.95 (ADR-0054): initialises the process-wide OpenRouter chat client on
+/// first use and returns it. `model` is the text model the enrich JUDGE will
+/// call (no default; the caller validates presence upfront).
+pub fn get_openrouter_chat_client(
+    api_key: secrecy::SecretBox<String>,
+    model: &str,
+    timeout_secs: u64,
+) -> Result<&'static crate::chat_api::OpenRouterChatClient, AppError> {
+    if let Some(c) = OPENROUTER_CHAT_CLIENT.get() {
+        return Ok(c);
+    }
+    let client =
+        crate::chat_api::OpenRouterChatClient::new(api_key, model.to_string(), timeout_secs)?;
+    let _ = OPENROUTER_CHAT_CLIENT.set(client);
+    Ok(OPENROUTER_CHAT_CLIENT
+        .get()
+        .expect("OPENROUTER_CHAT_CLIENT initialised above"))
+}
+
+/// v1.0.95: returns the process-wide OpenRouter chat client if it has already
+/// been initialised via [`get_openrouter_chat_client`]. Used by the enrich
+/// JUDGE dispatch, which initialises the singleton once at startup and then
+/// fetches it per item without re-threading the API key.
+pub fn openrouter_chat_client() -> Option<&'static crate::chat_api::OpenRouterChatClient> {
+    OPENROUTER_CHAT_CLIENT.get()
 }
 
 /// ADR-0042 / GAP-002: route a single passage through the Claude

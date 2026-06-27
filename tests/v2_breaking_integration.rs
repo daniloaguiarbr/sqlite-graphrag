@@ -90,7 +90,14 @@ fn purge_dry_run_deletes_nothing() {
     assert_eq!(json["dry_run"], true, "dry_run deve ser true na resposta");
 
     cmd(&tmp)
-        .args(["purge", "--name", "mem-dry-run", "--retention-days", "0"])
+        .args([
+            "purge",
+            "--name",
+            "mem-dry-run",
+            "--retention-days",
+            "0",
+            "--yes",
+        ])
         .assert()
         .success();
 }

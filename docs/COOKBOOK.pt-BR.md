@@ -220,7 +220,7 @@ sqlite-graphrag --embedding-backend openrouter \
 
 ## Como Atualizar Para a v1.0.94 (Remediação de Quatro Gaps)
 - Sem migração de banco; schema permanece em v15. Basta `cargo install sqlite-graphrag --locked --force`.
-- QUEBRANTE: toda invocação de `enrich` agora exige `--mode` (`claude-code`|`codex`|`opencode`). Atualize scripts para `enrich --operation memory-bindings --mode codex`.
+- QUEBRANTE: toda invocação de `enrich` agora exige `--mode` (`claude-code`|`codex`|`opencode`|`openrouter`). Atualize scripts para `enrich --operation memory-bindings --mode codex`.
 - A dimensão de embedding padrão agora é 384. Bancos novos usam 384; bancos legados em 64 mantêm a dim registrada. Re-embede na dim ativa com `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation re-embed --limit 100 --resume --mode codex --json`.
 
 ## Como Atualizar De v1.0.74 Ou v1.0.75 Para v1.0.76 (Apenas LLM)
@@ -2165,6 +2165,7 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Expandir corpos curtos: `sqlite-graphrag enrich --operation body-enrich --mode claude-code --limit 20 --json`
 - Retomar após interrupção: `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --resume --json`
 - Usar Codex em vez de Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`
+- Enriquecer via OpenRouter REST sem CLI local: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model <model> --json` — `--openrouter-model` é obrigatório (sem default; ausência sai com exit 1 antes de qualquer chamada de rede) e a chave vem de `OPENROUTER_API_KEY`; o JUDGE roda sobre `/chat/completions` com `json_schema` strict, e `--openrouter-timeout` tem padrão de 300s (`--openrouter-base-url` opcional)
 - Rodar com workers LLM em paralelo: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 

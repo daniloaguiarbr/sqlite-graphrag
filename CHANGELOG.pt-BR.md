@@ -3,6 +3,22 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.95] - 2026-06-27
+
+### Adicionado
+- `GAP-OR-ENRICH`: novo `enrich --mode openrouter` roteia o JUDGE para o endpoint REST `/chat/completions` do OpenRouter, de modo que a extração estruturada (`memory-bindings`, `entity-descriptions`, `body-enrich`, etc.) não exige mais um subprocesso de CLI `claude`/`codex`/`opencode` instalado localmente. O pipeline SCAN→JUDGE→PERSIST permanece intacto; só o transporte do JUDGE muda
+- Novo módulo `src/chat_api.rs` (`OpenRouterChatClient`) — cliente REST de chat espelhando `src/embedding_api.rs`: mesma política de retry/backoff (aborto imediato em 401/400/404, `retry-after` em 429, backoff exponencial + jitter em 5xx) e os mesmos headers mínimos (apenas `Authorization: Bearer`)
+- Novos flags do `enrich`: `--openrouter-model` (OBRIGATÓRIO para `--mode openrouter`; a ausência é rejeitada com exit 1 antes de qualquer chamada de rede), `--openrouter-api-key` (env `OPENROUTER_API_KEY`), `--openrouter-timeout`, `--openrouter-base-url`
+- Structured Outputs: as requisições enviam `response_format` `json_schema` com `strict: true` mais `provider.require_parameters: true`, de modo que apenas providers que honram o schema são roteados e a saída do modelo é JSON confiável, sem parsing frágil de stdout
+- Reasoning desabilitado na extração (`reasoning.enabled: false`) para reduzir tokens pagos e latência, com fallback gracioso para reasoning-mandatory: `complete()` tenta primeiro com `enabled: false` e, num HTTP 400 mencionando `reasoning`, faz UM retry omitindo o campo `reasoning` para o modelo usar seu default obrigatório (helper `reasoning_disable_rejected`). 9 dos 13 modelos testados aceitam `enabled: false`; 4 (`minimax/minimax-m2.7[:nitro]`, `openai/gpt-oss-120b[:nitro]`) exigem o fallback
+- O custo real por item é lido de `usage.cost` na resposta (sem o parâmetro depreciado `usage: {include:true}`) e somado ao total da execução
+
+### Notas de Auditoria
+- Build limpo: 0 erros, 0 warnings de clippy (`-D warnings`), 0 diferenças de fmt
+- Suíte de testes: `cargo test` exit 0, 0 falhas
+- E2E: `--mode openrouter` valida a chave de API sem spawnar subprocesso; todos os 13 modelos de texto OpenRouter exercitados contra o schema rígido passam (13/13 compatíveis — 9 diretamente com `reasoning.enabled: false`, 4 via o fallback reasoning-mandatory)
+
+
 ## [1.0.94] - 2026-06-26
 
 ### Corrigido

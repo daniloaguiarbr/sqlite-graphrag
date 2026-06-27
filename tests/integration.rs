@@ -337,9 +337,17 @@ fn test_init_returns_json_with_status_ok() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_health_auto_inits_when_missing() {
+fn test_health_does_not_auto_init_when_missing() {
     let tmp = TempDir::new().unwrap();
-    cmd(&tmp).arg("health").assert().success();
+    // v1.0.x contract: `health` no longer auto-creates the database; with a
+    // missing DB it guards with exit 4 and tells the operator to run `init`
+    // first (it must never silently create the file).
+    let assert = cmd(&tmp).arg("health").assert().failure().code(4);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("does not auto-create"),
+        "expected the no-auto-create guard, got stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -804,7 +812,14 @@ fn test_purge_removes_soft_deleted_memory() {
         .success();
 
     let output = cmd(&tmp)
-        .args(["purge", "--name", "purge-target", "--retention-days", "0"])
+        .args([
+            "purge",
+            "--name",
+            "purge-target",
+            "--retention-days",
+            "0",
+            "--yes",
+        ])
         .assert()
         .success()
         .get_output()
@@ -939,7 +954,7 @@ fn test_stats_returns_counts() {
     let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert!(json["memories"].as_i64().unwrap() >= 1);
     assert!(json["db_size_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(json["schema_version"], 13);
+    assert_eq!(json["schema_version"], 15);
 }
 
 #[test]
@@ -1352,7 +1367,7 @@ fn test_forget_purge_does_not_corrupt_fts_index() {
             .success();
 
         cmd(&tmp)
-            .args(["purge", "--name", &nome, "--retention-days", "0"])
+            .args(["purge", "--name", &nome, "--retention-days", "0", "--yes"])
             .assert()
             .success();
     }
@@ -2316,6 +2331,7 @@ fn test_cleanup_orphans_remove_entidades_orfas() {
             "co-mem-descartada",
             "--retention-days",
             "0",
+            "--yes",
         ])
         .assert()
         .success();

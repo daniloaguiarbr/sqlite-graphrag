@@ -95,6 +95,26 @@
 
 Veja [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) para o plano de teste do Split do Backend Claude (ADR-0042). Veja [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) para o plano de teste da Remediação de Cinco Gaps (ADR-0043). Ambos os novos planos são snapshots do design de teste liberado.
 
+## Plano de Teste v1.0.95 — Enrich via Chat OpenRouter (ADR-0054, GAP-OR-ENRICH)
+
+### Adições na Camada 1 (unit)
+- Montagem de `ChatRequest` (`src/chat_api.rs`, `OpenRouterChatClient`): testes wiremock verificando `response_format` `json_schema` com `strict:true`, `provider.require_parameters:true` e `reasoning.enabled:false`
+- Parse da resposta: extração de `choices[].message.content` seguida de um segundo parse JSON do payload de schema rígido
+- Leitura de `usage.cost` do corpo da resposta
+- Retry: `429` com header `retry-after`, backoff exponencial em `5xx`, `401` permanente sem retry
+- Erros `400`/`404` retornados sem retry
+- Conteúdo vazio / resposta de recusa tratados como modelo incompatível
+- `validate_mode_flags`: rejeita flags `claude`/`codex`/`opencode` sob `--mode openrouter`
+- `--openrouter-model` obrigatória: retorna exit 1 antes de qualquer chamada de rede quando ausente
+
+### Adições na Camada 2 (integração)
+- Dispatch do JUDGE para `call_openrouter` em todas as operações de enrich (`memory-bindings`, `entity-descriptions`, `body-enrich`)
+- Validação de chave API via `resolve_api_key` sem spawn de subprocesso
+
+### Delta na Camada 8 (smoke com LLM real)
+- `tests/openrouter_chat_real.rs` (`#[ignore]`, rodável com `OPENROUTER_API_KEY`) iterando os 13 modelos de texto contra o schema rígido
+- Matriz de compatibilidade 13/13 (9 diretos com `reasoning.enabled:false`, 4 via fallback reasoning-mandatory)
+
 ## Plano de Teste v1.0.93 — Backend de Embedding OpenRouter (ADR-0052, GAP-OR-INGEST)
 
 ### Adições na Camada 1 (unit)

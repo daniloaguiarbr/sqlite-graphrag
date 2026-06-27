@@ -187,6 +187,9 @@ pub mod constants;
 /// Local embedding generation (LLM-only, one-shot per invocation).
 pub mod embedder;
 
+/// HTTP client for the OpenRouter chat-completions API (direct HTTP, no CLI subprocess).
+pub mod chat_api;
+
 /// HTTP client for the OpenRouter embeddings API (direct HTTP, no CLI subprocess).
 pub mod embedding_api;
 

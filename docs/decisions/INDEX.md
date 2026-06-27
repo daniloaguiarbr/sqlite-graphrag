@@ -55,6 +55,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0051](adr-0051-opencode-backend-integration.md) | OpenCode Backend Integration | v1.0.90 | Accepted | [PT-BR](adr-0051-opencode-backend-integration.pt-BR.md) |
 | [ADR-0052](adr-0052-openrouter-embedding-backend.md) | OpenRouter Embedding Backend | v1.0.93 | Accepted | [PT-BR](adr-0052-openrouter-embedding-backend.pt-BR.md) |
 | [ADR-0053](adr-0053-v1094-four-gap-remediation.md) | v1.0.94 Four-Gap Remediation | v1.0.94 | Accepted | [PT-BR](adr-0053-v1094-four-gap-remediation.pt-BR.md) |
+| [ADR-0054](adr-0054-openrouter-chat-enrich.md) | OpenRouter Chat Enrich (GAP-OR-ENRICH) | v1.0.95 | Accepted | [PT-BR](adr-0054-openrouter-chat-enrich.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -74,6 +75,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.90**: 1 ADR (0051) — OpenCode backend integration
 - **v1.0.93**: 1 ADR (0052) — OpenRouter embedding backend
 - **v1.0.94**: 1 ADR (0053) — four-gap remediation (default dim 384, timeout 300s, enrich --mode required, entity embedding honours backends)
+- **v1.0.95**: 1 ADR (0054) — OpenRouter chat enrich (`enrich --mode openrouter`)
 
 ## Bilíngue Status
 
@@ -92,8 +94,8 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 
 ## Adding a New ADR
 
-1. Choose the next sequential number (next is ADR-0054)
-2. Create `adr-0053-slug.md` following the canonical structure
+1. Choose the next sequential number (next is ADR-0055)
+2. Create `adr-0055-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
 4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`
 5. Add PT-BR column link

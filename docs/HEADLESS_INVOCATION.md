@@ -69,9 +69,25 @@ Run `claude -p` with the MCP config locked down and empty, and the hooks config 
 - This eliminates subprocess cold-start (~200ms API call vs 15-20s subprocess spawn per embedding)
 - The OpenRouter path uses `reqwest+rustls-tls` directly — no `claude -p`, no `codex exec`, no CWD isolation needed
 - OAuth-only enforcement does NOT apply to OpenRouter — it uses its own `OPENROUTER_API_KEY` / `--openrouter-api-key`
-- Headless subprocess spawning remains unchanged for LLM-based embedding (`--embedding-backend llm`) and for `enrich` operations (which use generative reasoning, not vector embedding)
-- The `--enrich-after` flag on `ingest` still spawns a headless subprocess for the enrich phase, even when embedding uses OpenRouter
-- See ADR-0052 for the full architectural rationale
+- Headless subprocess spawning remains unchanged for LLM-based embedding (`--embedding-backend llm`) and for `enrich` operations run with `--mode claude-code|codex|opencode`
+- Since v1.0.95 (ADR-0054), `enrich --mode openrouter` also bypasses the subprocess: the JUDGE step runs via OpenRouter's `/chat/completions` REST endpoint (`reqwest+rustls-tls`), with no `claude -p` / `codex exec` / `opencode run` spawn and no CWD isolation. The SCAN→JUDGE→PERSIST pipeline is unchanged; only the JUDGE transport differs.
+- The `--enrich-after` flag on `ingest` still spawns a headless subprocess for the enrich phase when the enrich mode is a local CLI; with `--mode openrouter` the enrich phase stays subprocess-free
+- See ADR-0052 (OpenRouter embedding) and ADR-0054 (OpenRouter enrich JUDGE) for the full architectural rationale
+
+### v1.0.95 Update — OpenRouter Enrich JUDGE Bypasses Subprocess
+
+- `enrich --mode openrouter` routes the JUDGE step to `POST /api/v1/chat/completions` — no local CLI subprocess
+- `--openrouter-model` is REQUIRED with `--mode openrouter` (NO default; omitting it → exit 1 before any network call)
+- `--openrouter-api-key` reads from env `OPENROUTER_API_KEY` or `config add-key --provider openrouter`; `--openrouter-timeout` defaults to 300s; `--openrouter-base-url` is optional
+- Request uses `response_format` `json_schema` with `strict: true` and `provider.require_parameters: true`; `reasoning.enabled: false` with a one-shot reasoning-mandatory fallback; `usage.cost` is read from the response
+- Trade-off: OAuth zero-token (local CLI modes) vs tokens billed to `OPENROUTER_API_KEY` (OpenRouter mode); no migration, schema stays v15
+
+```bash
+# Headless enrich JUDGE via OpenRouter REST (no subprocess, no CWD isolation)
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+sqlite-graphrag enrich --operation memory-bindings \
+  --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json
+```
 
 ### Why NOT To Use `--bare`
 

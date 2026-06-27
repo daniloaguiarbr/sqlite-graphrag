@@ -132,6 +132,9 @@ RUSTDOCFLAGS="-D warnings" timeout 120 cargo doc --no-deps --all-features
 
 ## Recent Releases
 
+### v1.0.95 - 2026-06-27 — OpenRouter Chat Enrich (ADR-0054)
+- GAP-OR-ENRICH: new opt-in `enrich --mode openrouter` routes the JUDGE step to the OpenRouter `/chat/completions` REST endpoint, removing the requirement for a locally installed `claude`/`codex`/`opencode` CLI; the four enrich modes are now `claude-code`, `codex`, `opencode`, `openrouter`. New module `src/chat_api.rs` (`OpenRouterChatClient`) mirrors `src/embedding_api.rs`; `--openrouter-model` is required with `--mode openrouter`.
+- Validation: SCAN→JUDGE→PERSIST unchanged, 13/13 real models pass, no migration (schema v15); `OPENROUTER_API_KEY` handled via `secrecy`/zeroize, never logged or passed to a subprocess.
 ### v1.0.94 - 2026-06-26 — Four-Gap Remediation (ADR-0053)
 - Fixed GAP-OR-ENTITY-EMBED (entity embedding honours `--embedding-backend`/`--llm-backend`; `remember` with new entities ~119s -> ~0.9s), GAP-EMBED-DIM-64 (default dim 64 -> 384), GAP-EMBED-TIMEOUT-300 (embedding timeout 120s -> 300s), GAP-HEADLESS-DEFAULT (`enrich --mode` now required, clap exit 2 when omitted).
 - Validation: `cargo fmt --check` 0 diffs, `cargo clippy -- -D warnings` 0 warnings, `cargo test` exit 0; ADR-0053 (EN+PT), documentation synced across root, docs/, skill/ and llms.

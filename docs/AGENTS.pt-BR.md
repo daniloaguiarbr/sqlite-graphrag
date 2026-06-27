@@ -314,7 +314,7 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 ### Novos Comandos
 - `reclassify-relation --from-relation <antigo> --to-relation <novo> --batch --json` — renomeia tipos de relacionamento em massa no grafo; modo individual via `--source A --target B`; filtros opcionais `--filter-source-type` e `--filter-target-type`; trata colisões UNIQUE via `UPDATE OR IGNORE` + `DELETE`; `--dry-run` faz preview
 - `normalize-entities --yes --json` — normaliza todos os nomes de entidade para kebab-case ASCII minúsculo, mesclando colisões automaticamente (ex.: `Claude Code` + `claude-code` viram um nó); `--dry-run` faz preview
-- `enrich --operation <op> --mode claude-code --json` — pipeline de qualidade do grafo aumentada por LLM; 3 operações: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (gera descrições), `body-enrich` (expande corpos curtos); queue DB para resume/retry; `--dry-run` faz preview sem spawnar LLM; `--llm-parallelism <N>` spawna N threads paralelas de worker LLM (padrão 1, máximo 32) para reduzir o tempo de wall clock; saída é NDJSON
+- `enrich --operation <op> --mode <claude-code|codex|opencode|openrouter> --json` — pipeline de qualidade do grafo aumentada por LLM; 3 operações: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (gera descrições), `body-enrich` (expande corpos curtos); queue DB para resume/retry; `--dry-run` faz preview sem spawnar LLM; `--llm-parallelism <N>` spawna N threads paralelas de worker LLM (padrão 1, máximo 32) para reduzir o tempo de wall clock; saída é NDJSON. `--mode openrouter` roteia o JUDGE sobre REST `/chat/completions` (sem subprocesso local) e exige `--openrouter-model`
 ### Melhorias no Deep Research
 - `deep-research` agora computa embedding separado por sub-query — decomposição era cosmética na v1.0.64
 - `deep-research` funde pools KNN + FTS5 + grafo via RRF em vez de score fixo 0.5 para resultados FTS
@@ -925,6 +925,7 @@ let output = Command::new("sqlite-graphrag")
 - Campo de resposta `extraction_method` informa `url-regex` ou `none:extraction-failed`; `gliner-<variant>+regex` e `regex-only` são valores HISTÓRICOS (≤ v1.0.75)
 - USAR `--enable-ner` apenas quando a extração de URLs como entidades for valiosa
 - PREFERIR `--mode claude-code` / `--mode codex` ou `--graph-stdin` com entidades curadas por LLM para qualidade de extração semântica
+- USAR `--mode openrouter` quando nenhuma CLI LLM local estiver instalada (trade-off: cobra tokens na `OPENROUTER_API_KEY` versus o OAuth zero-token dos backends de CLI); exige `--openrouter-model`
 ### PROIBIDO — Anti-padrões de ingest
 - NUNCA usar `fd | xargs sqlite-graphrag remember` quando `ingest` existe
 - NUNCA omitir `--recursive` esperando descida automática
@@ -954,6 +955,7 @@ let output = Command::new("sqlite-graphrag")
 - USAR `--mode none` (padrão) para ingestão body-only sem extração
 - `--mode gliner` está DEPRECIADO desde a v1.0.79 (somente URL-regex; emite `tracing::warn!`); usar `--mode claude-code` ou `--mode codex` para extração semântica
 - USAR `--mode claude-code` para extração curada por LLM via Claude Code CLI instalado localmente
+- USAR `--mode openrouter` (no `enrich`) quando nenhuma CLI LLM local estiver instalada — o JUDGE roda sobre REST `/chat/completions`; trade-off: cobra tokens na `OPENROUTER_API_KEY` versus o OAuth zero-token de `claude-code`/`codex`/`opencode`
 - Modo Claude Code requer binário `claude` >= 2.1.0 no PATH com assinatura Pro/Max ativa
 - USAR `--resume` para continuar ingestão claude-code interrompida a partir do queue DB
 - USAR `--retry-failed` para retentar apenas arquivos com falha
@@ -1669,6 +1671,12 @@ cargo install --path . && sqlite-graphrag init
 - A cadeia de fallback de captura de stderr em ADR-0040 detecta `refresh_token_reused` e roteia para o próximo backend em `--llm-backend`
 - NÃO existe fix definitivo upstream; mitigação depende de `codex login` dirigido pelo operador
 
+
+## Novidades na v1.0.95 — Enriquecimento via OpenRouter Chat (ADR-0054)
+- `enrich --mode openrouter` roteia o JUDGE para REST `/chat/completions` sem subprocesso de CLI local; o pipeline SCAN para JUDGE para PERSIST permanece inalterado.
+- Flags: `--openrouter-model` (OBRIGATÓRIA; sem default; ausência sai com exit 1 antes de qualquer chamada de rede); `--openrouter-api-key` (env `OPENROUTER_API_KEY`); `--openrouter-timeout` (padrão 300s); `--openrouter-base-url` (opcional).
+- A requisição usa `response_format` `json_schema` com `strict:true` mais `provider.require_parameters:true`; `reasoning.enabled:false` com fallback reasoning-mandatory; o custo é lido de `usage.cost` (a forma `usage:{include:true}` está obsoleta).
+- Todos os 13/13 modelos verificados passam. Sem migração; schema permanece em v15. Os quatro modos de `enrich` agora são `claude-code`, `codex`, `opencode`, `openrouter`.
 
 ## Novidades na v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
 - A dimensão de embedding padrão agora é 384 (era 64); `init` grava `dim=384`. Bancos legados em 64 continuam funcionando via `schema_meta.dim`.

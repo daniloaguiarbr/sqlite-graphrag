@@ -6,7 +6,7 @@
 - The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
 - `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
-# CROSS PLATFORM SUPPORT (v1.0.93 — OpenRouter Embedding Backend + 986+ Tests)
+# CROSS PLATFORM SUPPORT (v1.0.95 — OpenRouter Chat Enrich)
 
 > One 14.6 MiB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 
@@ -16,7 +16,7 @@
 
 
 ## v1.0.76 Architectural Note
-- The default build is LLM-only and one-shot. There is no ONNX runtime to ship, no `libonnxruntime.so` to bundle, and no `multilingual-e5-small` model to download. Embedding generation delegates to a headless `claude code`, `codex`, or `opencode` subprocess (OAuth) spawned per call. Since v1.0.90, opencode is the third backend with auto-detect priority `codex > claude > opencode > none`.
+- The default build is LLM-only and one-shot. There is no ONNX runtime to ship, no `libonnxruntime.so` to bundle, and no `multilingual-e5-small` model to download. Embedding generation delegates to a headless `claude code`, `codex`, or `opencode` subprocess (OAuth) spawned per call. Since v1.0.90, opencode is the third backend with auto-detect priority `codex > claude > opencode > none`. Since v1.0.95, `enrich --mode openrouter` also extracts entities over the REST OpenRouter `/chat/completions` endpoint, requiring no local CLI — removing the subprocess dependency for enrichment, not just for embedding.
 - The `embedding-legacy` feature was REMOVED in v1.0.79 (ahead of the v1.1.0 schedule). Every build is LLM-only; the fastembed + ort + tokenizers pipeline and the ARM64 GNU ONNX contract no longer apply.
 - The cross-platform table below describes the LLM-only build, which is now the only build.
 

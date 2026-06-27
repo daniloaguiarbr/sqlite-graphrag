@@ -160,6 +160,12 @@
 - No new schema files were added — the OpenRouter backend uses the same output envelope structure as existing backends
 - `ingest-summary.schema.json` now reflects the `--enrich-after` flag behavior: when active, the summary includes the enrich phase results inline
 
+### Schema Changes in v1.0.95 (ADR-0054 / OpenRouter Chat Enrich)
+- `enrich` gains a fourth extraction mode `openrouter` (`--mode openrouter`) that routes the JUDGE turn to the OpenRouter `/chat/completions` REST endpoint instead of a headless `claude`/`codex`/`opencode` subprocess
+- NO new schema files were added — `enrich-phase.schema.json`, `enrich-item-event.schema.json`, and `enrich-summary.schema.json` are unchanged; the SCAN→JUDGE→PERSIST envelopes keep the same shape regardless of JUDGE transport
+- The optional `backend_invoked` enum already covers `openrouter` (added v1.0.93 for embedding); the same variant now also describes an enrich JUDGE served via OpenRouter chat
+- Structured Outputs (`response_format` `json_schema` `strict: true`) make the JUDGE output conform to the same entity/relationship structs the subprocess backends emit — no schema divergence
+
 ### Input Payload Schemas (Reference)
 - `entities-input.schema.json` validates the JSON array accepted by `remember --entities-file`
 - `relationships-input.schema.json` validates the JSON array accepted by `remember --relationships-file`

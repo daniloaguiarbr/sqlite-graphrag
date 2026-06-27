@@ -68,26 +68,35 @@ This section updates the framework to cover the documentation generated for the 
 - New ADR: ADR-0053 (EN + PT-BR); ADR-0051 PT-BR translation added (closes the only post-framework bilingual gap); docs/decisions/INDEX.md updated.
 - Updated: README, INTEGRATIONS, SECURITY, CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING (EN+PT); DOCUMENTATION_FRAMEWORK; SKILL (EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt.
 
-### Documentation Drift Status (as of v1.0.94)
+### v1.0.95 — OpenRouter Chat Enrich (ADR-0054, GAP-OR-ENRICH)
+- New `enrich --mode openrouter` routes the enrich JUDGE to the OpenRouter REST `/chat/completions` endpoint; structured extraction (memory-bindings, entity-descriptions, body-enrich) no longer requires a local claude/codex/opencode CLI.
+- New flags: `--openrouter-model` (REQUIRED, no default, exit 1 when absent), `--openrouter-api-key` (env `OPENROUTER_API_KEY`), `--openrouter-timeout` (default 300), `--openrouter-base-url` (optional).
+- New module `src/chat_api.rs` (`OpenRouterChatClient`) mirrors `src/embedding_api.rs`; the SCAN->JUDGE->PERSIST pipeline is unchanged — only the JUDGE transport moves.
+- Structured Outputs strict mode plus `provider.require_parameters`; `reasoning.enabled:false` with a reasoning-mandatory fallback path.
+- `usage.cost` is read from the response; 13/13 OpenRouter text models compatible (9 with `reasoning.enabled:false`, 4 via the reasoning-mandatory fallback).
+- New ADR: ADR-0054 (openrouter-chat-enrich) — EN + PT-BR.
+- Updated in this release: README/CHANGELOG/AGENTS/INTEGRATIONS/SECURITY/CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, HEADLESS_INVOCATION, CROSS_PLATFORM, TESTING, TEST_PLAN, schemas/README (EN+PT); SKILL (EN+PT); docs/decisions/INDEX.md + ADR-0054.
+
+### Documentation Drift Status (as of v1.0.95)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.93 (OpenRouter section) | v1.0.93 (espelhado) | Current |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.93 (100%) | v1.0.93 (100%) | Current |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.93 (OpenRouter backend) | v1.0.93 (espelhado) | Current |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.93 (new flags section) | v1.0.93 (espelhado) | Current |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.93 (API key handling) | v1.0.93 (espelhado) | Current |
-| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.93 (OpenRouter tests) | v1.0.93 (espelhado) | Current |
+| `README.md` / `README.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.95 (100%) | v1.0.95 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
 | `llms.txt` / `llms.pt-BR.txt` | v1.0.85.2 (outdated) | v1.0.85 (outdated) | BOTH outdated |
 | `llms-full.txt` | v1.0.79 (outdated) | N/A | EN outdated |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.93 (OpenRouter recipes) | v1.0.93 (espelhado) | Current |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.93 (OpenRouter guide) | v1.0.93 (espelhado) | Current |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.93 (migration guide) | v1.0.93 (espelhado) | Current |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.93 (wiremock/E2E) | v1.0.93 (espelhado) | Current |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.93 (rustls-tls) | v1.0.93 (espelhado) | Current |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.93 (OpenRouter headless) | v1.0.93 (espelhado) | Current |
-| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.93 (layers 1/2/7/8) | v1.0.93 (espelhado) | Current |
-| `docs/decisions/` (45 ADRs) | 100% (45/45) | 76% (34/45) | 11 ADRs missing PT-BR |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.95 (OpenRouter chat enrich) | v1.0.95 (espelhado) | Current |
+| `docs/decisions/` (48 ADRs) | 100% (48/48) | 75% (36/48) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
 | `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |
 
 ### Framework Update — Mandatory Coverage of v1.0.86+

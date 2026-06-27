@@ -336,6 +336,9 @@ pub enum EnrichMode {
     /// Use locally installed OpenCode CLI.
     #[value(name = "opencode")]
     Opencode,
+    /// Use the OpenRouter chat-completions REST API (no local CLI; v1.0.95).
+    #[value(name = "openrouter")]
+    OpenRouter,
 }
 
 impl std::fmt::Display for EnrichMode {
@@ -344,6 +347,7 @@ impl std::fmt::Display for EnrichMode {
             EnrichMode::ClaudeCode => write!(f, "claude-code"),
             EnrichMode::Codex => write!(f, "codex"),
             EnrichMode::Opencode => write!(f, "opencode"),
+            EnrichMode::OpenRouter => write!(f, "openrouter"),
         }
     }
 }
@@ -434,6 +438,23 @@ pub struct EnrichArgs {
         default_value_t = 300
     )]
     pub opencode_timeout: u64,
+
+    // -- Provider flags (OpenRouter, v1.0.95) --
+    /// OpenRouter text model to use (REQUIRED with --mode openrouter; no default).
+    #[arg(long, value_name = "MODEL")]
+    pub openrouter_model: Option<String>,
+
+    /// OpenRouter API key. Falls back to OPENROUTER_API_KEY env or stored config.
+    #[arg(long, value_name = "KEY", env = "OPENROUTER_API_KEY")]
+    pub openrouter_api_key: Option<String>,
+
+    /// Timeout per item in seconds when using OpenRouter. Default: 300.
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    pub openrouter_timeout: u64,
+
+    /// Optional OpenRouter base URL override (reserved; defaults to the public API).
+    #[arg(long, value_name = "URL")]
+    pub openrouter_base_url: Option<String>,
 
     // -- Cost controls --
     /// Abort when cumulative cost exceeds this USD budget (API key only; ignored for OAuth).
@@ -693,6 +714,32 @@ fn call_claude(
     Ok((result.value, result.cost_usd, result.is_oauth))
 }
 
+/// v1.0.95 (ADR-0054): route a single JUDGE turn through the OpenRouter
+/// chat-completions REST API. Unlike the subprocess runners there is no
+/// `binary` argument: the process-wide chat client (initialised in `run()`
+/// before scan) is fetched from the singleton and driven synchronously via
+/// the shared tokio runtime. Returns `(value, cost_usd, is_oauth=false)`
+/// where `cost_usd` is read from the response `usage.cost`.
+fn call_openrouter(
+    prompt: &str,
+    json_schema: &str,
+    input_text: &str,
+    model: Option<&str>,
+    timeout_secs: u64,
+) -> Result<(serde_json::Value, f64, bool), AppError> {
+    // `model` is bound into the client singleton at init; `timeout_secs` is
+    // enforced by the reqwest builder. Both remain in the signature for
+    // parity with the subprocess runners.
+    let _ = (model, timeout_secs);
+    let client = crate::embedder::openrouter_chat_client().ok_or_else(|| {
+        AppError::Validation(
+            "OpenRouter chat client not initialised before dispatch (internal error)".into(),
+        )
+    })?;
+    let runtime = crate::embedder::shared_runtime()?;
+    runtime.block_on(client.complete(prompt, input_text, json_schema, None))
+}
+
 // ---------------------------------------------------------------------------
 // Preflight probe (G35) — single-turn ping to verify the LLM provider
 // ---------------------------------------------------------------------------
@@ -884,6 +931,17 @@ fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
                 )));
             }
             PreflightOutcome::Healthy
+        }
+        EnrichMode::OpenRouter => {
+            // v1.0.95: the OpenRouter JUDGE has no subprocess to ping; the
+            // preflight only confirms a usable API key resolves. The chat
+            // client singleton is initialised in run() before scan.
+            match crate::config::resolve_api_key("openrouter", args.openrouter_api_key.as_deref()) {
+                Some(_) => PreflightOutcome::Healthy,
+                None => PreflightOutcome::Error(AppError::Validation(
+                    "OPENROUTER_API_KEY not found for --mode openrouter preflight".into(),
+                )),
+            }
         }
     }
 }
@@ -1674,6 +1732,44 @@ fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppEr
                 );
             }
         }
+        EnrichMode::OpenRouter => {
+            if args.claude_binary.is_some() {
+                conflicts.push("--claude-binary is ignored when --mode=openrouter".to_string());
+            }
+            if args.claude_model.is_some() {
+                conflicts.push("--claude-model is ignored when --mode=openrouter".to_string());
+            }
+            if args.codex_binary.is_some() {
+                conflicts.push("--codex-binary is ignored when --mode=openrouter".to_string());
+            }
+            if args.codex_model.is_some() {
+                conflicts.push("--codex-model is ignored when --mode=openrouter".to_string());
+            }
+            if args.opencode_binary.is_some() {
+                conflicts.push("--opencode-binary is ignored when --mode=openrouter".to_string());
+            }
+            if args.opencode_model.is_some() {
+                conflicts.push("--opencode-model is ignored when --mode=openrouter".to_string());
+            }
+            if !is_at_default(args.claude_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--claude-timeout={} is ignored when --mode=openrouter (remove the flag to use the default 300s)",
+                    args.claude_timeout
+                ));
+            }
+            if !is_at_default(args.codex_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--codex-timeout={} is ignored when --mode=openrouter (remove the flag to use the default 300s)",
+                    args.codex_timeout
+                ));
+            }
+            if !is_at_default(args.opencode_timeout, DEFAULT_TIMEOUT) {
+                conflicts.push(format!(
+                    "--opencode-timeout={} is ignored when --mode=openrouter (remove the flag to use the default 300s)",
+                    args.opencode_timeout
+                ));
+            }
+        }
     }
 
     if !conflicts.is_empty() {
@@ -1698,6 +1794,34 @@ pub fn run(
     // G20: mode-conditional flag validation BEFORE any DB access.
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_enrich(args)?;
+
+    // v1.0.95 (ADR-0054): when the JUDGE is OpenRouter the model is mandatory
+    // (no default) and the API key must resolve BEFORE any network or DB work.
+    // The chat client singleton is initialised here so every per-item dispatch
+    // fetches it without re-threading the key.
+    if args.mode == EnrichMode::OpenRouter {
+        let model = args.openrouter_model.as_deref().ok_or_else(|| {
+            AppError::Validation(
+                "--mode openrouter requires --openrouter-model (no default model is allowed)"
+                    .into(),
+            )
+        })?;
+        let resolved =
+            crate::config::resolve_api_key("openrouter", args.openrouter_api_key.as_deref())
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "OPENROUTER_API_KEY not found; set the env var, store it via \
+                         `config add-key --provider openrouter`, or pass --openrouter-api-key"
+                            .into(),
+                    )
+                })?;
+        crate::embedder::get_openrouter_chat_client(
+            resolved.value,
+            model,
+            args.openrouter_timeout,
+        )?;
+    }
+
     let started = Instant::now();
 
     let paths = AppPaths::resolve(args.db.as_deref())?;
@@ -1764,6 +1888,21 @@ pub fn run(
                     llm_parallelism: None,
                 });
                 bin
+            }
+            EnrichMode::OpenRouter => {
+                // v1.0.95: the OpenRouter JUDGE is a REST call, not a spawned
+                // binary. The chat client singleton was initialised at the top
+                // of run(); this placeholder path threads through the dispatch
+                // but is never dereferenced by the OpenRouter arm.
+                emit_json(&PhaseEvent {
+                    phase: "validate",
+                    binary_path: None,
+                    version: None,
+                    items_total: None,
+                    items_pending: None,
+                    llm_parallelism: None,
+                });
+                PathBuf::new()
             }
         })
     };
@@ -1977,6 +2116,10 @@ pub fn run(
             EnrichMode::Opencode => {
                 // No warning: opencode does not spawn MCP children.
             }
+            EnrichMode::OpenRouter => {
+                // No warning: OpenRouter is a bounded HTTP fan-out (no
+                // subprocess); --llm-parallelism is respected as-is.
+            }
         }
     }
 
@@ -1993,12 +2136,14 @@ pub fn run(
         EnrichMode::ClaudeCode => args.claude_timeout,
         EnrichMode::Codex => args.codex_timeout,
         EnrichMode::Opencode => args.opencode_timeout,
+        EnrichMode::OpenRouter => args.openrouter_timeout,
     };
 
     let provider_model: Option<&str> = match args.mode {
         EnrichMode::ClaudeCode => args.claude_model.as_deref(),
         EnrichMode::Codex => args.codex_model.as_deref(),
         EnrichMode::Opencode => args.opencode_model.as_deref(),
+        EnrichMode::OpenRouter => args.openrouter_model.as_deref(),
     };
 
     // G19: when parallelism > 1, spawn bounded worker threads.
@@ -2719,6 +2864,9 @@ fn call_memory_bindings(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => {
+            call_openrouter(BINDINGS_PROMPT, BINDINGS_SCHEMA, &body, model, timeout)?
+        }
     };
 
     let empty_arr = serde_json::Value::Array(vec![]);
@@ -2791,6 +2939,9 @@ fn call_entity_description(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => {
+            call_openrouter(&prompt, ENTITY_DESCRIPTION_SCHEMA, "", model, timeout)?
+        }
     };
 
     let description = value
@@ -2920,6 +3071,9 @@ fn call_body_enrich(
         }
         EnrichMode::Opencode => {
             call_opencode(binary, &prompt, BODY_ENRICH_SCHEMA, &body, model, timeout)?
+        }
+        EnrichMode::OpenRouter => {
+            call_openrouter(&prompt, BODY_ENRICH_SCHEMA, &body, model, timeout)?
         }
     };
 
@@ -3223,6 +3377,13 @@ fn call_weight_calibrate(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => call_openrouter(
+            WEIGHT_CALIBRATE_PROMPT,
+            WEIGHT_CALIBRATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
 
     let calibrated = value
@@ -3294,6 +3455,13 @@ fn call_relation_reclassify(
         )?,
         EnrichMode::Opencode => call_opencode(
             binary,
+            RELATION_RECLASSIFY_PROMPT,
+            RELATION_RECLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::OpenRouter => call_openrouter(
             RELATION_RECLASSIFY_PROMPT,
             RELATION_RECLASSIFY_SCHEMA,
             &input_text,
@@ -3374,6 +3542,13 @@ fn call_entity_connect(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => call_openrouter(
+            ENTITY_CONNECT_PROMPT,
+            ENTITY_CONNECT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let relation = value
         .get("relation")
@@ -3441,6 +3616,13 @@ fn call_entity_type_validate(
         )?,
         EnrichMode::Opencode => call_opencode(
             binary,
+            ENTITY_TYPE_VALIDATE_PROMPT,
+            ENTITY_TYPE_VALIDATE_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::OpenRouter => call_openrouter(
             ENTITY_TYPE_VALIDATE_PROMPT,
             ENTITY_TYPE_VALIDATE_SCHEMA,
             &input_text,
@@ -3520,6 +3702,13 @@ fn call_description_enrich(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => call_openrouter(
+            DESCRIPTION_ENRICH_PROMPT,
+            DESCRIPTION_ENRICH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let new_desc = value
         .get("description")
@@ -3587,6 +3776,13 @@ fn call_domain_classify(
         )?,
         EnrichMode::Opencode => call_opencode(
             binary,
+            DOMAIN_CLASSIFY_PROMPT,
+            DOMAIN_CLASSIFY_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::OpenRouter => call_openrouter(
             DOMAIN_CLASSIFY_PROMPT,
             DOMAIN_CLASSIFY_SCHEMA,
             &input_text,
@@ -3666,6 +3862,13 @@ fn call_graph_audit(
             model,
             timeout,
         )?,
+        EnrichMode::OpenRouter => call_openrouter(
+            GRAPH_AUDIT_PROMPT,
+            GRAPH_AUDIT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
     };
     let issues = value
         .get("issues")
@@ -3722,6 +3925,13 @@ fn call_deep_research_synth(
         )?,
         EnrichMode::Opencode => call_opencode(
             binary,
+            DEEP_RESEARCH_SYNTH_PROMPT,
+            DEEP_RESEARCH_SYNTH_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::OpenRouter => call_openrouter(
             DEEP_RESEARCH_SYNTH_PROMPT,
             DEEP_RESEARCH_SYNTH_SCHEMA,
             &input_text,
@@ -3827,6 +4037,13 @@ fn call_body_extract(
         )?,
         EnrichMode::Opencode => call_opencode(
             binary,
+            BODY_EXTRACT_PROMPT,
+            BODY_EXTRACT_SCHEMA,
+            &input_text,
+            model,
+            timeout,
+        )?,
+        EnrichMode::OpenRouter => call_openrouter(
             BODY_EXTRACT_PROMPT,
             BODY_EXTRACT_SCHEMA,
             &input_text,

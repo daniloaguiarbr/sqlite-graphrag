@@ -1,3 +1,26 @@
+# MIGRANDO PARA v1.0.95 — Enrich via Chat OpenRouter (ADR-0054)
+
+> Este guia cobre a atualização para v1.0.95. Nenhuma migração de banco executa. O schema permanece em v15. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.95 — Enrich via Chat OpenRouter (ADR-0054)
+
+### O Que Mudou
+- **GAP-OR-ENRICH**: novo modo opt-in `enrich --mode openrouter` roteia a etapa JUDGE ao endpoint REST `/chat/completions` do OpenRouter, de modo que a extração estruturada não exige mais uma CLI `claude`/`codex`/`opencode` instalada localmente. O pipeline SCAN→JUDGE→PERSIST permanece inalterado; apenas o transporte do JUDGE muda.
+- Novo módulo `src/chat_api.rs` (`OpenRouterChatClient`) espelha `src/embedding_api.rs` (mesmo retry/backoff e header mínimo `Authorization: Bearer`).
+- Os quatro modos de enrich agora são `claude-code`, `codex`, `opencode`, `openrouter`.
+
+### Nada Quebra
+- Nenhuma migração de banco; o schema permanece em v15.
+- Invocações existentes `enrich --mode claude-code|codex|opencode` não são afetadas — `openrouter` é puramente aditivo.
+
+### Flag Obrigatória
+- `--openrouter-model` é OBRIGATÓRIA com `--mode openrouter`; omiti-la sai com exit 1 antes de qualquer chamada de rede.
+
+```bash
+sqlite-graphrag enrich --operation memory-bindings --mode openrouter \
+  --openrouter-model MODEL --json
+```
+
 # MIGRANDO PARA v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
 
 > Este guia cobre a atualização de v1.0.93 para v1.0.94. Nenhuma migração de banco executa. O schema permanece em v15.

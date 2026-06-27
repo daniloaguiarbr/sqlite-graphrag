@@ -5,6 +5,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.95] - 2026-06-27
+
+### Added
+- GAP-OR-ENRICH: new `enrich --mode openrouter` routes the JUDGE to the OpenRouter `/chat/completions` REST endpoint, so structured extraction (`memory-bindings`, `entity-descriptions`, `body-enrich`, etc.) no longer requires a locally installed `claude`/`codex`/`opencode` CLI subprocess. The SCAN→JUDGE→PERSIST pipeline is unchanged; only the JUDGE transport differs
+- New module `src/chat_api.rs` (`OpenRouterChatClient`) — REST chat client mirroring `src/embedding_api.rs`: same retry/backoff policy (immediate abort on 401/400/404, `retry-after` on 429, exponential backoff + jitter on 5xx) and the same minimal headers (only `Authorization: Bearer`)
+- New `enrich` flags: `--openrouter-model` (REQUIRED for `--mode openrouter`; absence is rejected with exit 1 before any network call), `--openrouter-api-key` (env `OPENROUTER_API_KEY`), `--openrouter-timeout`, `--openrouter-base-url`
+- Structured Outputs: requests send `response_format` `json_schema` with `strict: true` plus `provider.require_parameters: true`, so only providers honouring the schema are routed and the model output is reliable JSON without fragile stdout parsing
+- Reasoning disabled for extraction (`reasoning.enabled: false`) to cut paid tokens and latency, with a graceful reasoning-mandatory fallback: `complete()` first tries `enabled: false`, and on an HTTP 400 mentioning `reasoning` it retries ONCE omitting the `reasoning` field so the model uses its mandatory default (helper `reasoning_disable_rejected`). 9 of the 13 tested models accept `enabled: false`; 4 (`minimax/minimax-m2.7[:nitro]`, `openai/gpt-oss-120b[:nitro]`) require the fallback
+- Real cost per item is read from `usage.cost` in the response (no deprecated `usage: {include:true}` parameter) and summed into the run total
+
+### Audit Notes
+- Build clean: 0 errors, 0 clippy warnings (`-D warnings`), 0 fmt diffs
+- Test suite: `cargo test` exit 0, 0 failures
+- E2E: `--mode openrouter` validates the API key without spawning a subprocess; all 13 OpenRouter text models exercised against the strict schema pass (13/13 compatible — 9 directly with `reasoning.enabled: false`, 4 via the reasoning-mandatory fallback)
+
+
 ## [1.0.94] - 2026-06-26
 
 ### Fixed

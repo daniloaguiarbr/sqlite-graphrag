@@ -95,6 +95,26 @@
 
 See [TEST_PLAN_v1.0.84.md](TEST_PLAN_v1.0.84.md) for the Claude Backend Split test plan (ADR-0042). See [TEST_PLAN_v1.0.85.md](TEST_PLAN_v1.0.85.md) for the Five-Gap Remediation test plan (ADR-0043). Both new plans are snapshots of the released test design.
 
+## v1.0.95 Test Plan — OpenRouter Chat Enrich (ADR-0054, GAP-OR-ENRICH)
+
+### Layer 1 (unit) additions
+- `ChatRequest` assembly (`src/chat_api.rs`, `OpenRouterChatClient`): wiremock tests verifying `response_format` `json_schema` with `strict:true`, `provider.require_parameters:true`, and `reasoning.enabled:false`
+- Response parsing: extraction of `choices[].message.content` followed by a second JSON parse of the strict-schema payload
+- `usage.cost` reading from the response body
+- Retry: `429` with `retry-after` header, `5xx` exponential backoff, `401` permanent without retry
+- `400`/`404` errors returned without retry
+- Empty content / refusal response treated as incompatible model
+- `validate_mode_flags`: rejects `claude`/`codex`/`opencode` flags under `--mode openrouter`
+- `--openrouter-model` required: returns exit 1 before any network call when absent
+
+### Layer 2 (integration) additions
+- JUDGE dispatch to `call_openrouter` across all enrich operations (`memory-bindings`, `entity-descriptions`, `body-enrich`)
+- API key validation via `resolve_api_key` without subprocess spawn
+
+### Layer 8 (real-LLM smoke) deltas
+- `tests/openrouter_chat_real.rs` (`#[ignore]`, runnable with `OPENROUTER_API_KEY`) iterating the 13 text models against the strict schema
+- Compatibility matrix 13/13 (9 direct with `reasoning.enabled:false`, 4 via reasoning-mandatory fallback)
+
 ## v1.0.93 Test Plan — OpenRouter Embedding Backend (ADR-0052, GAP-OR-INGEST)
 
 ### Layer 1 (unit) additions

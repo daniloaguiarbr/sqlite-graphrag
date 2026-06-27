@@ -1,6 +1,6 @@
 ---
 name: sqlite-graphrag
-description: This skill MUST activate for every sqlite-graphrag CLI operation covering persistent memory, GraphRAG knowledge graph, entity linking, hybrid-search, recall, deep-research, remember, remember-batch, ingest, edit, restore, enrich, forget, purge, link, rename-entity and graph maintenance. This skill teaches the LLM to embed via the OpenRouter REST backend with explicit model and price selection, to run entity extraction and enrichment as a SEPARATE step through codex, claude-code or opencode headless backends with explicit model choice, to add and verify OpenRouter API keys, to honour OAuth-only subprocess rules, preflight isolation, FTS5 plus BLOB cosine fusion, canonical relations, exit-code retry strategy and namespace isolation. This skill activates on keywords sqlite-graphrag GraphRAG memory embedding openrouter codex claude opencode remember recall hybrid-search ingest enrich deep-research forget purge link rename-entity
+description: This skill MUST activate for every sqlite-graphrag CLI operation covering persistent memory, GraphRAG knowledge graph, entity linking, hybrid-search, recall, deep-research, remember, remember-batch, ingest, edit, restore, enrich, forget, purge, link, rename-entity and graph maintenance. This skill teaches the LLM to embed via the OpenRouter REST backend with explicit model and price selection, to run entity extraction and enrichment as a SEPARATE step through codex, claude-code, opencode or openrouter backends with explicit model choice, to add and verify OpenRouter API keys, to honour OAuth-only subprocess rules, preflight isolation, FTS5 plus BLOB cosine fusion, canonical relations, exit-code retry strategy and namespace isolation. This skill activates on keywords sqlite-graphrag GraphRAG memory embedding openrouter codex claude opencode remember recall hybrid-search ingest enrich deep-research forget purge link rename-entity
 ---
 
 
@@ -15,7 +15,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - KNOW the CLI has THREE separate selectors; NEVER conflate them
 - USE `--embedding-backend` to choose HOW vectors are produced: `openrouter` (REST, fast) or `llm` (subprocess) or `auto`
 - USE `--llm-backend` to choose WHICH subprocess runs LLM embedding when `--embedding-backend llm`: `codex`, `claude`, `opencode`, `none`
-- USE `--extraction-backend` (and `enrich --mode`) to choose WHICH headless CLI extracts entities and relations: `codex`, `claude-code`, `opencode`
+- USE `--extraction-backend` (and `enrich --mode`) to choose WHICH backend extracts entities and relations: `codex`, `claude-code`, `opencode` (headless CLIs) or `openrouter` (REST `/chat/completions`, no local CLI)
 - SEPARATE writing from enriching ALWAYS: a write produces embeddings; a SEPARATE `enrich` invocation extracts the graph
 - PASS `--llm-backend none` on EVERY write (`remember`, `remember-batch`, `ingest`, `edit`, `restore`) to SKIP inline entity embedding and avoid the codex subprocess timeout
 - RUN `enrich` only AFTER a write returns exit 0, as a DISTINCT command, NEVER chained into the write
@@ -63,18 +63,19 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - PASS `--embedding-model <MODEL>` when `--embedding-backend openrouter`; there is NO default model, so omission triggers exit 78
 - KNOW prices below are per one million tokens; CHOOSE the model by cost and quality for the task
 - USE `nvidia/llama-nemotron-embed-vl-1b-v2:free` for FREE zero-cost embedding (RECOMMENDED default)
-- USE `perplexity/pplx-embed-v1-0.6b` for the CHEAPEST paid option at about 0.004 USD
-- USE `qwen/qwen3-embedding-8b` at about 0.01 USD
+- USE `qwen/qwen3-embedding-8b` at about 0.01 USD (CHEAPEST paid option)
 - USE `baai/bge-m3` at about 0.01 USD
 - USE `qwen/qwen3-embedding-4b` at about 0.02 USD
 - USE `openai/text-embedding-3-small` at about 0.02 USD
+- USE `perplexity/pplx-embed-v1-0.6b` at about 0.04 USD
 - USE `mistralai/mistral-embed-2312` at about 0.10 USD
 - USE `google/gemini-embedding-2` at about 0.12 USD
 - USE `openai/text-embedding-3-large` at about 0.13 USD
 - USE `google/gemini-embedding-001` at about 0.15 USD
 - KEEP `--embedding-dim 384` consistent across writes and reads; a mismatched dimension collides with the stored index and fails knn with exit 11
 - KNOW MRL truncation is applied server-side to the requested `--embedding-dim`, so a higher dimension stays cheap on the OpenRouter REST path
-- VERIFY the embedding model whitelist with `sqlite-graphrag codex-models --json`
+- KNOW NO subcommand enumerates OpenRouter embedding models; the curated price table above IS the authoritative menu
+- VERIFY the OpenRouter key and config resolution with `sqlite-graphrag config doctor --json`; an invalid model fails fast with exit 78
 - KNOW `--embedding-backend openrouter` propagates to ALL embedding paths: `remember`, `remember-batch`, `ingest`, `recall`, `edit`, `restore`, `hybrid-search`, `deep-research`, `enrich`, `init`, `rename-entity`
 
 
@@ -93,13 +94,37 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - CHOOSE codex with `--llm-backend codex --llm-model gpt-5.4-mini` for embedding and `--mode codex --codex-model gpt-5.4-mini` for extraction; refresh OAuth with `codex login`
 - CHOOSE claude with `--llm-backend claude --llm-model claude-sonnet-4-6` for embedding and `--mode claude-code --claude-model claude-sonnet-4-6` for extraction via the OAuth zero-token path
 - CHOOSE opencode with `--llm-backend opencode --llm-model opencode/big-pickle` for embedding and `--mode opencode --opencode-model opencode/big-pickle` for extraction via its own auth (NOT OAuth)
+- CHOOSE openrouter for extraction ONLY with `--mode openrouter --openrouter-model <model>` routing the judge to OpenRouter `/chat/completions` REST; the key comes from `OPENROUTER_API_KEY` and `--openrouter-model` is MANDATORY (no default; a missing value exits 1 before any network call)
 - KNOW DEFAULT models: codex `gpt-5.5`, claude `claude-sonnet-4-6`, opencode `opencode/big-pickle`
 - KNOW free opencode models: `opencode/big-pickle`, `opencode/deepseek-v4-flash-free`, `opencode/mimo-v2.5-free`, `opencode/nemotron-3-ultra-free`, `opencode/north-mini-code-free`
 - OVERRIDE binary paths with `--codex-binary`, `--claude-binary`, `--opencode-binary` when the CLI is not on PATH
 - TUNE per-backend timeouts on `ingest` with `--codex-timeout`, `--claude-timeout`, `--opencode-timeout` (seconds)
 - VALIDATE codex models with `--codex-model-validate` and auto-substitute with `--codex-model-fallback <MODEL>`
+- LIST the codex OAuth models with `sqlite-graphrag codex-models --json` to pick `--codex-model` for `--mode codex`; this lists CODEX models, NOT OpenRouter models
 - SWAP backend mid-job on rate limit with `--fallback-mode codex` on `enrich`, or `--llm-fallback codex,claude,none` globally
 - WARN that `claude-code` extraction spawns `claude -p`, which inherits the CWD `.mcp.json` and may fail; PREFER codex extraction or isolate the config dir
+- KNOW `--mode openrouter` does NOT spawn any subprocess — it makes a REST `/chat/completions` call, so it needs NO claude, codex or opencode CLI installed
+- WEIGH the trade-off: `openrouter` extraction bills tokens against `OPENROUTER_API_KEY` (read `usage.cost` from the response), whereas codex, claude-code and opencode bill no OpenRouter tokens via their OAuth or own-auth zero-token paths
+
+
+## OpenRouter Text Models for Enrich
+- PASS `--openrouter-model <MODEL>` from this table on `--mode openrouter`; prices are input/output USD per one million tokens
+- KNOW these models serve ONLY entity extraction and enrichment, NEVER embedding; the embedding table above is separate
+- USE `openai/gpt-oss-120b` at 0.039/0.18 USD, 131k context, 36 tps (CHEAPEST input, RECOMMENDED judge default)
+- USE `openai/gpt-oss-120b:nitro` at 0.15/0.60 USD, 131k context, 300 tps (FASTEST throughput)
+- USE `xiaomi/mimo-v2.5` at 0.10/0.28 USD, 1M context, 17 tps
+- USE `deepseek/deepseek-v4-flash` at 0.09/0.18 USD, 1M context, 20 tps
+- USE `deepseek/deepseek-v4-flash:nitro` at 0.14/0.28 USD, 1M context, 109 tps
+- USE `minimax/minimax-m2.7` at 0.25/1.00 USD, 205k context, 43 tps
+- USE `minimax/minimax-m3` at 0.30/1.20 USD, 1M context, 42 tps
+- USE `minimax/minimax-m2.7:nitro` at 0.30/1.20 USD, 205k context, 146 tps
+- USE `xiaomi/mimo-v2.5-pro` at 0.43/0.87 USD, 1M context, 29 tps
+- USE `google/gemini-3.1-flash-lite` at 0.95/3.00 USD, 1M context, 100 tps
+- USE `deepseek/deepseek-v4-pro` at 1.30/2.60 USD, 1M context, 26 tps
+- USE `z-ai/glm-5.2` and `z-ai/glm-5.2:nitro` whose price varies by provider; CONFIRM the real cost via `usage.cost` in the response
+- KNOW `:nitro` variants route to the fastest provider at a higher price
+- VERIFY a model honours strict `json_schema` BEFORE production; a model without Structured Outputs support fails with an explicit OpenRouter error
+- READ `usage.cost` from the chat response to account the real token cost per item
 
 
 ## Global Flags Reference
@@ -115,7 +140,10 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - `--llm-backend codex|claude|opencode|none|auto` — subprocess embedding backend, comma-separated chain allowed
 - `--llm-model <MODEL>` — model for the active LLM backend
 - `--llm-fallback <chain>` — comma-separated fallback chain when the primary fails
-- `--extraction-backend codex|claude-code|opencode` — entity-extraction subprocess selector
+- `--extraction-backend codex|claude-code|opencode|openrouter` — entity-extraction backend selector (openrouter is REST, not a subprocess)
+- `--openrouter-model <MODEL>` — MANDATORY judge model for `--mode openrouter` (no default; absence exits 1 before any network call)
+- `--openrouter-base-url <URL>` — optional OpenRouter endpoint override for chat enrich
+- `--openrouter-timeout <SECS>` — chat enrich request timeout, default 300
 - `--llm-parallelism N` — embedding subprocess fan-out, default 4, clamp [1, 32]
 - `--max-concurrency N` — cap concurrent heavy invocations, clamp [1, 2×nCPUs]
 - `--llm-max-host-concurrency N` — cap host-wide LLM subprocess slots
@@ -201,8 +229,9 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 ## Enrich Operations
 - INVOKE `enrich --operation <op> --mode <backend>` where BOTH flags are MANDATORY; omitting `--mode` is rejected by the parser with exit 2
 - VALID `--operation` values: `memory-bindings`, `entity-descriptions`, `body-enrich`, `re-embed`
-- VALID `--mode` values: `codex`, `claude-code`, `opencode`
-- PASS `--codex-model`, `--claude-model`, or `--opencode-model` to pick the extraction model matching the chosen mode
+- VALID `--mode` values: `codex`, `claude-code`, `opencode`, `openrouter`
+- PASS `--codex-model`, `--claude-model`, `--opencode-model`, or `--openrouter-model` to pick the extraction model matching the chosen mode
+- KNOW `--mode openrouter` requires `--openrouter-model` (no default), reads the key from `OPENROUTER_API_KEY`, makes a REST `/chat/completions` call with NO local CLI, sends `response_format` json_schema strict with `provider.require_parameters:true`, and bills tokens via `usage.cost`; the other three modes are OAuth or own-auth zero-token
 - PASS `--limit N --resume` for `re-embed`; `--retry-failed` to reprocess only failed items; `--dry-run` to preview
 - PASS `--min-output-chars N` to guard `body-enrich` output length; `--fallback-mode codex` to survive a Claude rate limit
 - NEVER run `enrich` in parallel against the same database; it acquires a per-namespace singleton
@@ -215,22 +244,27 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - REMEMBER step 2 codex: `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini --json`
 - REMEMBER step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - REMEMBER step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
+- REMEMBER step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
 - REMEMBER-BATCH step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-backend none remember-batch --transaction --json`
 - REMEMBER-BATCH step 2 codex: `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini --json`
 - REMEMBER-BATCH step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - REMEMBER-BATCH step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
+- REMEMBER-BATCH step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
 - INGEST step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model nvidia/llama-nemotron-embed-vl-1b-v2:free --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-backend none ingest ./docs --mode none --recursive --pattern "*.md" --type document --resume --json`
 - INGEST step 2 codex: `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini --json`
 - INGEST step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - INGEST step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
+- INGEST step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
 - EDIT step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model perplexity/pplx-embed-v1-0.6b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-backend none edit --name <n> --body-file new.md --json`
 - EDIT step 2 codex: `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini --json`
 - EDIT step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - EDIT step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
+- EDIT step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
 - RESTORE step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model nvidia/llama-nemotron-embed-vl-1b-v2:free --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-backend none restore --name <n> --version 2 --json`
 - RESTORE step 2 codex: `sqlite-graphrag --llm-backend codex --llm-model gpt-5.4-mini enrich --operation memory-bindings --mode codex --codex-model gpt-5.4-mini --json`
 - RESTORE step 2 claude: `sqlite-graphrag --llm-backend claude --llm-model claude-sonnet-4-6 enrich --operation memory-bindings --mode claude-code --claude-model claude-sonnet-4-6 --json`
 - RESTORE step 2 opencode: `sqlite-graphrag --llm-backend opencode --llm-model opencode/big-pickle enrich --operation memory-bindings --mode opencode --opencode-model opencode/big-pickle --json`
+- RESTORE step 2 openrouter: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --json` (key from `OPENROUTER_API_KEY`)
 
 
 ## Read-Only OpenRouter Formulas

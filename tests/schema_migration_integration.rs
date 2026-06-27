@@ -108,7 +108,7 @@ fn index_exists(conn: &Connection, name: &str) -> bool {
 
 #[test]
 #[serial]
-fn init_creates_13_migrations_v001_to_v013() {
+fn init_creates_15_migrations_v001_to_v015() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -124,13 +124,13 @@ fn init_creates_13_migrations_v001_to_v013() {
 
     assert_eq!(
         versions.len(),
-        13,
-        "exactly 13 migrations must be applied, found: {versions:?}"
+        15,
+        "exactly 15 migrations must be applied, found: {versions:?}"
     );
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-        "expected versions V001-V013"
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "expected versions V001-V015"
     );
 }
 
@@ -460,7 +460,7 @@ fn schema_meta_required_keys_exist() {
 
 #[test]
 #[serial]
-fn schema_version_meta_equals_13() {
+fn schema_version_meta_equals_15() {
     let (_tmp, db_path) = init_isolated_db();
     let conn = conn_ro(&db_path);
 
@@ -473,8 +473,8 @@ fn schema_version_meta_equals_13() {
         .expect("schema_version must exist in schema_meta");
 
     assert_eq!(
-        version, "13",
-        "schema_version in schema_meta must be '13' after V013"
+        version, "15",
+        "schema_version in schema_meta must be '15' after V015"
     );
 }
 
@@ -746,8 +746,8 @@ fn migrate_rehash_is_noop_on_healthy_db() {
         "healthy DB must report ok_no_changes, got: {stdout}"
     );
     assert_eq!(json["rewritten"].as_array().unwrap().len(), 0);
-    assert_eq!(json["inspected"], 13);
-    assert_eq!(json["schema_version"], 13);
+    assert_eq!(json["inspected"], 15);
+    assert_eq!(json["schema_version"], 15);
 }
 
 #[test]
@@ -830,7 +830,7 @@ fn migrate_to_llm_only_reports_no_vec_tables_on_fresh_db() {
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["schema_version"], 13);
+    assert_eq!(json["schema_version"], 15);
     assert_eq!(json["v013_applied"], true);
     assert_eq!(
         json["vec_tables_were_present"], false,

@@ -1,3 +1,19 @@
+## O Que Mudou na v1.0.95 — JUDGE do Enrich via OpenRouter (GAP-OR-ENRICH, ADR-0054)
+- **GAP-OR-ENRICH**: `enrich --mode openrouter` roteia a etapa JUDGE para o endpoint REST `/chat/completions` do OpenRouter. Nenhum subprocesso de CLI local é spawnado. O pipeline SCAN→JUDGE→PERSIST permanece inalterado; só o transporte do JUDGE muda.
+- Os quatro modos do enrich agora são: `claude-code`, `codex`, `opencode`, `openrouter`.
+- `--openrouter-model` é **OBRIGATÓRIA** com `--mode openrouter` (SEM default). Omiti-la → exit 1 ANTES de qualquer chamada de rede.
+- `--openrouter-api-key` lê da env `OPENROUTER_API_KEY` ou de `config add-key --provider openrouter`. `--openrouter-timeout` tem default de 300s. `--openrouter-base-url` é opcional.
+- A requisição usa `response_format` `json_schema` com `strict: true` e `provider.require_parameters: true`. `reasoning.enabled: false` com fallback reasoning-mandatory (uma retentativa omitindo `reasoning`). `usage.cost` é lido da resposta (`usage: {include: true}` está deprecado).
+- 13/13 modelos reais passam. Trade-off: OAuth zero-token (modos CLI locais) vs tokens cobrados na `OPENROUTER_API_KEY` (modo OpenRouter). Sem migração; schema permanece v15. Consulte ADR-0054.
+
+```bash
+# JUDGE do enrich via REST OpenRouter (sem subprocesso)
+export OPENROUTER_API_KEY="sk-or-v1-sua-chave-aqui"
+sqlite-graphrag enrich --operation memory-bindings \
+  --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json
+```
+
+
 ## O Que Mudou na v1.0.94 — Remediação de Quatro Gaps (ADR-0053)
 - **GAP-OR-ENTITY-EMBED**: O embedding de entidades em `remember`/`remember-batch`/`ingest` agora honra `--embedding-backend openrouter`, roteando via OpenRouter REST. `remember` com entidades novas cai de ~119s para ~0,9s.
 - **GAP-EMBED-DIM-64**: `DEFAULT_EMBEDDING_DIM` elevado de 64 para **384** (`constants.rs:29`). Bancos novos usam dim 384 por padrão. Bancos legados em dim 64 são preservados via `schema_meta.dim` — sem re-embed forçado.
@@ -318,7 +334,8 @@ A LLM devolve JSON estruturado com entidades e relacionamentos no mesmo prompt q
 ### `enrich` — Qualidade do Grafo Aumentada por LLM
 - O subcomando `enrich` executa operações de qualidade do grafo curadas por LLM. Três estão totalmente implementadas: `memory-bindings` (extrai entidades de memórias órfãs), `entity-descriptions` (preenche descrições de entidade NULL ou vazias) e `body-enrich` (expande corpos curtos de memória em conteúdo mais rico).
 - Duas operações adicionais são apenas de varredura e exibem listas candidatas sem reescrever: `weight-calibrate`, `relation-reclassify`, `entity-connect`, `entity-type-validate`, `description-enrich`, `cross-domain-bridges`, `domain-classify`, `graph-audit`, `deep-research-synth`, `body-extract`.
-- `--mode claude-code` ou `--mode codex` seleciona o provedor LLM. O padrão é `claude-code`. Ambos os provedores são OAuth-only desde a v1.0.69.
+- `--mode <claude-code|codex|opencode|openrouter>` seleciona o provedor do JUDGE e é **OBRIGATÓRIA** — NÃO há default (o default `claude-code` foi removido na v1.0.94). `claude-code`, `codex` e `opencode` são CLIs locais OAuth-only; `openrouter` (v1.0.95) chama o endpoint REST `/chat/completions` sem subprocesso.
+- Com `--mode openrouter` (v1.0.95): `--openrouter-model` é OBRIGATÓRIA (SEM default; omiti-la → exit 1 antes de qualquer chamada de rede). `--openrouter-api-key` lê da env `OPENROUTER_API_KEY` ou de `config add-key --provider openrouter`. `--openrouter-timeout` tem default de 300s. `--openrouter-base-url` é opcional. Exemplo: `enrich --operation memory-bindings --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json`.
 - `--preflight-check` emite um ping de 1 turno ANTES de varrer o conjunto candidato. Em rate limit OAuth do Claude, a sondagem aborta com erro claro (ou troca para `--fallback-mode` quando fornecido). Padrão desligado para manter `--dry-run` e fluxos de CI com custo zero.
 - `--fallback-mode <claude-code|codex>` troca automaticamente de provedor quando a sondagem de preflight ou uma chamada em voo atinge rate limit. Ignorado quando `--mode` já é `codex`.
 - `--rate-limit-buffer <SEGUNDOS>` padrão 300. Quando a sondagem detecta que o reset do rate limit OAuth está a menos do que o buffer de distância, aborta com sugestão para esperar.

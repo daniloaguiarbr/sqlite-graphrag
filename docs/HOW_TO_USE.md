@@ -16,6 +16,22 @@
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 
+## What Changed in v1.0.95 — OpenRouter Enrich JUDGE (GAP-OR-ENRICH, ADR-0054)
+- **GAP-OR-ENRICH**: `enrich --mode openrouter` routes the JUDGE step to OpenRouter's `/chat/completions` REST endpoint. No local CLI subprocess is spawned. The SCAN→JUDGE→PERSIST pipeline is unchanged; only the JUDGE transport changes.
+- The four enrich modes are now: `claude-code`, `codex`, `opencode`, `openrouter`.
+- `--openrouter-model` is **REQUIRED** with `--mode openrouter` (NO default). Omitting it → exit 1 BEFORE any network call.
+- `--openrouter-api-key` reads from env `OPENROUTER_API_KEY` or `config add-key --provider openrouter`. `--openrouter-timeout` defaults to 300s. `--openrouter-base-url` is optional.
+- The request uses `response_format` `json_schema` with `strict: true` and `provider.require_parameters: true`. `reasoning.enabled: false` with a reasoning-mandatory fallback (one retry omitting `reasoning`). `usage.cost` is read from the response (`usage: {include: true}` is deprecated).
+- 13/13 real models pass. Trade-off: OAuth zero-token (local CLI modes) vs tokens billed to the `OPENROUTER_API_KEY` (OpenRouter mode). No migration; schema stays v15. See ADR-0054.
+
+```bash
+# Enrich JUDGE via OpenRouter REST (no subprocess)
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+sqlite-graphrag enrich --operation memory-bindings \
+  --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json
+```
+
+
 ## What Changed in v1.0.94 — Four-Gap Remediation (ADR-0053)
 - **GAP-OR-ENTITY-EMBED**: Entity embedding in `remember`/`remember-batch`/`ingest` now honours `--embedding-backend openrouter`, routing via OpenRouter REST. `remember` with new entities drops from ~119s to ~0.9s.
 - **GAP-EMBED-DIM-64**: `DEFAULT_EMBEDDING_DIM` raised from 64 to **384** (`constants.rs:29`). New databases default to dim 384. Legacy databases at dim 64 are preserved via `schema_meta.dim` — no forced re-embed.
@@ -390,7 +406,8 @@ includes the schema and the response is larger).
 ### `enrich` — LLM-Augmented Graph Quality
 - The `enrich` subcommand runs LLM-curated graph-quality operations. Three are fully implemented: `memory-bindings` (extract entities from orphan memories), `entity-descriptions` (fill NULL/empty entity descriptions), and `body-enrich` (expand short memory bodies into richer content).
 - Two more operations are scan-only and surface candidate lists without rewriting: `weight-calibrate`, `relation-reclassify`, `entity-connect`, `entity-type-validate`, `description-enrich`, `cross-domain-bridges`, `domain-classify`, `graph-audit`, `deep-research-synth`, `body-extract`.
-- `--mode claude-code` or `--mode codex` selects the LLM provider. The default is `claude-code`. Both providers are OAuth-only since v1.0.69.
+- `--mode <claude-code|codex|opencode|openrouter>` selects the JUDGE provider and is **REQUIRED** — there is NO default (the `claude-code` default was removed in v1.0.94). `claude-code`, `codex` and `opencode` are OAuth-only local CLIs; `openrouter` (v1.0.95) calls the `/chat/completions` REST endpoint with no subprocess.
+- With `--mode openrouter` (v1.0.95): `--openrouter-model` is REQUIRED (NO default; omitting it → exit 1 before any network call). `--openrouter-api-key` reads from env `OPENROUTER_API_KEY` or `config add-key --provider openrouter`. `--openrouter-timeout` defaults to 300s. `--openrouter-base-url` is optional. Example: `enrich --operation memory-bindings --mode openrouter --openrouter-model "qwen/qwen3-235b-a22b" --json`.
 - `--preflight-check` issues a 1-turn ping BEFORE scanning the candidate set. On a Claude OAuth rate limit the probe aborts with a clear error (or switches to `--fallback-mode` when supplied). Default off to keep `--dry-run` and CI flows zero-cost.
 - `--fallback-mode <claude-code|codex>` automatically switches provider when the preflight probe or an in-flight call hits a rate limit. Ignored when `--mode` is already `codex`.
 - `--rate-limit-buffer <SECONDS>` defaults to 300. When the preflight probe detects that the OAuth rate-limit reset is less than the buffer away, it aborts with a suggestion to wait.
