@@ -86,6 +86,47 @@ pub fn check_available_memory(min_mb: u64) -> Result<u64, AppError> {
     Ok(available_mb)
 }
 
+/// Rejects an embedding input that would overflow the model's token window
+/// (GAP-SG-02).
+///
+/// The PRIMARY limit is TOKENS: `qwen/qwen3-embedding-8b` accepts roughly 32K
+/// tokens, so an input above [`crate::constants::EMBEDDING_REQUEST_MAX_TOKENS`]
+/// is rejected before the HTTP request, using the conservative cl100k_base
+/// proxy in [`crate::tokenizer::count_tokens`]. The byte cap
+/// [`crate::constants::MAX_MEMORY_BODY_LEN`] is a SECONDARY, coarser guard kept
+/// as a cheap short-circuit so a pathological input is rejected even before
+/// tokenisation.
+///
+/// # Errors
+/// Returns [`AppError::Validation`] (exit 1, permanent) when either limit is
+/// exceeded; the message advises splitting the input into smaller memories.
+pub fn check_embedding_input_size(text: &str) -> Result<(), AppError> {
+    // Secondary guard: a byte length far above the body cap cannot fit the
+    // token window, and the check is O(1) versus tokenising the whole input.
+    let bytes = text.len();
+    if bytes > crate::constants::MAX_MEMORY_BODY_LEN {
+        return Err(AppError::Validation(format!(
+            "embedding input is {} bytes, above the {}-byte body cap; \
+             split it into smaller memories",
+            bytes,
+            crate::constants::MAX_MEMORY_BODY_LEN
+        )));
+    }
+
+    // Primary guard: the model's real ceiling is in tokens.
+    let tokens = crate::tokenizer::count_tokens(text);
+    if tokens > crate::constants::EMBEDDING_REQUEST_MAX_TOKENS {
+        return Err(AppError::Validation(format!(
+            "embedding input is {} tokens, above the {}-token model ceiling; \
+             split it into smaller memories",
+            tokens,
+            crate::constants::EMBEDDING_REQUEST_MAX_TOKENS
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +194,34 @@ mod tests {
     fn current_process_memory_mb_returns_some_value() {
         let rss = current_process_memory_mb();
         assert!(rss.is_some());
+    }
+
+    #[test]
+    fn check_embedding_input_size_accepts_small_text() {
+        assert!(check_embedding_input_size("a short passage").is_ok());
+    }
+
+    #[test]
+    fn check_embedding_input_size_rejects_above_token_ceiling() {
+        // "word " repeated is ~1 cl100k token per word; well above 30K words
+        // exceeds EMBEDDING_REQUEST_MAX_TOKENS while staying under the byte cap.
+        let big = "word ".repeat(crate::constants::EMBEDDING_REQUEST_MAX_TOKENS + 5_000);
+        assert!(
+            big.len() <= crate::constants::MAX_MEMORY_BODY_LEN,
+            "token guard, not byte guard, must be exercised"
+        );
+        match check_embedding_input_size(&big) {
+            Err(AppError::Validation(msg)) => assert!(msg.contains("tokens")),
+            other => unreachable!("expected Validation(tokens), got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_embedding_input_size_rejects_above_byte_cap() {
+        let huge = "x".repeat(crate::constants::MAX_MEMORY_BODY_LEN + 1);
+        match check_embedding_input_size(&huge) {
+            Err(AppError::Validation(msg)) => assert!(msg.contains("bytes")),
+            other => unreachable!("expected Validation(bytes), got: {other:?}"),
+        }
     }
 }

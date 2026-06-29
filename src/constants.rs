@@ -321,6 +321,25 @@ pub const MAX_NAMESPACES_ACTIVE: u32 = 100;
 /// Maximum tokens accepted by an embedding input before chunking.
 pub const EMBEDDING_MAX_TOKENS: usize = 512;
 
+/// Maximum token count for a SINGLE embedding request input (GAP-SG-02).
+///
+/// The `qwen/qwen3-embedding-8b` model used by the OpenRouter backend accepts
+/// roughly 32K tokens of context. This ceiling rejects an input above a safe
+/// margin BEFORE the HTTP request, using the conservative cl100k_base proxy in
+/// [`crate::tokenizer::count_tokens`] (which emits at least as many tokens as
+/// Qwen for the same text). Distinct from [`EMBEDDING_MAX_TOKENS`] (512), which
+/// is the per-chunk ceiling that drives chunking.
+pub const EMBEDDING_REQUEST_MAX_TOKENS: usize = 30_000;
+
+/// Byte budget for one auto-split partition (sub-memory) in `ingest`
+/// (GAP-SG-04/07).
+///
+/// Chosen below the 127 KB body margin so each partition also stays under
+/// [`REMEMBER_MAX_SAFE_MULTI_CHUNKS`] chunks and [`EMBEDDING_REQUEST_MAX_TOKENS`]
+/// tokens, even for multibyte/CJK text (~1 cl100k token per UTF-8 char, so
+/// 80 KiB / 3 bytes-per-char yields about 27K tokens, below the 30K ceiling).
+pub const AUTOSPLIT_PARTITION_MAX_BYTES: usize = 80 * 1024;
+
 /// Maximum result count from the recursive graph CTE in `recall`.
 pub const K_GRAPH_MATCHES_LIMIT: usize = 20;
 

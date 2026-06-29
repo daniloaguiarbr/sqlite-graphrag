@@ -1009,6 +1009,14 @@ pub fn run(
     }
     tx.commit()?;
 
+    // GAP-SG-13: when --force-merge UPDATES an existing memory its body/graph may
+    // have changed, so drop any stale enrich-queue sidecar entry keyed to it. The
+    // next enrich run re-scans it cleanly. Best-effort; no-op when the queue file
+    // is absent.
+    if action == "updated" {
+        crate::commands::enrich::cleanup_queue_entry(memory_id, &normalized_name);
+    }
+
     // v1.0.24 P0-2: persist URLs in a dedicated table, outside the main transaction.
     // Failures do not propagate — non-critical path with graceful degradation.
     let urls_persisted = if !extracted_urls.is_empty() {

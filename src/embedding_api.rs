@@ -143,6 +143,11 @@ impl OpenRouterClient {
         text: &str,
         input_type: Option<&str>,
     ) -> Result<Vec<f32>, AppError> {
+        // GAP-SG-02: reject an input that would overflow the model's token
+        // window BEFORE the HTTP request, surfacing a clear Validation error
+        // instead of a provider context-length rejection paid for round-trip.
+        crate::memory_guard::check_embedding_input_size(text)?;
+
         let request = EmbeddingRequest {
             model: &self.model,
             input: EmbeddingInput::Single(text),
@@ -174,6 +179,13 @@ impl OpenRouterClient {
     ) -> Result<Vec<Vec<f32>>, AppError> {
         if texts.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // GAP-SG-02: validate every input before any HTTP request so an
+        // oversized member of the batch fails fast as Validation rather than a
+        // provider context-length rejection mid-batch.
+        for text in texts {
+            crate::memory_guard::check_embedding_input_size(text)?;
         }
 
         let mut all = Vec::with_capacity(texts.len());
@@ -483,5 +495,19 @@ mod tests {
 
         let missing: ApiError = serde_json::from_str(r#"{"message":"oops"}"#).unwrap();
         assert_eq!(missing.code_string(), "unknown");
+    }
+
+    #[tokio::test]
+    async fn embed_single_rejects_oversized_input_before_request() {
+        // GAP-SG-02: an input above EMBEDDING_REQUEST_MAX_TOKENS must fail as
+        // Validation WITHOUT any network call. The fake key/URL would error
+        // distinctly (Embedding) if the guard let the request through.
+        let api_key = SecretBox::new(Box::new("test-key".to_string()));
+        let client = OpenRouterClient::new(api_key, "qwen/qwen3-embedding-8b".into(), 384).unwrap();
+        let big = "word ".repeat(crate::constants::EMBEDDING_REQUEST_MAX_TOKENS + 5_000);
+        match client.embed_single(&big, None).await {
+            Err(AppError::Validation(msg)) => assert!(msg.contains("tokens")),
+            other => unreachable!("expected Validation before request, got: {other:?}"),
+        }
     }
 }

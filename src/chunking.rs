@@ -263,6 +263,152 @@ pub fn aggregate_embeddings(chunk_embeddings: &[Vec<f32>]) -> Vec<f32> {
     mean
 }
 
+/// Budget assessment of a body for the auto-split and dry-run paths
+/// (GAP-SG-05/06).
+#[derive(Debug, Clone, Copy)]
+pub struct BodyBudget {
+    /// Total body length in bytes.
+    pub bytes: usize,
+    /// Conservative cl100k token count of the whole body.
+    pub approx_tokens: usize,
+    /// Number of embedding chunks the body splits into.
+    pub chunk_count: usize,
+    /// Number of sub-memories auto-split would produce (1 when the body fits).
+    pub partition_count: usize,
+    /// True when the body exceeds at least one single-memory budget and would
+    /// be auto-split.
+    pub exceeds_limits: bool,
+}
+
+/// Returns the number of embedding chunks `body` splits into, using the same
+/// hierarchical splitter the persistence path uses (GAP-SG-05).
+pub fn estimate_chunk_count(body: &str) -> usize {
+    split_into_chunks_hierarchical(body).len()
+}
+
+/// Returns `true` when `body` fits a single memory without auto-split: under
+/// the partition byte budget, the safe chunk ceiling, and the embedding request
+/// token ceiling.
+fn fits_single_partition(body: &str) -> bool {
+    body.len() <= crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES
+        && estimate_chunk_count(body) <= crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS
+        && crate::tokenizer::count_tokens(body) <= crate::constants::EMBEDDING_REQUEST_MAX_TOKENS
+}
+
+/// Assesses `body` against the single-memory budgets (GAP-SG-05/06).
+///
+/// Used by `ingest --dry-run` to report chunk and token counts and how many
+/// sub-memories an auto-split would create.
+pub fn assess_body_budget(body: &str) -> BodyBudget {
+    let partition_count = split_body_by_sections(body).len();
+    BodyBudget {
+        bytes: body.len(),
+        approx_tokens: crate::tokenizer::count_tokens(body),
+        chunk_count: estimate_chunk_count(body),
+        partition_count,
+        exceeds_limits: partition_count > 1,
+    }
+}
+
+/// Splits a large `body` into sub-memory partitions at Markdown section
+/// boundaries (ATX headers), keeping each partition below the byte, chunk and
+/// token budgets (GAP-SG-04/07).
+///
+/// A body that already fits a single memory is returned unchanged as a single
+/// element. Otherwise the body is cut at ATX header lines, sections are greedily
+/// packed into partitions under [`crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES`],
+/// and any partition still over budget (e.g. one huge headerless section) is
+/// hard-sliced on char boundaries. Concatenating the returned partitions
+/// reproduces `body` exactly (lossless).
+pub fn split_body_by_sections(body: &str) -> Vec<String> {
+    if fits_single_partition(body) {
+        return vec![body.to_string()];
+    }
+
+    let max_bytes = crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES;
+    let sections = split_markdown_sections(body);
+
+    let mut packed: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for section in sections {
+        if !current.is_empty() && current.len() + section.len() > max_bytes {
+            packed.push(std::mem::take(&mut current));
+        }
+        current.push_str(&section);
+    }
+    if !current.is_empty() {
+        packed.push(current);
+    }
+
+    let mut result = Vec::with_capacity(packed.len());
+    for partition in packed {
+        if fits_single_partition(&partition) {
+            result.push(partition);
+        } else {
+            result.extend(hard_slice_to_budget(&partition));
+        }
+    }
+
+    if result.is_empty() {
+        vec![body.to_string()]
+    } else {
+        result
+    }
+}
+
+/// Cuts `body` into sections, each starting at an ATX Markdown header line and
+/// running until the next header. Leading content before the first header is the
+/// first section. Sections retain their original text (trailing newlines
+/// included) so concatenation is lossless.
+fn split_markdown_sections(body: &str) -> Vec<String> {
+    let mut sections: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in body.split_inclusive('\n') {
+        if is_atx_header(line) && !current.is_empty() {
+            sections.push(std::mem::take(&mut current));
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        sections.push(current);
+    }
+    if sections.is_empty() {
+        sections.push(body.to_string());
+    }
+    sections
+}
+
+/// Returns `true` when `line` is an ATX Markdown header: 1..=6 leading `#`
+/// followed by a space, tab or line end. Up to leading spaces are tolerated.
+fn is_atx_header(line: &str) -> bool {
+    let trimmed = line.trim_start_matches(' ');
+    let hashes = trimmed.chars().take_while(|&c| c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return false;
+    }
+    let after = &trimmed[hashes..];
+    after.is_empty() || after.starts_with(' ') || after.starts_with('\n') || after.starts_with('\t')
+}
+
+/// Hard-slices `body` on char boundaries into pieces no larger than the
+/// partition byte budget. The fallback for a single Markdown section that alone
+/// exceeds the budget; an 80 KiB piece is always under the chunk and token
+/// ceilings (see [`crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES`]).
+fn hard_slice_to_budget(body: &str) -> Vec<String> {
+    let max_bytes = crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES;
+    let mut pieces: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    while start < body.len() {
+        let mut end = previous_char_boundary(body, (start + max_bytes).min(body.len()));
+        if end <= start {
+            end = next_char_boundary(body, start + 1);
+        }
+        pieces.push(body[start..end].to_string());
+        start = end;
+    }
+    pieces
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +611,84 @@ mod tests {
             assert!(body.is_char_boundary(c.start_offset));
             assert!(body.is_char_boundary(c.end_offset));
         }
+    }
+
+    // ── GAP-SG-04/05/06/07: budget assessment and section auto-split ──
+
+    fn assert_partition_within_limits(p: &str) {
+        assert!(
+            p.len() <= crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES,
+            "partition {} bytes exceeds byte budget",
+            p.len()
+        );
+        assert!(
+            estimate_chunk_count(p) <= crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS,
+            "partition exceeds chunk budget"
+        );
+        assert!(
+            crate::tokenizer::count_tokens(p) <= crate::constants::EMBEDDING_REQUEST_MAX_TOKENS,
+            "partition exceeds token budget"
+        );
+    }
+
+    #[test]
+    fn assess_body_budget_small_body_fits() {
+        let budget = assess_body_budget("# Title\n\nshort body");
+        assert_eq!(budget.partition_count, 1);
+        assert!(!budget.exceeds_limits);
+        assert!(budget.chunk_count >= 1);
+        assert!(budget.approx_tokens >= 1);
+    }
+
+    #[test]
+    fn split_body_by_sections_returns_single_for_small_body() {
+        let body = "# H\n\nsmall";
+        let parts = split_body_by_sections(body);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], body);
+    }
+
+    #[test]
+    fn split_body_by_sections_partitions_large_markdown_below_limits() {
+        // ~400 sections of ~520 bytes each => ~208 KB, above the 80 KiB budget.
+        let mut body = String::new();
+        for i in 0..400 {
+            body.push_str(&format!("# Section {i}\n\n{}\n\n", "body text ".repeat(50)));
+        }
+        assert!(body.len() > crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES);
+
+        let parts = split_body_by_sections(&body);
+        assert!(
+            parts.len() > 1,
+            "expected multiple partitions, got {}",
+            parts.len()
+        );
+        for p in &parts {
+            assert_partition_within_limits(p);
+        }
+        // Lossless: concatenation reproduces the original body exactly.
+        assert_eq!(parts.concat(), body);
+    }
+
+    #[test]
+    fn split_body_by_sections_hard_slices_headerless_body() {
+        // No ATX headers and far above the byte budget => hard-slice fallback.
+        let body = "x".repeat(crate::constants::AUTOSPLIT_PARTITION_MAX_BYTES * 3 + 17);
+        let parts = split_body_by_sections(&body);
+        assert!(parts.len() > 1);
+        for p in &parts {
+            assert_partition_within_limits(p);
+        }
+        assert_eq!(parts.concat(), body);
+    }
+
+    #[test]
+    fn is_atx_header_recognizes_headers() {
+        assert!(is_atx_header("# Title"));
+        assert!(is_atx_header("### Sub\n"));
+        assert!(is_atx_header("  ## Indented"));
+        assert!(!is_atx_header("####### too many"));
+        assert!(!is_atx_header("#nospace"));
+        assert!(!is_atx_header("plain text"));
     }
 }

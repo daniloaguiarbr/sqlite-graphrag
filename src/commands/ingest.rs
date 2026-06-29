@@ -447,6 +447,21 @@ struct IngestFileEvent<'a> {
     backend_invoked: Option<&'a str>,
 }
 
+/// GAP-SG-06: per-file budget assessment emitted during `--dry-run` so the
+/// operator sees chunk and token counts (and how many sub-memories an
+/// auto-split would create) before running a real ingest.
+#[derive(Serialize)]
+struct IngestDryRunBudget<'a> {
+    budget: bool,
+    file: &'a str,
+    name: &'a str,
+    bytes: usize,
+    chunk_count: usize,
+    token_count: usize,
+    partition_count: usize,
+    exceeds_limits: bool,
+}
+
 #[derive(Serialize)]
 struct IngestSummary {
     summary: bool,
@@ -520,7 +535,7 @@ fn stage_file(
     llm_backend: crate::cli::LlmBackendChoice,
     embedding_backend: crate::cli::EmbeddingBackendChoice,
     auto_describe: bool,
-) -> Result<StagedFile, AppError> {
+) -> Result<Vec<StagedFile>, AppError> {
     use crate::constants::*;
 
     if name.len() > MAX_MEMORY_NAME_LEN {
@@ -572,6 +587,79 @@ fn stage_file(
         ));
     }
 
+    // GAP-SG-04/07: auto-split a body that exceeds the single-memory budgets
+    // (bytes, chunk count, token count) into section-aligned sub-memories so
+    // ingestion never fails on an oversized document. A body that fits returns
+    // a single partition under the original name.
+    let partitions = chunking::split_body_by_sections(&raw_body);
+    let total_parts = partitions.len();
+    let mut staged = Vec::with_capacity(total_parts);
+    for (part_idx, part_body) in partitions.into_iter().enumerate() {
+        let part_name = if total_parts == 1 {
+            name.to_string()
+        } else {
+            format!("{name}-part-{}", part_idx + 1)
+        };
+        if part_name.len() > MAX_MEMORY_NAME_LEN {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::name_length(MAX_MEMORY_NAME_LEN),
+            ));
+        }
+        let part_description = if total_parts == 1 {
+            description.clone()
+        } else {
+            partition_description(&description, part_idx + 1, total_parts)
+        };
+        staged.push(stage_one_body(
+            part_body,
+            part_name,
+            part_description,
+            paths,
+            enable_ner,
+            gliner_variant,
+            max_rss_mb,
+            llm_parallelism,
+            llm_backend,
+            embedding_backend,
+        )?);
+    }
+    Ok(staged)
+}
+
+/// Builds a partition description by appending a `(part i/n)` marker, trimming
+/// the base (on a char boundary) when the marker would push it past
+/// [`crate::constants::MAX_MEMORY_DESCRIPTION_LEN`].
+fn partition_description(base: &str, part: usize, total: usize) -> String {
+    let suffix = format!(" (part {part}/{total})");
+    let max = crate::constants::MAX_MEMORY_DESCRIPTION_LEN;
+    if base.len() + suffix.len() <= max {
+        return format!("{base}{suffix}");
+    }
+    let mut cut = max.saturating_sub(suffix.len()).min(base.len());
+    while cut > 0 && !base.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{}", &base[..cut], suffix)
+}
+
+/// Stages a single body (one memory) into a [`StagedFile`]: NER extraction,
+/// chunking, embedding and entity embedding. Extracted from `stage_file` so the
+/// GAP-SG-04/07 auto-split path stages each partition independently.
+#[allow(clippy::too_many_arguments)]
+fn stage_one_body(
+    raw_body: String,
+    name: String,
+    description: String,
+    paths: &AppPaths,
+    enable_ner: bool,
+    gliner_variant: crate::extraction::GlinerVariant,
+    max_rss_mb: u64,
+    llm_parallelism: usize,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<StagedFile, AppError> {
+    use crate::constants::*;
+
     let mut extracted_entities: Vec<NewEntity> = Vec::with_capacity(30);
     let mut extracted_relationships: Vec<NewRelationship> = Vec::with_capacity(50);
     let mut extracted_urls: Vec<crate::extraction::ExtractedUrl> = Vec::with_capacity(4);
@@ -608,7 +696,7 @@ fn stage_file(
             Err(e) => {
                 tracing::warn!(
                     target: "ingest",
-                    file = %path.display(),
+                    file = %name,
                     "auto-extraction failed (graceful degradation): {e:#}"
                 );
             }
@@ -662,7 +750,7 @@ fn stage_file(
             Ok((v, k)) => (Some(v), Some(k.as_str())),
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
             Err(e) if skip_embed => {
-                tracing::warn!(error = %e, file = %path.display(), "ingest: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                tracing::warn!(error = %e, file = %name, "ingest: embedding failed; --skip-embedding-on-failure active, persisting without embedding");
                 (None, None)
             }
             Err(e) => return Err(e),
@@ -680,7 +768,7 @@ fn stage_file(
                     target: "ingest",
                     rss_mb = rss,
                     max_rss_mb = max_rss_mb,
-                    file = %path.display(),
+                    file = %name,
                     "RSS exceeded --max-rss-mb threshold; aborting to prevent system instability"
                 );
                 return Err(AppError::LowMemory {
@@ -706,7 +794,7 @@ fn stage_file(
             }
             Err(AppError::Validation(msg)) => return Err(AppError::Validation(msg)),
             Err(e) if skip_embed => {
-                tracing::warn!(error = %e, file = %path.display(), "ingest: chunk embedding failed; --skip-embedding-on-failure active, persisting without embedding");
+                tracing::warn!(error = %e, file = %name, "ingest: chunk embedding failed; --skip-embedding-on-failure active, persisting without embedding");
                 (None, None)
             }
             Err(e) => return Err(e),
@@ -743,7 +831,7 @@ fn stage_file(
             Some(entity_embeddings)
         }
         Err(e) if skip_embed => {
-            tracing::warn!(error = %e, file = %path.display(), "ingest: entity embedding failed; --skip-embedding-on-failure active");
+            tracing::warn!(error = %e, file = %name, "ingest: entity embedding failed; --skip-embedding-on-failure active");
             None
         }
         Err(e) => return Err(e),
@@ -753,7 +841,7 @@ fn stage_file(
         body: raw_body,
         body_hash,
         snippet,
-        name: name.to_string(),
+        name,
         description,
         embedding,
         chunk_embeddings: chunk_embeddings_opt,
@@ -1400,6 +1488,32 @@ pub fn run(
                         body_length: 0,
                         backend_invoked: None,
                     })?;
+
+                    // GAP-SG-06: report chunk + token counts and how many
+                    // sub-memories an auto-split would create, so the operator
+                    // detects chunk/token overflow before a real ingest.
+                    match std::fs::read_to_string(file_str) {
+                        Ok(body) => {
+                            let budget = chunking::assess_body_budget(&body);
+                            output::emit_json_compact(&IngestDryRunBudget {
+                                budget: true,
+                                file: file_str,
+                                name: derived_name,
+                                bytes: budget.bytes,
+                                chunk_count: budget.chunk_count,
+                                token_count: budget.approx_tokens,
+                                partition_count: budget.partition_count,
+                                exceeds_limits: budget.exceeds_limits,
+                            })?;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "ingest",
+                                file = %file_str,
+                                "dry-run: could not read file for budget assessment: {e}"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1489,7 +1603,7 @@ pub fn run(
     // the consumer, preventing memory blowup when Phase A is faster than Phase B.
     // Each message carries the slot index so Phase B can look up SlotMeta in order.
     let channel_bound = (parallelism * 2).max(1);
-    let (tx, rx) = mpsc::sync_channel::<(usize, Result<StagedFile, AppError>)>(channel_bound);
+    let (tx, rx) = mpsc::sync_channel::<(usize, Result<Vec<StagedFile>, AppError>)>(channel_bound);
 
     // Phase A: launched in a dedicated OS thread so the main thread can consume
     // the channel concurrently. pool.install() blocks the calling thread until
@@ -1523,7 +1637,10 @@ pub fn run(
                 // Emit NDJSON progress event to stderr so the user sees work
                 // happening during long NER runs (e.g. 50 files × 27s each).
                 let (n_entities, n_relationships) = match &result {
-                    Ok(sf) => (sf.entities.len(), sf.relationships.len()),
+                    Ok(parts) => (
+                        parts.iter().map(|sf| sf.entities.len()).sum::<usize>(),
+                        parts.iter().map(|sf| sf.relationships.len()).sum::<usize>(),
+                    ),
                     Err(_) => (0, 0),
                 };
                 let progress = StageProgressEvent {
@@ -1674,46 +1791,85 @@ pub fn run(
             }
         };
 
-        let outcome =
-            stage_result.and_then(|sf| persist_staged(conn, &namespace, &memory_type_str, sf));
-
-        match outcome {
-            Ok(FileSuccess {
-                memory_id,
-                action,
-                body_length,
-                backend_invoked: file_backend_invoked,
-            }) => {
-                output::emit_json_compact(&IngestFileEvent {
-                    file: file_str,
-                    name: derived_name,
-                    status: "indexed",
-                    truncated: *name_truncated,
-                    original_name: original_name.clone(),
-                    original_filename: original_filename.as_deref(),
-                    error: None,
-                    memory_id: Some(memory_id),
-                    action: Some(action),
-                    body_length,
-                    backend_invoked: file_backend_invoked,
-                })?;
-                succeeded += 1;
-            }
-            Err(ref e) if matches!(e, AppError::Duplicate(_)) => {
-                output::emit_json_compact(&IngestFileEvent {
-                    file: file_str,
-                    name: derived_name,
-                    status: "skipped",
-                    truncated: *name_truncated,
-                    original_name: original_name.clone(),
-                    original_filename: original_filename.as_deref(),
-                    error: Some(format!("{e}")),
-                    memory_id: None,
-                    action: Some("duplicate".to_string()),
-                    body_length: 0,
-                    backend_invoked: None,
-                })?;
-                skipped += 1;
+        match stage_result {
+            Ok(parts) => {
+                // GAP-SG-04/07: one source file can stage as multiple
+                // sub-memories (auto-split partitions); persist and report each.
+                for staged in parts {
+                    let part_name = staged.name.clone();
+                    match persist_staged(conn, &namespace, &memory_type_str, staged) {
+                        Ok(FileSuccess {
+                            memory_id,
+                            action,
+                            body_length,
+                            backend_invoked: file_backend_invoked,
+                        }) => {
+                            output::emit_json_compact(&IngestFileEvent {
+                                file: file_str,
+                                name: &part_name,
+                                status: "indexed",
+                                truncated: *name_truncated,
+                                original_name: original_name.clone(),
+                                original_filename: original_filename.as_deref(),
+                                error: None,
+                                memory_id: Some(memory_id),
+                                action: Some(action),
+                                body_length,
+                                backend_invoked: file_backend_invoked,
+                            })?;
+                            succeeded += 1;
+                        }
+                        Err(ref e) if matches!(e, AppError::Duplicate(_)) => {
+                            output::emit_json_compact(&IngestFileEvent {
+                                file: file_str,
+                                name: &part_name,
+                                status: "skipped",
+                                truncated: *name_truncated,
+                                original_name: original_name.clone(),
+                                original_filename: original_filename.as_deref(),
+                                error: Some(format!("{e}")),
+                                memory_id: None,
+                                action: Some("duplicate".to_string()),
+                                body_length: 0,
+                                backend_invoked: None,
+                            })?;
+                            skipped += 1;
+                        }
+                        Err(e) => {
+                            let err_msg = format!("{e}");
+                            output::emit_json_compact(&IngestFileEvent {
+                                file: file_str,
+                                name: &part_name,
+                                status: "failed",
+                                truncated: *name_truncated,
+                                original_name: original_name.clone(),
+                                original_filename: original_filename.as_deref(),
+                                error: Some(err_msg.clone()),
+                                memory_id: None,
+                                action: None,
+                                body_length: 0,
+                                backend_invoked: None,
+                            })?;
+                            failed += 1;
+                            if fail_fast {
+                                output::emit_json_compact(&IngestSummary {
+                                    summary: true,
+                                    dir: args.dir.display().to_string(),
+                                    pattern: args.pattern.clone(),
+                                    recursive: args.recursive,
+                                    files_total: total,
+                                    files_succeeded: succeeded,
+                                    files_failed: failed,
+                                    files_skipped: skipped,
+                                    elapsed_ms: started.elapsed().as_millis() as u64,
+                                })?;
+                                return Err(AppError::Validation(format!(
+                                    "ingest aborted on first failure: {err_msg}"
+                                )));
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 let err_msg = format!("{e}");
@@ -1825,6 +1981,12 @@ pub fn run(
             max_attempts: 5,
             status: false,
             rest_concurrency: None,
+            // enrich-after runs a plain memory-bindings pass; dead-letter,
+            // backoff-ignore and graph-only flags stay at their defaults.
+            list_dead: false,
+            requeue_dead: false,
+            ignore_backoff: false,
+            body_extract_graph_only: false,
         };
         match super::enrich::run(&enrich_args, llm_backend, embedding_backend) {
             Ok(()) => {
@@ -2328,5 +2490,37 @@ mod tests {
             }
             _ => panic!("expected Ingest subcommand"),
         }
+    }
+
+    // ── GAP-SG-06: --dry-run reports chunk and token counts ──
+
+    #[test]
+    fn dry_run_budget_event_serializes_chunk_and_token_counts() {
+        let ev = IngestDryRunBudget {
+            budget: true,
+            file: "/tmp/doc.md",
+            name: "doc",
+            bytes: 1234,
+            chunk_count: 3,
+            token_count: 567,
+            partition_count: 1,
+            exceeds_limits: false,
+        };
+        let json = serde_json::to_string(&ev).expect("serialize budget event");
+        assert!(json.contains("\"chunk_count\":3"), "got: {json}");
+        assert!(json.contains("\"token_count\":567"), "got: {json}");
+        assert!(json.contains("\"partition_count\":1"), "got: {json}");
+        assert!(json.contains("\"exceeds_limits\":false"), "got: {json}");
+    }
+
+    #[test]
+    fn assess_body_budget_feeds_dry_run_with_positive_counts() {
+        // The dry-run path feeds chunking::assess_body_budget; a representative
+        // body must report a positive chunk and token count.
+        let body = "# Title\n\nsome representative body text for the budget.";
+        let budget = chunking::assess_body_budget(body);
+        assert!(budget.chunk_count >= 1);
+        assert!(budget.approx_tokens >= 1);
+        assert_eq!(budget.partition_count, 1);
     }
 }

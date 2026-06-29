@@ -82,7 +82,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
         )
         .optional()?;
 
-    let (action, forgotten, deleted_at, _memory_id) = match probe {
+    let (action, forgotten, deleted_at, memory_id) = match probe {
         None => ("not_found", false, None, None),
         Some((id, Some(existing))) => ("already_deleted", false, Some(existing), Some(id)),
         Some((id, None)) => {
@@ -129,6 +129,15 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     // NOTE: delete_vec is already called BEFORE soft_delete (line 94) inside
     // the `Some((id, None))` arm above.  A second call here is redundant and
     // produces spurious log warnings when the vector row no longer exists.
+
+    // GAP-SG-13: cascade-clean the enrich-queue sidecar so a freshly forgotten
+    // memory never lingers as a pending/dead-letter row keyed to a now-deleted
+    // memory. Best-effort and a no-op when the queue file is absent.
+    if forgotten {
+        if let Some(id) = memory_id {
+            crate::commands::enrich::cleanup_queue_entry(id, &name);
+        }
+    }
 
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 

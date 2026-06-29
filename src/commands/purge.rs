@@ -233,7 +233,10 @@ fn execute_purge(
 ) -> Result<(), AppError> {
     let candidates = select_candidates(tx, namespace, name, cutoff_epoch)?;
 
-    for (memory_id, _name) in &candidates {
+    for (memory_id, name) in &candidates {
+        // GAP-SG-13: cascade-clean the enrich-queue sidecar for each purged
+        // memory (best-effort; no-op when the queue file is absent).
+        crate::commands::enrich::cleanup_queue_entry(*memory_id, name);
         if let Err(err) = tx.execute(
             "DELETE FROM vec_chunks WHERE memory_id = ?1",
             rusqlite::params![memory_id],

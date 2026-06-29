@@ -297,7 +297,15 @@ const BODY_ENRICH_PROMPT_PREFIX: &str = "You are a knowledge assistant. Given a 
 #[serde(rename_all = "kebab-case")]
 pub enum EnrichOperation {
     /// Add missing entity/relationship bindings to memories (fully implemented).
+    /// memory-bindings VINCULA cada memória às entidades EXISTENTES extraídas do
+    /// seu corpo — não inventa um novo grafo, apenas conecta o que falta. Scans
+    /// only UNBOUND memories (those with zero `memory_entities`).
     MemoryBindings,
+    /// GAP-SG-24/26: additive augmentation — re-run binding extraction over
+    /// memories that are ALREADY bound, filtered by `--names`/`--names-file`, to
+    /// merge newly-discovered entities/relationships WITHOUT removing existing
+    /// links. Requires a name filter (refuses to re-scan the whole namespace).
+    AugmentBindings,
     /// Fill NULL/empty entity descriptions with LLM-generated summaries (fully implemented).
     EntityDescriptions,
     /// Expand short memory bodies into richer content (fully implemented, GAP-18).
@@ -368,7 +376,31 @@ impl std::fmt::Display for EnrichMode {
     # Resume an interrupted body-enrich run\n  \
     sqlite-graphrag enrich --operation body-enrich --resume --json\n\n  \
     # Retry only failed items from a previous run\n  \
-    sqlite-graphrag enrich --operation memory-bindings --retry-failed --json\n\n\
+    sqlite-graphrag enrich --operation memory-bindings --retry-failed --json\n\n  \
+    # Converge the whole backlog (internal scan+drain loop, no bash wrapper)\n  \
+    sqlite-graphrag enrich --operation memory-bindings --mode openrouter \\\n    \
+      --openrouter-model deepseek/deepseek-v4-flash:nitro --until-empty --max-runtime 600\n\n  \
+    # Inspect / resurrect dead-letter items\n  \
+    sqlite-graphrag enrich --operation memory-bindings --list-dead\n  \
+    sqlite-graphrag enrich --operation memory-bindings --requeue-dead\n\n  \
+    # Read-only status (no LLM, no singleton)\n  \
+    sqlite-graphrag enrich --operation memory-bindings --status\n\n\
+    OPERATIONS NOTE:\n  \
+    memory-bindings LINKS each memory to the EXISTING entities extracted from its\n  \
+    body — it does not invent a new graph, it connects what is missing. It scans\n  \
+    only UNBOUND memories. To re-run extraction over ALREADY-bound memories and\n  \
+    MERGE newly-found entities/relationships additively (without removing links),\n  \
+    use --operation augment-bindings with --names/--names-file.\n\n\
+    DEAD-LETTER SIDECAR (.enrich-queue.sqlite):\n  \
+    A SQLite sidecar tracks each work item across runs. Schema (table `queue`):\n  \
+    item_key (UNIQUE name/id), item_type (memory|entity), operation, memory_id,\n  \
+    status (pending|processing|done|skipped|dead), attempt, error, error_class,\n  \
+    next_retry_at (backoff cooldown). --until-empty loops scan→drain internally\n  \
+    until eligible items are exhausted; transient failures (incl. malformed/non-\n  \
+    JSON LLM output, GAP-SG-09) reschedule with backoff until --max-attempts, then\n  \
+    land in status='dead'. Use --status to see the queue, --list-dead to inspect\n  \
+    the sink, --requeue-dead to retry it, and --ignore-backoff to skip cooldowns.\n  \
+    --names/--names-file also remedy a cooldown by targeting a specific subset.\n\n\
     EXIT CODES:\n  \
     0  success\n  \
     1  validation error (bad args, binary not found)\n  \
@@ -482,14 +514,56 @@ pub struct EnrichArgs {
     pub max_runtime: Option<u64>,
 
     /// GAP-ENRICH-BACKLOG-CONVERGE: attempts per item before it becomes a
-    /// dead-letter (status='dead'). Range 1..=20. Default 5.
-    #[arg(long, value_name = "N", default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..=20))]
+    /// dead-letter (status='dead'). Range 1..=20. Default 8.
+    ///
+    /// GAP-SG-21: the default was raised from 5 to 8 because GAP-SG-09 now
+    /// reclassifies malformed / non-JSON LLM output as TRANSIENT (retryable)
+    /// rather than a permanent HardFailure. A flaky structured-output model
+    /// (e.g. deepseek-v4-flash:nitro) may emit several bad generations in a row
+    /// even after JSON repair (GAP-SG-10) recovers most of them; the extra
+    /// attempts give the backlog room to converge before an item is parked in
+    /// the dead-letter sink. Permanent faults (ProviderError, NotFound) still
+    /// dead-letter on the first attempt regardless of this value.
+    #[arg(long, value_name = "N", default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=20))]
     pub max_attempts: u32,
 
     /// GAP-ENRICH-BACKLOG-CONVERGE: read-only mode — report queue and backlog
     /// counts without calling the LLM or acquiring the singleton.
     #[arg(long)]
     pub status: bool,
+
+    /// GAP-SG-23: list every dead-letter item (status='dead') for the current
+    /// operation with its error_class, attempt count and last error message.
+    /// Read-only — no LLM, no singleton. Use it to inspect what `--requeue-dead`
+    /// would resurrect before running it.
+    #[arg(long)]
+    pub list_dead: bool,
+
+    /// GAP-SG-11/14: resurrect dead-letter items — move every `status='dead'`
+    /// row back to `pending`, zeroing `attempt`, `next_retry_at`, `error` and
+    /// `error_class`. Distinct from `--retry-failed`, which only resets the
+    /// legacy `status='failed'` rows; dead-letter rows are the terminal sink of
+    /// the v1.0.96 converge loop and are never re-selected without this flag.
+    /// No LLM call or singleton is taken — it only rewrites queue statuses.
+    #[arg(long)]
+    pub requeue_dead: bool,
+
+    /// GAP-SG-16: ignore the per-item backoff cooldown (`next_retry_at`) when
+    /// selecting candidates, so items waiting on exponential backoff are
+    /// processed immediately. Use to drain a backlog whose cooldown windows are
+    /// long but the provider has recovered. Without it, `--status` reports such
+    /// items under `waiting` and they are skipped until their `next_retry_at`.
+    #[arg(long)]
+    pub ignore_backoff: bool,
+
+    /// GAP-SG-28: read-only `body-extract` — extract entities/relationships into
+    /// the graph WITHOUT rewriting (or truncating) the memory body. The default
+    /// `body-extract` restructures the stored body in place; with this flag the
+    /// body is left untouched and only graph bindings are persisted (additive,
+    /// via the same upsert path as `memory-bindings`). Ignored for every other
+    /// operation.
+    #[arg(long)]
+    pub body_extract_graph_only: bool,
 
     /// GAP-ENRICH-BACKLOG-CONVERGE: REST concurrency for --mode openrouter
     /// (clamp 1..=16, default 8). Distinct from the legacy --llm-parallelism.
@@ -542,6 +616,12 @@ pub struct EnrichArgs {
     /// G37: select a specific subset of memory names to enrich instead of
     /// the full candidate set. Comma-separated, e.g. `--names a,b,c`.
     /// Empty when omitted (processes all candidates).
+    ///
+    /// GAP-SG-18: also a cooldown remedy — when `--status` shows items under
+    /// `waiting` (parked on `next_retry_at` backoff), pass the exact names here
+    /// to re-enqueue and process just that subset on the next run instead of
+    /// waiting for every cooldown to elapse. REQUIRED for `--operation
+    /// augment-bindings`, which refuses to re-scan the whole namespace.
     #[arg(long, value_name = "NAMES", value_delimiter = ',')]
     pub names: Vec<String>,
 
@@ -627,6 +707,17 @@ struct PhaseEvent<'a> {
     llm_parallelism: Option<u32>,
 }
 
+/// GAP-SG-45: separates the SCAN metric (always serial — a single SQL sweep of
+/// the candidate set) from the DRAIN metric (the parallel worker fan-out). The
+/// legacy "scan" `PhaseEvent` reported `llm_parallelism` on the scan event,
+/// conflating the two; this event makes the distinction explicit.
+#[derive(Debug, Serialize)]
+struct ConcurrencyEvent {
+    phase: &'static str,
+    scan_parallelism: u32,
+    drain_parallelism: u32,
+}
+
 #[derive(Debug, Serialize)]
 struct ItemEvent<'a> {
     /// Item identifier (memory name or entity name).
@@ -670,6 +761,13 @@ struct EnrichSummary {
     /// ou quando a operação não envolveu re-embed).
     #[serde(skip_serializing_if = "Option::is_none")]
     backend_invoked: Option<&'static str>,
+    /// GAP-SG-15: items still parked on backoff (`status='pending'` with a future
+    /// `next_retry_at`) when the run ended. Non-zero means the backlog has NOT
+    /// converged — those items are waiting on a cooldown, not done.
+    waiting: i64,
+    /// GAP-SG-15: dead-letter items (`status='dead'`) at the end of the run.
+    /// Non-zero requires `--list-dead` to inspect and `--requeue-dead` to retry.
+    dead: i64,
 }
 
 use crate::output::emit_json_line as emit_json;
@@ -715,6 +813,11 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
     // EXISTS` never alters an existing table, so add them idempotently here.
     let mut has_error_class = false;
     let mut has_next_retry_at = false;
+    // GAP-SG-12/42: the `operation` column scopes queue rows to the enrich
+    // operation that enqueued them, so `--status` can segment counts per
+    // operation instead of conflating a shared `item_key` space. Migrated
+    // idempotently here for the same reason as the v1.0.96 columns.
+    let mut has_operation = false;
     {
         let mut stmt = conn.prepare("PRAGMA table_info(queue)")?;
         let names = stmt.query_map([], |r| r.get::<_, String>(1))?;
@@ -722,6 +825,7 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
             match name?.as_str() {
                 "error_class" => has_error_class = true,
                 "next_retry_at" => has_next_retry_at = true,
+                "operation" => has_operation = true,
                 _ => {}
             }
         }
@@ -732,10 +836,86 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
     if !has_next_retry_at {
         conn.execute_batch("ALTER TABLE queue ADD COLUMN next_retry_at TEXT")?;
     }
+    if !has_operation {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN operation TEXT")?;
+    }
     conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_enrich_queue_eligible ON queue(status, next_retry_at)",
+        "CREATE INDEX IF NOT EXISTS idx_enrich_queue_eligible ON queue(status, next_retry_at);
+         CREATE INDEX IF NOT EXISTS idx_enrich_queue_operation ON queue(operation, status);
+         CREATE INDEX IF NOT EXISTS idx_enrich_queue_memory ON queue(memory_id)",
     )?;
     Ok(conn)
+}
+
+/// GAP-SG-12: enqueue one scan candidate, linking it to its `memory_id` and
+/// tagging it with the originating `operation`. For memory-keyed operations the
+/// id is resolved from `main_conn` so the cascade cleanup (GAP-SG-13) can target
+/// the queue row by `memory_id` even before the item is processed. Entity/id
+/// keyed operations leave `memory_id` NULL (the `item_key` carries the link).
+/// `INSERT OR IGNORE` preserves the v1.0.96 invariant that a dead-letter row is
+/// never resurrected by re-enqueue (item_key is UNIQUE).
+fn enqueue_candidate(
+    queue_conn: &Connection,
+    main_conn: &Connection,
+    namespace: &str,
+    key: &str,
+    item_type: &str,
+    operation: &str,
+) {
+    let memory_id: Option<i64> = if item_type == "memory" {
+        main_conn
+            .query_row(
+                "SELECT id FROM memories WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
+                rusqlite::params![namespace, key],
+                |r| r.get(0),
+            )
+            .ok()
+    } else {
+        None
+    };
+    if let Err(e) = queue_conn.execute(
+        "INSERT OR IGNORE INTO queue (item_key, item_type, status, operation, memory_id) \
+         VALUES (?1, ?2, 'pending', ?3, ?4)",
+        rusqlite::params![key, item_type, operation, memory_id],
+    ) {
+        tracing::warn!(target: "enrich", error = %e, "queue insert failed");
+    }
+}
+
+/// Queue `item_type` for an operation: entity-keyed operations use `"entity"`,
+/// every other (memory/id-keyed) operation uses `"memory"`.
+fn item_type_for(operation: &EnrichOperation) -> &'static str {
+    match operation {
+        EnrichOperation::EntityDescriptions => "entity",
+        _ => "memory",
+    }
+}
+
+/// GAP-SG-13: remove a memory's enrich-queue entry when the memory is deleted or
+/// force-merged, so the dead-letter / pending sidecar never references a row
+/// that no longer exists. Best-effort and a no-op when the queue file is absent
+/// (the common case after a clean run, which removes it). Targets BOTH
+/// `memory_id` (populated at enqueue for memory ops, GAP-SG-12) and `item_key`
+/// (the memory name) so pending rows enqueued before id resolution are also
+/// cleared. Errors are logged, never propagated — cleanup must not fail the
+/// caller's delete/upsert.
+pub fn cleanup_queue_entry(memory_id: i64, name: &str) {
+    if !std::path::Path::new(DEFAULT_QUEUE_DB).exists() {
+        return;
+    }
+    match open_queue_db(DEFAULT_QUEUE_DB) {
+        Ok(conn) => {
+            if let Err(e) = conn.execute(
+                "DELETE FROM queue WHERE memory_id = ?1 OR item_key = ?2",
+                rusqlite::params![memory_id, name],
+            ) {
+                tracing::warn!(target: "enrich", error = %e, memory_id, "enrich-queue cleanup failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(target: "enrich", error = %e, "enrich-queue cleanup skipped (open failed)");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,6 +923,10 @@ fn open_queue_db(path: &str) -> Result<Connection, AppError> {
 // ---------------------------------------------------------------------------
 
 /// Read-only `enrich --status` report (no LLM, no singleton).
+///
+/// GAP-SG-42: all queue counts are scoped to the current `--operation` (rows
+/// migrated before the `operation` column, which are NULL, are still counted so
+/// a legacy queue is not silently reported as empty).
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct EnrichStatus {
     status_report: bool,
@@ -757,6 +941,47 @@ pub struct EnrichStatus {
     queue_dead: i64,
     eligible_now: i64,
     waiting: i64,
+    /// GAP-SG-15/46: coarse backlog state, disambiguating an empty queue from a
+    /// not-yet-scanned backlog and from a cooldown wait.
+    /// `draining` (eligible items now) | `cooldown` (all pending items waiting on
+    /// `next_retry_at`) | `pending-scan` (candidates exist but the queue is not
+    /// populated — run enrich to scan) | `empty` (nothing left to do).
+    state: &'static str,
+    /// GAP-SG-16: per-item `next_retry_at` for every pending row currently in
+    /// backoff, so an operator can see exactly when each will become eligible.
+    waiting_items: Vec<WaitingItem>,
+}
+
+/// GAP-SG-16: one pending queue row waiting on its backoff cooldown.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct WaitingItem {
+    item_key: String,
+    attempt: i64,
+    next_retry_at: Option<String>,
+    error_class: Option<String>,
+}
+
+/// GAP-SG-23: one dead-letter row reported by `--list-dead`.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct DeadItem {
+    dead_item: bool,
+    item_key: String,
+    item_type: String,
+    attempt: i64,
+    error_class: Option<String>,
+    error: Option<String>,
+}
+
+/// GAP-SG-23/11: summary footer for `--list-dead` and `--requeue-dead`.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct DeadSummary {
+    summary: bool,
+    operation: String,
+    namespace: String,
+    /// `list-dead` | `requeue-dead`
+    action: &'static str,
+    dead_total: i64,
+    requeued: i64,
 }
 
 /// Classifies an enrich item failure into a retry/dead-letter outcome.
@@ -771,6 +996,15 @@ fn classify_enrich_outcome(e: &AppError) -> crate::retry::AttemptOutcome {
         AppError::RateLimited { .. } | AppError::Timeout { .. } | AppError::DbBusy(_) => {
             AttemptOutcome::Transient
         }
+        // GAP-SG-09: errors that are genuinely PERMANENT for this item and must
+        // dead-letter immediately (retrying cannot help): a structured provider
+        // rejection (context-length overflow / refusal carried as ProviderError),
+        // or a memory/entity that no longer exists (deleted between scan and
+        // processing).
+        AppError::ProviderError { .. }
+        | AppError::NotFound(_)
+        | AppError::MemoryNotFound { .. }
+        | AppError::MemoryNotFoundById { .. } => AttemptOutcome::HardFailure,
         _ => {
             let msg = format!("{e}").to_lowercase();
             if msg.contains("server error")
@@ -782,6 +1016,18 @@ fn classify_enrich_outcome(e: &AppError) -> crate::retry::AttemptOutcome {
                 || msg.contains("503")
                 || msg.contains("504")
             {
+                AttemptOutcome::Transient
+            } else if msg.contains("json")
+                || msg.contains("no structured content")
+                || msg.contains("non-object")
+                || msg.contains("missing '")
+            {
+                // GAP-SG-09: malformed / non-JSON / shape-invalid LLM output is a
+                // model HICCUP, not a permanent fault. deepseek-v4-flash:nitro
+                // emits the occasional non-JSON or shape-wrong generation; with
+                // strict-parse + repair (GAP-SG-10) most are recovered, and the
+                // rest must be RESCHEDULED with backoff (bounded by
+                // --max-attempts) instead of dead-lettering on the first try.
                 AttemptOutcome::Transient
             } else {
                 AttemptOutcome::HardFailure
@@ -1204,6 +1450,60 @@ fn scan_unbound_memories(
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+}
+
+/// GAP-SG-24/26: returns ALREADY-bound memory names for additive augmentation,
+/// restricted to `name_filter`.
+///
+/// Unlike [`scan_unbound_memories`] this selects memories that DO have at least
+/// one `memory_entities` binding, so a second extraction pass can merge newly
+/// discovered entities/relationships without disturbing existing links (the
+/// persist path is purely additive). A name filter is MANDATORY: re-running
+/// extraction over an entire namespace is expensive and rarely intended, so an
+/// empty filter is rejected rather than silently scanning everything.
+fn scan_bound_memories_for_augment(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+    name_filter: &[String],
+) -> Result<Vec<String>, AppError> {
+    if name_filter.is_empty() {
+        return Err(AppError::Validation(
+            "augment-bindings requires an explicit subset: pass --names or \
+             --names-file (it refuses to re-scan the whole namespace)"
+                .into(),
+        ));
+    }
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+        .map(|i| format!("?{i}"))
+        .collect();
+    let in_clause = placeholders.join(", ");
+    let sql = format!(
+        "SELECT m.name
+         FROM memories m
+         WHERE m.namespace = ?1
+           AND m.deleted_at IS NULL
+           AND m.name IN ({in_clause})
+           AND EXISTS (
+               SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
+           )
+         ORDER BY m.id
+         {limit_clause}"
+    );
+    let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+    params_vec.push(&namespace);
+    for n in name_filter {
+        params_vec.push(n);
+    }
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params_from_iter(params_vec.iter().copied()),
+            |r| r.get::<_, String>(0),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// Reads a list of memory names from a UTF-8 text file (G37).
@@ -1946,6 +2246,75 @@ pub fn run(
     // calls the LLM, never initialises the OpenRouter client, and never
     // acquires the job singleton, so it is safe to run while a real enrich is
     // in flight (it only reads the queue DB and the unbound backlog).
+    // GAP-SG-23/11: --list-dead (inspect dead-letter rows) and --requeue-dead
+    // (resurrect them) are queue-only operations — no LLM, no main-DB write, no
+    // singleton. Both are scoped to the current --operation so a shared queue is
+    // not cross-contaminated. Handled before any provider setup.
+    if args.list_dead || args.requeue_dead {
+        let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
+        let op_label = format!("{:?}", args.operation);
+        let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
+        if args.list_dead {
+            let mut stmt = queue_conn.prepare(
+                "SELECT item_key, item_type, attempt, error_class, error FROM queue \
+                 WHERE status='dead' AND (operation = ?1 OR operation IS NULL) ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![op_label], |r| {
+                    Ok(DeadItem {
+                        dead_item: true,
+                        item_key: r.get(0)?,
+                        item_type: r.get(1)?,
+                        attempt: r.get(2)?,
+                        error_class: r.get(3)?,
+                        error: r.get(4)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let dead_total = rows.len() as i64;
+            for item in &rows {
+                emit_json(item);
+            }
+            emit_json(&DeadSummary {
+                summary: true,
+                operation: op_label,
+                namespace,
+                action: "list-dead",
+                dead_total,
+                requeued: 0,
+            });
+            return Ok(());
+        }
+        // --requeue-dead: move dead -> pending, clearing the failure bookkeeping.
+        let dead_total: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='dead' \
+                 AND (operation = ?1 OR operation IS NULL)",
+                rusqlite::params![op_label],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let requeued = queue_conn
+            .execute(
+                "UPDATE queue SET status='pending', attempt=0, next_retry_at=NULL, \
+                 error=NULL, error_class=NULL \
+                 WHERE status='dead' AND (operation = ?1 OR operation IS NULL)",
+                rusqlite::params![op_label],
+            )
+            .map_err(|e| AppError::Validation(format!("requeue-dead failed: {e}")))?
+            as i64;
+        let _ = queue_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        emit_json(&DeadSummary {
+            summary: true,
+            operation: op_label,
+            namespace,
+            action: "requeue-dead",
+            dead_total,
+            requeued,
+        });
+        return Ok(());
+    }
+
     if args.status {
         let paths = AppPaths::resolve(args.db.as_deref())?;
         ensure_db_ready(&paths)?;
@@ -1953,11 +2322,16 @@ pub fn run(
         let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
         let unbound_backlog = scan_unbound_memories(&conn, &namespace, None, &[])?.len();
         let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
-        let count_status = |st: &str| -> i64 {
+        let op_label = format!("{:?}", args.operation);
+        // GAP-SG-42: scope every count to the current operation. Rows migrated
+        // before the `operation` column (NULL) are still counted so a legacy
+        // queue is never reported as spuriously empty.
+        let count_status = |st: &str, op: &str| -> i64 {
             queue_conn
                 .query_row(
-                    "SELECT COUNT(*) FROM queue WHERE status=?1",
-                    rusqlite::params![st],
+                    "SELECT COUNT(*) FROM queue WHERE status=?1 \
+                     AND (operation = ?2 OR operation IS NULL)",
+                    rusqlite::params![st, op],
                     |r| r.get(0),
                 )
                 .unwrap_or(0)
@@ -1965,32 +2339,72 @@ pub fn run(
         let eligible_now: i64 = queue_conn
             .query_row(
                 "SELECT COUNT(*) FROM queue WHERE status='pending' \
+                 AND (operation = ?1 OR operation IS NULL) \
                  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))",
-                [],
+                rusqlite::params![op_label],
                 |r| r.get(0),
             )
             .unwrap_or(0);
         let waiting: i64 = queue_conn
             .query_row(
                 "SELECT COUNT(*) FROM queue WHERE status='pending' \
+                 AND (operation = ?1 OR operation IS NULL) \
                  AND next_retry_at IS NOT NULL AND next_retry_at > datetime('now')",
-                [],
+                rusqlite::params![op_label],
                 |r| r.get(0),
             )
             .unwrap_or(0);
+        // GAP-SG-16: enumerate the items currently in backoff with their ETA.
+        let waiting_items = {
+            let mut stmt = queue_conn.prepare(
+                "SELECT item_key, attempt, next_retry_at, error_class FROM queue \
+                 WHERE status='pending' AND (operation = ?1 OR operation IS NULL) \
+                 AND next_retry_at IS NOT NULL AND next_retry_at > datetime('now') \
+                 ORDER BY next_retry_at",
+            )?;
+            let items: Vec<WaitingItem> = stmt
+                .query_map(rusqlite::params![op_label], |r| {
+                    Ok(WaitingItem {
+                        item_key: r.get(0)?,
+                        attempt: r.get(1)?,
+                        next_retry_at: r.get(2)?,
+                        error_class: r.get(3)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            items
+        };
+        let queue_pending = count_status("pending", &op_label);
+        let queue_processing = count_status("processing", &op_label);
+        let queue_done = count_status("done", &op_label);
+        let queue_failed = count_status("failed", &op_label);
+        let queue_skipped = count_status("skipped", &op_label);
+        let queue_dead = count_status("dead", &op_label);
+        // GAP-SG-15/46: distinguish empty from cooldown from not-yet-scanned.
+        let state = if eligible_now > 0 {
+            "draining"
+        } else if waiting > 0 {
+            "cooldown"
+        } else if queue_pending == 0 && unbound_backlog > 0 {
+            "pending-scan"
+        } else {
+            "empty"
+        };
         emit_json(&EnrichStatus {
             status_report: true,
-            operation: format!("{:?}", args.operation),
-            namespace: namespace.clone(),
+            operation: op_label,
+            namespace,
             unbound_backlog,
-            queue_pending: count_status("pending"),
-            queue_processing: count_status("processing"),
-            queue_done: count_status("done"),
-            queue_failed: count_status("failed"),
-            queue_skipped: count_status("skipped"),
-            queue_dead: count_status("dead"),
+            queue_pending,
+            queue_processing,
+            queue_done,
+            queue_failed,
+            queue_skipped,
+            queue_dead,
             eligible_now,
             waiting,
+            state,
+            waiting_items,
         });
         return Ok(());
     }
@@ -2210,6 +2624,8 @@ pub fn run(
             cost_usd: 0.0,
             elapsed_ms: started.elapsed().as_millis() as u64,
             backend_invoked: take_enrich_backend(),
+            waiting: 0,
+            dead: 0,
         });
         return Ok(());
     }
@@ -2247,19 +2663,11 @@ pub fn run(
             .map_err(|e| AppError::Validation(format!("queue clear failed: {e}")))?;
     }
 
-    // Populate queue
-    for (idx, key) in scan_result.iter().enumerate() {
-        let item_type = match args.operation {
-            EnrichOperation::EntityDescriptions => "entity",
-            _ => "memory",
-        };
-        if let Err(e) = queue_conn.execute(
-            "INSERT OR IGNORE INTO queue (item_key, item_type, status) VALUES (?1, ?2, 'pending')",
-            rusqlite::params![key, item_type],
-        ) {
-            tracing::warn!(target: "enrich", error = %e, "queue insert failed");
-        }
-        let _ = idx; // suppress unused warning
+    // Populate queue (GAP-SG-12: tag rows with the operation + link memory_id).
+    let op_label = format!("{:?}", args.operation);
+    let item_type = item_type_for(&args.operation);
+    for key in scan_result.iter() {
+        enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
     }
 
     // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
@@ -2364,6 +2772,23 @@ pub fn run(
         EnrichMode::OpenRouter => args.openrouter_model.as_deref(),
     };
 
+    // GAP-SG-16: when --ignore-backoff is set, drop the per-item cooldown filter
+    // from candidate selection so items parked on `next_retry_at` are eligible
+    // immediately. Shared by the parallel workers and the serial loop.
+    let backoff_clause: &str = if args.ignore_backoff {
+        ""
+    } else {
+        "AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))"
+    };
+
+    // GAP-SG-45: announce the scan-vs-drain concurrency split (scan is always
+    // serial; drain uses `parallelism` workers).
+    emit_json(&ConcurrencyEvent {
+        phase: "concurrency",
+        scan_parallelism: 1,
+        drain_parallelism: parallelism as u32,
+    });
+
     // GAP-ENRICH-BACKLOG-CONVERGE: --until-empty wraps the scan→populate→drain
     // cycle in an internal loop so the external bash retry loop is unnecessary.
     // Without --until-empty the loop body runs exactly once (legacy behaviour).
@@ -2375,15 +2800,8 @@ pub fn run(
             // INSERT OR IGNORE never resurrects a dead-letter row (item_key is
             // UNIQUE), so the backlog converges instead of looping forever.
             let rescan = scan_operation(&conn, &namespace, args)?;
-            let rescan_item_type = match args.operation {
-                EnrichOperation::EntityDescriptions => "entity",
-                _ => "memory",
-            };
             for key in &rescan {
-                let _ = queue_conn.execute(
-                    "INSERT OR IGNORE INTO queue (item_key, item_type, status) VALUES (?1, ?2, 'pending')",
-                    rusqlite::params![key, rescan_item_type],
-                );
+                enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
             }
         }
         let completed_before = completed;
@@ -2460,13 +2878,18 @@ pub fn run(
                                     break;
                                 }
                             }
+                            // GAP-SG-16: --ignore-backoff drops the next_retry_at
+                            // cooldown filter so items waiting on backoff are
+                            // claimed immediately.
+                            let dequeue_sql = format!(
+                                "UPDATE queue SET status='processing', attempt=attempt+1 \
+                                 WHERE id = (SELECT id FROM queue WHERE status='pending' {backoff_clause} \
+                                             ORDER BY id LIMIT 1) \
+                                 RETURNING id, item_key, item_type, attempt"
+                            );
                             let pending: Option<(i64, String, String, i64)> = w_queue
                                 .query_row(
-                                    "UPDATE queue SET status='processing', attempt=attempt+1 \
-                                     WHERE id = (SELECT id FROM queue WHERE status='pending' \
-                                                   AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
-                                                 ORDER BY id LIMIT 1) \
-                                     RETURNING id, item_key, item_type, attempt",
+                                    &dequeue_sql,
                                     [],
                                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                                 )
@@ -2479,7 +2902,7 @@ pub fn run(
                             let current_index = w_completed + w_failed + w_skipped;
 
                             let call_result = match operation {
-                                EnrichOperation::MemoryBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::MemoryBindings | EnrichOperation::AugmentBindings => call_memory_bindings(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::EntityDescriptions => call_entity_description(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::BodyEnrich => call_body_enrich(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode, min_oc, max_oc, prompt_tpl, args.preserve_threshold, paths, llm_backend, embedding_backend),
                                 EnrichOperation::ReEmbed => call_reembed(&w_conn, namespace, &item_key, paths, llm_backend, embedding_backend),
@@ -2491,7 +2914,7 @@ pub fn run(
                                 EnrichOperation::DomainClassify => call_domain_classify(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::GraphAudit => call_graph_audit(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
                                 EnrichOperation::DeepResearchSynth => call_deep_research_synth(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
-                                EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode),
+                                EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_binary.expect("provider binary required"), provider_model, provider_timeout, mode, args.body_extract_graph_only),
                             };
 
                             match call_result {
@@ -2625,17 +3048,18 @@ pub fn run(
                     }
                 }
 
-                // Dequeue next pending item
+                // Dequeue next pending item (GAP-SG-16: --ignore-backoff drops
+                // the next_retry_at cooldown filter).
+                let dequeue_sql = format!(
+                    "UPDATE queue SET status='processing', attempt=attempt+1 \
+                     WHERE id = (SELECT id FROM queue WHERE status='pending' {backoff_clause} \
+                                 ORDER BY id LIMIT 1) \
+                     RETURNING id, item_key, item_type, attempt"
+                );
                 let pending: Option<(i64, String, String, i64)> = queue_conn
-                    .query_row(
-                        "UPDATE queue SET status='processing', attempt=attempt+1 \
-                 WHERE id = (SELECT id FROM queue WHERE status='pending' \
-                               AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')) \
-                             ORDER BY id LIMIT 1) \
-                 RETURNING id, item_key, item_type, attempt",
-                        [],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
+                    .query_row(&dequeue_sql, [], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })
                     .ok();
 
                 let (queue_id, item_key, item_type, attempt_current) = match pending {
@@ -2647,17 +3071,19 @@ pub fn run(
                 let current_index = completed + failed + skipped;
 
                 let call_result = match args.operation {
-                    EnrichOperation::MemoryBindings => call_memory_bindings(
-                        &conn,
-                        &namespace,
-                        &item_key,
-                        provider_binary
-                            .as_deref()
-                            .expect("provider binary required"),
-                        provider_model,
-                        provider_timeout,
-                        &args.mode,
-                    ),
+                    EnrichOperation::MemoryBindings | EnrichOperation::AugmentBindings => {
+                        call_memory_bindings(
+                            &conn,
+                            &namespace,
+                            &item_key,
+                            provider_binary
+                                .as_deref()
+                                .expect("provider binary required"),
+                            provider_model,
+                            provider_timeout,
+                            &args.mode,
+                        )
+                    }
                     EnrichOperation::EntityDescriptions => call_entity_description(
                         &conn,
                         &namespace,
@@ -2795,6 +3221,7 @@ pub fn run(
                         provider_model,
                         provider_timeout,
                         &args.mode,
+                        args.body_extract_graph_only,
                     ),
                 };
 
@@ -3010,8 +3437,7 @@ pub fn run(
         }
         let eligible_remaining: i64 = queue_conn
             .query_row(
-                "SELECT COUNT(*) FROM queue WHERE status='pending' \
-                 AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))",
+                &format!("SELECT COUNT(*) FROM queue WHERE status='pending' {backoff_clause}"),
                 [],
                 |r| r.get(0),
             )
@@ -3034,6 +3460,27 @@ pub fn run(
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     let _ = queue_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
 
+    // GAP-SG-15: report items still in cooldown (waiting) and dead-lettered
+    // alongside completed, so `--until-empty` makes the convergence state
+    // explicit (cooldown vs. dead vs. truly empty) instead of just "done".
+    let waiting_final: i64 = queue_conn
+        .query_row(
+            "SELECT COUNT(*) FROM queue WHERE status='pending' \
+             AND (operation = ?1 OR operation IS NULL) \
+             AND next_retry_at IS NOT NULL AND next_retry_at > datetime('now')",
+            rusqlite::params![op_label],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let dead_final: i64 = queue_conn
+        .query_row(
+            "SELECT COUNT(*) FROM queue WHERE status='dead' \
+             AND (operation = ?1 OR operation IS NULL)",
+            rusqlite::params![op_label],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
     emit_json(&EnrichSummary {
         summary: true,
         operation: format!("{:?}", args.operation),
@@ -3044,6 +3491,8 @@ pub fn run(
         cost_usd: cost_total,
         elapsed_ms: started.elapsed().as_millis() as u64,
         backend_invoked: take_enrich_backend(),
+        waiting: waiting_final,
+        dead: dead_final,
     });
 
     if failed == 0 {
@@ -3504,6 +3953,12 @@ fn scan_operation(
             let rows = scan_unbound_memories(conn, namespace, args.limit, &name_filter)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
+        // GAP-SG-24/26: additive augmentation processes ALREADY-bound memories,
+        // restricted to an explicit name filter so it never re-scans the whole
+        // namespace.
+        EnrichOperation::AugmentBindings => {
+            scan_bound_memories_for_augment(conn, namespace, args.limit, &name_filter)
+        }
         EnrichOperation::EntityDescriptions => {
             let rows =
                 scan_entities_without_description(conn, namespace, args.limit, &name_filter)?;
@@ -3558,9 +4013,15 @@ fn scan_operation(
                 "SELECT name FROM memories WHERE namespace=?1 AND deleted_at IS NULL ORDER BY id {limit_clause}"
             );
             let mut stmt = conn.prepare(&sql)?;
-            let names = stmt
+            let mut names = stmt
                 .query_map(rusqlite::params![namespace], |r| r.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
+            // GAP-SG-27: honour --names/--names-file for body-extract (and the
+            // sibling whole-namespace scans), which previously ignored it and
+            // scanned every memory by id.
+            if !name_filter.is_empty() {
+                names.retain(|n| name_filter.iter().any(|f| f == n));
+            }
             Ok(names)
         }
     }
@@ -4278,15 +4739,88 @@ fn call_deep_research_synth(
 }
 
 /// G27 P2: Extract structured body from unstructured text via LLM.
+///
+/// GAP-SG-28: when `graph_only` is set, the memory body is left UNTOUCHED and
+/// the extraction instead pulls entities/relationships into the graph (additive,
+/// via the same upsert path as `memory-bindings`). This is the read-only mode —
+/// it never rewrites or truncates the stored body.
+#[allow(clippy::too_many_arguments)]
 fn call_body_extract(
     conn: &Connection,
-    _namespace: &str,
+    namespace: &str,
     item_key: &str,
     binary: &Path,
     model: Option<&str>,
     timeout: u64,
     mode: &EnrichMode,
+    graph_only: bool,
 ) -> Result<EnrichItemResult, AppError> {
+    // GAP-SG-28: read-only graph extraction. Reuse the bindings prompt/schema
+    // and the additive persist path; the body is never modified.
+    if graph_only {
+        let (memory_id, body): (i64, String) = conn
+            .query_row(
+                "SELECT id, COALESCE(body,'') FROM memories WHERE namespace=?1 AND name=?2 AND deleted_at IS NULL",
+                rusqlite::params![namespace, item_key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AppError::NotFound(format!("memory '{item_key}' not found"))
+                }
+                other => AppError::Database(other),
+            })?;
+        if body.trim().is_empty() {
+            return Ok(EnrichItemResult::Skipped {
+                reason: "body is empty".to_string(),
+            });
+        }
+        let (value, cost, is_oauth) = match mode {
+            EnrichMode::ClaudeCode => call_claude(
+                binary,
+                BINDINGS_PROMPT,
+                BINDINGS_SCHEMA,
+                &body,
+                model,
+                timeout,
+            )?,
+            EnrichMode::Codex => call_codex(
+                binary,
+                BINDINGS_PROMPT,
+                BINDINGS_SCHEMA,
+                &body,
+                model,
+                timeout,
+            )?,
+            EnrichMode::Opencode => call_opencode(
+                binary,
+                BINDINGS_PROMPT,
+                BINDINGS_SCHEMA,
+                &body,
+                model,
+                timeout,
+            )?,
+            EnrichMode::OpenRouter => {
+                call_openrouter(BINDINGS_PROMPT, BINDINGS_SCHEMA, &body, model, timeout)?
+            }
+        };
+        let empty_arr = serde_json::Value::Array(vec![]);
+        let entities_val = value.get("entities").unwrap_or(&empty_arr);
+        let rels_val = value.get("relationships").unwrap_or(&empty_arr);
+        let (ent_count, rel_count) =
+            persist_memory_bindings(conn, namespace, memory_id, entities_val, rels_val)?;
+        return Ok(EnrichItemResult::Done {
+            memory_id: Some(memory_id),
+            entity_id: None,
+            entities: ent_count,
+            rels: rel_count,
+            chars_before: None,
+            chars_after: None,
+            cost,
+            is_oauth,
+        });
+    }
+
     let (mem_id, body, old_desc): (i64, String, String) = conn
         .query_row(
             "SELECT id, body, description FROM memories WHERE name = ?1 AND deleted_at IS NULL",
@@ -5240,5 +5774,203 @@ JSONL
             .ok();
         assert_eq!(second, None);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // GAP-SG-09: malformed / non-JSON / shape-invalid LLM output is a transient
+    // model hiccup (retryable with backoff), NOT a permanent dead-letter.
+    #[test]
+    fn classify_non_json_and_shape_errors_are_transient() {
+        for msg in [
+            "model 'x' returned non-object JSON after repair (got string)",
+            "model 'x' returned content that could not be parsed even after JSON repair",
+            "model 'x' returned no structured content",
+            "LLM result missing 'description' field",
+            "LLM result missing 'enriched_body' field",
+        ] {
+            assert_eq!(
+                classify_enrich_outcome(&AppError::Validation(msg.into())),
+                crate::retry::AttemptOutcome::Transient,
+                "expected transient for: {msg}"
+            );
+        }
+    }
+
+    // GAP-SG-09: genuinely permanent faults still dead-letter on the first try.
+    #[test]
+    fn classify_provider_error_and_not_found_are_hard() {
+        assert_eq!(
+            classify_enrich_outcome(&AppError::ProviderError {
+                code: "400".into(),
+                message: "context length exceeded".into(),
+            }),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+        assert_eq!(
+            classify_enrich_outcome(&AppError::NotFound("memory 'gone' not found".into())),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+    }
+
+    // GAP-SG-12/42: the queue gains an `operation` column, migrated idempotently.
+    #[test]
+    fn open_queue_db_migrates_operation_column() {
+        let (conn, path) = open_temp_queue();
+        // Re-open to prove the ALTER is idempotent on an existing file.
+        drop(conn);
+        let conn = open_queue_db(&path).expect("second open is idempotent");
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(queue)").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert!(cols.iter().any(|c| c == "operation"));
+        assert!(cols.iter().any(|c| c == "memory_id"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // GAP-SG-12: enqueue_candidate tags the row with its operation and links the
+    // resolved memory_id so the cascade cleanup can target it.
+    #[test]
+    fn enqueue_candidate_tags_operation_and_memory_id() {
+        let main = open_test_db();
+        main.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'mem-x', 'body')",
+            [],
+        )
+        .unwrap();
+        let mem_id: i64 = main
+            .query_row("SELECT id FROM memories WHERE name='mem-x'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let (queue, path) = open_temp_queue();
+        enqueue_candidate(&queue, &main, "global", "mem-x", "memory", "MemoryBindings");
+        let (op, mid): (String, i64) = queue
+            .query_row(
+                "SELECT operation, memory_id FROM queue WHERE item_key='mem-x'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(op, "MemoryBindings");
+        assert_eq!(mid, mem_id);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // GAP-SG-11: --requeue-dead moves dead rows back to pending and zeroes the
+    // failure bookkeeping; --retry-failed (status='failed') leaves dead rows.
+    #[test]
+    fn requeue_dead_resurrects_dead_rows() {
+        let (conn, path) = open_temp_queue();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status, operation, attempt, error, error_class, next_retry_at) \
+             VALUES ('mem-dead', 'memory', 'dead', 'MemoryBindings', 8, 'boom', 'permanent', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        // The --requeue-dead UPDATE (scoped to the operation).
+        let n = conn
+            .execute(
+                "UPDATE queue SET status='pending', attempt=0, next_retry_at=NULL, \
+                 error=NULL, error_class=NULL \
+                 WHERE status='dead' AND (operation = ?1 OR operation IS NULL)",
+                rusqlite::params!["MemoryBindings"],
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let (status, attempt, nra): (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT status, attempt, next_retry_at FROM queue WHERE item_key='mem-dead'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "pending");
+        assert_eq!(attempt, 0);
+        assert!(nra.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // GAP-SG-13: the cascade-cleanup DELETE removes the queue row by memory_id
+    // AND by item_key (name), covering both done (id-linked) and pending rows.
+    #[test]
+    fn cascade_cleanup_delete_targets_memory_id_and_name() {
+        let (conn, path) = open_temp_queue();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status, memory_id) VALUES ('by-id', 'memory', 'done', 42)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status) VALUES ('by-name', 'memory', 'pending')",
+            [],
+        )
+        .unwrap();
+        // Same DELETE that cleanup_queue_entry issues.
+        let removed = conn
+            .execute(
+                "DELETE FROM queue WHERE memory_id = ?1 OR item_key = ?2",
+                rusqlite::params![42_i64, "by-name"],
+            )
+            .unwrap();
+        assert_eq!(removed, 2);
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM queue", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // GAP-SG-24/26: augment scan requires an explicit name filter and selects
+    // ONLY already-bound memories.
+    #[test]
+    fn scan_bound_memories_for_augment_requires_names_and_finds_bound() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (id, namespace, name, body) VALUES (1, 'global', 'bound', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (id, namespace, name, body) VALUES (2, 'global', 'unbound', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, namespace, name) VALUES (10, 'global', 'e')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (1, 10)",
+            [],
+        )
+        .unwrap();
+
+        // Empty filter is rejected.
+        assert!(scan_bound_memories_for_augment(&conn, "global", None, &[]).is_err());
+
+        // With a filter, only the bound memory in the filter is returned.
+        let names = scan_bound_memories_for_augment(
+            &conn,
+            "global",
+            None,
+            &["bound".to_string(), "unbound".to_string()],
+        )
+        .unwrap();
+        assert_eq!(names, vec!["bound".to_string()]);
+    }
+
+    #[test]
+    fn item_type_for_maps_entity_and_memory() {
+        assert_eq!(
+            item_type_for(&EnrichOperation::EntityDescriptions),
+            "entity"
+        );
+        assert_eq!(item_type_for(&EnrichOperation::MemoryBindings), "memory");
+        assert_eq!(item_type_for(&EnrichOperation::AugmentBindings), "memory");
+        assert_eq!(item_type_for(&EnrichOperation::BodyExtract), "memory");
     }
 }

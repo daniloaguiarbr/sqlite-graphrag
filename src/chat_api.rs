@@ -253,12 +253,34 @@ impl OpenRouterChatClient {
                 ))
             })?;
 
-        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+        // GAP-SG-10: deepseek-v4-flash:nitro and similar models do not honour
+        // `json_schema` strict mode reliably — they wrap output in markdown
+        // fences, add trailing commas, or omit quotes around keys. Try a strict
+        // parse first (zero cost for well-formed JSON), then fall back to the
+        // repair pass (a Rust port of `json_repair`) before giving up.
+        let value = crate::json_repair::repair_to_value(&content).map_err(|e| {
             AppError::Validation(format!(
-                "model '{}' returned non-JSON content despite strict schema: {e}",
+                "model '{}' returned content that could not be parsed even after \
+                 JSON repair: {e}",
                 self.model
             ))
         })?;
+
+        // GAP-SG-10: `llm_json` coerces aggressively — free text becomes a JSON
+        // string, empty input becomes `{}`, a lone delimiter becomes `null`. The
+        // enrich JUDGE contract is ALWAYS a JSON object, so a non-object result
+        // here is a malformed/refused generation, NOT a usable value. Reject it
+        // (the enrich classifier reclassifies this as a transient model hiccup,
+        // GAP-SG-09) instead of letting a coerced scalar masquerade as a
+        // valid-but-empty result downstream.
+        if !value.is_object() {
+            return Err(AppError::Validation(format!(
+                "model '{}' returned non-object JSON after repair (got {}); \
+                 likely a refusal or malformed structured output",
+                self.model,
+                json_shape_name(&value)
+            )));
+        }
 
         let cost = response.usage.and_then(|u| u.cost).unwrap_or(0.0);
 
@@ -447,6 +469,19 @@ impl OpenRouterChatClient {
 fn reasoning_disable_rejected(err: &AppError) -> bool {
     let msg = err.to_string().to_lowercase();
     msg.contains("400") && msg.contains("reasoning")
+}
+
+/// Names the JSON shape of `value` for diagnostics (GAP-SG-10). Used when the
+/// repaired model output is not the object the enrich JUDGE contract requires.
+fn json_shape_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 #[cfg(test)]
@@ -707,6 +742,9 @@ mod tests {
 
     #[tokio::test]
     async fn complete_non_json_content_errors_as_incompatible() {
+        // GAP-SG-10: free text is coerced by the repair pass into a JSON string
+        // (not an object), so it is rejected by the shape guard rather than the
+        // strict-parse error. The message names the offending shape + model.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -722,8 +760,30 @@ mod tests {
             .await
             .expect_err("non-json content is an error");
         let msg = err.to_string();
-        assert!(msg.contains("non-JSON content"), "got: {msg}");
+        assert!(msg.contains("non-object JSON after repair"), "got: {msg}");
         assert!(msg.contains("google/gemini-3.1-flash-lite"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn complete_repairs_markdown_fenced_object() {
+        // GAP-SG-10: a model that wraps a valid object in a ```json fence (a
+        // common deepseek-v4-flash:nitro defect) is repaired and parsed instead
+        // of being rejected as non-JSON.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(success_body(
+                "```json\n{\"entities\":[\"rust\"],\"relationships\":[]}\n```",
+                Some(0.0),
+            )))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server, "deepseek/deepseek-v4-flash").await;
+        let (value, _, _) = client
+            .complete("system", "input", TEST_SCHEMA, None)
+            .await
+            .expect("fenced object is repaired");
+        assert_eq!(value, json!({"entities": ["rust"], "relationships": []}));
     }
 
     #[tokio::test]
