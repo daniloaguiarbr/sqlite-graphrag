@@ -107,10 +107,10 @@ pub struct EmbeddingAbandonArgs {
 #[derive(Serialize)]
 struct EmbeddingStatusOutput {
     action: &'static str,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que seria
-    /// invocado para processar embeddings live. `"claude" | "codex"
-    /// | "none" | "auto"`. `"auto"` indica que o caller pediu Auto e
-    /// a chain codex→claude→none seria iterada em runtime.
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that would be
+    /// invoked to process live embeddings. `"claude" | "codex"
+    /// | "none" | "auto"`. `"auto"` indicates the caller requested Auto and
+    /// the codex→claude→none chain would be iterated at runtime.
     backend_invoked: &'static str,
     counts: EmbeddingStatusCounts,
     /// GAP-SG-41: real vector coverage in the persisted tables. The `counts`

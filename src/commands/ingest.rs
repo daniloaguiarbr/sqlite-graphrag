@@ -118,9 +118,9 @@ pub struct IngestArgs {
     )]
     pub enable_ner: bool,
 
-    /// GAP-E2E-011: gera description heurística a partir da primeira linha
-    /// significativa do body, em vez de "ingested from `<path>`". Quando
-    /// `--no-auto-describe` é passado, mantém o comportamento legado.
+    /// GAP-E2E-011: generates a heuristic description from the first meaningful
+    /// line of the body, instead of "ingested from `<path>`". When
+    /// `--no-auto-describe` is passed, keeps the legacy behaviour.
     #[arg(
         long,
         default_value_t = true,
@@ -450,10 +450,10 @@ struct IngestFileEvent<'a> {
     action: Option<String>,
     /// Byte length of the body ingested; 0 when not yet read (e.g. skip or dry-run events).
     body_length: usize,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o embedding live. `"claude" | "codex" | "none"`. Absent on
-    /// the wire when `None` (kept for happy-path envelope cleanliness, ou
-    /// quando o arquivo não chegou à fase de embed por duplicação/erro).
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the live embedding. `"claude" | "codex" | "none"`. Absent on
+    /// the wire when `None` (kept for happy-path envelope cleanliness, or
+    /// when the file never reached the embed phase due to duplication/error).
     #[serde(skip_serializing_if = "Option::is_none")]
     backend_invoked: Option<&'a str>,
 }
@@ -522,10 +522,10 @@ struct StagedFile {
     relationships: Vec<NewRelationship>,
     entity_embeddings: Option<Vec<Vec<f32>>>,
     urls: Vec<crate::extraction::ExtractedUrl>,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o embedding do body. `None` quando o batch paralelo
-    /// embed_passages_parallel_local fallback em backends diferentes
-    /// entre chunks (não há um único discriminador estável).
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the body embedding. `None` when the parallel batch
+    /// embed_passages_parallel_local fell back to different backends
+    /// across chunks (there is no single stable discriminator).
     backend_invoked: Option<&'static str>,
 }
 

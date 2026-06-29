@@ -44,15 +44,15 @@ jobs:
       # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
       - name: Pre-warm rustup toolchain (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Pre-warm attempt $attempt ==="
             rustup toolchain install stable --profile minimal --no-self-update
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 15
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 15
           done
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -62,16 +62,16 @@ jobs:
       # to recover from PATH propagation delays on Windows runners.
       - name: Verify rustc + cargo (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Verify attempt $attempt ==="
             rustc --version
             cargo --version
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 10
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 10
           done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
@@ -108,15 +108,15 @@ jobs:
       # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
       - name: Pre-warm rustup toolchain (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Pre-warm attempt $attempt ==="
             rustup toolchain install stable --profile minimal --no-self-update
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 15
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 15
           done
       - uses: dtolnay/rust-toolchain@stable
       # G53-WINDOWS-INFRA (v1.0.80): verify rustc/cargo reachable after
@@ -124,16 +124,16 @@ jobs:
       # to recover from PATH propagation delays on Windows runners.
       - name: Verify rustc + cargo (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Verify attempt $attempt ==="
             rustc --version
             cargo --version
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 10
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 10
           done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
@@ -244,11 +244,30 @@ jobs:
           # `error[E0463]: can't find crate for 'core'`.
           targets: x86_64-pc-windows-msvc
       - name: Install Windows MSVC target stdlib explicitly
-        run: rustup target add x86_64-pc-windows-msvc --toolchain stable
+        # RC-8 (v1.0.98): `rust-toolchain.toml` pins `channel = "1.88"`, so every
+        # `cargo` command in the repo uses 1.88 via the override — NOT the
+        # `stable` the dtolnay action installs. Adding the target to `stable`
+        # (the old `--toolchain stable`) left 1.88 without the cross stdlib, so
+        # `cargo check --target x86_64-pc-windows-msvc` failed with
+        # `error[E0463]: can't find crate for 'core'` (exit 101). Drop the
+        # explicit toolchain so the target lands on the active (overridden) 1.88.
+        run: rustup target add x86_64-pc-windows-msvc
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
-      - name: cargo check --target x86_64-pc-windows-msvc
-        run: timeout 600 cargo check --target x86_64-pc-windows-msvc --lib --all-features
+      # RC-8 (v1.0.98): `ring` (pulled by reqwest+rustls for the OpenRouter REST
+      # client) requires the MSVC compiler for the *-windows-msvc target and
+      # rejects GNU, so a plain `cargo check --target x86_64-pc-windows-msvc`
+      # cannot run ring's build script on a Linux runner. cargo-xwin supplies an
+      # LLVM-based MSVC sysroot (clang / llvm-lib + the Windows SDK fetched by
+      # xwin), letting the cross type-check run without a native Windows toolchain.
+      - name: Install clang + llvm tools for cargo-xwin
+        run: sudo apt-get update && sudo apt-get install -y clang llvm lld
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+      - name: cargo xwin check --target x86_64-pc-windows-msvc
+        run: timeout 900 cargo xwin check --target x86_64-pc-windows-msvc --lib --all-features
 
   audit:
     name: Security Audit
@@ -287,7 +306,14 @@ jobs:
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --locked
+        # RC-5 (v1.0.98): pin to 0.44.0 via prebuilt binary. The unpinned
+        # `cargo install cargo-semver-checks --locked` pulled 0.48.0, which
+        # requires rustc 1.91 > our MSRV 1.88 and failed to compile (exit 101).
+        # 0.44.0 is the last release supporting 1.88; the prebuilt binary skips
+        # the MSRV compile entirely.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks@0.44.0
       - name: Run semver-checks against the previous release
         # v1.0.79 is the last published release; bump on each release.
         # Use --major-version to scope to a single major track; without it
@@ -296,7 +322,7 @@ jobs:
         run: |
           cargo semver-checks check-baseline \
             --manifest-path Cargo.toml \
-            --baseline-version 1.0.79 \
+            --baseline-version 1.0.96 \
             --verbose
           # The previous command exit code is non-zero when ANY breaking
           # change is detected. We currently run with continue-on-error at

@@ -1,12 +1,12 @@
-//! Binário para regenerar `docs/schemas/*.schema.json` a partir dos tipos Rust.
+//! Binary to regenerate `docs/schemas/*.schema.json` from the Rust types.
 //! GAP-E2E-007 (v1.0.89): schemars 0.8 + Must-Ignore policy (RFC 7493 I-JSON).
 //!
-//! IDEMPOTENTE: rodar 2x produz output byte-idêntico porque schemars normaliza
-//! a ordem das chaves (SchemaObject é BTreeMap-backed) e este binário aplica
-//! transformações determinísticas (Draft 2020-12 + additionalProperties: true).
+//! IDEMPOTENT: running it twice produces byte-identical output because schemars
+//! normalizes the key order (SchemaObject is BTreeMap-backed) and this binary applies
+//! deterministic transformations (Draft 2020-12 + additionalProperties: true).
 //!
-//! Uso:
-//!   cargo run --bin dump_schema -- health    # regenera health.schema.json
+//! Usage:
+//!   cargo run --bin dump_schema -- health    # regenerates health.schema.json
 
 use schemars::schema_for;
 use serde_json::Value;
@@ -15,8 +15,8 @@ use std::path::PathBuf;
 /// Draft 2020-12 schema URI per docs_rules/rules_rust_json_e_ndjson.md line 555.
 const DRAFT_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 
-/// Aplica Must-Ignore (`additionalProperties: true`) recursivamente em todos os
-/// objects do schema. Regra line 537: ADOTAR Must-Ignore em APIs que evoluem.
+/// Applies Must-Ignore (`additionalProperties: true`) recursively to all
+/// objects in the schema. Rule line 537: ADOPT Must-Ignore in evolving APIs.
 fn apply_must_ignore(value: &mut Value) {
     match value {
         Value::Object(map) => {

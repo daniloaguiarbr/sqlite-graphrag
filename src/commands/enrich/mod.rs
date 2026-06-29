@@ -314,8 +314,8 @@ const BODY_ENRICH_PROMPT_PREFIX: &str = "You are a knowledge assistant. Given a 
 #[serde(rename_all = "kebab-case")]
 pub enum EnrichOperation {
     /// Add missing entity/relationship bindings to memories (fully implemented).
-    /// memory-bindings VINCULA cada memória às entidades EXISTENTES extraídas do
-    /// seu corpo — não inventa um novo grafo, apenas conecta o que falta. Scans
+    /// memory-bindings LINKS each memory to the EXISTING entities extracted from
+    /// its body — it does not invent a new graph, it only connects what is missing. Scans
     /// only UNBOUND memories (those with zero `memory_entities`).
     MemoryBindings,
     /// GAP-SG-24/26: additive augmentation — re-run binding extraction over
@@ -706,7 +706,7 @@ pub struct EnrichArgs {
     #[arg(long, value_name = "N", default_value_t = 5)]
     pub circuit_breaker_threshold: u32,
 
-    /// G29 Passo 4: minimum trigram-Jaccard similarity between the
+    /// G29 Step 4: minimum trigram-Jaccard similarity between the
     /// original body and the LLM-rewritten body for the rewrite to be
     /// accepted. Scores below the threshold are rejected and emitted as
     /// `EnrichItemResult::PreservationFailed`. Default 0.7 (per the G29
@@ -715,14 +715,14 @@ pub struct EnrichArgs {
     #[arg(long, value_name = "FLOAT", default_value_t = 0.7)]
     pub preserve_threshold: f64,
 
-    /// G33 Passo 3: when set, validate `--codex-model` against the
+    /// G33 Step 3: when set, validate `--codex-model` against the
     /// ChatGPT Pro OAuth accepted-model list and abort with a
     /// suggestion when the value is unknown. Default true (fail fast
     /// to avoid burning OAuth turns). Set to false to opt out.
     #[arg(long, default_value_t = true)]
     pub codex_model_validate: bool,
 
-    /// G33 Passo 3: when set together with an invalid `--codex-model`,
+    /// G33 Step 3: when set together with an invalid `--codex-model`,
     /// automatically substitute the supplied default (e.g. `gpt-5.5`)
     /// instead of aborting. The substitution is recorded in the NDJSON
     /// stream as `provider_substituted: true` for traceability.
@@ -825,10 +825,10 @@ struct EnrichSummary {
     skipped: usize,
     cost_usd: f64,
     elapsed_ms: u64,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o re-embedding durante o enrich. `"claude" | "codex" | "none"`.
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the re-embedding during enrich. `"claude" | "codex" | "none"`.
     /// Absent on the wire when `None` (kept for happy-path envelope cleanliness,
-    /// ou quando a operação não envolveu re-embed).
+    /// or when the operation did not involve a re-embed).
     #[serde(skip_serializing_if = "Option::is_none")]
     backend_invoked: Option<&'static str>,
     /// GAP-SG-15: items still parked on backoff (`status='pending'` with a future

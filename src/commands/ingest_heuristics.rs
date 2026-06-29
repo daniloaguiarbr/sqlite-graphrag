@@ -1,28 +1,28 @@
-//! Heurística determinística para gerar descriptions de memórias ingeridas.
+//! Deterministic heuristic for generating descriptions of ingested memories.
 //!
-//! GAP-E2E-011 (FALTA-6): toda memória ingerida recebia description
-//! hardcoded `"ingested from <path>"`, o que tornava a listagem inútil
-//! e empobrecia o resultado de buscas. Esta heurística pure-Rust extrai
-//! a primeira linha significativa do body, ignorando headers markdown.
+//! GAP-E2E-011 (FALTA-6): every ingested memory received the hardcoded
+//! description `"ingested from <path>"`, which made the listing useless
+//! and degraded search results. This pure-Rust heuristic extracts
+//! the first meaningful line of the body, ignoring markdown headers.
 //!
-//! Regras:
-//! - Primeira linha não-vazia com mais de 20 caracteres
-//! - Ignora linhas que começam com `#` (markdown headers)
-//! - Trunca em 100 caracteres via `chars().take(100)`
-//! - Fallback: `"ingested document"` quando nenhuma linha válida
+//! Rules:
+//! - First non-empty line longer than 20 characters
+//! - Ignores lines starting with `#` (markdown headers)
+//! - Truncates at 100 characters via `chars().take(100)`
+//! - Fallback: `"ingested document"` when no line is valid
 //!
-//! Determinismo: zero alocação baseada em ordem de hash, zero LLM,
-//! zero dependência de ordem de filesystem. Saída reproduzível byte a byte.
+//! Determinism: zero hash-order-based allocation, zero LLM,
+//! zero dependency on filesystem order. Byte-for-byte reproducible output.
 
-/// Extrai uma description heurística do body de um documento ingerido.
+/// Extracts a heuristic description from the body of an ingested document.
 ///
-/// Retorna a primeira linha significativa (não-vazia, >20 chars, não-header
-/// markdown) truncada em 100 caracteres. Fallback determinístico contextual:
-/// quando nenhuma linha atende os critérios, usa o stem (nome sem extensão)
-/// do path, ou `"ingested document"` se o stem for vazio ou inválido.
+/// Returns the first meaningful line (non-empty, >20 chars, not a markdown
+/// header) truncated at 100 characters. Contextual deterministic fallback:
+/// when no line meets the criteria, uses the path stem (name without extension),
+/// or `"ingested document"` if the stem is empty or invalid.
 ///
-/// FALTA-6 (v1.0.89): edge case de body só com headers Markdown agora gera
-/// description útil ao operador em vez do placeholder genérico.
+/// FALTA-6 (v1.0.89): the edge case of a body with only Markdown headers now
+/// generates a description useful to the operator instead of the generic placeholder.
 pub fn extract_heuristic_description(body: &str, path_hint: Option<&str>) -> String {
     let from_body = body
         .lines()
@@ -39,7 +39,7 @@ pub fn extract_heuristic_description(body: &str, path_hint: Option<&str>) -> Str
     "ingested document".to_string()
 }
 
-/// Extrai o stem (nome sem extensão) de um path, sanitizado.
+/// Extracts the stem (name without extension) from a path, sanitized.
 fn derive_stem(path: &str) -> Option<String> {
     let basename = std::path::Path::new(path)
         .file_stem()

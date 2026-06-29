@@ -88,10 +88,10 @@ struct EditResponse {
     version: i64,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o re-embedding do body editado. `"claude" | "codex" | "none"`.
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the re-embedding of the edited body. `"claude" | "codex" | "none"`.
     /// Absent on the wire when `None` (kept for happy-path envelope cleanliness,
-    /// ou quando body não mudou e re-embedding não foi invocado).
+    /// or when the body did not change and re-embedding was not invoked).
     #[serde(skip_serializing_if = "Option::is_none")]
     backend_invoked: Option<&'static str>,
 }

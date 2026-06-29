@@ -250,7 +250,7 @@ pub mod output;
 /// Dual-format argument parser: accepts Unix epoch and RFC 3339.
 pub mod parsers;
 
-/// G29 Passo 4: preservation checks (Jaccard trigram) for LLM-enriched bodies.
+/// G29 Step 4: preservation checks (Jaccard trigram) for LLM-enriched bodies.
 pub mod preservation;
 
 /// Filesystem paths for the project-local database and app support directories.

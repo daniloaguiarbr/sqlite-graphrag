@@ -29,13 +29,13 @@
 //! design philosophy (helper consumed by all 4 spawn sites, no
 //! caller-local reimplementation, opt-out via env var for emergencies).
 //!
-//! ## Invariante imposta
+//! ## Enforced invariant
 //!
-//! `sqlite-graphrag` executa Claude Code e Codex CLI **obrigatoriamente
-//! headless sem MCP**. Pre-flight rejeita argv que carrega MCP servers
-//! explícitos antes do fork, fechando o caminho onde
-//! `~/.claude/settings.json` ou walk-up de `.mcp.json` herdado poderia
-//! reintroduzir plugins contra a policy.
+//! `sqlite-graphrag` runs Claude Code and the Codex CLI **mandatorily
+//! headless without MCP**. Pre-flight rejects argv that carries explicit
+//! MCP servers before the fork, closing the path where
+//! `~/.claude/settings.json` or an inherited `.mcp.json` walk-up could
+//! reintroduce plugins against the policy.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

@@ -1,12 +1,12 @@
 #![cfg(all(unix, feature = "slow-tests"))]
-//! Suite 6 — testes de signal handling (Unix only).
+//! Suite 6 — signal handling tests (Unix only).
 //!
 //! Each test spawns the binary as a real subprocess, sends a signal via
-//! `libc::kill`, aguarda com `.wait()` e verifica o exit status e integridade
-//! do banco de dados.
+//! `libc::kill`, waits with `.wait()` and checks the exit status and the
+//! database integrity.
 //!
 //! This suite is compiled and executed ONLY on Unix systems. On Windows it is
-//! silenciosamente omitida pela diretiva `#![cfg(unix)]`.
+//! silently omitted by the `#![cfg(unix)]` directive.
 
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
@@ -52,7 +52,7 @@ fn sqlite_graphrag_cmd(tmp: &TempDir) -> Command {
     cmd
 }
 
-/// Envia `signal` ao processo `child` usando `libc::kill`.
+/// Sends `signal` to the `child` process using `libc::kill`.
 /// Returns `Ok(())` if the syscall returned 0, `Err(errno)` otherwise.
 fn send_signal(child: &Child, signal: libc::c_int) -> Result<(), i32> {
     let pid = child.id() as libc::pid_t;
@@ -64,7 +64,7 @@ fn send_signal(child: &Child, signal: libc::c_int) -> Result<(), i32> {
     }
 }
 
-/// Verifica integridade do banco SQLite usando `PRAGMA integrity_check`.
+/// Checks the SQLite database integrity using `PRAGMA integrity_check`.
 /// Returns `true` when the result is "ok".
 fn db_integro(tmp: &TempDir) -> bool {
     let db_path = tmp.path().join("test.sqlite");
@@ -128,7 +128,7 @@ fn sigint_during_health_exits_with_db_integrity() {
 /// SIGTERM during `init` on an already-initialized database must shut down gracefully.
 ///
 /// Tests that the binary handles SIGTERM without database corruption.
-/// O processo pode encerrar com exit 0 (completou antes do sinal) ou
+/// The process may finish with exit 0 (completed before the signal) or
 /// with signal code — both are valid, but DB must be intact.
 #[test]
 fn sigterm_during_init_graceful_exit_db_integrity() {
@@ -237,8 +237,8 @@ fn sigterm_after_remember_does_not_corrupt_db() {
 /// Verifies that the process does not enter an infinite loop or zombie state after SIGKILL.
 ///
 /// SIGKILL cannot be intercepted — the kernel terminates the process
-/// imediatamente. O banco pode estar em estado parcial, mas `.wait()` deve
-/// retornar sem bloquear.
+/// immediately. The database may be in a partial state, but `.wait()` must
+/// return without blocking.
 #[test]
 fn sigkill_process_does_not_become_zombie() {
     let tmp = setup_db();

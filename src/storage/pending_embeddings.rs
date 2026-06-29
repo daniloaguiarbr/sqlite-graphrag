@@ -1,7 +1,7 @@
-//! GAP-005 (v1.0.82): DAO para tabela `pending_embeddings`.
+//! GAP-005 (v1.0.82): DAO for the `pending_embeddings` table.
 //!
-//! Fila de memórias persistidas com embedding NULL para reprocessamento posterior
-//! via `embedding retry --backend <KIND>` ou `enrich --operation re-embed --pending-only`.
+//! Queue of memories persisted with a NULL embedding for later reprocessing
+//! via `embedding retry --backend <KIND>` or `enrich --operation re-embed --pending-only`.
 
 use rusqlite::{params, Connection};
 
@@ -43,7 +43,7 @@ pub struct PendingEmbedding {
     pub updated_at: i64,
 }
 
-/// Insere uma nova entrada `pending_embeddings` com status `pending`.
+/// Inserts a new `pending_embeddings` entry with status `pending`.
 #[allow(clippy::too_many_arguments)]
 pub fn insert(
     conn: &Connection,

@@ -1,9 +1,9 @@
-//! GAP-005 (v1.0.82): Mapeamento de exit codes de subprocesso LLM para diagnósticos acionáveis.
+//! GAP-005 (v1.0.82): mapping of LLM subprocess exit codes to actionable diagnostics.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// Tabela imutável de exit codes conhecidos para sugestões acionáveis.
+/// Immutable table of known exit codes mapped to actionable suggestions.
 pub static EXIT_CODE_HINTS: OnceLock<HashMap<i32, &'static str>> = OnceLock::new();
 
 fn exit_code_hints_map() -> &'static HashMap<i32, &'static str> {
@@ -22,7 +22,7 @@ fn exit_code_hints_map() -> &'static HashMap<i32, &'static str> {
     })
 }
 
-/// Retorna diagnóstico acionável baseado no exit code.
+/// Returns an actionable diagnostic based on the exit code.
 pub fn diagnose_exit_code(code: Option<i32>, signal: Option<i32>) -> String {
     if let Some(sig) = signal {
         return match sig {

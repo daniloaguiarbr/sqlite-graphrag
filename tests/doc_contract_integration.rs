@@ -120,7 +120,7 @@ impl Env {
     }
 }
 
-/// Verifica que todas as `keys` existem no objeto JSON `v`.
+/// Checks that all `keys` exist in the JSON object `v`.
 fn assert_has_keys(cmd: &str, v: &Value, keys: &[&str]) {
     let obj = v
         .as_object()
@@ -134,7 +134,7 @@ fn assert_has_keys(cmd: &str, v: &Value, keys: &[&str]) {
     }
 }
 
-/// Verifica que todas as `keys` existem em cada item de um JSON array.
+/// Checks that all `keys` exist in each item of a JSON array.
 fn assert_array_items_have_keys(cmd: &str, v: &Value, keys: &[&str]) {
     let arr = v
         .as_array()
