@@ -195,6 +195,24 @@ pub enum AppError {
     /// etc.) before retrying.
     #[error("preflight validation failed: {source}")]
     PreFlightFailed { source: Box<PreFlightError> },
+
+    /// v1.0.97 (GAP-SG-01/03): the OpenRouter provider returned a structured
+    /// error object (an `error` field carrying `code` and `message`), often
+    /// inside an HTTP 200 body (e.g. token/context-length overflow). Maps to
+    /// exit code `1`.
+    ///
+    /// Modelling the provider rejection as a typed variant — instead of the
+    /// generic `Embedding`/`Validation` string — stops the optimistic success
+    /// parse from masking the cause with a misleading missing-field error. The
+    /// `code` and `message` carry the REAL provider diagnostics.
+    ///
+    /// This variant is **permanent**: a structured provider error in a success
+    /// body is a content or configuration rejection that retrying the identical
+    /// request will not fix. Genuine rate limiting surfaces as HTTP 429 and is
+    /// retried inside the HTTP client (then exposed via `RateLimited` when
+    /// attempts are exhausted), so it never reaches callers as `ProviderError`.
+    #[error("provider error (code {code}): {message}")]
+    ProviderError { code: String, message: String },
 }
 
 /// Bridges the structured [`PreFlightError`] produced by the
@@ -268,6 +286,7 @@ impl AppError {
             Self::LowMemory { .. } => crate::constants::LOW_MEMORY_EXIT_CODE,
             Self::Shutdown { .. } => crate::constants::SHUTDOWN_EXIT_CODE,
             Self::PreFlightFailed { .. } => 16,
+            Self::ProviderError { .. } => 1,
         }
     }
 
@@ -349,6 +368,7 @@ impl AppError {
                 | Self::LimitExceeded(_)
                 | Self::VecExtension(_)
                 | Self::PreFlightFailed { .. }
+                | Self::ProviderError { .. }
         )
     }
 
@@ -426,6 +446,7 @@ impl AppError {
             } => pt::low_memory(*available_mb, *required_mb),
             Self::Shutdown { signal } => pt::shutdown(signal),
             Self::PreFlightFailed { source } => pt::preflight_failed(&source.to_string()),
+            Self::ProviderError { code, message } => pt::provider_error(code, message),
         }
     }
 }

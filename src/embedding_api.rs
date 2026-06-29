@@ -46,6 +46,45 @@ struct EmbeddingData {
     index: usize,
 }
 
+/// Envelope that captures BOTH shapes the OpenRouter embeddings endpoint can
+/// return: the success payload (`data`) and the structured error object
+/// (`error`). OpenRouter sometimes returns the error object inside an HTTP 200
+/// body (e.g. token/context-length overflow); a direct parse to
+/// [`EmbeddingResponse`] would fail with a misleading missing-field error,
+/// masking the real cause. Both fields are optional so the branch is decided
+/// by inspection, not by a parse failure.
+#[derive(Deserialize)]
+struct EmbeddingEnvelope {
+    #[serde(default)]
+    data: Option<Vec<EmbeddingData>>,
+    #[serde(default)]
+    error: Option<ApiError>,
+}
+
+/// Structured OpenRouter error object. `code` is a `serde_json::Value` because
+/// the provider sends it as either a JSON number or string depending on the
+/// failure; `message` defaults to empty so a malformed error object never
+/// re-introduces the missing-field masking.
+#[derive(Deserialize)]
+struct ApiError {
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+    #[serde(default)]
+    message: String,
+}
+
+impl ApiError {
+    /// Renders `code` as a plain string without JSON quoting, falling back to
+    /// `unknown` when the provider omitted it.
+    fn code_string(&self) -> String {
+        match &self.code {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => "unknown".to_string(),
+        }
+    }
+}
+
 pub struct OpenRouterClient {
     client: reqwest::Client,
     api_key: SecretBox<String>,
@@ -224,13 +263,39 @@ impl OpenRouterClient {
                 let body = resp.text().await.map_err(|e| {
                     AppError::Embedding(format!("failed to read response body: {e}"))
                 })?;
-                match serde_json::from_str::<EmbeddingResponse>(&body) {
-                    Ok(parsed) => return Ok(parsed),
+                match serde_json::from_str::<EmbeddingEnvelope>(&body) {
+                    Ok(env) => {
+                        // A structured error object inside a 2xx body is a
+                        // PERMANENT provider rejection (e.g. context-length
+                        // overflow). Surface the REAL code/message instead of
+                        // masking it as a parse failure, and do not retry.
+                        if let Some(api_err) = env.error {
+                            return Err(AppError::ProviderError {
+                                code: api_err.code_string(),
+                                message: api_err.message,
+                            });
+                        }
+                        match env.data {
+                            Some(data) => return Ok(EmbeddingResponse { data }),
+                            None => {
+                                tracing::warn!(
+                                    attempt,
+                                    body_len = body.len(),
+                                    "HTTP 200 with neither data nor error (retrying)"
+                                );
+                                last_err = Some(AppError::Embedding(
+                                    "OpenRouter 200 response had neither data nor error".into(),
+                                ));
+                                Self::backoff(attempt).await;
+                                continue;
+                            }
+                        }
+                    }
                     Err(e) => {
                         tracing::warn!(
                             attempt,
                             body_len = body.len(),
-                            "HTTP 200 but parse failed (retrying): {e}"
+                            "HTTP 200 but JSON unparseable (retrying): {e}"
                         );
                         last_err = Some(AppError::Embedding(format!(
                             "failed to parse embedding response: {e}"
@@ -266,6 +331,13 @@ impl OpenRouterClient {
                     retry_after_secs = retry_after,
                     "OpenRouter rate limited, waiting"
                 );
+                // GAP-SG-56: surface the Retry-After delay to the caller. If
+                // every attempt is rate limited, the loop exits with this
+                // RateLimited error (retryable) carrying the server-advised
+                // wait, instead of a generic max-retries-exceeded message.
+                last_err = Some(AppError::RateLimited {
+                    detail: format!("OpenRouter HTTP 429 (retry-after {retry_after}s)"),
+                });
                 tokio::time::sleep(Duration::from_secs(retry_after)).await;
                 continue;
             }
@@ -361,5 +433,55 @@ mod tests {
         let short = vec![1.0, 2.0];
         let err = client.truncate_embedding(short);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn embedding_envelope_surfaces_provider_error_not_missing_field() {
+        // GAP-SG-01: a 200 body carrying an OpenRouter error object must yield
+        // the REAL message, not the misleading missing-field parse failure.
+        let body = r#"{"error":{"code":400,"message":"context length exceeded"}}"#;
+
+        // Precondition: the legacy optimistic parse masked the cause. Match
+        // instead of unwrap_err so EmbeddingResponse need not derive Debug.
+        let legacy_err = match serde_json::from_str::<EmbeddingResponse>(body) {
+            Ok(_) => panic!("legacy parse should have failed on an error body"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            legacy_err.contains("missing field"),
+            "precondition: legacy parse masks the cause as a missing field: {legacy_err}"
+        );
+
+        // The envelope captures the structured error instead.
+        let env: EmbeddingEnvelope =
+            serde_json::from_str(body).expect("envelope parses an error body");
+        assert!(env.data.is_none());
+        let api_err = env.error.expect("error object captured");
+        assert_eq!(api_err.message, "context length exceeded");
+        assert_eq!(api_err.code_string(), "400");
+    }
+
+    #[test]
+    fn embedding_envelope_parses_success_body() {
+        let body = r#"{"data":[{"embedding":[1.0,2.0,3.0],"index":0}]}"#;
+        let env: EmbeddingEnvelope =
+            serde_json::from_str(body).expect("envelope parses a success body");
+        assert!(env.error.is_none());
+        let data = env.data.expect("data present");
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].embedding, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn api_error_code_string_handles_number_string_and_missing() {
+        let num: ApiError = serde_json::from_str(r#"{"code":429,"message":"slow down"}"#).unwrap();
+        assert_eq!(num.code_string(), "429");
+
+        let s: ApiError =
+            serde_json::from_str(r#"{"code":"rate_limited","message":"slow down"}"#).unwrap();
+        assert_eq!(s.code_string(), "rate_limited");
+
+        let missing: ApiError = serde_json::from_str(r#"{"message":"oops"}"#).unwrap();
+        assert_eq!(missing.code_string(), "unknown");
     }
 }

@@ -499,6 +499,10 @@ pub mod validation {
             format!("extensão sqlite-vec falhou: {msg}")
         }
 
+        pub fn provider_error(code: &str, message: &str) -> String {
+            format!("erro do provedor (código {code}): {message}")
+        }
+
         pub fn db_busy(msg: &str) -> String {
             format!("banco ocupado: {msg}")
         }

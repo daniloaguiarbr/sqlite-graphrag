@@ -75,6 +75,12 @@ struct ChatResponse {
     choices: Vec<Choice>,
     #[serde(default)]
     usage: Option<Usage>,
+    /// Structured provider error. OpenRouter may return this inside an HTTP 200
+    /// body (e.g. token/context-length overflow); without it the response would
+    /// parse into empty `choices` and surface the misleading "no structured
+    /// content" error instead of the real cause (GAP-SG-03).
+    #[serde(default)]
+    error: Option<ApiError>,
 }
 
 #[derive(Deserialize)]
@@ -92,6 +98,30 @@ struct RespMessage {
 struct Usage {
     #[serde(default)]
     cost: Option<f64>,
+}
+
+/// Structured OpenRouter error object carried under the `error` key. `code` is
+/// a `serde_json::Value` because the provider sends it as either a JSON number
+/// or string; `message` defaults to empty so a malformed error object never
+/// masks the cause.
+#[derive(Deserialize)]
+struct ApiError {
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+    #[serde(default)]
+    message: String,
+}
+
+impl ApiError {
+    /// Renders `code` as a plain string without JSON quoting, falling back to
+    /// `unknown` when the provider omitted it.
+    fn code_string(&self) -> String {
+        match &self.code {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => "unknown".to_string(),
+        }
+    }
 }
 
 /// Process-wide OpenRouter chat client. Holds the model name so that callers
@@ -315,7 +345,20 @@ impl OpenRouterChatClient {
                     AppError::Validation(format!("failed to read response body: {e}"))
                 })?;
                 match serde_json::from_str::<ChatResponse>(&body) {
-                    Ok(parsed) => return Ok(parsed),
+                    Ok(parsed) => {
+                        // A structured error object inside a 2xx body is a
+                        // PERMANENT provider rejection (e.g. context-length
+                        // overflow). Surface the REAL code/message instead of
+                        // letting empty choices masquerade as no-structured-
+                        // content, and do not retry.
+                        if let Some(api_err) = parsed.error {
+                            return Err(AppError::ProviderError {
+                                code: api_err.code_string(),
+                                message: api_err.message,
+                            });
+                        }
+                        return Ok(parsed);
+                    }
                     Err(e) => {
                         tracing::warn!(
                             attempt,
@@ -357,6 +400,13 @@ impl OpenRouterChatClient {
                     retry_after_secs = retry_after,
                     "OpenRouter rate limited, waiting"
                 );
+                // GAP-SG-56: surface the Retry-After delay to the caller. If
+                // every attempt is rate limited, the loop exits with this
+                // RateLimited error (retryable) carrying the server-advised
+                // wait, instead of a generic max-retries-exceeded message.
+                last_err = Some(AppError::RateLimited {
+                    detail: format!("OpenRouter HTTP 429 (retry-after {retry_after}s)"),
+                });
                 tokio::time::sleep(Duration::from_secs(retry_after)).await;
                 continue;
             }
@@ -778,5 +828,35 @@ mod tests {
             .await
             .expect_err("request exceeds the 1s timeout");
         assert!(err.to_string().contains("timed out"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn complete_surfaces_provider_error_in_200_body() {
+        // GAP-SG-03: an HTTP 200 whose body is a structured OpenRouter error
+        // (token/context-length overflow) must surface the REAL message, not
+        // the misleading no-structured-content from empty choices.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "error": { "code": 400, "message": "context length exceeded" }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server, "deepseek/deepseek-v4-flash").await;
+        let err = client
+            .complete("system", "input", TEST_SCHEMA, None)
+            .await
+            .expect_err("provider error must surface");
+        let msg = err.to_string();
+        assert!(msg.contains("context length exceeded"), "got: {msg}");
+        assert!(
+            !msg.contains("no structured content"),
+            "must not mask as empty choices: {msg}"
+        );
+        assert!(
+            !msg.contains("missing field"),
+            "must not mask as a missing field: {msg}"
+        );
     }
 }
