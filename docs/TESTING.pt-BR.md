@@ -101,6 +101,15 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 - `embed_via_backend_returns_resolved_kind` — `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`
 - `setup_mock_path_emits_json` — `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado para emitir JSON (não JSONL)
 
+## v1.0.97 — Testes da Auditoria Pós-Selagem (ADR-0056/0057/0058, GAP-SG-57..66)
+
+- `commands::enrich::queue::tests::prune_dead_orphans_removes_only_orphan_memory_rows` — GAP-SG-66. Prova que `enrich --prune-dead-orphans` deleta só linhas `dead` órfãs de memória, mantém a linha de memória viva e nunca toca em linhas de entidade (retorna 1).
+- `paths::tests` ×3 para `sidecar_path` — GAP-SG-64/65. Cobrem DB absoluto (sidecar derivado ao lado), nome relativo puro (fallback para CWD) e nome com diretório (sidecar nesse diretório).
+- `tests/enrich_queue_db_isolation.rs` — GAP-SG-64. Planta uma fila ao lado de `db_a` e prova que `enrich --status` a lê de um CWD não relacionado.
+- Cluster flaky `llm_slots::tests` endurecido (GAP-SG-63) — testes de slot sensíveis a contenção foram de ~8/10 falhas para 0/10 sob a suíte completa.
+- Lint gate `#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]` em `src/lib.rs` (GAP-SG-58) — a contagem real de `unwrap`/`expect` de produção (~36, não os 423 que contavam `#[cfg(test)]`) foi convertida para `?`/`ok_or_else`/recuperação de poison; o gate revelou mais 5 em `config_cmd.rs`.
+- Contagens registradas no selo: `cargo test --lib` 973/0, `cargo test` padrão 1164/0, `cargo test --features slow-tests` 1522/0/11 ignorados; após o trabalho pós-selagem `cargo install --path . --locked --force` realinhou o binário global e `installed_binary_smoke` roda 26/0 SEM bypass (GAP-SG-62 resolvido); `cargo fmt --check` 0 diffs; `cargo clippy --all-targets --features slow-tests -- -D warnings` 0 warnings.
+
 ## v1.0.96 — Testes de Dead-Letter do Enrich + Concorrência REST OpenRouter (ADR-0055)
 
 - Testes unitários de dead-letter (`commands::enrich::tests`, 8 testes): rate-limit / timeout / db-busy classificam como `Transient`; validação / parse classificam como `HardFailure`; `open_queue_db` executa o `ALTER TABLE` de `error_class` + `next_retry_at` de forma idempotente; `record_item_failure` marca um HardFailure como `dead`, um Transient como `pending` com `next_retry_at` futuro (via `compute_delay`) e um Transient além de `--max-attempts` como `dead`; o dequeue pula linhas com retry futuro e exclui `dead`

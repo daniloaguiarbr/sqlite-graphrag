@@ -6,7 +6,7 @@
 - The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` runs on Linux only; the same assertion applies on Windows by construction (env propagation is platform-agnostic in the helper)
 - `--strict-env-clear` flag and `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` env var work identically on Windows; only `PATH` (or `Path` on Windows, which the helper normalises) is forwarded in strict mode
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
-# CROSS PLATFORM SUPPORT (v1.0.96 — Enrich Dead-Letter + REST Concurrency)
+# CROSS PLATFORM SUPPORT (v1.0.97 — Queue Sidecar Derived from `--db`)
 
 > One 14.6 MiB binary, five targets, zero model download across every major operating system (v1.0.76 LLM-Only)
 
@@ -272,6 +272,11 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - The detection is regex-based and operates on the raw stderr bytes; it does not depend on the `codex` CLI version or platform
 - The fallback writes the original failure to `tracing::warn!` (stderr) and persists the row in `pending_embeddings` if no backend succeeds
 
+
+## v1.0.97 Cross-Platform Behaviour
+### Queue Sidecar Path Derivation (GAP-SG-64 / GAP-SG-65, ADR-0057)
+- The enrich/ingest queue sidecars are derived from the `--db` directory via `paths::sidecar_path`, which uses `std::path::Path::parent()` + `join` — platform-agnostic, identical on Linux glibc, aarch64 GNU, macOS Apple Silicon, Windows x86_64 and Windows ARM64; the graceful bare-filename fallback (no parent) preserves the legacy CWD layout on every filesystem (ext4, APFS, NTFS)
+- No new platform-specific primitive is introduced; the production `unwrap`/`expect` audit (GAP-SG-57..60, ADR-0056), the `llm_slots` test hardening (GAP-SG-63), and the new `enrich --prune-dead-orphans` inspector (GAP-SG-66, ADR-0058) — a SQLite delete on the `.enrich-queue.sqlite` sidecar — are internal and cross-platform by construction
 
 ## v1.0.96 Cross-Platform Behaviour
 ### Bounded REST Fan-Out (GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)

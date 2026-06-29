@@ -44,6 +44,17 @@
 - `--openrouter-base-url URL` — optional override of the OpenRouter base URL
 - New module `src/chat_api.rs` (`OpenRouterChatClient`) mirrors `src/embedding_api.rs`; SCAN→JUDGE→PERSIST unchanged, only the JUDGE transport differs; 13/13 real models verified; no migration, schema v15
 
+## New Commands and Flags (since v1.0.97)
+- `enrich --requeue-dead` — moves terminal `dead` items back to `pending` for another pass (no in-place queue reset); `enrich --list-dead` — read-only JSON listing of each dead item with its `error_class` and `message`; `enrich --ignore-backoff` — dequeues eligible items immediately, bypassing the `next_retry_at` cooldown; `enrich --prune-dead-orphans` — read-only inspector (no LLM, no singleton) that deletes `dead` memory-type queue entries whose `item_key` no longer exists in the main database, leaving entity rows untouched (GAP-SG-66, ADR-0058)
+- `enrich --status`, `--list-dead`, `--requeue-dead` and `--prune-dead-orphans` now run WITHOUT `--operation`/`--mode` (previously `--mode` was mandatory) — ideal for hook/timer integration
+- `enrich --operation augment-bindings` — adds bindings to memories that are ALREADY linked; REQUIRES `--names <a,b,c>` or `--names-file <path>`. `enrich --operation body-extract --body-extract-graph-only` — read-only graph extraction without rewriting the body
+- `--max-attempts` default raised to 8 (range 1..=20); `--openrouter-timeout` default raised to 600s
+- `remember --graph-file <path>` — loads the entity graph from a file (combinable with `--body-file`); `remember --strict-name` — rejects a non-kebab name instead of normalizing; `remember --replace-graph` (with `--force-merge`) zeroes existing bindings before writing
+- `ingest --force-merge` — updates duplicate files instead of skipping (dedup by `body_hash`); oversized bodies auto-split natively into chunks
+- `read --format raw` — prints the pure body with no JSON envelope; `unlink --memory <name> --entity <name>` — removes a single curated memory-to-entity binding
+- `embedding status --json` adds a `coverage` object (real vector counts per table); `stats --json` adds a top-level `total_memories`
+- `--db <PATH>` must be placed AFTER the subcommand; `SQLITE_GRAPHRAG_DB_PATH` is the canonical position-independent override (SG-32). The per-namespace enrich singleton is unchanged, with `--rest-concurrency` (clamp 1..=16, default 8) as the throughput remedy (GAP-20)
+
 ## New Commands and Flags (since v1.0.96)
 - `enrich --until-empty` — internal scan→drain loop that runs until the queue holds no eligible items or `--max-runtime` expires; replaces the external bash retry loop (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
 - `--max-runtime <SECONDS>` — wall-clock ceiling for `--until-empty` (default 3600)

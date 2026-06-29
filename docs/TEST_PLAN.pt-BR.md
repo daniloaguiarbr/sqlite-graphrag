@@ -95,6 +95,25 @@
 
 O plano de teste do Split do Backend Claude (ADR-0042) e o plano de teste da Remediação de Cinco Gaps (ADR-0043) estão consolidados neste documento; seus arquivos de snapshot independentes foram aposentados na v1.0.96.
 
+## Plano de Teste v1.0.97 — Sidecar de Fila do `--db` + Poda de Órfãos Dead-Letter (ADR-0056/0057/0058, GAP-SG-57..66)
+
+### Adições na Camada 1 (unit)
+- `paths::sidecar_path` (3 testes): um `--db` absoluto deriva o sidecar ao lado dele; um nome puro (sem parent) cai no layout do CWD; um `--db` em diretório aninhado deriva o sidecar naquele diretório
+- `prune_dead_orphans_removes_only_orphan_memory_rows`: somente linhas `status='dead'` com `item_type='memory'` cujo `item_key` não existe mais no banco principal são deletadas; linhas dead com chave de entidade e linhas dead de memória viva ficam intocadas
+- Auditoria de `unwrap`/`expect` de produção (GAP-SG-57..60, ADR-0056) imposta por um lint gate do Clippy (`-D warnings`); a desduplicação de `parse_claude_output` mantém os parsers do enrich e do ingest_claude comportamentalmente idênticos
+
+### Adições na Camada 2 (integração)
+- `tests/enrich_queue_db_isolation.rs`: o enrich enfileira contra `tmpA/db.sqlite`, depois `enrich --status --db tmpA/db.sqlite` de um CWD diferente reporta o backlog enquanto `--db tmpB/db.sqlite` reporta zero — prova que a fila segue o `--db`, não o CWD
+
+### Endurecimento de testes flaky
+- GAP-SG-61 `concurrency_peak_never_exceeds_permits` e o cluster `llm_slots::tests` do GAP-SG-63 foram des-flakados (contabilidade determinística de permits); ambos verdes sob a suite completa
+
+### Smoke do binário instalado (GAP-SG-62)
+- `cargo install --path . --locked --force` realinhou `~/.cargo/bin/sqlite-graphrag` para 1.0.97; `installed_binary_smoke` agora roda 26/0 SEM o bypass de version-mismatch
+
+### Totais de selagem
+- `cargo test --lib` 973 passed / 0 failed; `cargo test` default 1164 / 0; `cargo test --features slow-tests` 1522 / 0 / 11 ignored; `cargo fmt --check` 0 diffs; `cargo clippy --all-targets --features slow-tests -- -D warnings` 0 warnings
+
 ## Plano de Teste v1.0.96 — Dead-Letter do Enrich + Concorrência REST OpenRouter (ADR-0055, GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY)
 
 ### Adições na Camada 1 (unit)

@@ -306,6 +306,9 @@ static NAME_SLUG_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::ne
 
 /// Returns a reference to the compiled [`NAME_SLUG_REGEX`] pattern.
 /// Compiled once on first call, cached via `OnceLock`.
+// expect_used (audited v1.0.97): NAME_SLUG_REGEX is a const literal; a parse
+// failure would be a compile-reproducible bug, never a runtime condition.
+#[allow(clippy::expect_used)]
 pub fn name_slug_regex() -> &'static regex::Regex {
     NAME_SLUG_RE.get_or_init(|| {
         regex::Regex::new(NAME_SLUG_REGEX).expect("NAME_SLUG_REGEX is a valid pattern")
@@ -379,9 +382,6 @@ pub const BATCH_PARTIAL_FAILURE_EXIT_CODE: i32 = 13;
 
 /// Exit code for DbBusy in v2.0.0 (migrated from 13 to free 13 for batch failure).
 pub const DB_BUSY_EXIT_CODE: i32 = 15;
-
-/// Filename used for the advisory exclusive lock that prevents parallel invocations.
-pub const CLI_LOCK_FILE: &str = "cli.lock";
 
 /// Polling interval in milliseconds used by `--wait-lock` between `try_lock_exclusive` attempts.
 pub const CLI_LOCK_POLL_INTERVAL_MS: u64 = 500;

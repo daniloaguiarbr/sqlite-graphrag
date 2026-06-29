@@ -63,7 +63,8 @@ pub fn register_shutdown_handler() {
                     }
                 }
             })
-            .expect("failed to spawn SIGTERM/SIGHUP handler thread");
+            .inspect_err(|e| tracing::warn!(target: "signals", error = %e, "SIGTERM/SIGHUP handler thread spawn failed"))
+            .ok();
 
         // Drain thread: blocks on the channel and calls the same handler
         // used by the SIGINT path. Synchronous main() can't await this,
@@ -80,7 +81,8 @@ pub fn register_shutdown_handler() {
                     handle_first_signal(name, number);
                 }
             })
-            .expect("failed to spawn SIGTERM drain thread");
+            .inspect_err(|e| tracing::warn!(target: "signals", error = %e, "SIGTERM drain thread spawn failed"))
+            .ok();
     }
 }
 

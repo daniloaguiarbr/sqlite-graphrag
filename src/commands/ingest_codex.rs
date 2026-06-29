@@ -545,7 +545,7 @@ fn collect_matching_files(
 }
 
 /// Opens or creates the queue database for tracking ingest progress.
-fn open_queue_db(path: &str) -> Result<Connection, AppError> {
+fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;
 
     conn.execute_batch(
@@ -593,6 +593,10 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
     // ingest against different databases is allowed.
     let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let early_paths = AppPaths::resolve(args.db.as_deref())?;
+    let queue_path = match args.queue_db.as_deref() {
+        Some(p) => std::path::PathBuf::from(p),
+        None => crate::paths::sidecar_path(&early_paths.db, ".ingest-queue.sqlite"),
+    };
     let _singleton = crate::lock::acquire_job_singleton(
         crate::lock::JobType::IngestCodex,
         &early_ns,
@@ -624,7 +628,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
     // Stage 2: Scan files
     let files = collect_matching_files(&args.dir, &args.pattern, args.recursive, args.max_files)?;
 
-    let queue_conn = open_queue_db(&args.queue_db)?;
+    let queue_conn = open_queue_db(&queue_path)?;
 
     if args.resume {
         let reset = queue_conn
@@ -717,7 +721,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
             elapsed_ms: started.elapsed().as_millis() as u64,
         });
         if !args.keep_queue {
-            let _ = std::fs::remove_file(&args.queue_db);
+            let _ = std::fs::remove_file(&queue_path);
         }
         return Ok(());
     }
@@ -1142,7 +1146,7 @@ pub fn run_codex_ingest(args: &IngestArgs) -> Result<(), AppError> {
     });
 
     if !args.keep_queue && failed == 0 {
-        let _ = std::fs::remove_file(&args.queue_db);
+        let _ = std::fs::remove_file(&queue_path);
     }
 
     Ok(())

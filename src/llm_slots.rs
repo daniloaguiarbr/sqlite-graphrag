@@ -254,6 +254,11 @@ mod tests {
     use std::sync::Barrier;
     use std::thread;
 
+    // Serialises every test that mutates the process-global slot env
+    // (XDG_RUNTIME_DIR / SQLITE_GRAPHRAG_CACHE_DIR). Without this, parallel
+    // tests clobber each other's env and collide in the same slots dir.
+    static SLOT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn unique_test_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!(
@@ -288,6 +293,7 @@ mod tests {
 
     #[test]
     fn slot_enforces_max_concurrency() {
+        let _serial = SLOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let _g1 = acquire_llm_slot(2, 5).expect("first slot");
@@ -305,6 +311,7 @@ mod tests {
 
     #[test]
     fn slot_releases_on_drop() {
+        let _serial = SLOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let g1 = acquire_llm_slot(1, 5).expect("first slot");
@@ -322,8 +329,8 @@ mod tests {
 
     #[test]
     fn read_status_reflects_active_slots() {
-        let original = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok();
-        std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", unique_test_dir());
+        let _serial = SLOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let _g1 = acquire_llm_slot(4, 5).expect("first slot");
         let status = read_status(4);
@@ -331,17 +338,13 @@ mod tests {
         assert!(status.active >= 1);
         assert!(!status.pids.is_empty());
 
-        if let Some(v) = original {
-            std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", v);
-        } else {
-            std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR");
-        }
+        restore_slots_env(orig_xdg, orig_cache);
     }
 
     #[test]
     fn concurrent_acquires_with_2_threads_serialize() {
-        let original = std::env::var("SQLITE_GRAPHRAG_CACHE_DIR").ok();
-        std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", unique_test_dir());
+        let _serial = SLOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (orig_xdg, orig_cache) = isolate_slots_env();
 
         let barrier = Arc::new(Barrier::new(3));
         let mut handles = vec![];
@@ -357,10 +360,6 @@ mod tests {
         // max=2 → no máximo 2 succeeds simultâneos (mas teste serializa)
         assert!(successes >= 1);
 
-        if let Some(v) = original {
-            std::env::set_var("SQLITE_GRAPHRAG_CACHE_DIR", v);
-        } else {
-            std::env::remove_var("SQLITE_GRAPHRAG_CACHE_DIR");
-        }
+        restore_slots_env(orig_xdg, orig_cache);
     }
 }

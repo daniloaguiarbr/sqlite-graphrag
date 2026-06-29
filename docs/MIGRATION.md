@@ -1,11 +1,23 @@
-# MIGRATING TO v1.0.96 — Enrich Dead-Letter + REST Concurrency (ADR-0055)
+# MIGRATING TO v1.0.97 — Queue Sidecar Derived from `--db` (ADR-0057)
 
-> This guide covers upgrading to v1.0.96. No migration runs on the main database; schema remains at v15. The separate `.enrich-queue.sqlite` queue database is migrated in-place automatically on the first `enrich` — no operator action. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+> This guide covers upgrading to v1.0.97. No migration runs on the main database; the schema remains at v15. The `.enrich-queue.sqlite` / `.ingest-queue.sqlite` worklist sidecars are now derived from the `--db` directory (ADR-0057) instead of the process CWD — no operator action for the canonical default DB. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.97 — Queue Sidecar Derived from `--db` (ADR-0057)
+
+### What Changed
+- **GAP-SG-64 / GAP-SG-65 (ADR-0057)**: the enrich (`.enrich-queue.sqlite`) and ingest (`.ingest-queue.sqlite`) worklist sidecars are now derived from the `--db` directory via `paths::sidecar_path`, not the process CWD. `enrich --status` and the ingest `--resume`/`--retry-failed` follow `--db` regardless of the working directory.
+- NO main-database schema migration (stays at v15). NO sidecar file migration: when run from the project directory with the default DB, the derived path coincides with the legacy `./.enrich-queue.sqlite`, so the existing backlog is kept in place. When `--db` points elsewhere, the queue that belongs to that database is the one used.
+- **GAP-SG-57..60 (ADR-0056)**: internal-only — `enrich.rs` modularised, production `unwrap`/`expect` audited behind a lint gate, `parse_claude_output` de-duplicated. No CLI or output change.
+- **GAP-SG-66 (ADR-0058)**: new read-only inspector `enrich --prune-dead-orphans` deletes ONLY enrich-queue rows with `status='dead'` and `item_type='memory'` whose `item_key` (the memory name) is absent from the main DB — for operators upgrading with an inflated `queue_dead` of orphan rows (memories renamed or purged after enqueue, which `--requeue-dead` only re-fails). No LLM, no singleton, no `--operation`/`--mode`; entity-keyed dead rows are untouched and only the `.enrich-queue.sqlite` sidecar is mutated.
+
+### Operator Action
+- Reinstall: `cargo install sqlite-graphrag --locked --force`. No data migration. If you previously ran `enrich`/`ingest` with a `--db` that diverged from your CWD, the now-correct sidecar is the one next to that `--db`; a stale queue left in an old CWD can be deleted.
+- If `enrich --status` reports a large `queue_dead` of orphan rows after the upgrade, run `enrich --prune-dead-orphans --json` once to drop them (read-only inspector; safe — it removes only dead rows whose memory no longer exists).
 
 ## v1.0.96 — Enrich Dead-Letter + REST Concurrency (ADR-0055)
 
 ### What Changed
-- **GAP-ENRICH-BACKLOG-CONVERGE**: `enrich` now drives the backlog to convergence via a dead-letter queue. The `.enrich-queue.sqlite` database gains two columns through an IDEMPOTENT `ALTER TABLE` — `error_class` and `next_retry_at` — plus the index `idx_enrich_queue_eligible ON queue(status, next_retry_at)` and a new terminal status `dead`. Transient failures (rate-limit/timeout/5xx) reschedule `next_retry_at` with exponential backoff; hard failures (validation/parse) go terminal immediately. An item turns `dead` after `--max-attempts` transient retries (default 5) or on the first hard failure. Dequeue honours `next_retry_at` and excludes `dead`, so the live set is strictly decreasing.
+- **GAP-ENRICH-BACKLOG-CONVERGE**: `enrich` now drives the backlog to convergence via a dead-letter queue. The `.enrich-queue.sqlite` database gains two columns through an IDEMPOTENT `ALTER TABLE` — `error_class` and `next_retry_at` — plus the index `idx_enrich_queue_eligible ON queue(status, next_retry_at)` and a new terminal status `dead`. Transient failures (rate-limit/timeout/5xx) reschedule `next_retry_at` with exponential backoff; hard failures (validation/parse) go terminal immediately. An item turns `dead` after `--max-attempts` transient retries (default 5 in v1.0.96; raised to 8 in v1.0.97) or on the first hard failure. Dequeue honours `next_retry_at` and excludes `dead`, so the live set is strictly decreasing.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: REST embedding for `--mode openrouter` fans out per batch with a bounded `tokio::task::JoinSet` (no new dependency), in-flight clamp 1..16 (Cloudflare-safe range). Chunk order is preserved by index; SQLite writes stay serialized via WAL + atomic claim (single-writer intact).
 
 ### Queue Migration — Automatic and In-Place

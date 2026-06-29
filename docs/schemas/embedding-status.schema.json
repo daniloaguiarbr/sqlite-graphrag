@@ -5,7 +5,7 @@
   "description": "Output of `sqlite-graphrag embedding status` for the pending-embeddings queue health (GAP-005, v1.0.82; backend_invoked added in v1.0.84 by ADR-0042).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action", "counts", "elapsed_ms"],
+  "required": ["action", "counts", "coverage", "elapsed_ms"],
   "properties": {
     "action": { "const": "embedding_status" },
     "backend_invoked": {
@@ -24,6 +24,20 @@
         "abandoned": { "type": "integer", "minimum": 0 }
       }
     },
-    "elapsed_ms": { "type": "integer", "minimum": 0 }
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "coverage": {
+      "description": "GAP-SG-41 (v1.0.97): real persisted-vector coverage queried from the vector tables, distinct from the always-empty async `counts` queue. Always present.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memories_total", "memories_with_vec", "entities_total", "entities_with_vec", "chunks_total", "chunks_with_vec"],
+      "properties": {
+        "memories_total": { "type": "integer", "minimum": 0 },
+        "memories_with_vec": { "type": "integer", "minimum": 0 },
+        "entities_total": { "type": "integer", "minimum": 0 },
+        "entities_with_vec": { "type": "integer", "minimum": 0 },
+        "chunks_total": { "type": "integer", "minimum": 0 },
+        "chunks_with_vec": { "type": "integer", "minimum": 0 }
+      }
+    }
   }
 }

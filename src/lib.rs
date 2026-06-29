@@ -36,6 +36,11 @@
 //! suitable for orchestration by shell scripts and LLM agents. Consult the
 //! README for the full contract.
 
+// v1.0.97 (GAP-ROBUSTEZ-UNWRAP): production code must not panic via
+// unwrap()/expect(). Test code keeps them for brevity (cfg(test) opt-out).
+// Proven-invariant call sites carry a local #[allow] with justification.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::OnceLock;
 use tokio_util::sync::CancellationToken;

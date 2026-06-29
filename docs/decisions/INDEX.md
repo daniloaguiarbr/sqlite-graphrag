@@ -57,6 +57,9 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0053](adr-0053-v1094-four-gap-remediation.md) | v1.0.94 Four-Gap Remediation | v1.0.94 | Accepted | [PT-BR](adr-0053-v1094-four-gap-remediation.pt-BR.md) |
 | [ADR-0054](adr-0054-openrouter-chat-enrich.md) | OpenRouter Chat Enrich (GAP-OR-ENRICH) | v1.0.95 | Accepted | [PT-BR](adr-0054-openrouter-chat-enrich.pt-BR.md) |
 | [ADR-0055](adr-0055-enrich-deadletter-rest-concurrency.md) | Enrich Dead-Letter + REST Concurrency (GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY) | v1.0.96 | Accepted | [PT-BR](adr-0055-enrich-deadletter-rest-concurrency.pt-BR.md) |
+| [ADR-0056](adr-0056-enrich-modularisation-unwrap-audit.md) | Enrich Modularisation + unwrap/expect Audit + parse_claude_output DRY (GAP-SG-57..60) | v1.0.97 | Accepted | [PT-BR](adr-0056-enrich-modularisation-unwrap-audit.pt-BR.md) |
+| [ADR-0057](adr-0057-queue-db-relative-sidecar.md) | Enrich + Ingest Queue Sidecar Derived from `--db` (GAP-SG-64, GAP-SG-65) | v1.0.97 | Accepted | [PT-BR](adr-0057-queue-db-relative-sidecar.pt-BR.md) |
+| [ADR-0058](adr-0058-prune-dead-orphans.md) | `enrich --prune-dead-orphans` — Clean Orphaned Dead-Letter Rows (GAP-SG-66) | v1.0.97 | Accepted | [PT-BR](adr-0058-prune-dead-orphans.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -78,11 +81,12 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.94**: 1 ADR (0053) — four-gap remediation (default dim 384, timeout 300s, enrich --mode required, entity embedding honours backends)
 - **v1.0.95**: 1 ADR (0054) — OpenRouter chat enrich (`enrich --mode openrouter`)
 - **v1.0.96**: 1 ADR (0055) — enrich dead-letter + REST concurrency fan-out
+- **v1.0.97**: 3 ADRs (0056-0058) — enrich modularisation + unwrap audit; queue sidecar derived from `--db`; prune orphaned dead-letter
 
 ## Bilíngue Status
 
-- **EN (English)**: 47/47 ADRs (100%)
-- **PT-BR (Português Brasileiro)**: 35/47 ADRs (74%)
+- **EN (English)**: 52/52 ADRs (100%)
+- **PT-BR (Português Brasileiro)**: 40/52 ADRs (77%)
 - **PT-BR pendente**: 12 ADRs (0007-0018) — criados antes do mandato bilíngue (legado histórico)
 
 ## Conventions
@@ -96,10 +100,10 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 
 ## Adding a New ADR
 
-1. Choose the next sequential number (next is ADR-0056)
-2. Create `adr-0056-slug.md` following the canonical structure
+1. Choose the next sequential number (next is ADR-0059)
+2. Create `adr-0059-slug.md` following the canonical structure
 3. Add entry to this INDEX.md (EN row)
-4. After EN stabilizes (typically 1+ release), create `adr-0050-slug.pt-BR.md`
+4. After EN stabilizes (typically 1+ release), create `adr-0059-slug.pt-BR.md`
 5. Add PT-BR column link
 6. Update the "Coverage by Version" section
 7. Reference the new ADR from `gaps.md` if it closes a documented gap

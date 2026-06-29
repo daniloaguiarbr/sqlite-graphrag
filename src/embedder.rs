@@ -139,7 +139,9 @@ pub(crate) fn shared_runtime() -> Result<&'static tokio::runtime::Runtime, AppEr
         .build()
         .map_err(|e| AppError::Embedding(format!("tokio runtime init failed: {e}")))?;
     let _ = RUNTIME.set(rt);
-    Ok(RUNTIME.get().expect("RUNTIME initialised above"))
+    RUNTIME.get().ok_or_else(|| {
+        AppError::Embedding("tokio runtime unavailable after initialisation".to_string())
+    })
 }
 
 /// Initialises the LLM-embedding client on first use and returns it.
@@ -149,7 +151,9 @@ pub fn get_embedder(_models_dir: &Path) -> Result<&'static Mutex<LlmEmbedding>, 
     }
     let backend = LlmEmbedding::detect_available()?;
     let _ = EMBEDDER.set(Mutex::new(backend));
-    Ok(EMBEDDER.get().expect("EMBEDDER initialised above"))
+    EMBEDDER
+        .get()
+        .ok_or_else(|| AppError::Embedding("embedder unavailable after initialisation".to_string()))
 }
 
 /// ADR-0042 / GAP-002: returns the process-wide Claude embedder, lazily
@@ -172,9 +176,9 @@ pub fn get_claude_embedder(
     }
     let backend = builder.build()?;
     let _ = CLAUDE_EMBEDDER.set(Mutex::new(backend));
-    Ok(CLAUDE_EMBEDDER
-        .get()
-        .expect("CLAUDE_EMBEDDER initialised above"))
+    CLAUDE_EMBEDDER.get().ok_or_else(|| {
+        AppError::Embedding("claude embedder unavailable after initialisation".to_string())
+    })
 }
 
 /// GAP-OPENCODE-001 / v1.0.90: returns the process-wide OpenCode embedder,
@@ -197,9 +201,9 @@ pub fn get_opencode_embedder(
     }
     let backend = builder.build()?;
     let _ = OPENCODE_EMBEDDER.set(Mutex::new(backend));
-    Ok(OPENCODE_EMBEDDER
-        .get()
-        .expect("OPENCODE_EMBEDDER initialised above"))
+    OPENCODE_EMBEDDER.get().ok_or_else(|| {
+        AppError::Embedding("opencode embedder unavailable after initialisation".to_string())
+    })
 }
 
 pub fn get_openrouter_embedder(
@@ -212,9 +216,9 @@ pub fn get_openrouter_embedder(
     }
     let client = crate::embedding_api::OpenRouterClient::new(api_key, model.to_string(), dim)?;
     let _ = OPENROUTER_CLIENT.set(client);
-    Ok(OPENROUTER_CLIENT
-        .get()
-        .expect("OPENROUTER_CLIENT initialised above"))
+    OPENROUTER_CLIENT.get().ok_or_else(|| {
+        AppError::Embedding("openrouter client unavailable after initialisation".to_string())
+    })
 }
 
 /// v1.0.95 (ADR-0054): initialises the process-wide OpenRouter chat client on
@@ -231,9 +235,9 @@ pub fn get_openrouter_chat_client(
     let client =
         crate::chat_api::OpenRouterChatClient::new(api_key, model.to_string(), timeout_secs)?;
     let _ = OPENROUTER_CHAT_CLIENT.set(client);
-    Ok(OPENROUTER_CHAT_CLIENT
-        .get()
-        .expect("OPENROUTER_CHAT_CLIENT initialised above"))
+    OPENROUTER_CHAT_CLIENT.get().ok_or_else(|| {
+        AppError::Embedding("openrouter chat client unavailable after initialisation".to_string())
+    })
 }
 
 /// v1.0.95: returns the process-wide OpenRouter chat client if it has already
@@ -1754,7 +1758,7 @@ mod tests {
                 current.fetch_sub(1, Ordering::SeqCst);
                 Ok(batch
                     .into_iter()
-                    .map(|(i, _)| (i, dummy_vec(crate::constants::embedding_dim())))
+                    .map(|(i, _)| (i, dummy_vec(dim)))
                     .collect())
             }
         };
@@ -1800,7 +1804,7 @@ mod tests {
             }
             Ok(batch
                 .into_iter()
-                .map(|(i, _)| (i, dummy_vec(crate::constants::embedding_dim())))
+                .map(|(i, _)| (i, dummy_vec(dim)))
                 .collect())
         };
 
@@ -1839,7 +1843,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             Ok(batch
                 .into_iter()
-                .map(|(i, _)| (i, dummy_vec(crate::constants::embedding_dim())))
+                .map(|(i, _)| (i, dummy_vec(dim)))
                 .collect())
         };
 

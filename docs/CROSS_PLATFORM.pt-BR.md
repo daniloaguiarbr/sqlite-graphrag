@@ -6,7 +6,7 @@
 - O teste de auditoria no-leak `audit_no_token_leak_in_subprocess_stderr` roda apenas em Linux; a mesma asserção se aplica no Windows por construção (propagação de env é agnóstica de plataforma no helper)
 - Flag `--strict-env-clear` e env var `SQLITE_GRAPHRAG_STRICT_ENV_CLEAR=1` funcionam identicamente no Windows; apenas `PATH` (ou `Path` no Windows, que o helper normaliza) é encaminhado em modo estrito
 - Veja `docs/decisions/adr-0041-preserve-custom-provider-env.pt-BR.md` e `docs/COOKBOOK.pt-BR.md#como-usar-providers-anthropic-compativeis-customizados-v1083` para a receita completa
-# SUPORTE CROSS PLATFORM (v1.0.96 — Dead-Letter do Enrich + Concorrência REST)
+# SUPORTE CROSS PLATFORM (v1.0.97 — Sidecar de Fila Derivado do `--db`)
 
 > Um binário de 14.6 MiB, cinco targets, zero download de modelo em todo sistema operacional moderno (v1.0.76 Apenas LLM)
 
@@ -242,6 +242,11 @@ export SQLITE_GRAPHRAG_LOG_LEVEL="debug"
 - Defesa em profundidade: `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` estão INTENCIONALMENTE AUSENTES das whitelists `env_clear` em toda plataforma; mesmo se um refactor futuro mover o guard OAuth-only, a variável nunca alcança o filho
 - Veja `docs/decisions/adr-0011-oauth-only-enforcement.md` para a justificativa completa e `src/commands/claude_runner.rs:574-666` e `src/commands/codex_spawn.rs:684-758` para os quatro testes de conformidade OAuth-only em cada binário
 
+
+## Comportamento Cross-Platform da v1.0.97
+### Derivação do Caminho do Sidecar de Fila (GAP-SG-64 / GAP-SG-65, ADR-0057)
+- Os sidecars de fila do enrich/ingest são derivados do diretório do `--db` via `paths::sidecar_path`, que usa `std::path::Path::parent()` + `join` — agnóstico de plataforma, idêntico em Linux glibc, aarch64 GNU, macOS Apple Silicon, Windows x86_64 e Windows ARM64; o fallback gracioso para nome puro (sem parent) preserva o layout CWD legado em todo filesystem (ext4, APFS, NTFS)
+- Nenhum primitivo novo específico de plataforma é introduzido; a auditoria de `unwrap`/`expect` em produção (GAP-SG-57..60, ADR-0056), o endurecimento dos testes `llm_slots` (GAP-SG-63) e o novo inspetor `enrich --prune-dead-orphans` (GAP-SG-66, ADR-0058) — um delete SQLite no sidecar `.enrich-queue.sqlite` — são internos e cross-platform por construção
 
 ## Comportamento Cross-Platform da v1.0.96
 ### Fan-Out REST Bounded (GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)

@@ -326,6 +326,18 @@ pub fn build_claude_command(
 /// G03: detects `terminal_reason: "max_turns"` and returns a specific error
 /// instead of a generic failure message.
 pub fn parse_claude_output(stdout: &str) -> Result<ClaudeResult, AppError> {
+    parse_claude_output_opts(stdout, false)
+}
+
+/// Like [`parse_claude_output`] but lets the caller decide whether a
+/// `terminal_reason: "max_turns"` result is fatal. `ingest` passes `true`
+/// (a partial extraction with a usable structured value is acceptable); `enrich`
+/// and the default keep `false` (max_turns means hooks are consuming turns — a
+/// misconfiguration to surface rather than silently accept).
+pub fn parse_claude_output_opts(
+    stdout: &str,
+    tolerate_max_turns: bool,
+) -> Result<ClaudeResult, AppError> {
     let elements: Vec<ClaudeOutputElement> = serde_json::from_str(stdout).map_err(|e| {
         AppError::Validation(format!("failed to parse claude output as JSON array: {e}"))
     })?;
@@ -345,7 +357,7 @@ pub fn parse_claude_output(stdout: &str) -> Result<ClaudeResult, AppError> {
         })?;
 
     // G03: detect max_turns exhaustion before checking is_error
-    if result_elem.terminal_reason.as_deref() == Some("max_turns") {
+    if !tolerate_max_turns && result_elem.terminal_reason.as_deref() == Some("max_turns") {
         tracing::warn!(
             target: "claude_runner",
             "claude -p hit max_turns limit — hooks may have consumed turns"

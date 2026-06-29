@@ -95,6 +95,25 @@
 
 The Claude Backend Split test plan (ADR-0042) and the Five-Gap Remediation test plan (ADR-0043) are consolidated into this document; their standalone snapshot files were retired in v1.0.96.
 
+## v1.0.97 Test Plan — Queue Sidecar from `--db` + Prune Dead-Letter Orphans (ADR-0056/0057/0058, GAP-SG-57..66)
+
+### Layer 1 (unit) additions
+- `paths::sidecar_path` (3 tests): an absolute `--db` derives the sidecar beside it; a bare filename (no parent) falls back to the CWD layout; a nested-directory `--db` derives the sidecar in that directory
+- `prune_dead_orphans_removes_only_orphan_memory_rows`: only `status='dead'` rows with `item_type='memory'` whose `item_key` is absent from the main DB are deleted; entity-keyed dead rows and live-memory dead rows are untouched
+- Production `unwrap`/`expect` audit (GAP-SG-57..60, ADR-0056) enforced by a Clippy lint gate (`-D warnings`); `parse_claude_output` de-duplication keeps the enrich and ingest_claude parsers behaviourally identical
+
+### Layer 2 (integration) additions
+- `tests/enrich_queue_db_isolation.rs`: enrich enqueues against `tmpA/db.sqlite`, then `enrich --status --db tmpA/db.sqlite` from a different CWD reports the backlog while `--db tmpB/db.sqlite` reports zero — proves the queue follows `--db`, not the CWD
+
+### Flaky-test hardening
+- GAP-SG-61 `concurrency_peak_never_exceeds_permits` and the GAP-SG-63 `llm_slots::tests` cluster were de-flaked (deterministic permit accounting); both green under the full suite
+
+### Installed-binary smoke (GAP-SG-62)
+- `cargo install --path . --locked --force` realigned `~/.cargo/bin/sqlite-graphrag` to 1.0.97; `installed_binary_smoke` now runs 26/0 WITHOUT the version-mismatch bypass
+
+### Sealing totals
+- `cargo test --lib` 973 passed / 0 failed; default `cargo test` 1164 / 0; `cargo test --features slow-tests` 1522 / 0 / 11 ignored; `cargo fmt --check` 0 diffs; `cargo clippy --all-targets --features slow-tests -- -D warnings` 0 warnings
+
 ## v1.0.96 Test Plan — Enrich Dead-Letter + OpenRouter REST Concurrency (ADR-0055, GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY)
 
 ### Layer 1 (unit) additions

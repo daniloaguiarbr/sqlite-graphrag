@@ -14,6 +14,16 @@
       "minimum": 0,
       "type": "number"
     },
+    "dead": {
+      "description": "Items moved to the terminal dead-letter state (GAP-SG-15/23, v1.0.97).",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "waiting": {
+      "description": "Items waiting on backoff with next_retry_at in the future (GAP-SG-15/16, v1.0.97).",
+      "minimum": 0,
+      "type": "integer"
+    },
     "elapsed_ms": {
       "description": "Total wall-clock time in milliseconds.",
       "minimum": 0,
@@ -64,7 +74,9 @@
     "failed",
     "skipped",
     "cost_usd",
-    "elapsed_ms"
+    "elapsed_ms",
+    "dead",
+    "waiting"
   ],
   "title": "EnrichSummary",
   "type": "object"

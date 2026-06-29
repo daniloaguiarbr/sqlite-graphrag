@@ -2171,6 +2171,24 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Rodar com workers LLM em paralelo: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 
+## Como Limpar Linhas de Dead-Letter Órfãs (v1.0.97)
+
+### Problema
+- A fila do enrich acumula linhas `dead` de memórias que foram renomeadas ou purgadas após o enfileiramento
+- `--requeue-dead` apenas re-falha essas linhas; não remove as verdadeiramente órfãs cuja chave de memória não existe mais no banco principal
+
+### Solução
+```bash
+sqlite-graphrag enrich --prune-dead-orphans --json
+```
+
+### Explicação
+- Deleta apenas linhas `status='dead' AND item_type='memory'` cujo `item_key` (nome da memória) está ausente da tabela principal de memórias — linhas de entidade são intocadas
+- Read-only em relação ao banco principal: somente o sidecar `.enrich-queue.sqlite` é mutado
+- Roda sem `--operation` nem `--mode`; sem LLM, sem singleton adquirido (GAP-SG-66, ADR-0058)
+- Verifique `.summary.pruned` na saída JSON para a contagem de linhas removidas
+
+
 ## Como Criar Memórias em Lote a Partir de NDJSON (v1.0.67)
 
 ### Problema

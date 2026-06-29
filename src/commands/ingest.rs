@@ -242,9 +242,9 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = false)]
     pub keep_queue: bool,
 
-    /// Custom path for the claude-code ingest queue database.
-    #[arg(long, default_value = ".ingest-queue.sqlite")]
-    pub queue_db: String,
+    /// Custom path for the ingest queue DB. Default: alongside the --db database.
+    #[arg(long)]
+    pub queue_db: Option<String>,
 
     /// Initial wait time in seconds when rate-limited (only with --mode claude-code).
     #[arg(long, default_value_t = 60)]
@@ -2111,6 +2111,7 @@ pub fn run(
             // backoff-ignore and graph-only flags stay at their defaults.
             list_dead: false,
             requeue_dead: false,
+            prune_dead_orphans: false,
             ignore_backoff: false,
             body_extract_graph_only: false,
         };

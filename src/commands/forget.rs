@@ -135,7 +135,7 @@ pub fn run(args: ForgetArgs) -> Result<(), AppError> {
     // memory. Best-effort and a no-op when the queue file is absent.
     if forgotten {
         if let Some(id) = memory_id {
-            crate::commands::enrich::cleanup_queue_entry(id, &name);
+            crate::commands::enrich::cleanup_queue_entry(&paths.db, id, &name);
         }
     }
 

@@ -1118,7 +1118,7 @@ pub fn run(
     // next enrich run re-scans it cleanly. Best-effort; no-op when the queue file
     // is absent.
     if action == "updated" {
-        crate::commands::enrich::cleanup_queue_entry(memory_id, &normalized_name);
+        crate::commands::enrich::cleanup_queue_entry(&paths.db, memory_id, &normalized_name);
     }
 
     // v1.0.24 P0-2: persist URLs in a dedicated table, outside the main transaction.

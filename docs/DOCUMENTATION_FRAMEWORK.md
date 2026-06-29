@@ -87,26 +87,34 @@ This section updates the framework to cover the documentation generated for the 
 - Updated in this release: README/CHANGELOG/AGENTS/INTEGRATIONS/SECURITY/CONTRIBUTING (root EN+PT); docs/AGENTS, HOW_TO_USE, COOKBOOK, MIGRATION, HEADLESS_INVOCATION, CROSS_PLATFORM, TESTING, TEST_PLAN (EN+PT); SKILL (EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt.
 - Tests: 8 dead-letter unit tests in `commands::enrich::tests`, 1 ordering test in `embedder::tests` (`reassemble_ordered_restores_input_order`), live `tests/openrouter_live_concurrency.rs` (`#[ignore]`); nextest 1086 passed, 0 failed, 6 skipped.
 
-### Documentation Drift Status (as of v1.0.96)
+### v1.0.97 — Post-Sealing Audit (ADR-0056/0057/0058)
+- New read-only inspector `enrich --prune-dead-orphans` (GAP-SG-66, ADR-0058): deletes ONLY `status='dead' AND item_type='memory'` enrich-queue rows whose `item_key` is absent from the main DB; entity-keyed dead rows untouched; only the `.enrich-queue.sqlite` sidecar is mutated; `DeadSummary` gains a `pruned` count.
+- Queue sidecar derived from `--db` (GAP-SG-64 enrich + GAP-SG-65 ingest, ADR-0057): new helper `paths::sidecar_path(db_path, filename)` resolves `.enrich-queue.sqlite`/`.ingest-queue.sqlite` next to the database instead of the CWD; no legacy file migration.
+- Enrich modularisation + `unwrap`/`expect` audit + `parse_claude_output` DRY (GAP-SG-57..60, ADR-0056): `src/commands/enrich.rs` (6013 lines) split into `src/commands/enrich/` (mod + queue + scan + postprocess + extraction); production `unwrap`/`expect` converted to `?` and gated by the `src/lib.rs` lint.
+- Flaky `llm_slots::tests` hardened (GAP-SG-63); global binary realigned via `cargo install --path . --locked --force` so `installed_binary_smoke` runs 26/0 without bypass (GAP-SG-62).
+- Documented in: README, CHANGELOG, AGENTS, COOKBOOK, HOW_TO_USE, HEADLESS_INVOCATION, INTEGRATIONS (root EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt; SKILL (EN+PT); TESTING, MIGRATION (EN+PT); docs/decisions/INDEX.md + ADR-0056/0057/0058 (EN+PT).
+
+### Documentation Drift Status (as of v1.0.97)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.96 (100%) | v1.0.96 (100%) | Current |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `llms.txt` / `llms.pt-BR.txt` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `llms-full.txt` | v1.0.96 (enrich dead-letter + REST concurrency) | N/A | Current |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.96 (enrich dead-letter + REST concurrency) | v1.0.96 (espelhado) | Current |
-| `docs/decisions/` (48 ADRs) | 100% (48/48) | 75% (36/48) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
+| `README.md` / `README.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.97 (100%) | v1.0.97 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (no v1.0.97 exit code/env var change) | v1.0.96 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (no v1.0.97 contributor-flow change) | v1.0.96 (espelhado) | Current |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `llms-full.txt` | v1.0.97 (post-sealing audit) | N/A | Current |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.97 (queue sidecar from `--db`, ADR-0057) | v1.0.97 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.96 (no v1.0.97 platform change) | v1.0.96 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.96 (no v1.0.97 test-plan phase change) | v1.0.96 (espelhado) | Current |
+| `skill/sqlite-graphrag-en` / `skill/sqlite-graphrag-pt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
+| `docs/decisions/` (52 ADRs) | 100% (52/52) | 77% (40/52) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
 | `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |
 
 ### Framework Update — Mandatory Coverage of v1.0.86+

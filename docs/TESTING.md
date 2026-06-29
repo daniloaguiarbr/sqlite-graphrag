@@ -99,6 +99,15 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
   - `auto_describe_ignores_short_and_blank_lines` — short lines (<21 chars) and blank lines are skipped
 - `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` — GAP-E2E-001. Verifies `Cargo.toml:6` description matches the actual binary size within ±5%
 - `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
+## v1.0.97 — Post-Sealing Audit Tests (ADR-0056/0057/0058, GAP-SG-57..66)
+
+- `commands::enrich::queue::tests::prune_dead_orphans_removes_only_orphan_memory_rows` — GAP-SG-66. Proves `enrich --prune-dead-orphans` deletes only orphan `dead` memory rows, keeps the live memory row, and never touches entity-keyed rows (returns 1).
+- `paths::tests` ×3 for `sidecar_path` — GAP-SG-64/65. Cover absolute DB (sidecar derived alongside), pure relative name (CWD fallback), and a name with a directory (sidecar in that directory).
+- `tests/enrich_queue_db_isolation.rs` — GAP-SG-64. Plants a queue next to `db_a` and proves `enrich --status` reads it from an unrelated CWD.
+- Flaky `llm_slots::tests` cluster hardened (GAP-SG-63) — contention-sensitive slot tests went from ~8/10 failures to 0/10 under the full suite.
+- Lint gate `#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]` in `src/lib.rs` (GAP-SG-58) — the real production `unwrap`/`expect` count (~36, not the 423 that counted `#[cfg(test)]`) was converted to `?`/`ok_or_else`/poison-recovery; the gate revealed 5 more in `config_cmd.rs`.
+- Counts recorded at sealing: `cargo test --lib` 973/0, default `cargo test` 1164/0, `cargo test --features slow-tests` 1522/0/11 ignored; after the post-sealing work `cargo install --path . --locked --force` realigned the global binary and `installed_binary_smoke` runs 26/0 WITHOUT bypass (GAP-SG-62 resolved); `cargo fmt --check` 0 diffs; `cargo clippy --all-targets --features slow-tests -- -D warnings` 0 warnings.
+
 ## v1.0.96 — Enrich Dead-Letter + OpenRouter REST Concurrency Tests (ADR-0055)
 
 - Dead-letter unit tests (`commands::enrich::tests`, 8 tests): rate-limit / timeout / db-busy classify as `Transient`; validation / parse classify as `HardFailure`; `open_queue_db` runs the `error_class` + `next_retry_at` `ALTER TABLE` idempotently; `record_item_failure` marks a HardFailure `dead`, a Transient `pending` with a future `next_retry_at` (via `compute_delay`), and a Transient past `--max-attempts` `dead`; dequeue skips future-retry rows and excludes `dead`

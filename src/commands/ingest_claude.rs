@@ -86,16 +86,11 @@ Rules:\n\
 #[derive(Debug, Deserialize)]
 struct ClaudeOutputElement {
     r#type: Option<String>,
-    subtype: Option<String>,
     #[serde(default)]
     is_error: bool,
-    structured_output: Option<ExtractionResult>,
     result: Option<String>,
-    total_cost_usd: Option<f64>,
     error: Option<String>,
     terminal_reason: Option<String>,
-    #[serde(rename = "apiKeySource")]
-    api_key_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -475,57 +470,19 @@ fn extract_with_claude(
 ///
 /// Returns `(extraction, cost_usd, is_oauth)` where `is_oauth` is true when
 /// the init element reports `apiKeySource: "none"` (OAuth subscription).
+/// Parses `claude -p --output-format json` output into the ingest
+/// `ExtractionResult`. Delegates the shared element/error/oauth handling to
+/// `claude_runner::parse_claude_output` (DRY v1.0.97), which additionally
+/// covers G03 max_turns detection and the auth-failure warn, then deserialises
+/// the structured value into the typed `ExtractionResult`.
 fn parse_claude_output(stdout: &str) -> Result<(ExtractionResult, f64, bool), AppError> {
-    let elements: Vec<ClaudeOutputElement> = serde_json::from_str(stdout).map_err(|e| {
-        AppError::Validation(format!("failed to parse claude output as JSON array: {e}"))
+    let result = super::claude_runner::parse_claude_output_opts(stdout, true)?;
+    let extraction: ExtractionResult = serde_json::from_value(result.value).map_err(|e| {
+        AppError::Validation(format!(
+            "failed to deserialize claude output as ExtractionResult: {e}"
+        ))
     })?;
-
-    let is_oauth = elements
-        .iter()
-        .find(|e| e.r#type.as_deref() == Some("system") && e.subtype.as_deref() == Some("init"))
-        .and_then(|e| e.api_key_source.as_deref())
-        .map(|s| s == "none")
-        .unwrap_or(false);
-
-    let result_elem = elements
-        .iter()
-        .find(|e| e.r#type.as_deref() == Some("result"))
-        .ok_or_else(|| {
-            AppError::Validation("claude output missing 'result' element".to_string())
-        })?;
-
-    if result_elem.is_error {
-        let err_msg = result_elem
-            .error
-            .as_deref()
-            .or(result_elem.result.as_deref())
-            .unwrap_or("unknown error");
-        if err_msg.contains("rate_limit") || err_msg.contains("overloaded") {
-            return Err(AppError::RateLimited {
-                detail: err_msg.to_string(),
-            });
-        }
-        return Err(AppError::Validation(format!(
-            "claude extraction failed: {err_msg}"
-        )));
-    }
-
-    let extraction = result_elem
-        .structured_output
-        .clone()
-        .or_else(|| {
-            result_elem
-                .result
-                .as_ref()
-                .and_then(|text| serde_json::from_str::<ExtractionResult>(text).ok())
-        })
-        .ok_or_else(|| {
-            AppError::Validation("claude result missing structured_output and result field".into())
-        })?;
-
-    let cost = result_elem.total_cost_usd.unwrap_or(0.0);
-
-    Ok((extraction, cost, is_oauth))
+    Ok((extraction, result.cost_usd, result.is_oauth))
 }
 
 use crate::output::emit_json_line as emit_json;
@@ -553,7 +510,7 @@ fn collect_matching_files(
 }
 
 /// Opens or creates the queue database for tracking ingest progress.
-fn open_queue_db(path: &str) -> Result<Connection, AppError> {
+fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;
 
     conn.pragma_update(None, "journal_mode", "wal")?;
@@ -601,6 +558,10 @@ pub fn run_claude_ingest(
     // concurrent ingest against different databases is allowed.
     let early_ns = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
     let early_paths = AppPaths::resolve(args.db.as_deref())?;
+    let queue_path = match args.queue_db.as_deref() {
+        Some(p) => std::path::PathBuf::from(p),
+        None => crate::paths::sidecar_path(&early_paths.db, ".ingest-queue.sqlite"),
+    };
     let _singleton = crate::lock::acquire_job_singleton(
         crate::lock::JobType::IngestClaudeCode,
         &early_ns,
@@ -632,7 +593,7 @@ pub fn run_claude_ingest(
     // Stage 2: Scan
     let files = collect_matching_files(&args.dir, &args.pattern, args.recursive, args.max_files)?;
 
-    let queue_conn = open_queue_db(&args.queue_db)?;
+    let queue_conn = open_queue_db(&queue_path)?;
 
     if args.resume {
         let reset = queue_conn
@@ -722,7 +683,7 @@ pub fn run_claude_ingest(
             elapsed_ms: started.elapsed().as_millis() as u64,
         });
         if !args.keep_queue {
-            let _ = std::fs::remove_file(&args.queue_db);
+            let _ = std::fs::remove_file(&queue_path);
         }
         return Ok(());
     }
@@ -1308,7 +1269,7 @@ pub fn run_claude_ingest(
     });
 
     if !args.keep_queue && failed == 0 {
-        let _ = std::fs::remove_file(&args.queue_db);
+        let _ = std::fs::remove_file(&queue_path);
     }
 
     Ok(())

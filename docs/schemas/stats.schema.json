@@ -8,7 +8,8 @@
     "memories", "memories_total", "entities", "entities_total",
     "relationships", "relationships_total", "edges",
     "chunks_total", "avg_body_len", "namespaces",
-    "db_size_bytes", "db_bytes", "schema_version", "elapsed_ms"
+    "db_size_bytes", "db_bytes", "schema_version", "elapsed_ms",
+    "total_memories"
   ],
   "additionalProperties": false,
   "properties": {
@@ -25,6 +26,7 @@
     "db_size_bytes":        { "type": "integer", "minimum": 0 },
     "db_bytes":             { "type": "integer", "minimum": 0, "description": "Alias of db_size_bytes." },
     "schema_version":       { "type": "integer", "minimum": 0, "description": "Latest applied migration number from refinery_schema_history. Emitted as JSON number since v1.0.35 (was string in v1.0.34 and earlier)." },
-    "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }
+    "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." },
+    "total_memories":       { "type": "integer", "minimum": 0, "description": "Total memories populated by the stats aggregate (GAP-SG-43, v1.0.97)." }
   }
 }

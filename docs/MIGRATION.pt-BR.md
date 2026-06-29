@@ -1,11 +1,23 @@
-# MIGRANDO PARA v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
+# MIGRANDO PARA v1.0.97 — Sidecar de Fila Derivado do `--db` (ADR-0057)
 
-> Este guia cobre a atualização para v1.0.96. Nenhuma migração roda no banco principal; o schema permanece em v15. O banco de fila separado `.enrich-queue.sqlite` é migrado in-place automaticamente no primeiro `enrich` — sem ação do operador. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+> Este guia cobre a atualização para v1.0.97. Nenhuma migração roda no banco principal; o schema permanece em v15. Os sidecars de fila `.enrich-queue.sqlite` / `.ingest-queue.sqlite` agora são derivados do diretório do `--db` (ADR-0057) em vez do CWD do processo — sem ação do operador no banco default canônico. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.97 — Sidecar de Fila Derivado do `--db` (ADR-0057)
+
+### O Que Mudou
+- **GAP-SG-64 / GAP-SG-65 (ADR-0057)**: os sidecars de fila do enrich (`.enrich-queue.sqlite`) e do ingest (`.ingest-queue.sqlite`) agora são derivados do diretório do `--db` via `paths::sidecar_path`, não do CWD do processo. `enrich --status` e o `--resume`/`--retry-failed` do ingest seguem o `--db` independentemente do diretório de trabalho.
+- SEM migração de schema do banco principal (permanece em v15). SEM migração do arquivo de sidecar: ao rodar do diretório do projeto com o banco default, o caminho derivado coincide com o legado `./.enrich-queue.sqlite`, então o backlog existente é mantido no lugar. Quando o `--db` aponta para outro lugar, usa-se a fila que pertence àquele banco.
+- **GAP-SG-57..60 (ADR-0056)**: interno apenas — `enrich.rs` modularizado, `unwrap`/`expect` de produção auditados sob um lint gate, `parse_claude_output` desduplicado. Sem mudança de CLI ou de saída.
+- **GAP-SG-66 (ADR-0058)**: novo inspetor read-only `enrich --prune-dead-orphans` deleta SOMENTE linhas da fila do enrich com `status='dead'` e `item_type='memory'` cujo `item_key` (o nome da memória) não existe mais no banco principal — para operadores que atualizam com um `queue_dead` inflado de linhas órfãs (memórias renomeadas ou purgadas após o enfileiramento, que o `--requeue-dead` apenas re-falha). Sem LLM, sem singleton, sem `--operation`/`--mode`; linhas dead com chave de entidade ficam intocadas e apenas o sidecar `.enrich-queue.sqlite` é mutado.
+
+### Ação do Operador
+- Reinstale: `cargo install sqlite-graphrag --locked --force`. Sem migração de dados. Se você rodava `enrich`/`ingest` com um `--db` que divergia do seu CWD, o sidecar agora-correto é o que fica ao lado daquele `--db`; uma fila stale deixada num CWD antigo pode ser apagada.
+- Se o `enrich --status` reportar um `queue_dead` grande de linhas órfãs após o upgrade, rode `enrich --prune-dead-orphans --json` uma vez para removê-las (inspetor read-only; seguro — remove apenas linhas dead cuja memória não existe mais).
 
 ## v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
 
 ### O Que Mudou
-- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (default 5) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
+- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (default 5 na v1.0.96; elevado para 8 na v1.0.97) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: o embedding REST para `--mode openrouter` faz fan-out por lote com um `tokio::task::JoinSet` bounded (sem dependência nova), com clamp in-flight 1..16 (faixa Cloudflare-safe). A ordem dos chunks é preservada por índice; as escritas SQLite permanecem serializadas via WAL + claim atômico (single-writer intacto).
 
 ### Migração da Fila — Automática e In-Place

@@ -103,6 +103,18 @@ pub(crate) fn parent_or_err(path: &Path) -> Result<&Path, AppError> {
     })
 }
 
+/// Derives a sidecar file path next to the database (e.g. the enrich/ingest
+/// queue), so worklist files follow `--db` instead of the process CWD. Falls
+/// back to the bare filename (CWD) when `db_path` has no parent — preserving the
+/// legacy default-DB layout.
+pub fn sidecar_path(db_path: &Path, filename: &str) -> PathBuf {
+    db_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.join(filename))
+        .unwrap_or_else(|| PathBuf::from(filename))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +248,32 @@ mod tests {
         let p = PathBuf::from("");
         let result = parent_or_err(&p);
         assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn sidecar_path_derives_next_to_absolute_db() {
+        let db = PathBuf::from("/var/data/graphrag.sqlite");
+        assert_eq!(
+            sidecar_path(&db, ".enrich-queue.sqlite"),
+            PathBuf::from("/var/data/.enrich-queue.sqlite")
+        );
+    }
+
+    #[test]
+    fn sidecar_path_bare_filename_falls_back_to_cwd() {
+        let db = PathBuf::from("graphrag.sqlite");
+        assert_eq!(
+            sidecar_path(&db, ".enrich-queue.sqlite"),
+            PathBuf::from(".enrich-queue.sqlite")
+        );
+    }
+
+    #[test]
+    fn sidecar_path_relative_subdir_db() {
+        let db = PathBuf::from("sub/dir/db.sqlite");
+        assert_eq!(
+            sidecar_path(&db, ".ingest-queue.sqlite"),
+            PathBuf::from("sub/dir/.ingest-queue.sqlite")
+        );
     }
 }

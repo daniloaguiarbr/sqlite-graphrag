@@ -54,7 +54,9 @@ pub fn is_system_saturated() -> bool {
 /// previous timestamp (or None on first call) so the caller can decide
 /// whether to actually invoke the syscall.
 fn ensure_fresh() -> Option<Instant> {
-    let mut guard = LAST_REFRESH.lock().expect("loadavg mutex poisoned");
+    let mut guard = LAST_REFRESH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let now = Instant::now();
     let should_refresh = guard
         .as_ref()

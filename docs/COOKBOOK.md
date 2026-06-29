@@ -2176,6 +2176,24 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Run with parallel LLM workers: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 
+## How To Clean Orphan Dead-Letter Rows (v1.0.97)
+
+### Problem
+- The enrich queue accumulates `dead` rows for memories that were renamed or purged after they were enqueued
+- `--requeue-dead` only re-fails those rows; it does not remove truly orphaned ones whose memory key is absent from the main database
+
+### Solution
+```bash
+sqlite-graphrag enrich --prune-dead-orphans --json
+```
+
+### Explanation
+- Deletes only `status='dead' AND item_type='memory'` rows whose `item_key` (memory name) is absent from the main memories table — entity rows are untouched
+- Read-only with respect to the main database: only the sidecar `.enrich-queue.sqlite` is mutated
+- Runs without `--operation` or `--mode`; no LLM, no singleton acquired (GAP-SG-66, ADR-0058)
+- Check `.summary.pruned` in the JSON output for the count of rows removed
+
+
 ## How To Batch-Create Memories From NDJSON (v1.0.67)
 
 ### Problem

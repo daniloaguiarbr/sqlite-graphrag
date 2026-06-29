@@ -154,6 +154,9 @@ pub fn split_into_chunks_by_token_offsets(
 /// v1.0.76: the `tokenizer` parameter was removed. The chunker now uses the
 /// char-based heuristic (`CHARS_PER_TOKEN = 2`) which is the same heuristic
 /// the rest of the codebase uses for `Chunk::token_count_approx`.
+// expect_used (audited v1.0.97): overlap < chunk size is a const-derived
+// compile-time invariant (CHUNK_OVERLAP_TOKENS < CHUNK_SIZE_TOKENS).
+#[allow(clippy::expect_used)]
 pub fn split_into_chunks_hierarchical(body: &str) -> Vec<Chunk> {
     if body.is_empty() {
         return Vec::new();

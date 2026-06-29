@@ -84,7 +84,7 @@ pub fn run(args: ConfigArgs) -> Result<(), AppError> {
                 "provider": provider,
                 "fingerprint": fingerprint,
             });
-            println!("{}", serde_json::to_string(&output).unwrap());
+            println!("{}", serde_json::to_string(&output)?);
             Ok(())
         }
         ConfigAction::ListKeys { json: _ } => {
@@ -102,7 +102,7 @@ pub fn run(args: ConfigArgs) -> Result<(), AppError> {
                 })
                 .collect();
             let output = json!({ "keys": keys });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            println!("{}", serde_json::to_string_pretty(&output)?);
             Ok(())
         }
         ConfigAction::RemoveKey {
@@ -122,7 +122,7 @@ pub fn run(args: ConfigArgs) -> Result<(), AppError> {
                 "action": "key_removed",
                 "fingerprint": fingerprint,
             });
-            println!("{}", serde_json::to_string(&output).unwrap());
+            println!("{}", serde_json::to_string(&output)?);
             Ok(())
         }
         ConfigAction::Doctor { json: _ } => {
@@ -149,7 +149,7 @@ pub fn run(args: ConfigArgs) -> Result<(), AppError> {
                 "config_exists": config_exists,
                 "providers": results,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            println!("{}", serde_json::to_string_pretty(&output)?);
             Ok(())
         }
         ConfigAction::Path { json: _ } => {
@@ -158,7 +158,7 @@ pub fn run(args: ConfigArgs) -> Result<(), AppError> {
                 "config_path": path.display().to_string(),
                 "exists": path.exists(),
             });
-            println!("{}", serde_json::to_string(&output).unwrap());
+            println!("{}", serde_json::to_string(&output)?);
             Ok(())
         }
     }

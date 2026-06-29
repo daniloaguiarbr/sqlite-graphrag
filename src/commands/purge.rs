@@ -127,6 +127,7 @@ pub fn run(args: PurgeArgs) -> Result<(), AppError> {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         execute_purge(
             &tx,
+            &paths.db,
             &namespace,
             args.name.as_deref(),
             cutoff_epoch,
@@ -226,6 +227,7 @@ fn compute_metrics(
 
 fn execute_purge(
     tx: &rusqlite::Transaction,
+    db_path: &std::path::Path,
     namespace: &str,
     name: Option<&str>,
     cutoff_epoch: i64,
@@ -236,7 +238,7 @@ fn execute_purge(
     for (memory_id, name) in &candidates {
         // GAP-SG-13: cascade-clean the enrich-queue sidecar for each purged
         // memory (best-effort; no-op when the queue file is absent).
-        crate::commands::enrich::cleanup_queue_entry(*memory_id, name);
+        crate::commands::enrich::cleanup_queue_entry(db_path, *memory_id, name);
         if let Err(err) = tx.execute(
             "DELETE FROM vec_chunks WHERE memory_id = ?1",
             rusqlite::params![memory_id],

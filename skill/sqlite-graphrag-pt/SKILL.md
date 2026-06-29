@@ -47,7 +47,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - INVOQUE sempre como subprocesso; LEIA stdout para JSON/NDJSON; LEIA stderr para logs; CHEQUE o exit code ANTES de parsear
 - SAIBA que o binário NÃO tem daemon, NÃO tem ONNX runtime, NÃO tem cache de modelo
 - SAIBA que a similaridade cosine é pure Rust sobre `memory_embeddings`, `entity_embeddings`, `chunk_embeddings` backed por BLOB
-- SAIBA que o schema é v15 após `init` ou `migrate` em banco fresco
+- SAIBA que `init` ou `migrate` levam um banco fresco à versão de schema atual; LEIA o número vivo em `health --json` `schema_version`
 - ENFORCE OAUTH-ONLY para os backends de subprocesso codex e claude: o spawn ABORTA exit 1 se `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` estiver definida
 - SAIBA que `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` são PRESERVADAS para providers customizados
 - SAIBA que o CWD do subprocesso é ISOLADO; diretórios órfãos são limpos automaticamente
@@ -96,7 +96,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - ESCOLHA opencode com `--llm-backend opencode --llm-model opencode/big-pickle` para embedding e `--mode opencode --opencode-model opencode/big-pickle` para extração via seu próprio auth (NÃO OAuth)
 - ESCOLHA openrouter SOMENTE para extração com `--mode openrouter --openrouter-model <model>` roteando o judge para o REST `/chat/completions` do OpenRouter; a chave vem de `OPENROUTER_API_KEY` e `--openrouter-model` é OBRIGATÓRIA (sem default; valor ausente sai com exit 1 antes de qualquer chamada de rede)
 - SAIBA os modelos DEFAULT: codex `gpt-5.5`, claude `claude-sonnet-4-6`, opencode `opencode/big-pickle`
-- SAIBA os modelos opencode gratuitos: `opencode/big-pickle`, `opencode/deepseek-v4-flash-free`, `opencode/mimo-v2.5-free`, `opencode/nemotron-3-ultra-free`, `opencode/north-mini-code-free`
+- SAIBA que o catálogo de modelos opencode é EXTERNO e dinâmico, com tiers gratuitos rotativos como Big Pickle, GPT-5 Nano, Nemotron Super e MiniMax Free; a CLI repassa `--opencode-model` SEM VALIDAR, então PASSE qualquer id atual do OpenCode Zen (o default verificado é `opencode/big-pickle`) e CONSULTE `opencode.ai/zen` para o catálogo vivo em vez de hardcodar ids voláteis
 - SOBRESCREVA os paths dos binários com `--codex-binary`, `--claude-binary`, `--opencode-binary` quando a CLI não estiver no PATH
 - AJUSTE os timeouts por backend no `ingest` com `--codex-timeout`, `--claude-timeout`, `--opencode-timeout` (segundos)
 - VALIDE modelos codex com `--codex-model-validate` e auto-substitua com `--codex-model-fallback <MODEL>`
@@ -128,7 +128,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 
 
 ## Referência de Flags Globais
-- `--db <PATH>` — sobrescrever localização do banco (aceito por subcomando)
+- `--db <PATH>` — sobrescrever localização do banco; COLOQUE-A DEPOIS do subcomando (ex: `remember --db <PATH>`), porque o override canônico independente de posição é a variável de ambiente `SQLITE_GRAPHRAG_DB_PATH`
 - `--namespace <ns>` — escopar operações para um namespace
 - `--json` — saída JSON estruturada (SEMPRE passe)
 - `--lang en|pt` — forçar idioma do stderr
@@ -143,7 +143,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - `--extraction-backend codex|claude-code|opencode|openrouter` — seletor de backend de extração de entidades (openrouter é REST, não subprocesso)
 - `--openrouter-model <MODEL>` — modelo judge OBRIGATÓRIO para `--mode openrouter` (sem default; ausência sai com exit 1 antes de qualquer chamada de rede)
 - `--openrouter-base-url <URL>` — override opcional do endpoint OpenRouter para o chat enrich
-- `--openrouter-timeout <SECS>` — timeout da requisição do chat enrich, padrão 300
+- `--openrouter-timeout <SECS>` — timeout da requisição do chat enrich, padrão 600
 - `--llm-parallelism N` — largura do fan-out de embedding, padrão 4, clamp [1, 32]; governa TANTO o fan-out de subprocesso QUANTO o fan-out REST OpenRouter concorrente (JoinSet bounded), então `--llm-parallelism 8` rende concorrência efetiva 8 no path REST; entradas pequenas de um único batch permanecem seriais
 - `--max-concurrency N` — cap de invocações pesadas concorrentes, clamp [1, 2×nCPUs]
 - `--llm-max-host-concurrency N` — cap de slots de subprocesso LLM em todo o host
@@ -160,14 +160,19 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 ## Operações CRUD de Escrita
 - INVOQUE `remember --name <kebab> --type <kind> --description <text>` com `--body <text>` ou `--body-file <path>` ou `--body-stdin` ou `--graph-stdin`
 - INVOQUE `remember --graph-stdin` para anexar `{body, entities, relationships}` em um único documento JSON
+- INVOQUE `remember --graph-file <path>` para carregar o grafo de entidades de um arquivo; COMBINE com `--body-file <path>` para fornecer o corpo e o grafo de arquivos separados
 - PASSE entities como `[{name, entity_type}]` em kebab-case ASCII; PASSE relationships como `[{source, target, relation, strength}]` onde strength está em [0.0, 1.0]
+- PASSE `--strict-name` para REJEITAR um nome fora de kebab-case em vez de normalizá-lo automaticamente
 - PASSE `--force-merge` para updates idempotentes e restauração de soft-deleted
+- PASSE `--replace-graph` junto de `--force-merge` para ZERAR os vínculos de entidade/relacionamento existentes antes de escrever o novo grafo (substituição total, não merge)
 - PASSE `--dry-run` para validar inputs sem persistir
 - VALORES válidos de `--type`: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - INVOQUE `remember-batch` para 10 ou mais memórias via NDJSON stdin; PASSE `--transaction` para all-or-nothing
 - INVOQUE `ingest <DIR> --recursive --pattern "*.md" --mode none` para importar um diretório como body-only, depois enriqueça SEPARADAMENTE
 - SAIBA que `ingest --mode` aceita `none` (padrão body-only), `claude-code`, `codex`; opencode NÃO é um modo de ingest, então enriqueça com opencode em uma etapa SEPARADA
 - USE `--resume` para continuar da fila após interrupção; `--retry-failed` apenas para itens falhados; `--auto-describe` para sintetizar descrições
+- PASSE `--force-merge` no `ingest` para ATUALIZAR arquivos duplicados em vez de pulá-los; o ingest deduplica por `body_hash`, então um arquivo inalterado é pulado mesmo após renomear
+- SAIBA que o `ingest` divide nativamente um corpo grande demais em múltiplos chunks, então um arquivo acima do limite por corpo é chunkado, NÃO rejeitado
 - RESPEITE o limite de 512000 bytes e 512 chunks por corpo
 - NUNCA misture `--body`, `--body-file`, `--body-stdin`, `--graph-stdin` em única invocação
 - NUNCA use `fd | xargs remember`; INVOQUE `ingest` em vez disso
@@ -176,6 +181,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 
 ## CRUD Leitura Atualização Deleção
 - INVOQUE `read --name <kebab> --json` para fetch O(1); PASSE `--with-graph` para incluir entidades vinculadas
+- USE `read --name <n> --format raw` para imprimir o corpo puro SEM envelope JSON, ideal para pipar em outra ferramenta
 - INVOQUE `list --type <kind> --limit N --offset N --json` para filtrar e paginar
 - INVOQUE `history --name <n> --diff --json` para histórico de versões com estatísticas de diff de caracteres
 - INVOQUE `edit --name <n> --body-file <path>` para atualizar o corpo, ou `--description <text>` e `--memory-type <kind>` para metadados
@@ -192,6 +198,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 ## Operações de Grafo de Entidades
 - INVOQUE `link --from <a> --to <b> --relation <type> --create-missing --weight <float>` para criar uma aresta
 - INVOQUE `unlink --from <a> --to <b> --relation <type>` para remover uma aresta, ou `--entity <name> --all` para dropar todas as arestas de uma entidade
+- INVOQUE `unlink --memory <name> --entity <name>` para remover um único vínculo curado memória-entidade sem tocar nas arestas entidade-entidade
 - INVOQUE `graph entities --json` para listar entidades via `.entities[]` (NÃO `.items[]`); ORDENE com `--sort-by degree|name|created_at`; PAGINE com `--limit N --offset N`
 - INVOQUE `graph stats --json` para inspecionar `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - INVOQUE `graph traverse --from <root> --depth <N> --json` para travessia de subgrafo; EXPORTE com `--format json|dot|mermaid --output <path>`
@@ -227,9 +234,11 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 
 
 ## Operações de Enrich
-- INVOQUE `enrich --operation <op> --mode <backend>` onde AMBAS as flags são OBRIGATÓRIAS; omitir `--mode` é rejeitado pelo parser com exit 2
-- VALORES válidos de `--operation`: `memory-bindings`, `entity-descriptions`, `body-enrich`, `re-embed`
+- INVOQUE `enrich --operation <op> --mode <backend>` onde AMBAS as flags são OBRIGATÓRIAS para qualquer operação LLM; omitir `--mode` é rejeitado com exit 2 — EXCETO os inspetores read-only `--status`, `--list-dead`, `--requeue-dead` e `--prune-dead-orphans`, que NÃO exigem `--operation` e `--mode`
+- VALORES válidos de `--operation`: `memory-bindings`, `entity-descriptions`, `body-enrich`, `re-embed`, `augment-bindings`, `body-extract`
 - VALORES válidos de `--mode`: `codex`, `claude-code`, `opencode`, `openrouter`
+- USE `augment-bindings` para adicionar MAIS vínculos a memórias que JÁ estão vinculadas; EXIGE `--names <a,b,c>` ou `--names-file <path>` para escopar os alvos
+- USE `body-extract --body-extract-graph-only` para extrair o grafo de um corpo de forma READ-ONLY, persistindo apenas entidades e relações sem reescrever o corpo
 - PASSE `--codex-model`, `--claude-model`, `--opencode-model` ou `--openrouter-model` para escolher o modelo de extração compatível com o modo escolhido
 - SAIBA que `--mode openrouter` exige `--openrouter-model` (sem default), lê a chave de `OPENROUTER_API_KEY`, faz uma chamada REST `/chat/completions` SEM CLI local, envia `response_format` json_schema strict com `provider.require_parameters:true`, e cobra tokens via `usage.cost`; os outros três modos são OAuth ou auth próprio zero-token
 - PASSE `--limit N --resume` para `re-embed`; `--retry-failed` para reprocessar apenas itens falhados; `--dry-run` para preview
@@ -237,12 +246,15 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - NUNCA rode `enrich` em paralelo contra o mesmo banco; ele adquire um singleton por namespace
 - PASSE `--until-empty` para loopar scan->drain INTERNAMENTE até a fila elegível esvaziar ou `--max-runtime` expirar, SUBSTITUINDO o loop bash externo de drain
 - PASSE `--max-runtime <SECONDS>` para limitar o orçamento wall-clock de `--until-empty`; padrão 3600
-- PASSE `--max-attempts <N>` para limitar os retries Transient antes de um item virar `dead`; padrão 5, range 1..=20
-- PASSE `--status` para um relatório JSON read-only de `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` e `waiting`; NÃO chama LLM e NÃO adquire singleton
+- PASSE `--max-attempts <N>` para limitar os retries Transient antes de um item virar `dead`; padrão 8, range 1..=20
+- PASSE `--status` para um relatório JSON read-only de `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` e `waiting`; NÃO chama LLM e NÃO adquire singleton (e NÃO exige `--operation`/`--mode`)
 - PASSE `--rest-concurrency <N>` para definir o fan-out REST de `--mode openrouter`; clamp 1..=16, padrão 8, DISTINTO de `--llm-parallelism`
-- SAIBA que a fila dead-letter adiciona as colunas `error_class` e `next_retry_at` mais o status terminal `dead`: falhas Transient (rate-limit, timeout, 5xx) reagendam com backoff exponencial, HardFailures (validação, parse) viram terminal de imediato, e o dequeue pula `dead` para o conjunto vivo encolher estritamente rumo à convergência
+- PASSE `--list-dead` para uma listagem JSON read-only de cada item terminal `dead` com seu `error_class` e `message`; `--requeue-dead` move esses itens de volta para `pending` para outra passada; `--ignore-backoff` desenfileira itens elegíveis de imediato, ignorando o cooldown `next_retry_at`
+- PASSE `--prune-dead-orphans` para deletar APENAS as linhas da fila de enrich onde `status='dead'` e `item_type='memory'` cujo `item_key` (nome da memória) está AUSENTE do banco principal; linhas dead com chave de entidade são INTOCADAS; o banco principal é read-only — APENAS o sidecar `.enrich-queue.sqlite` é mutado; o JSON `DeadSummary` inclui o campo `pruned` com a contagem de linhas removidas; NÃO exige `--operation`/`--mode`/flags de LLM — é um inspetor SQLite puro sem aquisição de singleton; FÓRMULA: `sqlite-graphrag enrich --prune-dead-orphans --json`; USE ANTES de `--requeue-dead` para limpar linhas dead orphan de memória (memória renomeada ou purgada APÓS o enfileiramento, `error_class=permanent` 'not found') que o `--requeue-dead` sozinho apenas re-falharia
+- SAIBA que a fila dead-letter TEM as colunas `error_class` e `next_retry_at` mais o status terminal `dead`: falhas Transient (rate-limit, timeout, 5xx) reagendam com backoff exponencial, HardFailures (validação, parse) viram terminal de imediato, e o dequeue pula `dead` para o conjunto vivo encolher estritamente rumo à convergência
+- SAIBA que a fila de enrich vive em um banco sidecar `.enrich-queue.sqlite` ao lado do `.sqlite` principal
 - FÓRMULA STATUS: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json` (sem chamada LLM, sem singleton)
-- FÓRMULA UNTIL-EMPTY: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --max-attempts 5 --rest-concurrency 8 --json`
+- FÓRMULA UNTIL-EMPTY: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --max-attempts 8 --rest-concurrency 8 --json`
 
 
 ## Escrita e Depois Enrich — Duas Etapas Separadas
@@ -281,7 +293,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - CLAMP `--llm-parallelism` em 1..32 e `--rest-concurrency` em 1..16; MANTENHA ambos na faixa segura Cloudflare 4..16 para modelos pagos; modelos `:free` têm limite de 20 req/min, então USE N baixo
 - LEMBRE que várias chaves NÃO somam capacidade; o teto é a rede OpenRouter mais o singleton de namespace, NÃO o número de chaves
 - REMEMBER paralelo etapa 1: `echo '{"body":"...","entities":[...],"relationships":[...]}' | sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none remember --name <n> --type decision --description "desc" --graph-stdin --force-merge --json`
-- REMEMBER paralelo etapa 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --max-runtime 3600 --max-attempts 5 --json`
+- REMEMBER paralelo etapa 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --max-runtime 3600 --max-attempts 8 --json`
 - REMEMBER-BATCH paralelo etapa 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 12 --llm-backend none remember-batch --transaction --json`
 - REMEMBER-BATCH paralelo etapa 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --rest-concurrency 12 --until-empty --max-runtime 3600 --json`
 - INGEST paralelo etapa 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model nvidia/llama-nemotron-embed-vl-1b-v2:free --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 6 --llm-backend none ingest ./docs --mode none --recursive --pattern "*.md" --type document --resume --json`
@@ -310,10 +322,10 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - OPTIMIZE: `sqlite-graphrag optimize --json` para refrescar estatísticas do planner; VACUUM: `sqlite-graphrag vacuum --json` após um purge grande
 - FTS: `fts check --json` para integridade, `fts stats --json` para contagens, `fts rebuild --json` quando `health.fts_degraded` for true
 - VEC: `vec orphan-list --json` depois `vec purge-orphan --yes`; `vec stats --json` para saúde de vetor
-- EMBEDDING: `embedding --status --json` para contagens; `pending-embeddings --status --json` depois `pending-embeddings process --json` para reprocessar falhas
+- EMBEDDING: `embedding --status --json` para contagens mais um objeto `coverage` reportando as contagens reais de vetor por tabela; `pending-embeddings --status --json` depois `pending-embeddings process --json` para reprocessar falhas
 - SLOTS: `slots status --json` para inspecionar o semáforo do host; `slots release --slot-id <N> --yes` para órfãos
 - PENDING: `pending list --filter-status queued --json`; `pending show <id>`; `pending cleanup --yes`
-- EXPORT: `export --namespace <ns> --type <kind> --json` como NDJSON; STATS: `stats --json` para contagens e tamanhos
+- EXPORT: `export --namespace <ns> --type <kind> --json` como NDJSON; STATS: `stats --json` para contagens e tamanhos, incluindo um `total_memories` no topo
 - BACKUP: `backup --output backup.sqlite --json`; SNAPSHOT: `sync-safe-copy --dest <path>` sem adquirir lock
 - INSPECT: `namespace-detect --json`, `debug-schema --json`, `cache list --json`, `cache clear-models --yes`
 - COMPLETIONS: `completions bash|zsh|fish|elvish|powershell`
