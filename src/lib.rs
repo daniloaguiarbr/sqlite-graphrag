@@ -290,6 +290,10 @@ pub mod stdin_helper;
 /// Real tokenizer of the embedding model for accurate token counting and chunking.
 pub mod tokenizer;
 
+/// v1.0.97: repairs malformed JSON from OpenRouter chat models (markdown code
+/// fences, trailing commas, unquoted keys) before parsing into a `serde_json::Value`.
+pub mod json_repair;
+
 mod embedded_migrations {
     use refinery::embed_migrations;
     embed_migrations!("migrations");

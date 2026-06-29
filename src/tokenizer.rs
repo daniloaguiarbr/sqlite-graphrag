@@ -63,6 +63,23 @@ pub fn get_model_max_length() -> usize {
     crate::constants::EMBEDDING_MAX_TOKENS
 }
 
+/// Returns the exact cl100k_base (OpenAI tiktoken) token count of `text`.
+///
+/// This is a deliberately conservative proxy for the
+/// `qwen/qwen3-embedding-8b` tokenizer used by the OpenRouter embedding
+/// backend: cl100k_base generally emits at least as many tokens as Qwen's
+/// BPE for the same input, so a count comfortably under the model's
+/// ~32K-token effective ceiling guarantees the input fits Qwen's window.
+///
+/// Unlike `approx_tokens`, this is exact for arbitrary input. It uses the
+/// process-wide cached BPE singleton, so repeated calls do not re-initialise
+/// the tokenizer.
+pub fn count_tokens(text: &str) -> usize {
+    tiktoken_rs::cl100k_base_singleton()
+        .encode_ordinary(text)
+        .len()
+}
+
 fn approx_tokens(text: &str) -> usize {
     let words = text.split_whitespace().count();
     // Round up to avoid under-chunking.
@@ -128,5 +145,12 @@ mod tests {
             count_passage_tokens("passage: teste fix real 5").unwrap(),
             9
         );
+    }
+
+    #[test]
+    fn count_tokens_matches_known_cl100k_counts() {
+        // "hello world" is exactly 2 cl100k_base tokens; empty string is 0.
+        assert_eq!(count_tokens("hello world"), 2);
+        assert_eq!(count_tokens(""), 0);
     }
 }

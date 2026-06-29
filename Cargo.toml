@@ -206,6 +206,13 @@ zeroize = "1"
 # `HealthResponse` struct in src/commands/health.rs, not just in tests.
 schemars = "0.8"
 
+# v1.0.97: llm_json repairs malformed JSON from OpenRouter chat models
+# (markdown code fences, trailing commas, unquoted keys) before re-parsing.
+llm_json = "1.0.3"
+# v1.0.97: tiktoken-rs (cl100k_base BPE) for exact token counts — used as a
+# conservative proxy for the qwen3-embedding-8b ~32K-token context ceiling.
+tiktoken-rs = "0.12"
+
 [target.'cfg(windows)'.dependencies]
 # G29 (v1.0.68): pinned exact to 0.59.0 because HANDLE type changed
 # from `isize` (0.48/0.52) to `*mut c_void` (>= 0.59); future patch versions
