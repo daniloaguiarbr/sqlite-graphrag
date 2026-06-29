@@ -326,6 +326,17 @@ pub struct IngestArgs {
         help = "Run enrich --operation memory-bindings after all files are ingested"
     )]
     pub enrich_after: bool,
+
+    /// GAP-SG-54: update existing memories instead of skipping them. Without
+    /// this flag a file whose derived name already exists is reported `skipped`;
+    /// with it the existing memory's body, embedding and chunks are refreshed
+    /// (the `remember --force-merge` update path applied per file).
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Update existing memories on name collision instead of skipping (idempotent re-ingest)"
+    )]
+    pub force_merge: bool,
 }
 
 /// Extraction mode for the ingest pipeline.
@@ -476,6 +487,7 @@ struct IngestSummary {
 }
 
 /// Outcome of a successful per-file ingest, used to build the NDJSON event.
+#[derive(Debug)]
 struct FileSuccess {
     memory_id: i64,
     action: String,
@@ -854,12 +866,91 @@ fn stage_one_body(
     })
 }
 
+/// Links the staged entities and relationships to `memory_id` within `tx`.
+/// Shared by the create and `--force-merge` update paths so the graph-binding
+/// logic lives in one place.
+fn link_staged_graph(
+    tx: &Connection,
+    namespace: &str,
+    memory_id: i64,
+    staged: &StagedFile,
+) -> Result<(), AppError> {
+    if staged.entities.is_empty() && staged.relationships.is_empty() {
+        return Ok(());
+    }
+    for (idx, entity) in staged.entities.iter().enumerate() {
+        let entity_id = entities::upsert_entity(tx, namespace, entity)?;
+        if let Some(ref entity_embeddings) = staged.entity_embeddings {
+            if let Some(entity_embedding) = entity_embeddings.get(idx) {
+                entities::upsert_entity_vec(
+                    tx,
+                    entity_id,
+                    namespace,
+                    entity.entity_type,
+                    entity_embedding,
+                    &entity.name,
+                )?;
+            }
+        }
+        entities::link_memory_entity(tx, memory_id, entity_id)?;
+    }
+    let entity_types: std::collections::HashMap<&str, EntityType> = staged
+        .entities
+        .iter()
+        .map(|entity| (entity.name.as_str(), entity.entity_type))
+        .collect();
+
+    let mut affected_entity_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for entity in &staged.entities {
+        if let Some(eid) = entities::find_entity_id(tx, namespace, &entity.name)? {
+            affected_entity_ids.insert(eid);
+        }
+    }
+
+    for rel in &staged.relationships {
+        let source_entity = NewEntity {
+            name: rel.source.clone(),
+            entity_type: entity_types
+                .get(rel.source.as_str())
+                .copied()
+                .unwrap_or(EntityType::Concept),
+            description: None,
+        };
+        let target_entity = NewEntity {
+            name: rel.target.clone(),
+            entity_type: entity_types
+                .get(rel.target.as_str())
+                .copied()
+                .unwrap_or(EntityType::Concept),
+            description: None,
+        };
+        let source_id = entities::upsert_entity(tx, namespace, &source_entity)?;
+        let target_id = entities::upsert_entity(tx, namespace, &target_entity)?;
+        let rel_id = entities::upsert_relationship(tx, namespace, source_id, target_id, rel)?;
+        entities::link_memory_relationship(tx, memory_id, rel_id)?;
+        affected_entity_ids.insert(source_id);
+        affected_entity_ids.insert(target_id);
+    }
+
+    for &eid in &affected_entity_ids {
+        entities::recalculate_degree(tx, eid)?;
+    }
+    Ok(())
+}
+
 /// Phase B: persists one `StagedFile` to the database on the main thread.
+///
+/// GAP-SG-54: when `force_merge` is true an existing memory with the same name
+/// is UPDATED (body/embedding/chunks/graph refreshed) instead of being rejected
+/// as a duplicate. GAP-SG-55: a memory whose `body_hash` already exists under a
+/// DIFFERENT name is skipped (content-level dedup) so divergent derived names do
+/// not duplicate identical content.
 fn persist_staged(
     conn: &mut Connection,
     namespace: &str,
     memory_type: &str,
     staged: StagedFile,
+    force_merge: bool,
 ) -> Result<FileSuccess, AppError> {
     {
         let active_count: u32 = conn.query_row(
@@ -881,12 +972,6 @@ fn persist_staged(
     }
 
     let existing_memory = memories::find_by_name(conn, namespace, &staged.name)?;
-    if existing_memory.is_some() {
-        return Err(AppError::Duplicate(errors_msg::duplicate_memory(
-            &staged.name,
-            namespace,
-        )));
-    }
     let duplicate_hash_id = memories::find_by_hash(conn, namespace, &staged.body_hash)?;
 
     let new_memory = NewMemory {
@@ -894,138 +979,173 @@ fn persist_staged(
         name: staged.name.clone(),
         memory_type: memory_type.to_string(),
         description: staged.description.clone(),
-        body: staged.body,
-        body_hash: staged.body_hash,
+        body: staged.body.clone(),
+        body_hash: staged.body_hash.clone(),
         session_id: None,
         source: "agent".to_string(),
         metadata: serde_json::json!({}),
     };
+    let body_length = new_memory.body.len();
+    let metadata_json = serde_json::to_string(&new_memory.metadata)?;
 
-    if let Some(hash_id) = duplicate_hash_id {
-        tracing::debug!(
-            target: "ingest",
-            duplicate_memory_id = hash_id,
-            "identical body already exists; persisting a new memory anyway"
-        );
-    }
-
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-
-    let memory_id = memories::insert(&tx, &new_memory)?;
-    versions::insert_version(
-        &tx,
-        memory_id,
-        1,
-        &staged.name,
-        memory_type,
-        &staged.description,
-        &new_memory.body,
-        &serde_json::to_string(&new_memory.metadata)?,
-        None,
-        "create",
-    )?;
-    if let Some(ref emb) = staged.embedding {
-        memories::upsert_vec(
-            &tx,
-            memory_id,
-            namespace,
-            memory_type,
-            emb,
-            &staged.name,
-            &staged.snippet,
-        )?;
-    }
-
-    if staged.chunks_info.len() > 1 {
-        storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &staged.chunks_info)?;
-        if let Some(ref chunk_embeddings) = staged.chunk_embeddings {
-            for (i, emb) in chunk_embeddings.iter().enumerate() {
-                storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+    match existing_memory {
+        Some((existing_id, _updated_at, _version)) => {
+            if !force_merge {
+                return Err(AppError::Duplicate(errors_msg::duplicate_memory(
+                    &staged.name,
+                    namespace,
+                )));
             }
-        }
-    }
 
-    if !staged.entities.is_empty() || !staged.relationships.is_empty() {
-        for (idx, entity) in staged.entities.iter().enumerate() {
-            let entity_id = entities::upsert_entity(&tx, namespace, entity)?;
-            if let Some(ref entity_embeddings) = staged.entity_embeddings {
-                if let Some(entity_embedding) = entity_embeddings.get(idx) {
-                    entities::upsert_entity_vec(
-                        &tx,
-                        entity_id,
-                        namespace,
-                        entity.entity_type,
-                        entity_embedding,
-                        &entity.name,
-                    )?;
+            // GAP-SG-54: --force-merge update path. Refresh body, embedding,
+            // chunks and graph bindings of the existing memory.
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+            let (old_name, old_desc, old_body): (String, String, String) = tx.query_row(
+                "SELECT name, description, body FROM memories WHERE id = ?1",
+                rusqlite::params![existing_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+
+            let next_v = versions::next_version(&tx, existing_id)?;
+            memories::update(&tx, existing_id, &new_memory, None)?;
+            memories::sync_fts_after_update(
+                &tx,
+                existing_id,
+                &old_name,
+                &old_desc,
+                &old_body,
+                &staged.name,
+                &staged.description,
+                &new_memory.body,
+            )?;
+            versions::insert_version(
+                &tx,
+                existing_id,
+                next_v,
+                &staged.name,
+                memory_type,
+                &staged.description,
+                &new_memory.body,
+                &metadata_json,
+                None,
+                "edit",
+            )?;
+
+            // Re-index chunks: drop the old slices then re-insert the staged set.
+            storage_chunks::delete_chunks(&tx, existing_id)?;
+            if let Some(ref emb) = staged.embedding {
+                memories::upsert_vec(
+                    &tx,
+                    existing_id,
+                    namespace,
+                    memory_type,
+                    emb,
+                    &staged.name,
+                    &staged.snippet,
+                )?;
+            }
+            if staged.chunks_info.len() > 1 {
+                storage_chunks::insert_chunk_slices(
+                    &tx,
+                    existing_id,
+                    &new_memory.body,
+                    &staged.chunks_info,
+                )?;
+                if let Some(ref chunk_embeddings) = staged.chunk_embeddings {
+                    for (i, emb) in chunk_embeddings.iter().enumerate() {
+                        storage_chunks::upsert_chunk_vec(
+                            &tx,
+                            i as i64,
+                            existing_id,
+                            i as i32,
+                            emb,
+                        )?;
+                    }
                 }
             }
-            entities::link_memory_entity(&tx, memory_id, entity_id)?;
-        }
-        let entity_types: std::collections::HashMap<&str, EntityType> = staged
-            .entities
-            .iter()
-            .map(|entity| (entity.name.as_str(), entity.entity_type))
-            .collect();
 
-        let mut affected_entity_ids: std::collections::HashSet<i64> =
-            std::collections::HashSet::new();
-        for entity in &staged.entities {
-            if let Some(eid) = entities::find_entity_id(&tx, namespace, &entity.name)? {
-                affected_entity_ids.insert(eid);
-            }
-        }
+            link_staged_graph(&tx, namespace, existing_id, &staged)?;
+            tx.commit()?;
 
-        for rel in &staged.relationships {
-            let source_entity = NewEntity {
-                name: rel.source.clone(),
-                entity_type: entity_types
-                    .get(rel.source.as_str())
-                    .copied()
-                    .unwrap_or(EntityType::Concept),
-                description: None,
-            };
-            let target_entity = NewEntity {
-                name: rel.target.clone(),
-                entity_type: entity_types
-                    .get(rel.target.as_str())
-                    .copied()
-                    .unwrap_or(EntityType::Concept),
-                description: None,
-            };
-            let source_id = entities::upsert_entity(&tx, namespace, &source_entity)?;
-            let target_id = entities::upsert_entity(&tx, namespace, &target_entity)?;
-            let rel_id = entities::upsert_relationship(&tx, namespace, source_id, target_id, rel)?;
-            entities::link_memory_relationship(&tx, memory_id, rel_id)?;
-            affected_entity_ids.insert(source_id);
-            affected_entity_ids.insert(target_id);
-        }
-
-        for &eid in &affected_entity_ids {
-            entities::recalculate_degree(&tx, eid)?;
-        }
-    }
-
-    tx.commit()?;
-
-    if !staged.urls.is_empty() {
-        let url_entries: Vec<storage_urls::MemoryUrl> = staged
-            .urls
-            .into_iter()
-            .map(|u| storage_urls::MemoryUrl {
-                url: u.url,
-                offset: Some(u.start as i64),
+            Ok(FileSuccess {
+                memory_id: existing_id,
+                action: "updated".to_string(),
+                body_length,
+                backend_invoked: staged.backend_invoked,
             })
-            .collect();
-        let _ = storage_urls::insert_urls(conn, memory_id, &url_entries);
-    }
+        }
+        None => {
+            // GAP-SG-55: identical content already stored under a different name
+            // → skip creating a duplicate (reported as `skipped` by the caller).
+            if let Some(hash_id) = duplicate_hash_id {
+                return Err(AppError::Duplicate(format!(
+                    "identical body already stored as memory id {hash_id} (dedup by body_hash); skipping '{}'",
+                    staged.name
+                )));
+            }
 
-    Ok(FileSuccess {
-        memory_id,
-        action: "created".to_string(),
-        body_length: new_memory.body.len(),
-        backend_invoked: staged.backend_invoked,
-    })
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let memory_id = memories::insert(&tx, &new_memory)?;
+            versions::insert_version(
+                &tx,
+                memory_id,
+                1,
+                &staged.name,
+                memory_type,
+                &staged.description,
+                &new_memory.body,
+                &metadata_json,
+                None,
+                "create",
+            )?;
+            if let Some(ref emb) = staged.embedding {
+                memories::upsert_vec(
+                    &tx,
+                    memory_id,
+                    namespace,
+                    memory_type,
+                    emb,
+                    &staged.name,
+                    &staged.snippet,
+                )?;
+            }
+            if staged.chunks_info.len() > 1 {
+                storage_chunks::insert_chunk_slices(
+                    &tx,
+                    memory_id,
+                    &new_memory.body,
+                    &staged.chunks_info,
+                )?;
+                if let Some(ref chunk_embeddings) = staged.chunk_embeddings {
+                    for (i, emb) in chunk_embeddings.iter().enumerate() {
+                        storage_chunks::upsert_chunk_vec(&tx, i as i64, memory_id, i as i32, emb)?;
+                    }
+                }
+            }
+            link_staged_graph(&tx, namespace, memory_id, &staged)?;
+            tx.commit()?;
+
+            if !staged.urls.is_empty() {
+                let url_entries: Vec<storage_urls::MemoryUrl> = staged
+                    .urls
+                    .into_iter()
+                    .map(|u| storage_urls::MemoryUrl {
+                        url: u.url,
+                        offset: Some(u.start as i64),
+                    })
+                    .collect();
+                let _ = storage_urls::insert_urls(conn, memory_id, &url_entries);
+            }
+
+            Ok(FileSuccess {
+                memory_id,
+                action: "created".to_string(),
+                body_length,
+                backend_invoked: staged.backend_invoked,
+            })
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1797,7 +1917,13 @@ pub fn run(
                 // sub-memories (auto-split partitions); persist and report each.
                 for staged in parts {
                     let part_name = staged.name.clone();
-                    match persist_staged(conn, &namespace, &memory_type_str, staged) {
+                    match persist_staged(
+                        conn,
+                        &namespace,
+                        &memory_type_str,
+                        staged,
+                        args.force_merge,
+                    ) {
                         Ok(FileSuccess {
                             memory_id,
                             action,
@@ -2087,7 +2213,11 @@ pub(crate) fn derive_kebab_name(path: &Path, max_len: usize) -> (String, bool, O
     };
     if trimmed.len() > max_len {
         let truncated = trimmed[..max_len].trim_matches('-').to_string();
-        tracing::debug!(
+        // GAP-SG-38: warn (not debug) so the operator sees that a derived name
+        // was cut at the cap and that any collision will be resolved with a
+        // numeric disambiguation suffix. The pre-truncation form is also
+        // surfaced per-file via `IngestFileEvent.original_name`.
+        tracing::warn!(
             target: "ingest",
             original = %trimmed,
             truncated_to = %truncated,
@@ -2203,6 +2333,129 @@ mod tests {
             validate_mode_conditional_flags_ingest(&args).is_ok(),
             "--mode claude-code + --resume is valid and must pass"
         );
+    }
+
+    fn setup_ingest_conn() -> Connection {
+        crate::storage::connection::register_vec_extension();
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::migrations::runner().run(&mut conn).unwrap();
+        conn
+    }
+
+    fn make_staged(name: &str, body: &str) -> StagedFile {
+        StagedFile {
+            body: body.to_string(),
+            body_hash: blake3::hash(body.as_bytes()).to_hex().to_string(),
+            snippet: body.chars().take(200).collect(),
+            name: name.to_string(),
+            description: "desc".to_string(),
+            embedding: None,
+            chunk_embeddings: None,
+            chunks_info: Vec::new(),
+            entities: Vec::new(),
+            relationships: Vec::new(),
+            entity_embeddings: None,
+            urls: Vec::new(),
+            backend_invoked: None,
+        }
+    }
+
+    // GAP-SG-54: re-ingesting the same name without --force-merge is a duplicate
+    // (skipped); with --force-merge it updates in place.
+    #[test]
+    fn persist_staged_force_merge_updates_existing() {
+        let mut conn = setup_ingest_conn();
+
+        let first = persist_staged(
+            &mut conn,
+            "global",
+            "document",
+            make_staged("doc-a", "v1"),
+            false,
+        )
+        .expect("create");
+        assert_eq!(first.action, "created");
+
+        // Same name, no force_merge → Duplicate (skip).
+        let dup = persist_staged(
+            &mut conn,
+            "global",
+            "document",
+            make_staged("doc-a", "v2-changed"),
+            false,
+        );
+        assert!(matches!(dup, Err(AppError::Duplicate(_))));
+
+        // Same name, force_merge → updated, body refreshed.
+        let upd = persist_staged(
+            &mut conn,
+            "global",
+            "document",
+            make_staged("doc-a", "v2-changed"),
+            true,
+        )
+        .expect("update");
+        assert_eq!(upd.action, "updated");
+        assert_eq!(upd.memory_id, first.memory_id);
+        let body: String = conn
+            .query_row(
+                "SELECT body FROM memories WHERE id = ?1",
+                rusqlite::params![first.memory_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(body, "v2-changed");
+    }
+
+    // GAP-SG-55: identical body under a divergent name is deduped (skipped).
+    #[test]
+    fn persist_staged_dedupes_by_body_hash() {
+        let mut conn = setup_ingest_conn();
+        persist_staged(
+            &mut conn,
+            "global",
+            "document",
+            make_staged("parte-1", "identical content"),
+            false,
+        )
+        .expect("create");
+
+        // Divergent derived name, same content → skipped as duplicate.
+        let res = persist_staged(
+            &mut conn,
+            "global",
+            "document",
+            make_staged("part-01", "identical content"),
+            false,
+        );
+        match res {
+            Err(AppError::Duplicate(msg)) => assert!(msg.contains("body_hash")),
+            other => panic!("expected body_hash dedup duplicate, got {other:?}"),
+        }
+        // Only one memory persisted.
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    // GAP-SG-54: `ingest --force-merge` parses and sets the update flag.
+    #[test]
+    fn ingest_force_merge_flag_parses() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["sqlite-graphrag", "ingest", "./docs", "--force-merge"])
+            .expect("parse");
+        match cli.command {
+            Some(Commands::Ingest(a)) => assert!(a.force_merge),
+            other => panic!("expected ingest, got {other:?}"),
+        }
+        // Default is off.
+        let cli2 = Cli::try_parse_from(["sqlite-graphrag", "ingest", "./docs"]).expect("parse");
+        match cli2.command {
+            Some(Commands::Ingest(a)) => assert!(!a.force_merge),
+            other => panic!("expected ingest, got {other:?}"),
+        }
     }
 
     #[test]

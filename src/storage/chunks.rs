@@ -93,6 +93,21 @@ pub fn delete_chunks(conn: &Connection, memory_id: i64) -> Result<(), AppError> 
     Ok(())
 }
 
+/// GAP-SG-40: counts the rows actually persisted in `memory_chunks` for a
+/// memory. Single-chunk bodies are stored inline in the `memories` row and
+/// append no chunk rows, so this returns `0` for them; multi-chunk bodies
+/// return the exact number of persisted chunk rows. Callers query this AFTER
+/// the transaction commits so the reported `chunks_persisted` reflects the
+/// observable database state rather than a pre-commit estimate.
+pub fn count_for_memory(conn: &Connection, memory_id: i64) -> Result<usize, AppError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_chunks WHERE memory_id = ?1",
+        params![memory_id],
+        |r| r.get(0),
+    )?;
+    Ok(n as usize)
+}
+
 pub fn knn_search_chunks(
     conn: &Connection,
     embedding: &[f32],
@@ -229,6 +244,40 @@ mod tests {
         let (_tmp, conn) = setup_db();
         let resultado = get_chunks_by_memory(&conn, 9999).unwrap();
         assert!(resultado.is_empty());
+    }
+
+    // GAP-SG-40: count_for_memory reports the real persisted chunk-row count.
+    #[test]
+    fn test_count_for_memory_reflects_persisted_rows() {
+        let (_tmp, conn) = setup_db();
+        let memory_id = insert_memory(&conn);
+
+        // No chunk rows yet (single-chunk bodies live inline) → 0.
+        assert_eq!(count_for_memory(&conn, memory_id).unwrap(), 0);
+
+        let chunks = vec![
+            Chunk {
+                memory_id,
+                chunk_idx: 0,
+                chunk_text: "a".to_string(),
+                start_offset: 0,
+                end_offset: 1,
+                token_count: 1,
+            },
+            Chunk {
+                memory_id,
+                chunk_idx: 1,
+                chunk_text: "b".to_string(),
+                start_offset: 1,
+                end_offset: 2,
+                token_count: 1,
+            },
+        ];
+        insert_chunks(&conn, &chunks).unwrap();
+        assert_eq!(count_for_memory(&conn, memory_id).unwrap(), 2);
+
+        // Unknown memory id → 0.
+        assert_eq!(count_for_memory(&conn, 9999).unwrap(), 0);
     }
 
     #[test]

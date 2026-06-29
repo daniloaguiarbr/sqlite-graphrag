@@ -92,6 +92,11 @@ struct ListResponse {
     /// True when the returned item count is less than `total_count`, indicating
     /// that more results exist beyond the applied limit.
     truncated: bool,
+    /// GAP-SG-53: actionable hint emitted only when `truncated` is true, warning
+    /// that `list` paginates and that `export --namespace <ns> --json` is the
+    /// authoritative inventory for dedup/counting decisions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    truncation_warning: Option<String>,
     /// Total execution time in milliseconds from handler start to serialisation.
     elapsed_ms: u64,
 }
@@ -152,12 +157,25 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
     let total_count = memories::count(&conn, &namespace, memory_type_str, args.include_deleted)?;
     let truncated = items.len() < total_count;
 
+    // GAP-SG-53: when pagination hides rows, tell the operator that `list` is
+    // not a reliable inventory and point them at `export` (full NDJSON).
+    let truncation_warning = if truncated {
+        let returned = items.len();
+        Some(format!(
+            "list returned {returned} of {total_count} memories in namespace '{namespace}'; \
+             list paginates and undercounts — use `export --namespace {namespace} --json` for the authoritative inventory"
+        ))
+    } else {
+        None
+    };
+
     match args.format {
         OutputFormat::Json => {
             let memories = items.clone();
             output::emit_json(&ListResponse {
                 total_count,
                 truncated,
+                truncation_warning,
                 memories,
                 items,
                 elapsed_ms: inicio.elapsed().as_millis() as u64,
@@ -166,6 +184,9 @@ pub fn run(args: ListArgs) -> Result<(), AppError> {
         OutputFormat::Text | OutputFormat::Markdown => {
             for item in &items {
                 output::emit_text(&format!("{}: {}", item.name, item.snippet));
+            }
+            if let Some(ref w) = truncation_warning {
+                output::emit_text(w);
             }
         }
     }
@@ -201,6 +222,7 @@ mod tests {
             memories: vec![make_item("test-memory")],
             total_count: 1,
             truncated: false,
+            truncation_warning: None,
             elapsed_ms: 7,
         };
         let json = serde_json::to_value(&resp).unwrap();
@@ -236,6 +258,42 @@ mod tests {
         assert_eq!(json["deleted_at_iso"], "2025-04-20T03:46:40Z");
     }
 
+    // GAP-SG-53: truncation_warning present when truncated, omitted otherwise.
+    #[test]
+    fn list_response_truncation_warning_present_when_truncated() {
+        let resp = ListResponse {
+            items: vec![make_item("a")],
+            memories: vec![make_item("a")],
+            total_count: 50,
+            truncated: true,
+            truncation_warning: Some("list returned 1 of 50 memories; use export".to_string()),
+            elapsed_ms: 1,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["truncated"].as_bool().unwrap());
+        assert!(json["truncation_warning"]
+            .as_str()
+            .unwrap()
+            .contains("export"));
+    }
+
+    #[test]
+    fn list_response_truncation_warning_omitted_when_not_truncated() {
+        let resp = ListResponse {
+            items: vec![make_item("a")],
+            memories: vec![make_item("a")],
+            total_count: 1,
+            truncated: false,
+            truncation_warning: None,
+            elapsed_ms: 1,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(
+            json.get("truncation_warning").is_none(),
+            "must be omitted when None"
+        );
+    }
+
     #[test]
     fn list_response_items_empty_serializes_empty_array() {
         let resp = ListResponse {
@@ -243,6 +301,7 @@ mod tests {
             memories: vec![],
             total_count: 0,
             truncated: false,
+            truncation_warning: None,
             elapsed_ms: 0,
         };
         let json = serde_json::to_value(&resp).unwrap();

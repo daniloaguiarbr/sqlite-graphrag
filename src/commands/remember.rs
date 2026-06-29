@@ -14,22 +14,6 @@ use crate::storage::memories::NewMemory;
 use crate::storage::{entities, memories, urls as storage_urls, versions};
 use serde::Deserialize;
 
-/// Returns the number of rows that will be written to `memory_chunks` for the
-/// given chunk count. Single-chunk bodies are stored directly in the
-/// `memories` row, so no chunk row is appended (returns `0`). Multi-chunk
-/// bodies persist every chunk and the count equals `chunks_created`.
-///
-/// Centralized as a function so the H-M8 invariant is unit-testable without
-/// running the full handler. The schema for `chunks_persisted` documents this
-/// contract explicitly (see `docs/schemas/remember.schema.json`).
-fn compute_chunks_persisted(chunks_created: usize) -> usize {
-    if chunks_created > 1 {
-        chunks_created
-    } else {
-        0
-    }
-}
-
 #[derive(clap::Args)]
 #[command(after_long_help = "EXAMPLES:\n  \
     # Create a memory with inline body\n  \
@@ -193,6 +177,25 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
         help = "Validate input and report planned actions without persisting"
     )]
     pub dry_run: bool,
+    /// GAP-SG-37: reject (instead of silently normalizing) when the supplied
+    /// --name is not already canonical kebab-case. Use this when the literal
+    /// name matters and a silent transform would surprise downstream lookups.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Reject the write if --name would be normalized to kebab-case (preserve-name guard)"
+    )]
+    pub strict_name: bool,
+    /// GAP-SG-51: with --force-merge, REPLACE the memory's entity/relationship
+    /// bindings with the supplied set instead of merging additively. Combined
+    /// with an empty `entities`/`relationships` payload this clears all bindings
+    /// without deleting the memory.
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "With --force-merge, replace (not merge) the memory's graph bindings; empty entities clears them"
+    )]
+    pub replace_graph: bool,
     /// Optional opaque session identifier for tracing memory provenance across multi-agent runs.
     #[arg(long)]
     pub session_id: Option<String>,
@@ -285,6 +288,15 @@ pub fn run(
         trimmed
     };
     let name_was_normalized = normalized_name != original_name;
+
+    // GAP-SG-37: when --strict-name is set, refuse to silently rewrite the name.
+    // The operator gets the canonical form so they can re-submit it explicitly.
+    if args.strict_name && name_was_normalized {
+        return Err(AppError::Validation(format!(
+            "--strict-name is set but '{original_name}' is not canonical kebab-case; \
+             re-run with --name '{normalized_name}' (or drop --strict-name to allow auto-normalization)"
+        )));
+    }
 
     if normalized_name.is_empty() {
         return Err(AppError::Validation(
@@ -664,10 +676,10 @@ pub fn run(
     let total_passage_tokens = crate::tokenizer::count_passage_tokens(&raw_body)?;
     let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body);
     let chunks_created = chunks_info.len();
-    // For single-chunk bodies the memory row itself stores the content and no
-    // entry is appended to `memory_chunks` (see line ~545). For multi-chunk
-    // bodies every chunk is persisted via `insert_chunk_slices`.
-    let chunks_persisted = compute_chunks_persisted(chunks_info.len());
+    // GAP-SG-40: `chunks_persisted` is no longer a pre-commit estimate. It is
+    // read back from `memory_chunks` AFTER the transaction commits (see below)
+    // so the reported count matches the observable database state. Single-chunk
+    // bodies store inline in the memories row and append no chunk rows.
 
     output::emit_progress_i18n(
         &format!(
@@ -954,6 +966,20 @@ pub fn run(
         }
     };
 
+    // GAP-SG-51: when --force-merge --replace-graph updates an existing memory,
+    // clear its prior entity/relationship bindings BEFORE re-linking the supplied
+    // set. With an empty `entities`/`relationships` payload this zeroes the graph
+    // for that memory without a `forget`. New bindings (if any) are linked by the
+    // block further below.
+    if args.replace_graph && action == "updated" {
+        let (e_removed, r_removed) = entities::clear_memory_graph_bindings(&tx, memory_id)?;
+        if e_removed + r_removed > 0 {
+            warnings.push(format!(
+                "--replace-graph cleared {e_removed} entity binding(s) and {r_removed} relationship binding(s) before re-linking"
+            ));
+        }
+    }
+
     if chunks_info.len() > 1 && !skip_reindex {
         storage_chunks::insert_chunk_slices(&tx, memory_id, &new_memory.body, &chunks_info)?;
 
@@ -1057,6 +1083,36 @@ pub fn run(
     }
     tx.commit()?;
 
+    // GAP-SG-40: read back the real chunk-row count now that the write is
+    // durable, so `chunks_persisted` reflects observable state (0 for inline
+    // single-chunk bodies, the exact row count for multi-chunk bodies).
+    let chunks_persisted = storage_chunks::count_for_memory(&conn, memory_id)?;
+
+    // GAP-SG-44: confirm the memory has a persisted embedding vector. A missing
+    // vector (embedding step failed/skipped) makes the memory unsearchable
+    // silently; surface it as a warning recommending re-embed instead of leaving
+    // `health` to report `vec_memories_missing` later.
+    if !new_memory.body.trim().is_empty() {
+        let has_vec: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM memory_embeddings WHERE memory_id = ?1)",
+                rusqlite::params![memory_id],
+                |r| r.get::<_, i64>(0).map(|v| v > 0),
+            )
+            .unwrap_or(false);
+        if !has_vec {
+            tracing::warn!(target: "remember",
+                memory_id,
+                name = %normalized_name,
+                "memory persisted without an embedding vector; recall will be degraded until re-embedded"
+            );
+            warnings.push(
+                "memory persisted without an embedding vector; run `enrich --operation re-embed` to make it searchable"
+                    .to_string(),
+            );
+        }
+    }
+
     // GAP-SG-13: when --force-merge UPDATES an existing memory its body/graph may
     // have changed, so drop any stale enrich-queue sidecar entry keyed to it. The
     // next enrich run re-scans it cleanly. Best-effort; no-op when the queue file
@@ -1117,28 +1173,60 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::compute_chunks_persisted;
     use crate::output::RememberResponse;
 
-    // Bug H-M8: chunks_persisted contract is unit-testable and matches schema.
-    #[test]
-    fn chunks_persisted_zero_for_zero_chunks() {
-        assert_eq!(compute_chunks_persisted(0), 0);
+    /// GAP-SG-37: replicates the `--strict-name` guard predicate so the
+    /// reject-on-normalization decision is unit-testable without a DB.
+    fn strict_name_rejects(strict: bool, name_was_normalized: bool) -> bool {
+        strict && name_was_normalized
     }
 
     #[test]
-    fn chunks_persisted_zero_for_single_chunk_body() {
-        // Single-chunk bodies live in the memories row itself; no row is
-        // appended to memory_chunks. This is the documented contract.
-        assert_eq!(compute_chunks_persisted(1), 0);
+    fn strict_name_rejects_only_when_name_would_change() {
+        assert!(
+            strict_name_rejects(true, true),
+            "strict + changed must reject"
+        );
+        assert!(
+            !strict_name_rejects(true, false),
+            "strict + canonical passes"
+        );
+        assert!(
+            !strict_name_rejects(false, true),
+            "non-strict always passes"
+        );
+        assert!(!strict_name_rejects(false, false));
     }
 
+    // GAP-SG-37/SG-51: --strict-name and --replace-graph must parse on remember.
     #[test]
-    fn chunks_persisted_equals_count_for_multi_chunk_body() {
-        // Every chunk above the first triggers a row in memory_chunks.
-        assert_eq!(compute_chunks_persisted(2), 2);
-        assert_eq!(compute_chunks_persisted(7), 7);
-        assert_eq!(compute_chunks_persisted(64), 64);
+    fn remember_parses_strict_name_and_replace_graph_flags() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "remember",
+            "--name",
+            "my-mem",
+            "--type",
+            "note",
+            "--description",
+            "d",
+            "--body",
+            "b",
+            "--strict-name",
+            "--replace-graph",
+            "--force-merge",
+        ])
+        .expect("parse");
+        match cli.command {
+            Some(Commands::Remember(a)) => {
+                assert!(a.strict_name);
+                assert!(a.replace_graph);
+                assert!(a.force_merge);
+            }
+            other => panic!("expected remember, got {other:?}"),
+        }
     }
 
     #[test]

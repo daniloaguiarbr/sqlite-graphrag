@@ -46,10 +46,30 @@ pub struct ReadArgs {
         help = "Include graph context (entities + relationships) in response"
     )]
     pub with_graph: bool,
+    /// Output format: `json` (default, full envelope) or `raw` (the pure memory
+    /// body to stdout, no JSON wrapper). GAP-SG-50: `raw` lets the body be piped
+    /// without a `jaq -r '.body'` round-trip.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ReadFormat::Json,
+        help = "Output format: json (default) or raw (pure body to stdout)"
+    )]
+    pub format: ReadFormat,
     #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
     pub json: bool,
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+}
+
+/// GAP-SG-50: output format for `read`. `Raw` emits the pure body; `Json`
+/// emits the full structured envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+#[value(rename_all = "lowercase")]
+pub enum ReadFormat {
+    #[default]
+    Json,
+    Raw,
 }
 
 #[derive(Serialize)]
@@ -146,6 +166,13 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
 
     match row_opt {
         Some(row) => {
+            // GAP-SG-50: `--format raw` emits the pure body and returns early,
+            // before building the JSON envelope. The body is written verbatim so
+            // it can be redirected to a file or piped without parsing.
+            if args.format == ReadFormat::Raw {
+                output::emit_raw(row.body.as_bytes());
+                return Ok(());
+            }
             // Resolve current version via memory_versions table (highest version for this memory_id).
             let version: i64 = conn
                 .query_row(
@@ -269,6 +296,26 @@ pub fn run(args: ReadArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // GAP-SG-50: `read --format raw` must parse to ReadFormat::Raw; default is Json.
+    #[test]
+    fn read_format_flag_parses_raw_and_defaults_json() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+
+        let raw = Cli::try_parse_from(["sqlite-graphrag", "read", "my-mem", "--format", "raw"])
+            .expect("parse raw");
+        match raw.command {
+            Some(Commands::Read(a)) => assert_eq!(a.format, ReadFormat::Raw),
+            other => panic!("expected read, got {other:?}"),
+        }
+
+        let dflt = Cli::try_parse_from(["sqlite-graphrag", "read", "my-mem"]).expect("parse");
+        match dflt.command {
+            Some(Commands::Read(a)) => assert_eq!(a.format, ReadFormat::Json),
+            other => panic!("expected read, got {other:?}"),
+        }
+    }
 
     #[test]
     fn epoch_to_iso_converts_zero_to_unix_epoch() {

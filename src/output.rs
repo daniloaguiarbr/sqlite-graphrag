@@ -90,6 +90,17 @@ pub fn emit_text(msg: &str) {
         .and_then(|()| std::io::Write::flush(&mut out));
 }
 
+/// GAP-SG-50: writes `bytes` to stdout verbatim, with no trailing newline and
+/// no JSON envelope. Used by `read --format raw` so the pure memory body can be
+/// piped without a `jaq -r '.body'` round-trip. A `BrokenPipe` error is
+/// silenced gracefully.
+#[inline]
+pub fn emit_raw(bytes: &[u8]) {
+    let mut out = std::io::stdout().lock();
+    let _ =
+        std::io::Write::write_all(&mut out, bytes).and_then(|()| std::io::Write::flush(&mut out));
+}
+
 /// Logs `msg` as a structured `tracing::info!` event (does not write to stdout).
 /// v1.0.89: suppressed when stderr is not a terminal (pipe) to avoid
 /// polluting JSON pipelines when the user redirects stderr with `2>&1`.
@@ -140,6 +151,51 @@ pub fn emit_error_json(code: i32, message: &str) {
             std::io::stdout().lock(),
             r#"{{"error":true,"code":{code},"message":"{escaped}"}}"#
         );
+    }
+}
+
+/// GAP-SG-39: emits an actionable JSON error envelope to stdout, including an
+/// optional `suggestion` field carrying the remediation hint derived from the
+/// error variant. Ensures even silent write failures (e.g. `remember` rejecting
+/// a malformed name) surface both the cause and how to fix it on stdout:
+/// `{"error": true, "code": <code>, "message": "...", "suggestion": "..."}`.
+/// A `BrokenPipe` error is silenced; a hand-rolled fallback preserves the
+/// contract when serialization itself fails.
+#[cold]
+#[inline(never)]
+pub fn emit_error_json_with_suggestion(code: i32, message: &str, suggestion: Option<&str>) {
+    #[derive(serde::Serialize)]
+    struct ErrorEnvelope<'a> {
+        error: bool,
+        code: i32,
+        message: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        suggestion: Option<&'a str>,
+    }
+    let envelope = ErrorEnvelope {
+        error: true,
+        code,
+        message,
+        suggestion,
+    };
+    if emit_json(&envelope).is_err() {
+        use std::io::Write;
+        let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+        match suggestion {
+            Some(s) => {
+                let esc_s = s.replace('\\', "\\\\").replace('"', "\\\"");
+                let _ = writeln!(
+                    std::io::stdout().lock(),
+                    r#"{{"error":true,"code":{code},"message":"{escaped}","suggestion":"{esc_s}"}}"#
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    std::io::stdout().lock(),
+                    r#"{{"error":true,"code":{code},"message":"{escaped}"}}"#
+                );
+            }
+        }
     }
 }
 

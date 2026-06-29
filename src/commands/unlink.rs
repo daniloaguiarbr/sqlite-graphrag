@@ -32,12 +32,19 @@ pub struct UnlinkArgs {
     /// or any custom snake_case/kebab-case string.
     #[arg(long, value_parser = crate::parsers::parse_relation, value_name = "RELATION")]
     pub relation: Option<String>,
-    /// Entity name for bulk removal. Must be combined with --all.
-    #[arg(long, requires = "all", conflicts_with_all = ["from", "to"])]
+    /// Entity name. Combine with --all to remove every relationship of that
+    /// entity, or with --memory to remove the curated memory↔entity binding.
+    #[arg(long, conflicts_with_all = ["from", "to"])]
     pub entity: Option<String>,
     /// When combined with --entity, removes ALL relationships where that entity is source or target.
     #[arg(long, requires = "entity")]
     pub all: bool,
+    /// GAP-SG-52: memory name. Combine with --entity to surgically remove the
+    /// curated `memory_entities` binding for that (memory, entity) pair —
+    /// covering bindings created via `remember --graph-stdin` that `prune-ner`
+    /// would not target selectively.
+    #[arg(long, requires = "entity", conflicts_with_all = ["from", "to", "all"], value_name = "NAME")]
+    pub memory: Option<String>,
     #[arg(long)]
     pub namespace: Option<String>,
     #[arg(long, value_enum, default_value = "json")]
@@ -72,6 +79,68 @@ pub fn run(args: UnlinkArgs) -> Result<(), AppError> {
     }
 
     let mut conn = open_rw(&paths.db)?;
+
+    // GAP-SG-52: --memory <name> --entity <name> → remove the curated
+    // memory↔entity binding for that pair (the `memory_entities` junction row).
+    if let Some(memory_name) = args.memory.as_deref() {
+        let entity_name = args.entity.as_deref().ok_or_else(|| {
+            AppError::Validation("--entity is required when --memory is used".to_string())
+        })?;
+        let memory_id = crate::storage::memories::find_by_name(&conn, &namespace, memory_name)?
+            .map(|(id, _, _)| id)
+            .ok_or_else(|| AppError::MemoryNotFound {
+                name: memory_name.to_string(),
+                namespace: namespace.clone(),
+            })?;
+        let entity_id =
+            entities::find_entity_id(&conn, &namespace, entity_name)?.ok_or_else(|| {
+                AppError::NotFound(errors_msg::entity_not_found(entity_name, &namespace))
+            })?;
+
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let removed = entities::unlink_memory_entity(&tx, memory_id, entity_id)?;
+        entities::recalculate_degree(&tx, entity_id)?;
+        tx.commit()?;
+
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
+        let response = UnlinkResponse {
+            action: if removed > 0 {
+                "deleted".to_string()
+            } else {
+                "noop".to_string()
+            },
+            from_name: memory_name.to_string(),
+            to_name: entity_name.to_string(),
+            relation: "memory-entity".to_string(),
+            relationships_removed: removed,
+            namespace: namespace.clone(),
+            elapsed_ms: inicio.elapsed().as_millis() as u64,
+        };
+
+        match args.format {
+            OutputFormat::Json => output::emit_json(&response)?,
+            OutputFormat::Text | OutputFormat::Markdown => {
+                output::emit_text(&format!(
+                    "{}: memory '{}' --[memory-entity]--> entity '{}' removed {} binding(s) [{}]",
+                    response.action,
+                    response.from_name,
+                    response.to_name,
+                    response.relationships_removed,
+                    response.namespace
+                ));
+            }
+        }
+        return Ok(());
+    }
+
+    // --entity without --all or --memory is ambiguous: reject loudly.
+    if args.entity.is_some() && !args.all {
+        return Err(AppError::Validation(
+            "--entity must be combined with --all (remove all relationships) or --memory <name> (remove a memory↔entity binding)"
+                .to_string(),
+        ));
+    }
 
     // Mode: --entity --all → delete every relationship for that entity.
     if args.all {
@@ -307,6 +376,30 @@ mod tests {
         assert_eq!(json["to_name"], "*");
         assert_eq!(json["relation"], "*");
         assert_eq!(json["relationships_removed"], 5u64);
+    }
+
+    // GAP-SG-52: `unlink --memory M --entity E` parses into the binding mode.
+    #[test]
+    fn unlink_memory_entity_binding_mode_parses() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "unlink",
+            "--memory",
+            "my-mem",
+            "--entity",
+            "jwt-token",
+        ])
+        .expect("parse");
+        match cli.command {
+            Some(Commands::Unlink(a)) => {
+                assert_eq!(a.memory.as_deref(), Some("my-mem"));
+                assert_eq!(a.entity.as_deref(), Some("jwt-token"));
+                assert!(!a.all);
+            }
+            other => panic!("expected unlink, got {other:?}"),
+        }
     }
 
     #[test]

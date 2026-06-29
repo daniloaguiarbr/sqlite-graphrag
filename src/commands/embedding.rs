@@ -113,6 +113,11 @@ struct EmbeddingStatusOutput {
     /// a chain codex→claude→none seria iterada em runtime.
     backend_invoked: &'static str,
     counts: EmbeddingStatusCounts,
+    /// GAP-SG-41: real vector coverage in the persisted tables. The `counts`
+    /// above only reflect the async retry queue (empty on the synchronous REST
+    /// path), so `coverage` reports the actual rows in `memory_embeddings`,
+    /// `entity_embeddings` and `chunk_embeddings` versus their source rows.
+    coverage: EmbeddingCoverage,
     elapsed_ms: u64,
 }
 
@@ -122,6 +127,33 @@ struct EmbeddingStatusCounts {
     in_progress: usize,
     done: usize,
     abandoned: usize,
+}
+
+/// GAP-SG-41: actual persisted-vector coverage. Each `*_with_vec` field counts
+/// the rows that have an embedding; the `*_total` field counts the source rows
+/// (active memories / entities / chunks). When totals are non-zero the operator
+/// can audit coverage directly instead of inferring it from `hybrid-search`.
+#[derive(Serialize, Default)]
+struct EmbeddingCoverage {
+    memories_total: i64,
+    memories_with_vec: i64,
+    entities_total: i64,
+    entities_with_vec: i64,
+    chunks_total: i64,
+    chunks_with_vec: i64,
+}
+
+/// Counts a table, returning 0 when the table is absent (legacy DB) instead of
+/// failing the whole status report.
+fn count_table(conn: &rusqlite::Connection, sql: &str) -> i64 {
+    match conn.query_row(sql, [], |r| r.get::<_, i64>(0)) {
+        Ok(n) => n,
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => 0,
+        Err(e) => {
+            tracing::warn!(target: "embedding", error = %e, sql, "coverage count failed");
+            0
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -225,10 +257,26 @@ fn run_status(args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Resul
         LlmBackendChoice::Auto => "auto",
     };
 
+    // GAP-SG-41: query the actual vector tables so coverage is observable even
+    // when the async queue is empty (the synchronous OpenRouter REST path never
+    // populates `pending_embeddings`).
+    let coverage = EmbeddingCoverage {
+        memories_total: count_table(
+            &conn,
+            "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
+        ),
+        memories_with_vec: count_table(&conn, "SELECT COUNT(*) FROM memory_embeddings"),
+        entities_total: count_table(&conn, "SELECT COUNT(*) FROM entities"),
+        entities_with_vec: count_table(&conn, "SELECT COUNT(*) FROM entity_embeddings"),
+        chunks_total: count_table(&conn, "SELECT COUNT(*) FROM memory_chunks"),
+        chunks_with_vec: count_table(&conn, "SELECT COUNT(*) FROM chunk_embeddings"),
+    };
+
     let output = EmbeddingStatusOutput {
         action: "embedding_status",
         backend_invoked,
         counts,
+        coverage,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
     emit_json_compact(&output)
@@ -268,6 +316,31 @@ fn run_abandon(args: EmbeddingAbandonArgs) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // GAP-SG-41: the status output exposes real vector coverage, not only the
+    // async queue counts.
+    #[test]
+    fn embedding_status_output_includes_coverage() {
+        let output = EmbeddingStatusOutput {
+            action: "embedding_status",
+            backend_invoked: "openrouter",
+            counts: EmbeddingStatusCounts::default(),
+            coverage: EmbeddingCoverage {
+                memories_total: 10,
+                memories_with_vec: 9,
+                entities_total: 4,
+                entities_with_vec: 4,
+                chunks_total: 7,
+                chunks_with_vec: 7,
+            },
+            elapsed_ms: 1,
+        };
+        let json = serde_json::to_value(&output).expect("serialize");
+        assert_eq!(json["coverage"]["memories_total"], 10);
+        assert_eq!(json["coverage"]["memories_with_vec"], 9);
+        assert_eq!(json["coverage"]["entities_with_vec"], 4);
+        assert_eq!(json["coverage"]["chunks_with_vec"], 7);
+    }
 
     #[test]
     fn status_filter_round_trip() {

@@ -225,6 +225,51 @@ pub fn link_memory_relationship(
     Ok(())
 }
 
+/// GAP-SG-52: removes the curated `memory_entities` binding between a memory
+/// and an entity. Unlike `prune-ner` (which targets an entity across every
+/// memory), this surgically unlinks a single `(memory_id, entity_id)` pair —
+/// covering bindings created via `remember --graph-stdin`. Returns the number
+/// of junction rows removed (0 or 1).
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
+pub fn unlink_memory_entity(
+    conn: &Connection,
+    memory_id: i64,
+    entity_id: i64,
+) -> Result<u64, AppError> {
+    let affected = conn.execute(
+        "DELETE FROM memory_entities WHERE memory_id = ?1 AND entity_id = ?2",
+        params![memory_id, entity_id],
+    )?;
+    Ok(affected as u64)
+}
+
+/// GAP-SG-51: clears every `memory_entities` and `memory_relationships`
+/// binding for a memory so a `--force-merge --replace-graph` update can install
+/// an authoritative set (including the empty set). The entities and
+/// relationships themselves are preserved; only the junction rows for this
+/// memory are removed. Returns `(entity_bindings_removed, relationship_bindings_removed)`.
+///
+/// # Errors
+///
+/// Returns [`AppError::Database`] when the underlying SQLite operation fails.
+pub fn clear_memory_graph_bindings(
+    conn: &Connection,
+    memory_id: i64,
+) -> Result<(u64, u64), AppError> {
+    let entities_removed = conn.execute(
+        "DELETE FROM memory_entities WHERE memory_id = ?1",
+        params![memory_id],
+    )? as u64;
+    let rels_removed = conn.execute(
+        "DELETE FROM memory_relationships WHERE memory_id = ?1",
+        params![memory_id],
+    )? as u64;
+    Ok((entities_removed, rels_removed))
+}
+
 /// Increments the `degree` counter of an entity by one.
 ///
 /// # Errors
@@ -1386,5 +1431,69 @@ mod tests {
     fn validate_entity_name_accepts_mixed_case() {
         assert!(validate_entity_name("FTS5").is_ok()); // 4 chars but has digit
         assert!(validate_entity_name("WAL").is_err()); // 3 chars ALL_CAPS
+    }
+
+    // GAP-SG-52: unlink_memory_entity removes exactly the targeted binding.
+    #[test]
+    fn test_unlink_memory_entity_removes_single_binding() -> TestResult {
+        let (_tmp, conn) = setup_db()?;
+        let memory_id = insert_memory(&conn)?;
+        let e1 = upsert_entity(&conn, "global", &new_entity_helper("entidade-um"))?;
+        let e2 = upsert_entity(&conn, "global", &new_entity_helper("entidade-dois"))?;
+        link_memory_entity(&conn, memory_id, e1)?;
+        link_memory_entity(&conn, memory_id, e2)?;
+
+        let removed = unlink_memory_entity(&conn, memory_id, e1)?;
+        assert_eq!(removed, 1);
+
+        // e1 binding gone, e2 binding kept.
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_entities WHERE memory_id = ?1",
+            params![memory_id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(remaining, 1);
+
+        // Idempotent: a second unlink of the same pair removes nothing.
+        assert_eq!(unlink_memory_entity(&conn, memory_id, e1)?, 0);
+        Ok(())
+    }
+
+    // GAP-SG-51: clear_memory_graph_bindings zeroes every binding for a memory.
+    #[test]
+    fn test_clear_memory_graph_bindings_clears_all() -> TestResult {
+        let (_tmp, conn) = setup_db()?;
+        let memory_id = insert_memory(&conn)?;
+        let e1 = upsert_entity(&conn, "global", &new_entity_helper("alpha-node"))?;
+        let e2 = upsert_entity(&conn, "global", &new_entity_helper("beta-node"))?;
+        link_memory_entity(&conn, memory_id, e1)?;
+        link_memory_entity(&conn, memory_id, e2)?;
+        let rel = NewRelationship {
+            source: "alpha-node".to_string(),
+            target: "beta-node".to_string(),
+            relation: "related".to_string(),
+            strength: 0.5,
+            description: None,
+        };
+        let rel_id = upsert_relationship(&conn, "global", e1, e2, &rel)?;
+        link_memory_relationship(&conn, memory_id, rel_id)?;
+
+        let (e_removed, r_removed) = clear_memory_graph_bindings(&conn, memory_id)?;
+        assert_eq!(e_removed, 2);
+        assert_eq!(r_removed, 1);
+
+        let ent_left: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_entities WHERE memory_id = ?1",
+            params![memory_id],
+            |r| r.get(0),
+        )?;
+        let rel_left: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_relationships WHERE memory_id = ?1",
+            params![memory_id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(ent_left, 0);
+        assert_eq!(rel_left, 0);
+        Ok(())
     }
 }

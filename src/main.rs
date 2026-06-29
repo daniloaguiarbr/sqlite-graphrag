@@ -530,7 +530,13 @@ fn main() -> std::process::ExitCode {
     };
 
     if let Err(e) = result {
-        sqlite_graphrag::output::emit_error_json(e.exit_code(), &e.localized_message());
+        // GAP-SG-39: emit an actionable error envelope (cause + remediation) so a
+        // non-zero exit from any write path is never silent on stdout.
+        sqlite_graphrag::output::emit_error_json_with_suggestion(
+            e.exit_code(),
+            &e.localized_message(),
+            e.suggestion(),
+        );
         sqlite_graphrag::output::emit_error(&e.localized_message());
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::Write::flush(&mut std::io::stderr());

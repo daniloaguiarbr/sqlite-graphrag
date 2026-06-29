@@ -30,6 +30,10 @@ struct StatsResponse {
     memories: i64,
     /// Alias of `memories` for the documented contract in SKILL.md.
     memories_total: i64,
+    /// GAP-SG-43: documented alias consumers read as `.total_memories`. Was
+    /// absent (so clients saw `null`); now populated with the live memory count
+    /// so `stats --json` is self-sufficient without a `list` fallback.
+    total_memories: i64,
     entities: i64,
     /// Alias of `entities` for the documented contract.
     entities_total: i64,
@@ -118,6 +122,7 @@ pub fn run(args: StatsArgs) -> Result<(), AppError> {
     output::emit_json(&StatsResponse {
         memories,
         memories_total: memories,
+        total_memories: memories,
         entities,
         entities_total: entities,
         relationships,
@@ -144,6 +149,7 @@ mod tests {
         let resp = StatsResponse {
             memories: 10,
             memories_total: 10,
+            total_memories: 10,
             entities: 5,
             entities_total: 5,
             relationships: 3,
@@ -160,6 +166,12 @@ mod tests {
         let json = serde_json::to_value(&resp).expect("serialization failed");
         assert_eq!(json["memories"], 10);
         assert_eq!(json["memories_total"], 10);
+        // GAP-SG-43: total_memories must be a populated number, never null.
+        assert_eq!(json["total_memories"], 10);
+        assert!(
+            json["total_memories"].is_number(),
+            "total_memories must be a number, not null"
+        );
         assert_eq!(json["entities"], 5);
         assert_eq!(json["entities_total"], 5);
         assert_eq!(json["relationships"], 3);
@@ -177,6 +189,7 @@ mod tests {
         let resp = StatsResponse {
             memories: 0,
             memories_total: 0,
+            total_memories: 0,
             entities: 0,
             entities_total: 0,
             relationships: 0,
@@ -205,6 +218,7 @@ mod tests {
         let resp = StatsResponse {
             memories: 0,
             memories_total: 0,
+            total_memories: 0,
             entities: 0,
             entities_total: 0,
             relationships: 0,
@@ -230,6 +244,7 @@ mod tests {
         let resp = StatsResponse {
             memories: 42,
             memories_total: 42,
+            total_memories: 42,
             entities: 7,
             entities_total: 7,
             relationships: 2,
