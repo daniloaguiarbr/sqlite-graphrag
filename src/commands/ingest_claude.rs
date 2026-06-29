@@ -915,34 +915,27 @@ pub fn run_claude_ingest(
             let ent_count = extraction.entities.len();
             let rel_count = 0;
 
+            // GAP-SG-47: fold non-canonical labels onto the nearest canonical
+            // kind instead of discarding the entity (no silent data loss).
             let new_entities: Vec<NewEntity> = extraction
                 .entities
                 .iter()
-                .filter_map(|e| match e.entity_type.parse::<EntityType>() {
-                    Ok(et) => Some(NewEntity {
-                        name: e.name.clone(),
-                        entity_type: et,
-                        description: None,
-                    }),
-                    Err(_) => {
-                        tracing::warn!(
-                            target: "ingest",
-                            entity = %e.name,
-                            entity_type = %e.entity_type,
-                            "entity type not recognized, skipping"
-                        );
-                        None
-                    }
+                .map(|e| NewEntity {
+                    name: e.name.clone(),
+                    entity_type: EntityType::map_to_canonical(&e.entity_type),
+                    description: None,
                 })
                 .collect();
 
+            // GAP-SG-48: rewrite non-canonical relations to canonical instead
+            // of normalizing-and-accepting them raw.
             let new_relationships: Vec<NewRelationship> = extraction
                 .relationships
                 .iter()
                 .map(|r| NewRelationship {
                     source: r.source.clone(),
                     target: r.target.clone(),
-                    relation: crate::parsers::normalize_relation(&r.relation),
+                    relation: crate::parsers::map_to_canonical_relation(&r.relation),
                     strength: r.strength,
                     description: None,
                 })

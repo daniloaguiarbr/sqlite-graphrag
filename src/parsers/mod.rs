@@ -240,6 +240,37 @@ pub fn validate_relation_format(s: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Maps an arbitrary relation label to its canonical form, never producing a
+/// non-canonical value (GAP-SG-48).
+///
+/// Relation handling used to be inconsistent: non-canonical relations were
+/// accepted raw (with only a `WARN`) while non-canonical entity types were
+/// rejected outright. This unifies the policy — extraction never persists a
+/// label outside the canonical vocabulary. Known aliases are rewritten via a
+/// fixed table; values that are already canonical pass through unchanged;
+/// anything else falls back to the generic `related`.
+///
+/// Alias table (mirrors the project's canonical relation map):
+/// `adds`/`creates` → `causes`, `implements` → `supports`,
+/// `blocks` → `contradicts`, `tested_by` → `related`, `part_of` → `applies_to`.
+pub fn map_to_canonical_relation(s: &str) -> String {
+    let normalized = normalize_relation(s);
+    if is_canonical_relation(&normalized) {
+        return normalized;
+    }
+    match normalized.as_str() {
+        "adds" | "creates" => "causes",
+        "implements" => "supports",
+        "blocks" => "contradicts",
+        "tested_by" => "related",
+        "part_of" => "applies_to",
+        // Any other non-canonical relation folds onto the generic canonical
+        // kind rather than being persisted raw.
+        _ => "related",
+    }
+    .to_string()
+}
+
 /// Emits a `tracing::warn!` when the relation is not in [`CANONICAL_RELATIONS`].
 pub fn warn_if_non_canonical(relation: &str) {
     if !is_canonical_relation(relation) {
@@ -317,6 +348,32 @@ mod relation_tests {
         assert!(is_canonical_relation("applies_to"));
         assert!(!is_canonical_relation("implements"));
         assert!(!is_canonical_relation("blocks"));
+    }
+
+    #[test]
+    fn map_to_canonical_relation_passes_through_canonical() {
+        assert_eq!(map_to_canonical_relation("uses"), "uses");
+        assert_eq!(map_to_canonical_relation("Applies-To"), "applies_to");
+        assert_eq!(map_to_canonical_relation("DEPENDS_ON"), "depends_on");
+    }
+
+    #[test]
+    fn map_to_canonical_relation_rewrites_known_aliases() {
+        // GAP-SG-48: part-of was previously accepted raw with only a WARN.
+        assert_eq!(map_to_canonical_relation("part-of"), "applies_to");
+        assert_eq!(map_to_canonical_relation("part_of"), "applies_to");
+        assert_eq!(map_to_canonical_relation("implements"), "supports");
+        assert_eq!(map_to_canonical_relation("blocks"), "contradicts");
+        assert_eq!(map_to_canonical_relation("adds"), "causes");
+        assert_eq!(map_to_canonical_relation("creates"), "causes");
+        assert_eq!(map_to_canonical_relation("tested-by"), "related");
+    }
+
+    #[test]
+    fn map_to_canonical_relation_unknown_folds_to_related() {
+        assert_eq!(map_to_canonical_relation("some-weird-relation"), "related");
+        // Output is always itself canonical.
+        assert!(is_canonical_relation(&map_to_canonical_relation("xyz")));
     }
 }
 

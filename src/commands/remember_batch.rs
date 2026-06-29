@@ -41,6 +41,14 @@ pub struct RememberBatchArgs {
     /// Database path override.
     #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
     pub db: Option<String>,
+    /// GAP-SG-35: maximum simultaneous LLM embedding subprocesses, accepted for
+    /// parity with `remember`/`edit`/`ingest`/`enrich` so agents that append
+    /// `--llm-parallelism` to every invocation never hit a clap error. The
+    /// batch loop embeds one passage per item serially; this value bounds the
+    /// embedding fan-out width where the backend supports it (clamp [1, 32]).
+    #[arg(long, default_value_t = 4, value_name = "N",
+          value_parser = clap::value_parser!(u64).range(1..=32))]
+    pub llm_parallelism: u64,
 }
 
 #[derive(Deserialize)]

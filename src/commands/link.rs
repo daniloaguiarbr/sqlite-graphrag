@@ -238,15 +238,15 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
 
         if args.max_entity_degree > 0 {
             let cap = args.max_entity_degree as i64;
+            // GAP-SG-49: enforce the cap instead of only warning. Prune the
+            // weakest incident edge(s) until each endpoint is back under the
+            // cap; if the just-created edge is the weakest it is the one
+            // refused.
             for (entity_id, entity_name) in [(source_id, &norm_from), (target_id, &norm_to)] {
-                let degree: i64 = tx.query_row(
-                    "SELECT degree FROM entities WHERE id = ?1",
-                    params![entity_id],
-                    |r| r.get(0),
-                )?;
-                if degree > cap {
+                let pruned = crate::graph::enforce_degree_cap(&tx, entity_id, cap)?;
+                if pruned > 0 {
                     output::emit_progress(&format!(
-                        "WARNING: entity '{entity_name}' degree {degree} exceeds cap {cap}"
+                        "entity '{entity_name}' exceeded degree cap {cap}; pruned {pruned} lowest-weight edge(s)"
                     ));
                 }
             }

@@ -70,12 +70,20 @@ pub struct RememberArgs {
     pub r#type: Option<MemoryType>,
     /// Short description (≤500 chars) summarizing the memory for use in `list` and `recall` snippets.
     /// Required when creating a new memory. Optional with --force-merge: if omitted the existing description is inherited.
-    #[arg(long)]
+    ///
+    /// GAP-SG-33: `allow_hyphen_values` lets a description that begins with a
+    /// hyphen (e.g. `"- bullet"`) be accepted as a value instead of being
+    /// mistaken for a flag.
+    #[arg(long, allow_hyphen_values = true)]
     pub description: Option<String>,
     /// Inline body content. Mutually exclusive with --body-file, --body-stdin, --graph-stdin.
     /// Maximum 512000 bytes; rejected if empty without an external graph.
+    ///
+    /// GAP-SG-33: `allow_hyphen_values` lets a body that begins with a hyphen
+    /// (e.g. a markdown bullet list) be accepted as a value.
     #[arg(
         long,
+        allow_hyphen_values = true,
         help = "Inline body content (max 500 KB / 512000 bytes; for larger inputs split into multiple memories or use --body-file)",
         conflicts_with_all = ["body_file", "body_stdin", "graph_stdin"]
     )]
@@ -111,10 +119,24 @@ pub struct RememberArgs {
             "body_file",
             "body_stdin",
             "entities_file",
-            "relationships_file"
+            "relationships_file",
+            "graph_file"
         ]
     )]
     pub graph_stdin: bool,
+    /// GAP-SG-30: read graph JSON (`{body, entities, relationships}`) from a
+    /// FILE instead of stdin, so a curated graph can combine with a body
+    /// supplied via --body / --body-file / --body-stdin (which previously
+    /// conflicted with --graph-stdin over the single stdin). The file's `body`
+    /// field is used only when no other body source is given; otherwise the
+    /// body source wins and only the file's entities/relationships are applied.
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read graph JSON (body + entities + relationships) from a file (combines with --body/--body-file/--body-stdin)",
+        conflicts_with_all = ["graph_stdin", "entities_file", "relationships_file"]
+    )]
+    pub graph_file: Option<std::path::PathBuf>,
     #[arg(
         long,
         help = "Namespace (env: SQLITE_GRAPHRAG_NAMESPACE, default: global)"
@@ -298,6 +320,12 @@ pub fn run(
         }
     }
 
+    // GAP-SG-30: capture whether the body comes from an explicit source before
+    // `args.body` is moved below; --graph-file only adopts the file's body when
+    // no explicit body source was supplied.
+    let body_explicitly_provided =
+        args.body.is_some() || args.body_file.is_some() || args.body_stdin;
+
     let mut raw_body = if let Some(b) = args.body {
         b
     } else if let Some(ref path) = args.body_file {
@@ -354,6 +382,28 @@ pub fn run(
     }
     if args.graph_stdin && !graph.entities.is_empty() {
         entities_provided_externally = true;
+    }
+    // GAP-SG-30: graph from a file, combinable with any body source. Conflicts
+    // with --graph-stdin/--entities-file/--relationships-file (enforced by clap),
+    // so `graph` is still empty here when --graph-file is set.
+    if let Some(path) = args.graph_file {
+        let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
+        if file_size > MAX_MEMORY_BODY_LEN as u64 {
+            return Err(AppError::LimitExceeded(
+                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
+            ));
+        }
+        let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
+        let mut gf = serde_json::from_str::<GraphInput>(&content)
+            .map_err(|e| AppError::Validation(format!("invalid JSON in --graph-file: {e}")))?;
+        graph.entities = gf.entities;
+        graph.relationships = gf.relationships;
+        if !body_explicitly_provided {
+            raw_body = gf.body.take().unwrap_or_default();
+        }
+        if !graph.entities.is_empty() {
+            entities_provided_externally = true;
+        }
     }
 
     if graph.entities.len() > max_entities_per_memory() {
@@ -982,16 +1032,14 @@ pub fn run(
         for &eid in &affected_entity_ids {
             entities::recalculate_degree(&tx, eid)?;
         }
-        // GAP-17: warn when entity degree exceeds the configured cap.
+        // GAP-SG-49: enforce the degree cap instead of only warning (was the
+        // GAP-17 advisory). Prune the weakest incident edge(s) until each
+        // affected entity is back under the cap.
         if args.max_entity_degree > 0 {
             let cap = args.max_entity_degree as i64;
             for &eid in &affected_entity_ids {
-                let degree: i64 = tx.query_row(
-                    "SELECT degree FROM entities WHERE id = ?1",
-                    rusqlite::params![eid],
-                    |r| r.get(0),
-                )?;
-                if degree > cap {
+                let pruned = crate::graph::enforce_degree_cap(&tx, eid, cap)?;
+                if pruned > 0 {
                     let name: String = tx.query_row(
                         "SELECT name FROM entities WHERE id = ?1",
                         rusqlite::params![eid],
@@ -999,9 +1047,9 @@ pub fn run(
                     )?;
                     tracing::warn!(target: "remember",
                         entity = %name,
-                        degree = degree,
                         cap = cap,
-                        "entity degree cap exceeded"
+                        pruned = pruned,
+                        "entity degree cap exceeded; pruned lowest-weight edge(s)"
                     );
                 }
             }

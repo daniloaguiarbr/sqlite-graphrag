@@ -1936,8 +1936,8 @@ pub fn run(
             "operation": "memory-bindings"
         }))?;
         let enrich_args = super::enrich::EnrichArgs {
-            operation: super::enrich::EnrichOperation::MemoryBindings,
-            mode: super::enrich::EnrichMode::ClaudeCode,
+            operation: Some(super::enrich::EnrichOperation::MemoryBindings),
+            mode: Some(super::enrich::EnrichMode::ClaudeCode),
             limit: None,
             dry_run: false,
             namespace: args.namespace.clone(),
@@ -2155,6 +2155,55 @@ fn collapse_dashes(s: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// GAP-SG-29: `ingest --mode none --resume` is rejected fail-fast by the
+    /// mode-conditional validator, which `run()` invokes as its very first
+    /// statement (before any DB/IO). clap 4.6 derive cannot express a
+    /// value-conditional conflict (`--mode=none` vs `--resume`) without also
+    /// breaking the valid `--mode claude-code --resume` combo, so the contract
+    /// is enforced here instead of at the parser layer.
+    #[test]
+    fn ingest_mode_none_with_resume_is_rejected() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+
+        let none_resume = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "ingest",
+            "./docs",
+            "--mode",
+            "none",
+            "--resume",
+        ])
+        .expect("parse succeeds; the conflict is value-conditional");
+        let args = match none_resume.command {
+            Some(Commands::Ingest(a)) => a,
+            other => panic!("expected ingest, got {other:?}"),
+        };
+        assert!(
+            validate_mode_conditional_flags_ingest(&args).is_err(),
+            "--mode none + --resume must be rejected fail-fast"
+        );
+
+        // The valid LLM-mode combo is NOT rejected.
+        let claude_resume = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "ingest",
+            "./docs",
+            "--mode",
+            "claude-code",
+            "--resume",
+        ])
+        .expect("parse");
+        let args = match claude_resume.command {
+            Some(Commands::Ingest(a)) => a,
+            other => panic!("expected ingest, got {other:?}"),
+        };
+        assert!(
+            validate_mode_conditional_flags_ingest(&args).is_ok(),
+            "--mode claude-code + --resume is valid and must pass"
+        );
+    }
 
     #[test]
     fn matches_pattern_suffix() {

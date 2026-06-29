@@ -51,6 +51,65 @@ impl EntityType {
             EntityType::Tool => "tool",
         }
     }
+
+    /// Maps an arbitrary type label to the closest canonical [`EntityType`],
+    /// never failing (GAP-SG-47).
+    ///
+    /// LLM extraction routinely emits type labels outside the 13 canonical
+    /// kinds (`platform`, `language`, `feature`, `framework`, ...). The old
+    /// parse path discarded those entities with a `WARN`, silently losing
+    /// legitimate graph nodes. This function PRESERVES them by folding each
+    /// label onto the nearest canonical kind. Anything it cannot place falls
+    /// back to [`EntityType::Concept`], the most general kind — so a label is
+    /// never dropped.
+    ///
+    /// Matching is case-insensitive and treats hyphens as underscores, so
+    /// `"Issue-Tracker"` resolves to [`EntityType::IssueTracker`].
+    pub fn map_to_canonical(s: &str) -> EntityType {
+        let key = s.trim().to_lowercase().replace('-', "_");
+        // Exact canonical (and case/hyphen-insensitive) match first.
+        if let Ok(et) = key.parse::<EntityType>() {
+            return et;
+        }
+        match key.as_str() {
+            // Concept-like: abstractions, technologies, capabilities, topics.
+            "platform" | "language" | "feature" | "framework" | "library" | "technology"
+            | "software" | "service" | "product" | "system" | "api" | "component" | "module"
+            | "package" | "dependency" | "protocol" | "standard" | "format" | "algorithm"
+            | "pattern" | "method" | "function" | "class" | "interface" | "command" | "flag"
+            | "option" | "config" | "setting" | "version" | "release" | "model" | "metric"
+            | "topic" | "skill" | "reference" | "note" | "feedback" | "url" | "link"
+            | "keyword" | "tag" | "category" => EntityType::Concept,
+            // File-like: documents, paths, code artifacts.
+            "document" | "doc" | "artifact" | "directory" | "folder" | "path" | "repository"
+            | "repo" | "codebase" | "script" => EntityType::File,
+            // Person-like roles.
+            "user" | "author" | "developer" | "maintainer" | "contributor" | "agent" | "owner"
+            | "assignee" => EntityType::Person,
+            // Organization-like collectives.
+            "company" | "org" | "vendor" | "group" | "team" | "department" | "institution" => {
+                EntityType::Organization
+            }
+            // Incident-like failures.
+            "bug" | "error" | "failure" | "outage" | "vulnerability" | "cve" | "regression"
+            | "defect" => EntityType::Incident,
+            // Decision-like records.
+            "adr" | "choice" | "policy" | "ruling" => EntityType::Decision,
+            // Date-like temporals.
+            "time" | "datetime" | "timestamp" | "day" | "month" | "year" | "deadline"
+            | "milestone" => EntityType::Date,
+            // Location-like places.
+            "city" | "country" | "region" | "place" | "address" | "site" => EntityType::Location,
+            // Issue-tracker-like.
+            "ticket" | "issue" | "jira" | "github_issue" | "pr" | "pull_request" => {
+                EntityType::IssueTracker
+            }
+            // Dashboard-like.
+            "panel" | "board" | "view" | "report" | "chart" => EntityType::Dashboard,
+            // Anything else: the most general canonical kind, never dropped.
+            _ => EntityType::Concept,
+        }
+    }
 }
 
 impl std::fmt::Display for EntityType {
@@ -171,5 +230,53 @@ mod tests {
     fn serde_json_deserializes_from_lowercase_string() {
         let et: EntityType = serde_json::from_str("\"person\"").unwrap();
         assert_eq!(et, EntityType::Person);
+    }
+
+    #[test]
+    fn map_to_canonical_preserves_canonical_types() {
+        assert_eq!(EntityType::map_to_canonical("person"), EntityType::Person);
+        assert_eq!(EntityType::map_to_canonical("concept"), EntityType::Concept);
+        assert_eq!(
+            EntityType::map_to_canonical("issue_tracker"),
+            EntityType::IssueTracker
+        );
+        // Hyphen + case variants normalize to the canonical kind.
+        assert_eq!(
+            EntityType::map_to_canonical("Issue-Tracker"),
+            EntityType::IssueTracker
+        );
+    }
+
+    #[test]
+    fn map_to_canonical_folds_non_canonical_instead_of_discarding() {
+        // GAP-SG-47: platform/language/feature were previously DISCARDED.
+        assert_eq!(
+            EntityType::map_to_canonical("platform"),
+            EntityType::Concept
+        );
+        assert_eq!(
+            EntityType::map_to_canonical("language"),
+            EntityType::Concept
+        );
+        assert_eq!(EntityType::map_to_canonical("feature"), EntityType::Concept);
+        // Role/collective folds.
+        assert_eq!(
+            EntityType::map_to_canonical("developer"),
+            EntityType::Person
+        );
+        assert_eq!(
+            EntityType::map_to_canonical("company"),
+            EntityType::Organization
+        );
+        assert_eq!(EntityType::map_to_canonical("document"), EntityType::File);
+    }
+
+    #[test]
+    fn map_to_canonical_unknown_falls_back_to_concept_never_dropped() {
+        assert_eq!(
+            EntityType::map_to_canonical("totally-made-up-kind"),
+            EntityType::Concept
+        );
+        assert_eq!(EntityType::map_to_canonical(""), EntityType::Concept);
     }
 }

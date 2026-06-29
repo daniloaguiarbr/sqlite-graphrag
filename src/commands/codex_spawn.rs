@@ -509,10 +509,10 @@ pub fn parse_extraction_text(text: &str) -> Result<ExtractionResult, AppError> {
                     .or_else(|| e.get("entity_type"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("concept");
-                let entity_type = serde_json::from_value::<crate::entity_type::EntityType>(
-                    serde_json::Value::String(entity_type_str.to_string()),
-                )
-                .unwrap_or(crate::entity_type::EntityType::Concept);
+                // GAP-SG-47: fold non-canonical labels onto the nearest
+                // canonical kind (preserves aliases/case instead of collapsing
+                // every miss straight to concept).
+                let entity_type = crate::entity_type::EntityType::map_to_canonical(entity_type_str);
                 entities.push(NewEntity {
                     name: name.to_string(),
                     entity_type,
@@ -536,7 +536,8 @@ pub fn parse_extraction_text(text: &str) -> Result<ExtractionResult, AppError> {
                 relationships.push(NewRelationship {
                     source: from_v.to_string(),
                     target: to_v.to_string(),
-                    relation: rel_v.to_string(),
+                    // GAP-SG-48: rewrite non-canonical relations to canonical.
+                    relation: crate::parsers::map_to_canonical_relation(rel_v),
                     strength: r.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5),
                     description: None,
                 });

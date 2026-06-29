@@ -407,13 +407,28 @@ impl std::fmt::Display for EnrichMode {
     14 I/O error"
 )]
 pub struct EnrichArgs {
-    /// Enrichment operation to run.
-    #[arg(long, short = 'o', value_enum, value_name = "OPERATION")]
-    pub operation: EnrichOperation,
+    /// Enrichment operation to run. Required for write operations; optional for
+    /// the read-only queue inspectors (`--status` / `--list-dead` /
+    /// `--requeue-dead`), where it defaults to `memory-bindings` when omitted
+    /// (GAP-SG-31).
+    #[arg(
+        long,
+        short = 'o',
+        value_enum,
+        value_name = "OPERATION",
+        required_unless_present_any = ["status", "list_dead", "requeue_dead"]
+    )]
+    pub operation: Option<EnrichOperation>,
 
-    /// LLM provider to use. Required (no default).
-    #[arg(long, value_enum)]
-    pub mode: EnrichMode,
+    /// LLM provider to use. Required for write operations; not needed for the
+    /// read-only queue inspectors (`--status` / `--list-dead` /
+    /// `--requeue-dead`), which never call the LLM (GAP-SG-31).
+    #[arg(
+        long,
+        value_enum,
+        required_unless_present_any = ["status", "list_dead", "requeue_dead"]
+    )]
+    pub mode: Option<EnrichMode>,
 
     /// Maximum number of items to process in this run. Omit for all.
     #[arg(long, value_name = "N")]
@@ -480,8 +495,13 @@ pub struct EnrichArgs {
     #[arg(long, value_name = "KEY", env = "OPENROUTER_API_KEY")]
     pub openrouter_api_key: Option<String>,
 
-    /// Timeout per item in seconds when using OpenRouter. Default: 300.
-    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    /// Timeout per item in seconds when using OpenRouter. Default: 600.
+    ///
+    /// GAP-SG-17: raised from 300 to 600 because dense bodies (close to the
+    /// ~32K-token context ceiling of the configured model) routinely take
+    /// longer than five minutes to generate via `deepseek-v4-flash:nitro`.
+    /// Raise it further for very large corpora; lower it for short snippets.
+    #[arg(long, value_name = "SECONDS", default_value_t = 600)]
     pub openrouter_timeout: u64,
 
     /// Optional OpenRouter base URL override (reserved; defaults to the public API).
@@ -681,6 +701,29 @@ pub struct EnrichArgs {
     /// stream as `provider_substituted: true` for traceability.
     #[arg(long, value_name = "MODEL")]
     pub codex_model_fallback: Option<String>,
+}
+
+impl EnrichArgs {
+    /// GAP-SG-31: resolved enrichment operation.
+    ///
+    /// `operation` is `Option` so the read-only queue inspectors
+    /// (`--status` / `--list-dead` / `--requeue-dead`) can run without it.
+    /// Write paths always carry a value (enforced by
+    /// `required_unless_present_any` at parse time); the read-only paths fall
+    /// back to `memory-bindings`, the most common queue, when it is omitted.
+    fn operation(&self) -> EnrichOperation {
+        self.operation
+            .clone()
+            .unwrap_or(EnrichOperation::MemoryBindings)
+    }
+
+    /// GAP-SG-31: resolved LLM provider. `mode` is `Option` for the read-only
+    /// inspectors that never call the LLM; write paths always carry a value
+    /// (enforced by `required_unless_present_any`). The fallback is only ever
+    /// observed by read-only code that does not actually invoke the provider.
+    fn mode(&self) -> EnrichMode {
+        self.mode.clone().unwrap_or(EnrichMode::OpenRouter)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,7 +1205,7 @@ enum PreflightOutcome {
 fn run_preflight_probe(args: &EnrichArgs) -> PreflightOutcome {
     let timeout = std::time::Duration::from_secs(args.rate_limit_buffer.max(60));
 
-    match args.mode {
+    match args.mode() {
         EnrichMode::ClaudeCode => {
             let bin = match find_claude_binary(args.claude_binary.as_deref()) {
                 Ok(b) => b,
@@ -1850,18 +1893,9 @@ fn persist_memory_bindings(
     let mut rel_count = 0usize;
 
     for item in &extracted_entities {
-        let entity_type = match item.entity_type.parse::<EntityType>() {
-            Ok(et) => et,
-            Err(_) => {
-                tracing::warn!(
-                    target: "enrich",
-                    entity = %item.name,
-                    entity_type = %item.entity_type,
-                    "entity type not recognized, skipping"
-                );
-                continue;
-            }
-        };
+        // GAP-SG-47: fold non-canonical labels onto the nearest canonical kind
+        // instead of discarding the entity (no silent data loss).
+        let entity_type = EntityType::map_to_canonical(&item.entity_type);
         match entities::upsert_entity(
             conn,
             namespace,
@@ -1887,8 +1921,9 @@ fn persist_memory_bindings(
     }
 
     for rel in &extracted_rels {
-        let normalized = crate::parsers::normalize_relation(&rel.relation);
-        crate::parsers::warn_if_non_canonical(&normalized);
+        // GAP-SG-48: rewrite non-canonical relations to canonical instead of
+        // accepting them raw with only a warning.
+        let normalized = crate::parsers::map_to_canonical_relation(&rel.relation);
 
         // Normalize entity names before lookup: upsert_entity normalizes on write,
         // so the lookup must use the same normalized form to find the row.
@@ -2124,7 +2159,7 @@ fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppEr
 
     let mut conflicts: Vec<String> = Vec::new();
 
-    match args.mode {
+    match args.mode() {
         EnrichMode::ClaudeCode => {
             if args.codex_binary.is_some() {
                 conflicts.push("--codex-binary is ignored when --mode=claude-code".to_string());
@@ -2222,7 +2257,7 @@ fn validate_mode_conditional_flags_enrich(args: &EnrichArgs) -> Result<(), AppEr
     if !conflicts.is_empty() {
         return Err(AppError::Validation(format!(
             "G20: mode-conditional flag conflicts detected for --mode={}:\n  - {}",
-            args.mode,
+            args.mode(),
             conflicts.join("\n  - ")
         )));
     }
@@ -2252,7 +2287,7 @@ pub fn run(
     // not cross-contaminated. Handled before any provider setup.
     if args.list_dead || args.requeue_dead {
         let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
-        let op_label = format!("{:?}", args.operation);
+        let op_label = format!("{:?}", args.operation());
         let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
         if args.list_dead {
             let mut stmt = queue_conn.prepare(
@@ -2322,7 +2357,7 @@ pub fn run(
         let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
         let unbound_backlog = scan_unbound_memories(&conn, &namespace, None, &[])?.len();
         let queue_conn = open_queue_db(DEFAULT_QUEUE_DB)?;
-        let op_label = format!("{:?}", args.operation);
+        let op_label = format!("{:?}", args.operation());
         // GAP-SG-42: scope every count to the current operation. Rows migrated
         // before the `operation` column (NULL) are still counted so a legacy
         // queue is never reported as spuriously empty.
@@ -2413,7 +2448,7 @@ pub fn run(
     // (no default) and the API key must resolve BEFORE any network or DB work.
     // The chat client singleton is initialised here so every per-item dispatch
     // fetches it without re-threading the key.
-    if args.mode == EnrichMode::OpenRouter {
+    if args.mode() == EnrichMode::OpenRouter {
         let model = args.openrouter_model.as_deref().ok_or_else(|| {
             AppError::Validation(
                 "--mode openrouter requires --openrouter-model (no default model is allowed)"
@@ -2459,10 +2494,10 @@ pub fn run(
     )?;
 
     // Validate provider binary upfront only for LLM-backed operations.
-    let provider_binary = if matches!(args.operation, EnrichOperation::ReEmbed) {
+    let provider_binary = if matches!(args.operation(), EnrichOperation::ReEmbed) {
         None
     } else {
-        Some(match args.mode {
+        Some(match args.mode() {
             EnrichMode::ClaudeCode => {
                 let bin = find_claude_binary(args.claude_binary.as_deref())?;
                 let version = super::claude_runner::validate_claude_version(&bin)?;
@@ -2539,16 +2574,18 @@ pub fn run(
     // different mode (typically codex) instead of failing the entire
     // batch. The probe itself consumes 1 OAuth turn, so it stays
     // opt-in (default off) to keep --dry-run and CI flows zero-cost.
-    if args.preflight_check && !args.dry_run && !matches!(args.operation, EnrichOperation::ReEmbed)
+    if args.preflight_check
+        && !args.dry_run
+        && !matches!(args.operation(), EnrichOperation::ReEmbed)
     {
         let preflight_result = run_preflight_probe(args);
         match preflight_result {
             PreflightOutcome::Healthy => {
-                tracing::info!(target: "enrich", mode = ?args.mode, "preflight probe healthy");
+                tracing::info!(target: "enrich", mode = ?args.mode(), "preflight probe healthy");
             }
             PreflightOutcome::RateLimited { reason, suggestion } => {
                 if let Some(fallback) = args.fallback_mode.clone() {
-                    if fallback != args.mode {
+                    if fallback != args.mode() {
                         // G35 (v1.0.69): the mid-batch mode switch is
                         // intentionally NOT applied because it would
                         // desynchronise the per-item rate-limit wait
@@ -2561,19 +2598,19 @@ pub fn run(
                         return Err(AppError::Validation(format!(
                             "preflight detected rate limit on {mode:?}: {reason}; \
                              re-invoke with `--mode {fallback:?}` to use the fallback provider",
-                            mode = args.mode
+                            mode = args.mode()
                         )));
                     }
                     return Err(AppError::Validation(format!(
                         "preflight detected rate limit on {mode:?}: {reason}; \
                          --fallback-mode matches --mode, no recovery possible",
-                        mode = args.mode
+                        mode = args.mode()
                     )));
                 }
                 return Err(AppError::Validation(format!(
                     "preflight detected rate limit on {mode:?}: {reason}; \
                      {suggestion}; pass --fallback-mode codex to recover",
-                    mode = args.mode
+                    mode = args.mode()
                 )));
             }
             PreflightOutcome::Error(e) => {
@@ -2616,7 +2653,7 @@ pub fn run(
         }
         emit_json(&EnrichSummary {
             summary: true,
-            operation: format!("{:?}", args.operation),
+            operation: format!("{:?}", args.operation()),
             items_total: total,
             completed: 0,
             failed: 0,
@@ -2664,15 +2701,15 @@ pub fn run(
     }
 
     // Populate queue (GAP-SG-12: tag rows with the operation + link memory_id).
-    let op_label = format!("{:?}", args.operation);
-    let item_type = item_type_for(&args.operation);
+    let op_label = format!("{:?}", args.operation());
+    let item_type = item_type_for(&args.operation());
     for key in scan_result.iter() {
         enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
     }
 
     // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
     // Clamp enforces the range even if the caller bypasses clap validation.
-    let parallelism = if args.mode == EnrichMode::OpenRouter {
+    let parallelism = if args.mode() == EnrichMode::OpenRouter {
         let rest = args.rest_concurrency.unwrap_or(8).clamp(1, 16) as usize;
         tracing::info!(
             target: "enrich",
@@ -2702,7 +2739,7 @@ pub fn run(
     // ceiling. The threshold and message depend on the LLM mode because
     // Claude Code spawns MCP children (G28-A) while Codex does not.
     if parallelism > 4 {
-        match args.mode {
+        match args.mode() {
             EnrichMode::ClaudeCode => {
                 tracing::warn!(
                     target: "enrich",
@@ -2758,14 +2795,14 @@ pub fn run(
     let rate_limit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
     let enrich_started = std::time::Instant::now();
 
-    let provider_timeout = match args.mode {
+    let provider_timeout = match args.mode() {
         EnrichMode::ClaudeCode => args.claude_timeout,
         EnrichMode::Codex => args.codex_timeout,
         EnrichMode::Opencode => args.opencode_timeout,
         EnrichMode::OpenRouter => args.openrouter_timeout,
     };
 
-    let provider_model: Option<&str> = match args.mode {
+    let provider_model: Option<&str> = match args.mode() {
         EnrichMode::ClaudeCode => args.claude_model.as_deref(),
         EnrichMode::Codex => args.codex_model.as_deref(),
         EnrichMode::Opencode => args.opencode_model.as_deref(),
@@ -2812,8 +2849,8 @@ pub fn run(
         if parallelism > 1 {
             let stdout_mu = parking_lot::Mutex::new(());
             let budget = args.max_cost_usd;
-            let operation = args.operation.clone();
-            let mode = args.mode.clone();
+            let operation = args.operation().clone();
+            let mode = args.mode().clone();
             let min_oc = args.min_output_chars;
             let max_oc = args.max_output_chars;
             let prompt_tpl = args.prompt_template.as_deref().map(|p| p.to_path_buf());
@@ -3070,7 +3107,7 @@ pub fn run(
                 let item_started = Instant::now();
                 let current_index = completed + failed + skipped;
 
-                let call_result = match args.operation {
+                let call_result = match args.operation() {
                     EnrichOperation::MemoryBindings | EnrichOperation::AugmentBindings => {
                         call_memory_bindings(
                             &conn,
@@ -3081,7 +3118,7 @@ pub fn run(
                                 .expect("provider binary required"),
                             provider_model,
                             provider_timeout,
-                            &args.mode,
+                            &args.mode(),
                         )
                     }
                     EnrichOperation::EntityDescriptions => call_entity_description(
@@ -3093,7 +3130,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::BodyEnrich => call_body_enrich(
                         &conn,
@@ -3104,7 +3141,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                         args.min_output_chars,
                         args.max_output_chars,
                         args.prompt_template.as_deref(),
@@ -3130,7 +3167,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::RelationReclassify => call_relation_reclassify(
                         &conn,
@@ -3141,7 +3178,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::EntityConnect | EnrichOperation::CrossDomainBridges => {
                         call_entity_connect(
@@ -3153,7 +3190,7 @@ pub fn run(
                                 .expect("provider binary required"),
                             provider_model,
                             provider_timeout,
-                            &args.mode,
+                            &args.mode(),
                         )
                     }
                     EnrichOperation::EntityTypeValidate => call_entity_type_validate(
@@ -3165,7 +3202,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::DescriptionEnrich => call_description_enrich(
                         &conn,
@@ -3176,7 +3213,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::DomainClassify => call_domain_classify(
                         &conn,
@@ -3187,7 +3224,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::GraphAudit => call_graph_audit(
                         &conn,
@@ -3198,7 +3235,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::DeepResearchSynth => call_deep_research_synth(
                         &conn,
@@ -3209,7 +3246,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                     ),
                     EnrichOperation::BodyExtract => call_body_extract(
                         &conn,
@@ -3220,7 +3257,7 @@ pub fn run(
                             .expect("provider binary required"),
                         provider_model,
                         provider_timeout,
-                        &args.mode,
+                        &args.mode(),
                         args.body_extract_graph_only,
                     ),
                 };
@@ -3243,7 +3280,7 @@ pub fn run(
                         backoff_secs = DEFAULT_RATE_LIMIT_WAIT;
 
                         // Persist depends on the operation
-                        let persist_err: Option<String> = match args.operation {
+                        let persist_err: Option<String> = match args.operation() {
                             EnrichOperation::MemoryBindings => {
                                 // Bindings already persisted inside call_memory_bindings
                                 None
@@ -3483,7 +3520,7 @@ pub fn run(
 
     emit_json(&EnrichSummary {
         summary: true,
-        operation: format!("{:?}", args.operation),
+        operation: format!("{:?}", args.operation()),
         items_total: total,
         completed,
         failed,
@@ -3948,7 +3985,7 @@ fn scan_operation(
 ) -> Result<Vec<String>, AppError> {
     // G37: resolve --names + --names-file once and apply to every scan path.
     let name_filter = resolve_name_filter(args)?;
-    match args.operation {
+    match args.operation() {
         EnrichOperation::MemoryBindings => {
             let rows = scan_unbound_memories(conn, namespace, args.limit, &name_filter)?;
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())

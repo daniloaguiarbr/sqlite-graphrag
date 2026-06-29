@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_TIMEOUT_SECS: u64 = 300;
+// GAP-SG-17: raised from 300 to 600 — the per-request fallback budget when a
+// caller passes `0`. Dense bodies near the model's ~32K-token context ceiling
+// regularly need more than five minutes to generate.
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 const MAX_RETRIES: u32 = 4;
 
