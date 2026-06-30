@@ -76,6 +76,10 @@ jobs:
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Clippy with feature matrix
+        # RC-3 (v1.0.98): this `run:` uses bash `if [ … ]; then … fi`, but without
+        # an explicit shell windows-2025 runs it under PowerShell, which rejects
+        # the bash syntax with a ParserError (exit 1) before clippy starts.
+        shell: bash
         run: |
           if [ "${{ matrix.features }}" = "default" ]; then
             cargo clippy --all-targets -- -D warnings
@@ -267,7 +271,11 @@ jobs:
         with:
           tool: cargo-xwin
       - name: cargo xwin check --target x86_64-pc-windows-msvc
-        run: timeout 900 cargo xwin check --target x86_64-pc-windows-msvc --lib --all-features
+        # RC-8 (v1.0.98): the cold cross-compile downloads the MSVC SDK and
+        # builds ~400 deps for the windows-msvc target from scratch, which
+        # exceeded the old 900s budget on the runner (exit 124). 1800s covers
+        # the cold run; Swatinem/rust-cache makes subsequent runs fast.
+        run: timeout 1800 cargo xwin check --target x86_64-pc-windows-msvc --lib --all-features
 
   audit:
     name: Security Audit

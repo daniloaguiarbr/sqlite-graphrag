@@ -49,6 +49,9 @@ jobs:
           unset CLAUDE_CODE_ENTRYPOINT
           cargo test --test embedder -- --ignored --nocapture
         env:
-          PATH: /usr/bin:/bin
+          # The hermetic intent is the OAuth-credential unset above, NOT a bare
+          # PATH. The old `/usr/bin:/bin` dropped `~/.cargo/bin`, so `cargo` was
+          # not found (exit 127). Keep the cargo/rustup proxies on PATH.
+          PATH: /home/runner/.cargo/bin:/usr/bin:/bin
           SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS: "10"
           SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY: "1"
