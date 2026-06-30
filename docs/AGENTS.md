@@ -339,7 +339,7 @@ Agents that try to set them will see a clear validation error.
 - New flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`
 ### Entity Normalization
 - Entity names are now normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
-- `--max-entity-degree N` warning flag on `link` and `remember` — emits `tracing::warn!` when an entity exceeds N edges
+- `--max-entity-degree N` flag REMOVED on `link` and `remember` in v1.0.99 — writes are now purely additive and NEVER prune, delete edges, or emit a degree warning
 ### Health Command Additions
 - `health` now reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, and `relation_concentration_warning` when any single relation type exceeds 40% of all edges
 

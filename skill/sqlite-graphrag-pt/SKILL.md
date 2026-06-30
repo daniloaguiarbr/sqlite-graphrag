@@ -199,7 +199,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - INVOQUE `link --from <a> --to <b> --relation <type> --create-missing --weight <float>` para criar uma aresta
 - INVOQUE `unlink --from <a> --to <b> --relation <type>` para remover uma aresta, ou `--entity <name> --all` para dropar todas as arestas de uma entidade
 - INVOQUE `unlink --memory <name> --entity <name>` para remover um único vínculo curado memória-entidade sem tocar nas arestas entidade-entidade
-- INVOQUE `graph entities --json` para listar entidades via `.entities[]` (NÃO `.items[]`); ORDENE com `--sort-by degree|name|created_at`; PAGINE com `--limit N --offset N`
+- INVOQUE `graph entities --json` para listar entidades via `.entities[]` (NÃO `.items[]`); ORDENE com `--sort-by name|degree|created-at` mais `--order asc|desc` (padrão `asc`; quando `--sort-by` é omitido o default é nome ascendente); USE `--order desc` para os mais-conectados-primeiro; PAGINE com `--limit N --offset N`
 - INVOQUE `graph stats --json` para inspecionar `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - INVOQUE `graph traverse --from <root> --depth <N> --json` para travessia de subgrafo; EXPORTE com `--format json|dot|mermaid --output <path>`
 - INVOQUE `rename-entity --name <old> --new-name <new>` para renomear uma entidade preservando arestas
@@ -211,7 +211,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - INVOQUE `normalize-entities --yes` para normalizar todos os nomes para kebab-case ASCII
 - INVOQUE `prune-ner --entity <n>` para remover bindings NER; `prune-ner --all --yes` para todo o namespace
 - INVOQUE `memory-entities --name <memory>` para lookup forward, ou `--entity <name>` para lookup reverso
-- PASSE `--max-entity-degree N` no `link` para avisar quando uma entidade exceder N conexões
+- SAIBA que a escrita no grafo é puramente ADITIVA: NÃO existe cap de grau, então hubs crescem sem limite e nenhuma escrita poda arestas; NORMALIZE somente via comandos de manutenção explícitos (`prune-relations`, `merge-entities`, `normalize-entities`), NUNCA durante uma escrita
 - TIPOS canônicos de entidade: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - VALIDE nomes de entidade: mínimo 2 chars, sem newlines, sem ALL_CAPS curto de 4 chars ou menos
 - NUNCA use `mentions` como relação padrão

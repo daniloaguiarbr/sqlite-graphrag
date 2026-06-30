@@ -16,6 +16,12 @@
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 
+## What Changed in v1.0.99 — Degree-Cap Removal + Doc/Convergence Fixes (GAP-SG-67/68/69, ADR-0059)
+- **GAP-SG-67 (BREAKING)**: the `--max-entity-degree` flag is REMOVED from `remember` and `link`; passing it now fails with clap exit 2, and the old `--max-entity-degree 0` mitigation is obsolete. The destructive global degree-cap pruning (`graph::enforce_degree_cap`) is deleted, so a write is 100% additive — it never prunes/deletes edges nor emits a degree warning, and the total `relationships` count never decreases on a normal write. Trade-off: hub degree grows unbounded; future normalisation is an explicit MAINTENANCE command only.
+- **GAP-SG-68**: `graph entities --sort-by degree` is documented correctly — it sorts ascending by default; use `--order desc` for most-connected-first. Doc-only fix, no behaviour change.
+- **GAP-SG-69**: `enrich --operation body-enrich ... --until-empty` now converges; vetoed `status='skipped'` short bodies are no longer re-enqueued on rescan, and the `.enrich-queue.sqlite` sidecar is kept while `skipped` verdicts remain (empirically 55→3).
+- No migration; schema stays v15. See ADR-0059 and MIGRATION.md.
+
 ## What Changed in v1.0.96 — Enrich Dead-Letter + OpenRouter REST Fan-Out (GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)
 - **GAP-ENRICH-BACKLOG-CONVERGE**: the enrich queue gains a terminal `dead` status plus `error_class` and `next_retry_at` columns (idempotent `ALTER TABLE` + `idx_enrich_queue_eligible`). Transient outcomes (rate-limit/timeout/5xx) reschedule with exponential backoff; a HardFailure goes terminal at once; an item turns `dead` after `--max-attempts` Transient retries. The dequeue honours `next_retry_at` and excludes `dead`, so the live set strictly decreases and the backlog always converges.
 - `--until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime` (default 3600s) expires — it replaces the external bash retry loop. `--max-attempts <N>` (default 5, range 1..=20) is the Transient retry budget before `dead`.

@@ -3,6 +3,20 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.0.99] - 2026-06-30
+
+Resolve o GAP-SG-67: a poda destrutiva global do degree cap foi removida, então uma escrita `remember`/`link` não pode mais deletar arestas históricas que pertencem a outras memórias. A escrita agora é puramente aditiva. O schema permanece na versão 15.
+
+### Corrigido
+- GAP-SG-67 — `remember`/`link` não deletam mais arestas históricas de outras memórias: a poda destrutiva global do degree cap foi removida, então uma escrita que referencia um hub de grau alto mantém toda aresta preexistente intacta e a contagem total de relações nunca diminui numa escrita normal.
+- GAP-SG-68 — divergência doc/comportamento de `graph entities --sort-by degree` corrigida: o doc-comment de `EntitySortField::Degree` (e o `--help` herdado) prometia "descendente por padrão" mas a ordenação é ascendente; a doc foi alinhada ao comportamento ascendente real ("Use `--order desc` para os mais conectados primeiro"). Sem mudança de contrato SQL; os 6 testes `build_order_by_*` seguem verdes.
+- GAP-SG-69 — `enrich --operation body-enrich --until-empty` agora converge: o scan não re-enfileira mais corpos curtos já vetados com `status='skipped'` pelo guard de preservação trigram-Jaccard. Novo helper `skipped_item_keys`; o scan inicial e o rescan excluem as chaves vetadas; o sidecar `.enrich-queue.sqlite` é mantido enquanto houver veredito `skipped` (removido só quando `dead==0` E `skipped==0`); `cleanup_queue_entry` limpa o veto quando o corpo muda. Empiricamente, items_total caiu 55→3 na segunda passada.
+
+### Removido (BREAKING)
+- Flag `--max-entity-degree` removida de `remember` e `link`; scripts que ainda a passarem recebem erro de argumento do clap (exit 2), e a mitigação obsoleta `--max-entity-degree 0` deixa de ser necessária.
+- Função interna `graph::enforce_degree_cap` e seus dois call sites em `remember` e `link` removidos; a escrita nunca poda, deleta arestas nem emite warn de grau.
+
+
 ## [1.0.98] - 2026-06-29
 
 Release de manutenção que deixa o pipeline de CI verde e restaura o fluxo de GitHub Release após a publicação da 1.0.97. O artefato 1.0.97 no crates.io é imutável, então as correções de código (doc comments em inglês, o advisory do `anyhow`, o escopo do preflight do OpenRouter) entram aqui; o resto são mudanças de CI/infra que não afetam o crate publicado.

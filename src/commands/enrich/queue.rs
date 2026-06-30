@@ -112,6 +112,26 @@ pub(super) fn enqueue_candidate(
     }
 }
 
+/// GAP-SG-69: item_keys vetoed `status='skipped'` for an operation. The
+/// body-enrich scan selects candidates purely by `LENGTH(body) <
+/// min_output_chars`, so a short body whose rewrite the preservation guard keeps
+/// rejecting would be re-scanned every pass and `--until-empty` would never
+/// converge. Callers exclude these keys so the scan returns only actionable
+/// items; `cleanup_queue_entry` clears the veto when the body actually changes,
+/// restoring the memory as a candidate.
+pub(super) fn skipped_item_keys(
+    conn: &Connection,
+    operation: &str,
+) -> Result<std::collections::HashSet<String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT item_key FROM queue WHERE status='skipped' AND (operation = ?1 OR operation IS NULL)",
+    )?;
+    let keys = stmt
+        .query_map(rusqlite::params![operation], |r| r.get::<_, String>(0))?
+        .collect::<Result<std::collections::HashSet<String>, _>>()?;
+    Ok(keys)
+}
+
 /// Queue `item_type` for an operation: entity-keyed operations use `"entity"`,
 /// every other (memory/id-keyed) operation uses `"memory"`.
 pub(super) fn item_type_for(operation: &EnrichOperation) -> &'static str {
@@ -705,6 +725,45 @@ mod tests {
         assert_eq!(status, "pending");
         assert_eq!(attempt, 0);
         assert!(nra.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn skipped_item_keys_excludes_only_skipped_for_operation() {
+        // GAP-SG-69: the body-enrich scan must drop memories already vetoed
+        // `status='skipped'` so `--until-empty` converges instead of re-scanning a
+        // non-expandable short body forever (the detached worker reported a
+        // stuck backlog for 30+ min).
+        let (conn, path) = open_temp_queue();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status, operation) VALUES ('mem-vetoed', 'memory', 'skipped', 'BodyEnrich')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status, operation) VALUES ('mem-pending', 'memory', 'pending', 'BodyEnrich')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO queue (item_key, item_type, status, operation) VALUES ('mem-other-op', 'memory', 'skipped', 'MemoryBindings')",
+            [],
+        )
+        .unwrap();
+        let keys = skipped_item_keys(&conn, "BodyEnrich").unwrap();
+        assert!(
+            keys.contains("mem-vetoed"),
+            "vetoed BodyEnrich item must be excluded from scan"
+        );
+        assert!(
+            !keys.contains("mem-pending"),
+            "pending item is still actionable"
+        );
+        assert!(
+            !keys.contains("mem-other-op"),
+            "skipped item from another operation must not leak"
+        );
+        assert_eq!(keys.len(), 1);
         let _ = std::fs::remove_file(&path);
     }
 

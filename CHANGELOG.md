@@ -5,6 +5,20 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.99] - 2026-06-30
+
+Resolves GAP-SG-67: the destructive global degree-cap pruning is removed, so a `remember`/`link` write can no longer delete historical edges that belong to other memories. Writes are now purely additive. The schema stays at version 15.
+
+### Fixed
+- GAP-SG-67 — `remember`/`link` no longer delete historical edges of other memories: the destructive global degree-cap pruning was removed, so a write referencing a high-degree hub keeps every preexisting edge intact and the total relationship count never decreases on a normal write.
+- GAP-SG-68 — `graph entities --sort-by degree` doc/behaviour mismatch fixed: the `EntitySortField::Degree` doc-comment (and the inherited `--help`) promised "descending by default" but the sort is ascending; the doc was aligned to the actual ascending behaviour ("Use `--order desc` for most-connected-first"). No SQL contract change; the 6 `build_order_by_*` tests stay green.
+- GAP-SG-69 — `enrich --operation body-enrich --until-empty` now converges: the scan no longer re-enqueues short bodies already vetoed `status='skipped'` by the trigram-Jaccard preservation guard. New `skipped_item_keys` helper; initial scan and rescan exclude vetoed keys; the `.enrich-queue.sqlite` sidecar is kept while `skipped` verdicts remain (removed only when `dead==0` AND `skipped==0`); `cleanup_queue_entry` clears the veto when a body changes. Empirically items_total dropped 55→3 on the second pass.
+
+### Removed (BREAKING)
+- `--max-entity-degree` flag dropped from `remember` and `link`; scripts that still pass it now get a clap argument error (exit 2), and the obsolete `--max-entity-degree 0` mitigation is no longer needed.
+- Internal `graph::enforce_degree_cap` function and its two call sites in `remember` and `link` removed; writes never prune, delete edges, or emit a degree warning.
+
+
 ## [1.0.98] - 2026-06-29
 
 Maintenance release that turns the CI pipeline green and restores the GitHub Release flow after the 1.0.97 publish. The crates.io 1.0.97 artifact is immutable, so the source-level fixes (English doc comments, the `anyhow` advisory, the OpenRouter preflight scope) ship here; the rest are CI/infrastructure changes that do not affect the published crate.

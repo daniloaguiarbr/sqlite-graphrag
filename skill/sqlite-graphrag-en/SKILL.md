@@ -199,7 +199,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - INVOKE `link --from <a> --to <b> --relation <type> --create-missing --weight <float>` to create an edge
 - INVOKE `unlink --from <a> --to <b> --relation <type>` to remove one edge, or `--entity <name> --all` to drop all edges of an entity
 - INVOKE `unlink --memory <name> --entity <name>` to remove a single curated memory-to-entity binding without touching entity-to-entity edges
-- INVOKE `graph entities --json` to list entities via `.entities[]` (NOT `.items[]`); ORDER with `--sort-by degree|name|created_at`; PAGINATE with `--limit N --offset N`
+- INVOKE `graph entities --json` to list entities via `.entities[]` (NOT `.items[]`); ORDER with `--sort-by name|degree|created-at` plus `--order asc|desc` (default `asc`; when `--sort-by` is omitted the default is name ascending); USE `--order desc` for most-connected-first; PAGINATE with `--limit N --offset N`
 - INVOKE `graph stats --json` to inspect `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - INVOKE `graph traverse --from <root> --depth <N> --json` for subgraph traversal; EXPORT with `--format json|dot|mermaid --output <path>`
 - INVOKE `rename-entity --name <old> --new-name <new>` to rename an entity preserving edges
@@ -211,7 +211,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - INVOKE `normalize-entities --yes` to normalize all names to kebab-case ASCII
 - INVOKE `prune-ner --entity <n>` to remove NER bindings; `prune-ner --all --yes` for the whole namespace
 - INVOKE `memory-entities --name <memory>` for forward lookup, or `--entity <name>` for reverse lookup
-- PASS `--max-entity-degree N` on `link` to warn when an entity exceeds N connections
+- KNOW that graph writes are purely ADDITIVE: there is NO degree cap, so hubs grow unbounded and no write prunes edges; NORMALIZE only via explicit maintenance commands (`prune-relations`, `merge-entities`, `normalize-entities`), NEVER during a write
 - CANONICAL entity types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
 - VALIDATE entity names: minimum 2 chars, no newlines, no short ALL_CAPS of 4 chars or less
 - NEVER use `mentions` as a default relation

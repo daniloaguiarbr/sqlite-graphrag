@@ -60,6 +60,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 | [ADR-0056](adr-0056-enrich-modularisation-unwrap-audit.md) | Enrich Modularisation + unwrap/expect Audit + parse_claude_output DRY (GAP-SG-57..60) | v1.0.97 | Accepted | [PT-BR](adr-0056-enrich-modularisation-unwrap-audit.pt-BR.md) |
 | [ADR-0057](adr-0057-queue-db-relative-sidecar.md) | Enrich + Ingest Queue Sidecar Derived from `--db` (GAP-SG-64, GAP-SG-65) | v1.0.97 | Accepted | [PT-BR](adr-0057-queue-db-relative-sidecar.pt-BR.md) |
 | [ADR-0058](adr-0058-prune-dead-orphans.md) | `enrich --prune-dead-orphans` — Clean Orphaned Dead-Letter Rows (GAP-SG-66) | v1.0.97 | Accepted | [PT-BR](adr-0058-prune-dead-orphans.pt-BR.md) |
+| [ADR-0059](adr-0059-v1099-degree-cap-removal-doc-convergence.md) | Remove Destructive Degree-Cap Pruning; Align sort-by-degree Doc; Converge body-enrich (GAP-SG-67/68/69) | v1.0.99 | Accepted | [PT-BR](adr-0059-v1099-degree-cap-removal-doc-convergence.pt-BR.md) |
 
 ## Coverage by Version
 
@@ -82,6 +83,7 @@ Each ADR is available in two languages: English (`adr-XXXX-slug.md`) and Brazili
 - **v1.0.95**: 1 ADR (0054) — OpenRouter chat enrich (`enrich --mode openrouter`)
 - **v1.0.96**: 1 ADR (0055) — enrich dead-letter + REST concurrency fan-out
 - **v1.0.97**: 3 ADRs (0056-0058) — enrich modularisation + unwrap audit; queue sidecar derived from `--db`; prune orphaned dead-letter
+- **v1.0.99**: 1 ADR (0059) — remove destructive degree-cap pruning + flag; align sort-by-degree doc; converge body-enrich
 
 ## Bilíngue Status
 

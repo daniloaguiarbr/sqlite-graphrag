@@ -222,6 +222,13 @@ sqlite-graphrag --embedding-backend openrouter \
 - Recipe "How to benchmark hybrid-search against pure vec search"
 
 
+## How To Upgrade To v1.0.99 (Degree-Cap Removal — BREAKING)
+- No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force`.
+- BREAKING: the `--max-entity-degree` flag is REMOVED from `remember` and `link`. Passing it fails with clap exit 2. Audit your scripts (`rg -- "--max-entity-degree" your-scripts/`) and delete every occurrence, including the no-op `--max-entity-degree 0` mitigation, which is obsolete.
+- Writes are now 100% additive: `remember`/`link` never prune or delete edges, so the total relationship count never decreases on a normal write (GAP-SG-67, ADR-0059). Trade-off: hub degree grows unbounded; normalise later only with an explicit MAINTENANCE command.
+- `graph entities --sort-by degree` sorts ascending by default; add `--order desc` for most-connected-first (GAP-SG-68).
+- `enrich --operation body-enrich ... --until-empty` now converges; vetoed short bodies are not re-enqueued (GAP-SG-69).
+
 ## How To Upgrade To v1.0.94 (Four-Gap Remediation)
 - No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force`.
 - BREAKING: every `enrich` invocation now requires `--mode` (`claude-code`|`codex`|`opencode`|`openrouter`). Update scripts to `enrich --operation memory-bindings --mode codex`.

@@ -39,6 +39,7 @@ use postprocess::{
 pub use queue::{cleanup_queue_entry, DeadItem, DeadSummary, EnrichStatus, WaitingItem};
 use queue::{
     enqueue_candidate, item_type_for, open_queue_db, prune_dead_orphans, record_item_failure,
+    skipped_item_keys,
 };
 use scan::{scan_isolated_entity_pairs, scan_operation, scan_unbound_memories};
 
@@ -1615,7 +1616,23 @@ pub fn run(
     }
 
     // SCAN phase
-    let scan_result = scan_operation(&conn, &namespace, args)?;
+    let mut scan_result = scan_operation(&conn, &namespace, args)?;
+    // GAP-SG-69: body-enrich candidates are scanned purely by `LENGTH(body) <
+    // min_output_chars`, so a short body whose rewrite the preservation guard
+    // keeps rejecting is re-scanned every pass — items_total never reaches 0 and
+    // `--until-empty` never converges (the detached worker reported a stuck
+    // backlog for 30+ min). Exclude memories already vetoed `status='skipped'`
+    // for this operation in the sidecar queue; `cleanup_queue_entry`
+    // (remember/edit/forget/purge) clears the veto when the body actually
+    // changes, so a genuinely updated memory is reconsidered automatically.
+    if matches!(args.operation(), EnrichOperation::BodyEnrich) {
+        let q_path = crate::paths::sidecar_path(&paths.db, ".enrich-queue.sqlite");
+        if let Ok(q) = open_queue_db(&q_path) {
+            if let Ok(vetoed) = skipped_item_keys(&q, &format!("{:?}", args.operation())) {
+                scan_result.retain(|k| !vetoed.contains(k));
+            }
+        }
+    }
     let total = scan_result.len();
 
     emit_json(&PhaseEvent {
@@ -1832,7 +1849,16 @@ pub fn run(
             // Re-scan and re-enqueue eligible candidates each iteration.
             // INSERT OR IGNORE never resurrects a dead-letter row (item_key is
             // UNIQUE), so the backlog converges instead of looping forever.
-            let rescan = scan_operation(&conn, &namespace, args)?;
+            let mut rescan = scan_operation(&conn, &namespace, args)?;
+            // GAP-SG-69: drop memories already vetoed `status='skipped'` so the
+            // re-scan converges instead of re-enqueuing a non-expandable short
+            // body every iteration (body-enrich only; the verdict persists in
+            // the sidecar queue and is cleared by cleanup_queue_entry on edit).
+            if matches!(args.operation(), EnrichOperation::BodyEnrich) {
+                if let Ok(vetoed) = skipped_item_keys(&queue_conn, &op_label) {
+                    rescan.retain(|k| !vetoed.contains(k));
+                }
+            }
             for key in &rescan {
                 enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
             }
@@ -2524,7 +2550,19 @@ pub fn run(
                 r.get(0)
             })
             .unwrap_or(0);
-        if dead == 0 {
+        // GAP-SG-69: keep the sidecar queue while it still holds `skipped`
+        // verdicts. Those rows tell the next scan which short bodies are
+        // non-expandable; removing the file would lose the veto and the
+        // body-enrich backlog would never converge. cleanup_queue_entry clears
+        // a row when its memory is edited/forgotten, so the veto is not permanent.
+        let skipped_remaining: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='skipped'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if dead == 0 && skipped_remaining == 0 {
             let _ = std::fs::remove_file(&queue_path);
         }
     }

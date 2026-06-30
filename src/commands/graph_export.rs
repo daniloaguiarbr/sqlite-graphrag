@@ -126,7 +126,7 @@ pub struct GraphStatsArgs {
 pub enum EntitySortField {
     /// Sort alphabetically by entity name.
     Name,
-    /// Sort by degree (total number of relationships, descending by default).
+    /// Sort by degree (total number of relationships). Use `--order desc` for most-connected-first.
     Degree,
     /// Sort by entity creation timestamp.
     CreatedAt,

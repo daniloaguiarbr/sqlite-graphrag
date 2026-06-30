@@ -322,7 +322,7 @@ As duas variáveis de chave de API também são excluídas da whitelist de env-c
 - Novas flags: `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.05), `--max-neighbors-per-hop`
 ### Normalização de Entidades
 - Nomes de entidade agora são normalizados para kebab-case minúsculo em todo path de escrita (remember, ingest, link, rename-entity)
-- Flag de warning `--max-entity-degree N` em `link` e `remember` — emite `tracing::warn!` quando entidade excede N arestas
+- Flag `--max-entity-degree N` REMOVIDA de `link` e `remember` na v1.0.99 — a escrita agora é puramente aditiva e NUNCA poda, deleta arestas nem emite warn de grau
 ### Adições ao Comando Health
 - `health` agora reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio` e `relation_concentration_warning` quando qualquer tipo de relação excede 40% do total de arestas
 

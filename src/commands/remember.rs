@@ -209,10 +209,6 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_RSS_MB,
           help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
     pub max_rss_mb: u64,
-    /// Emit a warning (but do not reject) when persisting an entity whose degree would
-    /// exceed this value after the upsert. Default 50. Set 0 to disable the check.
-    #[arg(long, default_value_t = 50, value_name = "N")]
-    pub max_entity_degree: u32,
     /// G42/S3 (v1.0.79): maximum simultaneous LLM embedding subprocesses.
     /// The effective value is further bounded by CPU count and available
     /// RAM (permits = min(N, cpus, ram_livre*0.5/350MB), clamp [1, 32]).
@@ -1057,28 +1053,6 @@ pub fn run(
 
         for &eid in &affected_entity_ids {
             entities::recalculate_degree(&tx, eid)?;
-        }
-        // GAP-SG-49: enforce the degree cap instead of only warning (was the
-        // GAP-17 advisory). Prune the weakest incident edge(s) until each
-        // affected entity is back under the cap.
-        if args.max_entity_degree > 0 {
-            let cap = args.max_entity_degree as i64;
-            for &eid in &affected_entity_ids {
-                let pruned = crate::graph::enforce_degree_cap(&tx, eid, cap)?;
-                if pruned > 0 {
-                    let name: String = tx.query_row(
-                        "SELECT name FROM entities WHERE id = ?1",
-                        rusqlite::params![eid],
-                        |r| r.get(0),
-                    )?;
-                    tracing::warn!(target: "remember",
-                        entity = %name,
-                        cap = cap,
-                        pruned = pruned,
-                        "entity degree cap exceeded; pruned lowest-weight edge(s)"
-                    );
-                }
-            }
         }
     }
     tx.commit()?;

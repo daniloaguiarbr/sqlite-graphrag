@@ -1,3 +1,42 @@
+# MIGRANDO PARA v1.0.99 — Remoção da Poda Destrutiva do Degree-Cap (ADR-0059, GAP-SG-67)
+
+> Este guia cobre a atualização para v1.0.99. Nenhuma migração roda no banco principal; o schema permanece em v15. UMA mudança quebrante: a flag `--max-entity-degree` foi removida de `remember`/`link`. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.99 — Remoção da Poda Destrutiva do Degree-Cap (ADR-0059, GAP-SG-67)
+
+### O Que Mudou
+- **GAP-SG-67 (ADR-0059)**: a poda destrutiva GLOBAL do degree-cap foi removida. A função `graph::enforce_degree_cap` e seus dois call sites (`remember`, `link`) foram deletados, então uma escrita agora é 100% aditiva — nunca poda/deleta arestas nem emite warn, e a contagem total de `relationships` nunca diminui numa escrita normal. Trade-off: o grau dos hubs cresce sem limite; qualquer normalização futura precisa ser um comando de MANUTENÇÃO explícito.
+- **GAP-SG-68**: correção apenas de documentação no doc-comment de `graph entities --sort-by degree` (agora descreve o default ascendente; use `--order desc` para o mais-conectado-primeiro). Sem mudança de comportamento.
+- **GAP-SG-69**: `enrich --operation body-enrich --until-empty` agora converge ao excluir dos rescans os corpos vetados pelo guard de preservação (`skipped`). Interno apenas — sem mudança de CLI.
+- SEM migração de schema do banco principal (permanece em v15). SEM migração de arquivo de sidecar.
+
+### Mudança Quebrante — `--max-entity-degree` foi removida
+
+A flag `--max-entity-degree <N>` em `remember` e `link` foi REMOVIDA. Passá-la é rejeitado pelo clap (exit 2). A mitigação anterior `--max-entity-degree 0` ficou obsoleta e desnecessária — não existe mais poda de degree-cap.
+
+**Antes (v1.0.97 — falha na v1.0.99 com exit 2):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --max-entity-degree 50 --json
+sqlite-graphrag link --from a --to b --relation uses --max-entity-degree 0 --json
+```
+
+**Depois (v1.0.99 — remova a flag):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --json
+sqlite-graphrag link --from a --to b --relation uses --json
+```
+
+### Quem É Afetado
+- Qualquer script, pipeline de CI ou job agendado que passe `--max-entity-degree` (incluindo a mitigação no-op `--max-entity-degree 0`) para `remember` ou `link`.
+
+### Como Atualizar
+1. Audite suas invocações: `rg -- "--max-entity-degree" seus-scripts/`
+2. Remova cada ocorrência de `--max-entity-degree <N>` das chamadas de `remember` / `link`.
+3. Reinstale: `cargo install sqlite-graphrag --locked --force`. Sem migração de banco — o schema permanece em v15.
+
+### Rollback
+Volte para v1.0.97 reinstalando o binário anterior. Nenhuma mudança de banco a desfazer — as escritas eram aditivas e o schema permanece inalterado em v15.
+
 # MIGRANDO PARA v1.0.97 — Sidecar de Fila Derivado do `--db` (ADR-0057)
 
 > Este guia cobre a atualização para v1.0.97. Nenhuma migração roda no banco principal; o schema permanece em v15. Os sidecars de fila `.enrich-queue.sqlite` / `.ingest-queue.sqlite` agora são derivados do diretório do `--db` (ADR-0057) em vez do CWD do processo — sem ação do operador no banco default canônico. Reinstale com `cargo install sqlite-graphrag --locked --force`.

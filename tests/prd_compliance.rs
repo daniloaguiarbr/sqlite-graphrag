@@ -1252,3 +1252,104 @@ fn prd_sync_safe_copy_generates_coherent_snapshot() {
     );
     assert!(dest.exists(), "arquivo de snapshot deve existir no destino");
 }
+
+// ---------------------------------------------------------------------------
+// 32 — GAP-SG-67: a write referencing a high-degree hub must be purely
+//      additive — it must NEVER prune incident edges. Repro of the incident
+//      at small scale: pre-fix, the default degree cap of 50 pruned the hub
+//      back down to 50; post-fix the edge count only ever grows.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gap_sg_67_write_never_prunes_high_degree_hub() {
+    let tmp = TempDir::new().unwrap();
+    init_db(&tmp);
+
+    // Build a HUB entity with 60 incident edges directly via SQL: well above
+    // the old default degree cap of 50. Each edge targets a distinct leaf so
+    // there are no UNIQUE(source_id,target_id,relation) collisions.
+    let conn = Connection::open(db_path(&tmp)).unwrap();
+    conn.execute(
+        "INSERT INTO entities (name, type, namespace) VALUES ('hub-sg67', 'concept', 'global')",
+        [],
+    )
+    .unwrap();
+    let hub_id: i64 = conn
+        .query_row("SELECT id FROM entities WHERE name='hub-sg67'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+
+    const SEED_EDGES: i64 = 60;
+    for i in 0..SEED_EDGES {
+        let leaf = format!("leaf-sg67-{i}");
+        conn.execute(
+            "INSERT INTO entities (name, type, namespace) VALUES (?1, 'concept', 'global')",
+            [&leaf],
+        )
+        .unwrap();
+        let leaf_id: i64 = conn
+            .query_row("SELECT id FROM entities WHERE name=?1", [&leaf], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        // Ascending weights so a pruning pass would have a deterministic victim
+        // order; the fix means no pruning happens at all.
+        let weight = 0.1 + (i as f64) * 0.01;
+        conn.execute(
+            "INSERT INTO relationships (source_id, target_id, relation, weight, namespace) \
+             VALUES (?1, ?2, 'related', ?3, 'global')",
+            rusqlite::params![hub_id, leaf_id, weight],
+        )
+        .unwrap();
+    }
+    drop(conn);
+
+    // One additional write: create the 61st incident edge on the hub via `link`.
+    // The --max-entity-degree flag no longer exists; pre-fix it defaulted to 50
+    // and this write would have pruned the 11 weakest edges back down to 50.
+    cmd_base(&tmp)
+        .args([
+            "link",
+            "--from",
+            "hub-sg67",
+            "--to",
+            "leaf-sg67-new",
+            "--relation",
+            "related",
+            "--create-missing",
+            "--namespace",
+            "global",
+        ])
+        .assert()
+        .success();
+
+    // ASSERT non-destructive: the edge count only grew (60 -> 61) and the hub's
+    // degree stays high. A degree-cap prune would have collapsed both to 50.
+    let conn = Connection::open(db_path(&tmp)).unwrap();
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM relationships", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        total,
+        SEED_EDGES + 1,
+        "GAP-SG-67: write must be additive; relationships dropped (degree-cap pruning regressed)"
+    );
+
+    let hub_degree: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM relationships WHERE source_id=?1 OR target_id=?1",
+            [hub_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        hub_degree,
+        SEED_EDGES + 1,
+        "GAP-SG-67: hub degree must not collapse to the old cap of 50"
+    );
+    assert!(
+        hub_degree > 50,
+        "GAP-SG-67: hub must remain above the removed degree cap of 50"
+    );
+}

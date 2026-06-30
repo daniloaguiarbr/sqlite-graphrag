@@ -101,6 +101,13 @@ Todos os cinco testes são gated por `#[serial_test::serial(env)]` para prevenir
 - `embed_via_backend_returns_resolved_kind` — `embed_via_backend` retorna `Result<(Vec<f32>, LlmBackendKind), AppError>` propagando `resolved_kind`
 - `setup_mock_path_emits_json` — `setup_mock_path()` em `tests/embedder.rs:37-77` alinhado para emitir JSON (não JSONL)
 
+## v1.0.99 — Remoção do Degree-Cap + Correções de Doc/Convergência (ADR-0059, GAP-SG-67/68/69)
+
+- **GAP-SG-67 (remoção de testes)**: `graph::enforce_degree_cap` e seus 5 testes unitários (mais o helper `setup_cap_db`) foram DELETADOS junto com a função. Não há novo teste de regressão dedicado — a garantia aditiva é estrutural: com o código de poda removido do caminho de escrita, um `remember`/`link` normal não pode mais deletar arestas, portanto o total de `relationships` não pode diminuir em uma escrita. `cargo clippy --all-targets -- -D warnings` confirma que não há referência pendente a `enforce_degree_cap`/`max_entity_degree`.
+- **GAP-SG-68**: os 6 testes `build_order_by_*` em `src/commands/graph_export.rs` (`build_order_by_defaults_to_name_asc`, `build_order_by_name_desc`, `build_order_by_degree_desc`, `build_order_by_degree_asc`, `build_order_by_created_at_asc`, `build_order_by_created_at_desc`) permanecem verdes; eles fixam o padrão ascendente e o caminho `--order desc` que o doc-comment realinhado agora descreve.
+- **GAP-SG-69**: `src/commands/enrich/queue.rs::tests::skipped_item_keys_excludes_only_skipped_for_operation` prova que o novo helper `skipped_item_keys` retorna apenas linhas com `status='skipped'` para a operação consultada, de modo que o rescan do body-enrich com `--until-empty` não re-enfileira corpos curtos vetados e o sidecar é retido enquanto houver veredictos `skipped` (empiricamente 55→3).
+- Sem migração; schema permanece v15; `Cargo.toml` é 1.0.99. Os totais da suíte não foram re-aferidos nesta passagem de documentação — rode `cargo nextest -P ci` para a contagem ao vivo.
+
 ## v1.0.97 — Testes da Auditoria Pós-Selagem (ADR-0056/0057/0058, GAP-SG-57..66)
 
 - `commands::enrich::queue::tests::prune_dead_orphans_removes_only_orphan_memory_rows` — GAP-SG-66. Prova que `enrich --prune-dead-orphans` deleta só linhas `dead` órfãs de memória, mantém a linha de memória viva e nunca toca em linhas de entidade (retorna 1).

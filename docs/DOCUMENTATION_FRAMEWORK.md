@@ -94,25 +94,32 @@ This section updates the framework to cover the documentation generated for the 
 - Flaky `llm_slots::tests` hardened (GAP-SG-63); global binary realigned via `cargo install --path . --locked --force` so `installed_binary_smoke` runs 26/0 without bypass (GAP-SG-62).
 - Documented in: README, CHANGELOG, AGENTS, COOKBOOK, HOW_TO_USE, HEADLESS_INVOCATION, INTEGRATIONS (root EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt; SKILL (EN+PT); TESTING, MIGRATION (EN+PT); docs/decisions/INDEX.md + ADR-0056/0057/0058 (EN+PT).
 
-### Documentation Drift Status (as of v1.0.97)
+### v1.0.99 — Remove Destructive Degree-Cap Pruning + Doc/Convergence Fixes (ADR-0059, GAP-SG-67/68/69)
+- **GAP-SG-67** — the destructive GLOBAL degree-cap pruning is REMOVED: `graph::enforce_degree_cap` and its two call sites (`remember`, `link`) are deleted, and the `--max-entity-degree` flag is REMOVED (BREAKING: clap exit 2 if passed; the `--max-entity-degree 0` mitigation is now obsolete). Writes are 100% additive — they never prune/delete edges nor emit a warn, and the total `relationships` count never decreases on a normal write. Schema stays v15 (no migration). Trade-off: hub degree grows unbounded; future normalisation is an explicit MAINTENANCE command only.
+- **GAP-SG-68** — `graph entities --sort-by degree` sorted ascending against a doc-comment that promised "descending by default"; fixed by aligning the DOC to the ascending behaviour ("Sort by degree (total number of relationships). Use --order desc for most-connected-first."). 6 `build_order_by_*` tests stay green; only `src/commands/graph_export.rs` (one line) changed.
+- **GAP-SG-69** — `enrich --operation body-enrich --until-empty` did not converge (scan re-scanned bodies rejected by the preservation guard, status `skipped`); fixed with the `skipped_item_keys` helper (`queue.rs`), the BodyEnrich initial scan + rescan now exclude preservation-vetoed `skipped` keys, the `.enrich-queue.sqlite` sidecar is preserved while `skipped` rows remain (removed only when `dead==0` AND `skipped==0`), and `cleanup_queue_entry` clears the veto when the body changes. Empirical convergence 55→3; test `skipped_item_keys_excludes_only_skipped_for_operation`.
+- New ADR: ADR-0059 (EN + PT-BR); docs/decisions/INDEX.md updated.
+- Updated: README, CHANGELOG, AGENTS, INTEGRATIONS (root EN+PT); docs/AGENTS, MIGRATION (EN+PT); DOCUMENTATION_FRAMEWORK; llms.txt, llms.pt-BR.txt, llms-full.txt.
+
+### Documentation Drift Status (as of v1.0.99)
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.97 (100%) | v1.0.97 (100%) | Current |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (no v1.0.97 exit code/env var change) | v1.0.96 (espelhado) | Current |
-| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (no v1.0.97 contributor-flow change) | v1.0.96 (espelhado) | Current |
-| `llms.txt` / `llms.pt-BR.txt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `llms-full.txt` | v1.0.97 (post-sealing audit) | N/A | Current |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.97 (queue sidecar from `--db`, ADR-0057) | v1.0.97 (espelhado) | Current |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.96 (no v1.0.97 platform change) | v1.0.96 (espelhado) | Current |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.96 (no v1.0.97 test-plan phase change) | v1.0.96 (espelhado) | Current |
+| `README.md` / `README.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.99 (100%) | v1.0.99 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (no v1.0.99 exit code/env var change) | v1.0.96 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (no v1.0.99 contributor-flow change) | v1.0.96 (espelhado) | Current |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `llms-full.txt` | v1.0.99 (GAP-SG-67/68/69) | N/A | Current |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.99 (GAP-SG-67 upgrade recipe) | v1.0.99 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.99 (--max-entity-degree removal, GAP-SG-67) | v1.0.99 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69 test changes) | v1.0.99 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.97 (no v1.0.99 platform change) | v1.0.97 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.97 (no v1.0.99 change) | v1.0.97 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69 test plan) | v1.0.99 (espelhado) | Current |
 | `skill/sqlite-graphrag-en` / `skill/sqlite-graphrag-pt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
 | `docs/decisions/` (52 ADRs) | 100% (52/52) | 77% (40/52) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
 | `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |

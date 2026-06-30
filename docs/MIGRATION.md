@@ -1,3 +1,42 @@
+# MIGRATING TO v1.0.99 — Remove Destructive Degree-Cap Pruning (ADR-0059, GAP-SG-67)
+
+> This guide covers upgrading to v1.0.99. No migration runs on the main database; the schema remains at v15. ONE breaking change: the `--max-entity-degree` flag is removed from `remember`/`link`. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.99 — Remove Destructive Degree-Cap Pruning (ADR-0059, GAP-SG-67)
+
+### What Changed
+- **GAP-SG-67 (ADR-0059)**: the destructive GLOBAL degree-cap pruning is removed. `graph::enforce_degree_cap` and its two call sites (`remember`, `link`) are deleted, so a write is now 100% additive — it never prunes/deletes edges nor emits a warn, and the total `relationships` count never decreases on a normal write. Trade-off: hub degree grows unbounded; any future normalisation must be an explicit MAINTENANCE command.
+- **GAP-SG-68**: documentation-only fix to the `graph entities --sort-by degree` doc-comment (now describes the ascending default; use `--order desc` for most-connected-first). No behaviour change.
+- **GAP-SG-69**: `enrich --operation body-enrich --until-empty` now converges by excluding preservation-vetoed (`skipped`) bodies from rescans. Internal-only — no CLI change.
+- NO main-database schema migration (stays at v15). NO sidecar file migration.
+
+### Breaking Change — `--max-entity-degree` is removed
+
+The `--max-entity-degree <N>` flag on `remember` and `link` is REMOVED. Passing it is rejected by clap (exit 2). The previous `--max-entity-degree 0` mitigation is obsolete and unnecessary — there is no degree-cap pruning anymore.
+
+**Before (v1.0.97 — fails in v1.0.99 with exit 2):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --max-entity-degree 50 --json
+sqlite-graphrag link --from a --to b --relation uses --max-entity-degree 0 --json
+```
+
+**After (v1.0.99 — drop the flag):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --json
+sqlite-graphrag link --from a --to b --relation uses --json
+```
+
+### Who Is Affected
+- Any script, CI pipeline, or scheduled job that passes `--max-entity-degree` (including the `--max-entity-degree 0` no-op mitigation) to `remember` or `link`.
+
+### How to Upgrade
+1. Audit your invocations: `rg -- "--max-entity-degree" your-scripts/`
+2. Remove every `--max-entity-degree <N>` occurrence from `remember` / `link` calls.
+3. Reinstall: `cargo install sqlite-graphrag --locked --force`. No database migration — schema stays at v15.
+
+### Rollback
+Roll back to v1.0.97 by reinstalling the previous binary. No database changes to undo — writes were additive and the schema is unchanged at v15.
+
 # MIGRATING TO v1.0.97 — Queue Sidecar Derived from `--db` (ADR-0057)
 
 > This guide covers upgrading to v1.0.97. No migration runs on the main database; the schema remains at v15. The `.enrich-queue.sqlite` / `.ingest-queue.sqlite` worklist sidecars are now derived from the `--db` directory (ADR-0057) instead of the process CWD — no operator action for the canonical default DB. Reinstall with `cargo install sqlite-graphrag --locked --force`.

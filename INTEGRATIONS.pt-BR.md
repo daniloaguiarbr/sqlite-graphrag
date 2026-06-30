@@ -179,7 +179,7 @@
 - `normalize-entities --yes` normaliza todos os nomes de entidade para kebab-case ASCII minúsculo; mescla colisões automaticamente; `--dry-run` faz preview
 - `enrich --operation <op> --mode claude-code` qualidade do grafo aumentada por LLM; operações: `memory-bindings`, `entity-descriptions`, `body-enrich`; `--dry-run` faz preview sem LLM; `--max-cost-usd`, `--resume`, `--retry-failed`
 - `deep-research` novas flags: `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.05), `--max-neighbors-per-hop`
-- `--max-entity-degree N` em `link` e `remember` emite `tracing::warn!` quando entidade excede N conexões
+- flag `--max-entity-degree` REMOVIDA de `link` e `remember` na v1.0.99 — a escrita agora é puramente aditiva e NUNCA poda, deleta arestas nem emite warn de grau (passar a flag agora resulta em clap exit 2)
 - `health` reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` quando qualquer relação excede 40%
 - Nomes de entidade normalizados para kebab-case em todo path de escrita (remember, ingest, link, rename-entity)
 

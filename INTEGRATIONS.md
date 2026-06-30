@@ -179,7 +179,7 @@
 - `normalize-entities --yes` normalizes all entity names to lowercase kebab-case ASCII; auto-merges collisions; `--dry-run` previews
 - `enrich --operation <op> --mode claude-code` LLM-augmented graph quality; operations: `memory-bindings`, `entity-descriptions`, `body-enrich`; `--dry-run` previews without LLM; `--max-cost-usd`, `--resume`, `--retry-failed`
 - `deep-research` new flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05)), `--max-neighbors-per-hop`
-- `--max-entity-degree N` on `link` and `remember` emits `tracing::warn!` when an entity exceeds N connections
+- `--max-entity-degree` flag REMOVED from `link` and `remember` in v1.0.99 — writes are now purely additive and NEVER prune, delete edges, or emit a degree warning (passing the flag now yields a clap exit 2)
 - `health` reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` when any relation exceeds 40%
 - Entity names are normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
 
