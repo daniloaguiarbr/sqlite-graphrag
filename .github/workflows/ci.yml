@@ -31,7 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025]
+        # RC-13 (v1.0.98): windows-2025 removed — the test/clippy suite uses
+        # Unix-only APIs (std::os::unix, PermissionsExt) in 8 files and never
+        # compiled on windows. Windows production binaries are validated by
+        # release.yml (native build) + the G29 cross-check (type regressions).
+        os: [ubuntu-latest, macos-latest]
         # v1.0.79: embedding-legacy removed from the matrix together with
         # the feature itself; every build is LLM-only.
         features: [default, llm-only]
@@ -92,7 +96,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025]
+        # RC-13 (v1.0.98): windows-2025 removed — the test suite is Unix-only
+        # (std::os::unix / PermissionsExt in 8 files) and never compiled on
+        # windows. Windows binaries are validated by release.yml + the G29
+        # cross-check.
+        os: [ubuntu-latest, macos-latest]
         # v1.0.79: embedding-legacy removed from the matrix together with
         # the feature itself; every build is LLM-only.
         features: [default, llm-only]
