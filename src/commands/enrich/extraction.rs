@@ -73,7 +73,7 @@ pub(super) enum EnrichItemResult {
     Skipped {
         reason: String,
     },
-    /// G29 Passo 4 (v1.0.69): the LLM rewrite diverged from the original
+    /// G29 Step 4 (v1.0.69): the LLM rewrite diverged from the original
     /// body beyond the configured `--preserve-threshold` and was rejected
     /// before persistence. The trigram-Jaccard score and threshold are
     /// emitted in the NDJSON stream for operator audit.

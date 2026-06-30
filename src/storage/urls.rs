@@ -12,7 +12,7 @@ pub struct MemoryUrl {
     pub offset: Option<i64>,
 }
 
-/// Insere uma URL na tabela `memory_urls`. Ignora duplicatas silenciosamente.
+/// Inserts a URL into the `memory_urls` table. Silently ignores duplicates.
 pub fn insert_url(conn: &Connection, memory_id: i64, entry: &MemoryUrl) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR IGNORE INTO memory_urls (memory_id, url, url_offset) VALUES (?1, ?2, ?3)",

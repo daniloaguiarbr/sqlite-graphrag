@@ -1,4 +1,4 @@
-//! Preservation checks for LLM-enriched memory bodies (G29 Passo 4).
+//! Preservation checks for LLM-enriched memory bodies (G29 Step 4).
 //!
 //! When a language model rewrites a memory body, the operator must be
 //! protected against silent hallucination: the LLM may invent facts, drop

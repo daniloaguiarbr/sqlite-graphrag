@@ -127,7 +127,7 @@ impl Env {
     }
 }
 
-/// Valida `instancia` contra o schema em `schema_str`.
+/// Validates `instancia` against the schema in `schema_str`.
 /// Collects all errors and aborts with a detailed message if any violations exist.
 fn validar_schema(cmd: &str, schema_str: &str, instancia: &Value) {
     let schema: Value =

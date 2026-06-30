@@ -39,7 +39,7 @@ pub struct OptimizeArgs {
         help = "Skip FTS5 rebuild when index is already functional (saves minutes on big DBs)"
     )]
     pub fts_skip_when_functional: bool,
-    /// G36 Passo 2 (v1.0.69): run `fts check` + `fts stats` only, do not
+    /// G36 Step 2 (v1.0.69): run `fts check` + `fts stats` only, do not
     /// trigger any rebuild. Exit code is 0 when the index is healthy, 1
     /// when a rebuild would be recommended.
     #[arg(
@@ -48,7 +48,7 @@ pub struct OptimizeArgs {
         help = "G36: only run fts check + fts stats, do not rebuild (exit 1 if rebuild recommended)"
     )]
     pub fts_dry_run: bool,
-    /// G36 Passo 3 (v1.0.69): emit a tracing::info! progress line every
+    /// G36 Step 3 (v1.0.69): emit a tracing::info! progress line every
     /// N seconds during the FTS5 rebuild. The FTS5 `rebuild` command is
     /// synchronous and does not call the SQLite progress handler, so the
     /// progress is sampled at the configured interval. Use 0 to disable.
@@ -58,7 +58,7 @@ pub struct OptimizeArgs {
         help = "G36: emit progress line every N seconds during FTS5 rebuild (0 to disable)"
     )]
     pub fts_progress: u64,
-    /// G36 Passo 4 (v1.0.69): skip all confirmation prompts. Required
+    /// G36 Step 4 (v1.0.69): skip all confirmation prompts. Required
     /// for non-interactive CI/CD pipelines that cannot answer `y/N`.
     #[arg(
         long,

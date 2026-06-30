@@ -703,8 +703,12 @@ mod tests {
 
     #[test]
     fn build_codex_command_includes_hardening_flags() {
+        // RC-14 (v1.0.98): `/bin/true` is rejected by the preflight existence
+        // check under the macOS runner sandbox. Use the running test binary,
+        // which always exists and is executable on every platform.
+        let self_exe = std::env::current_exe().expect("current exe path");
         let args = CodexSpawnArgs {
-            binary: Path::new("/bin/true"),
+            binary: &self_exe,
             prompt: "p",
             json_schema: "{}",
             input_text: "i",

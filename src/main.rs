@@ -352,6 +352,14 @@ fn main() -> std::process::ExitCode {
             cli.embedding_backend,
             EmbeddingBackendChoice::Auto | EmbeddingBackendChoice::Openrouter
         );
+        // RC-7 fix (v1.0.98): read-only / no-embedding subcommands (`init`, the
+        // `enrich` queue inspectors) must not be hard-failed by the eager
+        // OpenRouter key preflight. `init` self-degrades to `ok_no_embedding`
+        // and the inspectors never embed, so a missing key is not fatal here.
+        let tolerates_no_key = cli
+            .command
+            .as_ref()
+            .is_some_and(|c| c.tolerates_missing_embedding_key());
         if wants_openrouter {
             if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter)
                 && cli.embedding_model.is_none()
@@ -375,7 +383,9 @@ fn main() -> std::process::ExitCode {
                         dim,
                     ) {
                         tracing::warn!(error = %e, "failed to initialise OpenRouter embedding client");
-                        if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter) {
+                        if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter)
+                            && !tolerates_no_key
+                        {
                             sqlite_graphrag::output::emit_error_json(78, &e.to_string());
                             sqlite_graphrag::output::emit_error(&e.to_string());
                             let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -383,7 +393,9 @@ fn main() -> std::process::ExitCode {
                             return std::process::ExitCode::from(78_u8);
                         }
                     }
-                } else if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter) {
+                } else if matches!(cli.embedding_backend, EmbeddingBackendChoice::Openrouter)
+                    && !tolerates_no_key
+                {
                     let msg = "--embedding-backend openrouter requires OPENROUTER_API_KEY env var, config.toml key, or --openrouter-api-key flag";
                     sqlite_graphrag::output::emit_error_json(78, msg);
                     sqlite_graphrag::output::emit_error(msg);

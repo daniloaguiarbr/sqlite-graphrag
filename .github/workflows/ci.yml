@@ -31,7 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025]
+        # RC-13 (v1.0.98): windows-2025 removed — the test/clippy suite uses
+        # Unix-only APIs (std::os::unix, PermissionsExt) in 8 files and never
+        # compiled on windows. Windows production binaries are validated by
+        # release.yml (native build) + the G29 cross-check (type regressions).
+        os: [ubuntu-latest, macos-latest]
         # v1.0.79: embedding-legacy removed from the matrix together with
         # the feature itself; every build is LLM-only.
         features: [default, llm-only]
@@ -44,15 +48,15 @@ jobs:
       # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
       - name: Pre-warm rustup toolchain (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Pre-warm attempt $attempt ==="
             rustup toolchain install stable --profile minimal --no-self-update
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 15
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 15
           done
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -62,20 +66,24 @@ jobs:
       # to recover from PATH propagation delays on Windows runners.
       - name: Verify rustc + cargo (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Verify attempt $attempt ==="
             rustc --version
             cargo --version
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 10
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 10
           done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Clippy with feature matrix
+        # RC-3 (v1.0.98): this `run:` uses bash `if [ … ]; then … fi`, but without
+        # an explicit shell windows-2025 runs it under PowerShell, which rejects
+        # the bash syntax with a ParserError (exit 1) before clippy starts.
+        shell: bash
         run: |
           if [ "${{ matrix.features }}" = "default" ]; then
             cargo clippy --all-targets -- -D warnings
@@ -88,7 +96,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025]
+        # RC-13 (v1.0.98): windows-2025 removed — the test suite is Unix-only
+        # (std::os::unix / PermissionsExt in 8 files) and never compiled on
+        # windows. Windows binaries are validated by release.yml + the G29
+        # cross-check.
+        os: [ubuntu-latest, macos-latest]
         # v1.0.79: embedding-legacy removed from the matrix together with
         # the feature itself; every build is LLM-only.
         features: [default, llm-only]
@@ -108,15 +120,15 @@ jobs:
       # to windows-2025; Ubuntu and macOS hosts use the bare dtolnay step.
       - name: Pre-warm rustup toolchain (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Pre-warm attempt $attempt ==="
             rustup toolchain install stable --profile minimal --no-self-update
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 15
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 15
           done
       - uses: dtolnay/rust-toolchain@stable
       # G53-WINDOWS-INFRA (v1.0.80): verify rustc/cargo reachable after
@@ -124,16 +136,16 @@ jobs:
       # to recover from PATH propagation delays on Windows runners.
       - name: Verify rustc + cargo (windows-2025 resilience)
         if: matrix.os == 'windows-2025'
-        shell: pwsh
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "=== Verify attempt $attempt ==="
             rustc --version
             cargo --version
             rc=$?
-            if ($rc -eq 0) { break }
-            if ($attempt -eq 3) { exit $rc }
-            Start-Sleep -Seconds 10
+            if [ $rc -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit $rc; fi
+            sleep 10
           done
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
@@ -244,11 +256,46 @@ jobs:
           # `error[E0463]: can't find crate for 'core'`.
           targets: x86_64-pc-windows-msvc
       - name: Install Windows MSVC target stdlib explicitly
-        run: rustup target add x86_64-pc-windows-msvc --toolchain stable
+        # RC-8 (v1.0.98): `rust-toolchain.toml` pins `channel = "1.88"`, so every
+        # `cargo` command in the repo uses 1.88 via the override — NOT the
+        # `stable` the dtolnay action installs. Adding the target to `stable`
+        # (the old `--toolchain stable`) left 1.88 without the cross stdlib, so
+        # `cargo check --target x86_64-pc-windows-msvc` failed with
+        # `error[E0463]: can't find crate for 'core'` (exit 101). Drop the
+        # explicit toolchain so the target lands on the active (overridden) 1.88.
+        run: rustup target add x86_64-pc-windows-msvc
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
-      - name: cargo check --target x86_64-pc-windows-msvc
-        run: timeout 600 cargo check --target x86_64-pc-windows-msvc --lib --all-features
+      # RC-8 (v1.0.98): `ring` (pulled by reqwest+rustls for the OpenRouter REST
+      # client) requires the MSVC compiler for the *-windows-msvc target and
+      # rejects GNU, so a plain `cargo check --target x86_64-pc-windows-msvc`
+      # cannot run ring's build script on a Linux runner. cargo-xwin supplies an
+      # LLVM-based MSVC sysroot (clang / llvm-lib + the Windows SDK fetched by
+      # xwin), letting the cross type-check run without a native Windows toolchain.
+      - name: Install Clang 19 for cargo-xwin
+        # RC-15 (v1.0.98): the MSVC CRT headers fetched by xwin now emit
+        # STL1000 (static_assert) unless the compiler is Clang 19.0.0+.
+        # ubuntu-latest ships Clang 18 via the default `clang` package, so the
+        # cross type-check failed (`expected Clang 19.0.0 or newer`). Install
+        # Clang 19 from apt.llvm.org and front the PATH with the unsuffixed
+        # /usr/lib/llvm-19/bin so cargo-xwin picks clang-cl/lld-link/llvm-lib 19.
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 19
+          sudo apt-get install -y llvm-19 lld-19 clang-tools-19
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+          /usr/lib/llvm-19/bin/clang --version
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+      - name: cargo xwin check --target x86_64-pc-windows-msvc
+        # RC-8 (v1.0.98): the cold cross-compile downloads the MSVC SDK and
+        # builds ~400 deps for the windows-msvc target from scratch, which
+        # exceeded the old 900s budget on the runner (exit 124). 1800s covers
+        # the cold run; Swatinem/rust-cache makes subsequent runs fast.
+        run: timeout 1800 cargo xwin check --target x86_64-pc-windows-msvc --lib --all-features
 
   audit:
     name: Security Audit
@@ -287,17 +334,24 @@ jobs:
       - uses: ./.github/actions/install-mold-linker
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --locked
+        # RC-5 (v1.0.98): pin to 0.44.0 via prebuilt binary. The unpinned
+        # `cargo install cargo-semver-checks --locked` pulled 0.48.0, which
+        # requires rustc 1.91 > our MSRV 1.88 and failed to compile (exit 101).
+        # 0.44.0 is the last release supporting 1.88; the prebuilt binary skips
+        # the MSRV compile entirely.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks@0.44.0
       - name: Run semver-checks against the previous release
         # v1.0.79 is the last published release; bump on each release.
         # Use --major-version to scope to a single major track; without it
         # the tool defaults to the highest published version which may not
         # be the one this branch is targeting.
         run: |
-          cargo semver-checks check-baseline \
+          cargo semver-checks check-release \
             --manifest-path Cargo.toml \
-            --baseline-version 1.0.79 \
-            --verbose
+            --baseline-version 1.0.96 \
+            --verbose || echo "::warning::semver-checks reported differences (informational, see adr-0032)"
           # The previous command exit code is non-zero when ANY breaking
           # change is detected. We currently run with continue-on-error at
           # the job level so the gate is INFORMATIONAL until G53/adr-0032
@@ -333,6 +387,12 @@ jobs:
         run: |
           cargo install cargo-nextest --version 0.9.114 --locked
           cargo install cargo-llvm-cov --locked
+      - name: Install mock LLM on PATH
+        run: |
+          mkdir -p /tmp/sgr-llm-mock/bin
+          cp tests/mock-llm/claude tests/mock-llm/codex /tmp/sgr-llm-mock/bin/
+          chmod +x /tmp/sgr-llm-mock/bin/claude /tmp/sgr-llm-mock/bin/codex
+          echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - name: Coverage with nextest
         env:
           RUST_TEST_THREADS: "2"
@@ -533,6 +593,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-careful
+      - name: Install mock LLM on PATH
+        run: |
+          mkdir -p /tmp/sgr-llm-mock/bin
+          cp tests/mock-llm/claude tests/mock-llm/codex /tmp/sgr-llm-mock/bin/
+          chmod +x /tmp/sgr-llm-mock/bin/claude /tmp/sgr-llm-mock/bin/codex
+          echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - run: timeout 1200 cargo +nightly careful test -- --test-threads=2
 
   changelog-version-check:
@@ -567,6 +633,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      - name: Install mock LLM on PATH
+        run: |
+          mkdir -p /tmp/sgr-llm-mock/bin
+          cp tests/mock-llm/claude tests/mock-llm/codex /tmp/sgr-llm-mock/bin/
+          chmod +x /tmp/sgr-llm-mock/bin/claude /tmp/sgr-llm-mock/bin/codex
+          echo "/tmp/sgr-llm-mock/bin" >> $GITHUB_PATH
       - name: Generate coverage
         run: cargo llvm-cov --text --output-path coverage.txt
       - name: Enforce 75% threshold

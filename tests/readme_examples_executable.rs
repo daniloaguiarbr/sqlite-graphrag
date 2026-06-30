@@ -323,6 +323,17 @@ fn run_all_blocks(readme_label: &str, content: &str, min_blocks_expected: usize)
             skipped_composition += 1;
             continue;
         }
+        // The CI test job is hermetic (no `OPENROUTER_API_KEY`): a block that
+        // drives the OpenRouter embedding backend exits 78 at the preflight and
+        // cannot run here. These examples document live REST usage and are
+        // validated manually, not in CI.
+        if join_continuations(&block.lines)
+            .iter()
+            .any(|l| l.contains("--embedding-backend openrouter"))
+        {
+            skipped_composition += 1;
+            continue;
+        }
 
         // Pre-check: does this block contain at least one `sqlite-graphrag` line?
         let has_cli = join_continuations(&block.lines)

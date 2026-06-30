@@ -22,9 +22,9 @@ pub enum GraphExportFormat {
     Ndjson,
 }
 
-/// v1.0.82 (GAP-003): backend LLM para embedding. Aceita `auto` (default —
-/// detecta `codex` ou `claude` no PATH), `codex` (força codex exec), `claude`
-/// (força claude -p), ou `none` (skip-a embedding; útil para testes).
+/// v1.0.82 (GAP-003): LLM backend for embedding. Accepts `auto` (default —
+/// detects `codex` or `claude` on the PATH), `codex` (forces codex exec), `claude`
+/// (forces claude -p), or `none` (skips embedding; useful for tests).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum LlmBackendChoice {
     Auto,
@@ -69,15 +69,15 @@ impl EmbeddingBackendChoice {
 }
 
 impl LlmBackendChoice {
-    /// v1.0.82 (GAP-003): converte a escolha do CLI em uma chain ordenada
-    /// de backends que `embedder::embed_with_fallback` itera. O primeiro
-    /// elemento da chain é o backend preferido; elementos subsequentes
-    /// são fallbacks quando o preferido falha com `LlmBackendError`.
+    /// v1.0.82 (GAP-003): converts the CLI choice into an ordered chain
+    /// of backends that `embedder::embed_with_fallback` iterates. The first
+    /// element of the chain is the preferred backend; subsequent elements
+    /// are fallbacks used when the preferred one fails with `LlmBackendError`.
     ///
-    /// `Auto` produz `[Codex, Claude, None]` — codex é o default da v1.0.76+,
-    /// claude é o fallback se codex falhar (OAuth contention, quota), e
-    /// `None` permite `embed_with_fallback` retornar vetor vazio quando
-    /// `skip_on_failure` está ativo.
+    /// `Auto` produces `[Codex, Claude, None]` — codex is the default since v1.0.76+,
+    /// claude is the fallback if codex fails (OAuth contention, quota), and
+    /// `None` lets `embed_with_fallback` return an empty vector when
+    /// `skip_on_failure` is active.
     pub fn to_chain(self) -> Vec<crate::embedder::LlmBackendKind> {
         use crate::embedder::LlmBackendKind;
         match self {
@@ -240,19 +240,19 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "N", value_parser = clap::value_parser!(u64).range(8..=4096))]
     pub embedding_dim: Option<u64>,
 
-    /// v1.0.82 (GAP-003) / v1.0.84 (ADR-0042): backend LLM para embedding.
-    /// Aceita `auto` (detecta via PATH, codex-first), `codex` (força
-    /// `codex exec`), `claude` (força `claude -p`; desde v1.0.84 NÃO cai em
-    /// codex — emite `AppError::Validation` se `claude` ausente),
-    /// `opencode` (força `opencode run`), ou `none`
-    /// (skip-a embedding; útil para testes). Honra env var
+    /// v1.0.82 (GAP-003) / v1.0.84 (ADR-0042): LLM backend for embedding.
+    /// Accepts `auto` (detects via PATH, codex-first), `codex` (forces
+    /// `codex exec`), `claude` (forces `claude -p`; since v1.0.84 does NOT fall back to
+    /// codex — emits `AppError::Validation` if `claude` is absent),
+    /// `opencode` (forces `opencode run`), or `none`
+    /// (skips embedding; useful for tests). Honors the env var
     /// `SQLITE_GRAPHRAG_LLM_BACKEND`.
     #[arg(long, global = true, value_enum, default_value_t = LlmBackendChoice::Auto, env = "SQLITE_GRAPHRAG_LLM_BACKEND")]
     pub llm_backend: LlmBackendChoice,
 
-    /// v1.0.82 (GAP-003): modelo a invocar no backend escolhido.
-    /// Honra env var `SQLITE_GRAPHRAG_LLM_MODEL`. Default depende
-    /// do backend (codex: `gpt-5.5`; claude: `claude-sonnet-4-6`).
+    /// v1.0.82 (GAP-003): model to invoke on the chosen backend.
+    /// Honors the env var `SQLITE_GRAPHRAG_LLM_MODEL`. The default depends
+    /// on the backend (codex: `gpt-5.5`; claude: `claude-sonnet-4-6`).
     #[arg(
         long,
         global = true,
@@ -261,8 +261,8 @@ pub struct Cli {
     )]
     pub llm_model: Option<String>,
 
-    /// v1.0.82 (GAP-003): path para o binário `claude` (override de
-    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_CLAUDE_BINARY`.
+    /// v1.0.82 (GAP-003): path to the `claude` binary (overrides
+    /// PATH detection). Honors the env var `SQLITE_GRAPHRAG_CLAUDE_BINARY`.
     #[arg(
         long,
         global = true,
@@ -271,8 +271,8 @@ pub struct Cli {
     )]
     pub claude_binary: Option<std::path::PathBuf>,
 
-    /// v1.0.89 (GAP-1): path para o binário `codex` (override de
-    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_CODEX_BINARY`.
+    /// v1.0.89 (GAP-1): path to the `codex` binary (overrides
+    /// PATH detection). Honors the env var `SQLITE_GRAPHRAG_CODEX_BINARY`.
     #[arg(
         long,
         global = true,
@@ -281,8 +281,8 @@ pub struct Cli {
     )]
     pub codex_binary: Option<std::path::PathBuf>,
 
-    /// v1.0.90 (GAP-OPENCODE-001): path para o binário `opencode` (override de
-    /// detecção via PATH). Honra env var `SQLITE_GRAPHRAG_OPENCODE_BINARY`.
+    /// v1.0.90 (GAP-OPENCODE-001): path to the `opencode` binary (overrides
+    /// PATH detection). Honors the env var `SQLITE_GRAPHRAG_OPENCODE_BINARY`.
     #[arg(
         long,
         global = true,
@@ -291,9 +291,9 @@ pub struct Cli {
     )]
     pub opencode_binary: Option<std::path::PathBuf>,
 
-    /// v1.0.82 (GAP-005): cadeia de backends LLM tentados em ordem
-    /// quando o primário falha. Default `codex,claude,none`. Honra
-    /// env var `SQLITE_GRAPHRAG_LLM_FALLBACK`.
+    /// v1.0.82 (GAP-005): chain of LLM backends tried in order
+    /// when the primary fails. Default `codex,claude,none`. Honors
+    /// the env var `SQLITE_GRAPHRAG_LLM_FALLBACK`.
     #[arg(
         long,
         global = true,
@@ -302,9 +302,9 @@ pub struct Cli {
     )]
     pub llm_fallback: String,
 
-    /// v1.0.82 (GAP-005): persiste com embedding NULL quando todos
-    /// os backends da cadeia falham. Memória fica em `pending_embeddings`
-    /// para reprocessamento via `embedding retry`. Honra env var
+    /// v1.0.82 (GAP-005): persists with a NULL embedding when all
+    /// backends in the chain fail. The memory stays in `pending_embeddings`
+    /// for reprocessing via `embedding retry`. Honors the env var
     /// `SQLITE_GRAPHRAG_SKIP_EMBEDDING_ON_FAILURE`.
     #[arg(
         long,
@@ -315,8 +315,8 @@ pub struct Cli {
     )]
     pub skip_embedding_on_failure: bool,
 
-    /// v1.0.82 (GAP-004): limite host-wide de subprocessos LLM
-    /// simultâneos. Default derivado de `ncpus`. Honra env var
+    /// v1.0.82 (GAP-004): host-wide limit of concurrent LLM
+    /// subprocesses. Default derived from `ncpus`. Honors the env var
     /// `SQLITE_GRAPHRAG_LLM_MAX_HOST_CONCURRENCY`.
     #[arg(
         long,
@@ -326,8 +326,8 @@ pub struct Cli {
     )]
     pub llm_max_host_concurrency: Option<u32>,
 
-    /// v1.0.82 (GAP-004): segundos para aguardar slot LLM livre
-    /// antes de falhar com exit 75. Default 30s. Honra env var
+    /// v1.0.82 (GAP-004): seconds to wait for a free LLM slot
+    /// before failing with exit 75. Default 30s. Honors the env var
     /// `SQLITE_GRAPHRAG_LLM_SLOT_WAIT_SECS`.
     #[arg(
         long,
@@ -337,8 +337,8 @@ pub struct Cli {
     )]
     pub llm_slot_wait_secs: Option<u64>,
 
-    /// v1.0.82 (GAP-004): se setado, falha imediatamente (exit 75)
-    /// quando nenhum slot LLM está livre. Honra env var
+    /// v1.0.82 (GAP-004): if set, fails immediately (exit 75)
+    /// when no LLM slot is free. Honors the env var
     /// `SQLITE_GRAPHRAG_LLM_SLOT_NO_WAIT`.
     #[arg(
         long,
@@ -355,8 +355,8 @@ pub struct Cli {
     #[arg(long, global = true, value_enum, default_value_t = EmbeddingBackendChoice::Auto, env = "SQLITE_GRAPHRAG_EMBEDDING_BACKEND")]
     pub embedding_backend: EmbeddingBackendChoice,
 
-    /// v1.0.93: embedding model for OpenRouter API. OBRIGATORIO quando
-    /// `--embedding-backend openrouter`. Honra env var `SQLITE_GRAPHRAG_EMBEDDING_MODEL`.
+    /// v1.0.93: embedding model for the OpenRouter API. Required when
+    /// `--embedding-backend openrouter`. Honors env var `SQLITE_GRAPHRAG_EMBEDDING_MODEL`.
     #[arg(
         long,
         global = true,
@@ -544,6 +544,22 @@ impl Commands {
 
     pub fn uses_cli_slot(&self) -> bool {
         true
+    }
+
+    /// Read-only / no-embedding subcommands that MUST run without an embedding
+    /// API key. `init` warms a best-effort smoke test internally and degrades to
+    /// `ok_no_embedding` when the backend is unreachable; the `enrich` queue
+    /// inspectors (`--status` / `--list-dead` / `--requeue-dead` /
+    /// `--prune-dead-orphans`) never embed and never call the LLM. The eager
+    /// OpenRouter key preflight in `main` must skip its hard-fail for these.
+    pub fn tolerates_missing_embedding_key(&self) -> bool {
+        match self {
+            Self::Init(_) => true,
+            Self::Enrich(args) => {
+                args.status || args.list_dead || args.requeue_dead || args.prune_dead_orphans
+            }
+            _ => false,
+        }
     }
 }
 

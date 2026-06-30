@@ -5,6 +5,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.0.98] - 2026-06-29
+
+Maintenance release that turns the CI pipeline green and restores the GitHub Release flow after the 1.0.97 publish. The crates.io 1.0.97 artifact is immutable, so the source-level fixes (English doc comments, the `anyhow` advisory, the OpenRouter preflight scope) ship here; the rest are CI/infrastructure changes that do not affect the published crate.
+
+### Fixed
+- OpenRouter key preflight no longer hard-fails read-only / no-embedding subcommands: the eager `--embedding-backend openrouter` guard in `main` returned exit 78 for *every* subcommand when no API key resolved, including `init` (schema only — it already self-degrades to `ok_no_embedding`) and the `enrich` queue inspectors (`--status`/`--list-dead`/`--requeue-dead`/`--prune-dead-orphans`, which never embed). New `Commands::tolerates_missing_embedding_key()` scopes the guard so these run without a key; `remember`/`recall`/`hybrid-search`/`ingest`/`deep-research` keep failing fast. This was the deterministic cause of the ubuntu/macOS test-job failures (`tests/enrich_queue_db_isolation.rs` asserts a keyless `init` succeeds).
+- Security advisory `RUSTSEC-2026-0190` (unsoundness in `anyhow::Error::downcast_mut()`): `anyhow` bumped 1.0.102→1.0.103 in `Cargo.lock`, clearing `cargo audit` and `cargo deny check advisories`.
+- English-only doc policy: `///`/`//!` doc comments across `src/` and `tests/` that still carried Portuguese (the source of the `language-check` job failure) are translated to English; comments only, no behaviour change.
+
+### CI / infrastructure
+- Windows runners: four `Pre-warm`/`Verify` steps declared `shell: pwsh` but their bodies mixed a bash `for … do … done` header with PowerShell `if`/`Start-Sleep`, so PowerShell rejected the loop and the windows-2025 clippy/test jobs died before running. Converted to `shell: bash` with the retry idiom already proven in the test job.
+- SemVer gate (G53): pinned `cargo-semver-checks` to 0.44.0 via `taiki-e/install-action` (prebuilt binary); the unpinned `cargo install` pulled 0.48.0, which needs rustc 1.91 > the project MSRV 1.88 and failed to compile. Baseline bumped 1.0.79→1.0.96.
+- Windows MSVC cross-check (G29): the `rust-toolchain.toml` `channel = "1.88"` override made `cargo` use 1.88 while the windows-msvc target had been added to `stable`, failing with `error[E0463]: can't find crate for 'core'`. The target is now added to the active (overridden) toolchain; this exposed that `ring` (via reqwest+rustls) needs the MSVC compiler, so the cross type-check now runs through `cargo-xwin` (LLVM MSVC sysroot). Verified locally on Fedora with `cargo xwin check --target x86_64-pc-windows-msvc --lib --all-features`.
+- Tags: the divergent `v1.2.0`/`v1.2.1`/`v2.0.0`..`v2.0.5`/`v2.1.0`/`v2.2.0`/`v2.3.0` tags (a parallel lineage whose commits are not reachable from the 1.0.x line) were removed from the remote so the GitHub Releases view tracks the real version line.
+
+
 ## [1.0.97] - 2026-06-29
 
 This release closes the 56-gap backlog (`GAP-SG-01`..`GAP-SG-56`) catalogued in `gaps.md` from the real ingest/enrich of the rules-rust corpus. Work landed across 5 commits: `eeb40d5` (Phase 0 foundation), `aaeebcc` (Phase A), `a67b863` (Phases B + C-F), `dc6b974` (Phases G + J + M), `f418957` (Phases H + I + K + L).

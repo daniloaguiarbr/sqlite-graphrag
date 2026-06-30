@@ -1,17 +1,17 @@
 //! Concurrency tests via loom for the CLI slot semaphore.
 //!
 //! Models the central invariant of `src/lock.rs`: at most `MAX_SLOTS` threads
-//! podem deter um slot simultaneamente. Os testes usam `AtomicUsize` como
+//! can hold a slot simultaneously. The tests use `AtomicUsize` as the
 //! counter of active slots — loom-visible equivalent of the `flock` semaphore.
 //!
-//! O loom limita o total de threads (incluindo main) a `loom::MAX_THREADS = 5`.
+//! loom caps the total number of threads (including main) at `loom::MAX_THREADS = 5`.
 //! Therefore each model uses at most 4 spawned threads.
 //!
-//! Execute com:
+//! Run with:
 //! ```text
 //! RUSTFLAGS="--cfg sqlite_graphrag_loom" cargo nextest run --profile heavy -E 'test(/^loom_/)'
 //! ```
-//! Ou via script: `bash scripts/test-loom.sh`
+//! Or via script: `bash scripts/test-loom.sh`
 //!
 //! DO NOT run with `cargo test` without `--test-threads=1` — loom in parallel
 //! may saturate the CPU and cause thermal livelock (incident 2026-04-19).
@@ -67,7 +67,7 @@ impl SlotSemaforo {
         }
     }
 
-    /// Libera um slot previamente adquirido.
+    /// Releases a previously acquired slot.
     fn release(&self) {
         let anterior = self.contador.fetch_sub(1, Ordering::AcqRel);
         assert!(
@@ -85,8 +85,8 @@ impl SlotSemaforo {
 /// Test 1 — Maximum capacity invariant: 4 threads compete for 3 slots.
 ///
 /// With more threads than slots, at least 1 thread always fails acquisition.
-/// Verifica que o contador de slots ocupados NUNCA ultrapassa `max_slots`,
-/// independentemente do escalonamento concorrente explorado pelo loom.
+/// Checks that the occupied-slot counter NEVER exceeds `max_slots`,
+/// regardless of the concurrent scheduling explored by loom.
 ///
 /// loom::MAX_THREADS = 5 (main + 4 spawned), therefore maximum of 4 spawns.
 #[serial(loom_model)]
@@ -139,7 +139,7 @@ fn quatro_threads_invariante_maximo_tres_slots() {
     });
 }
 
-/// Teste 2 — Release libera slot e permite outra thread adquirir.
+/// Test 2 — Release frees a slot and lets another thread acquire it.
 ///
 /// Thread A acquires the single available slot. Thread B tries to acquire and fails.
 /// After A releases, B successfully acquires on the next attempt.

@@ -325,8 +325,8 @@ pub struct RememberResponse {
     /// keep the common (already-kebab) payload small.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_name: Option<String>,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o embedding da passagem. `"claude" | "codex" | "none"`.
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the passage embedding. `"claude" | "codex" | "none"`.
     /// Absent on the wire when `None` (kept for happy-path envelope cleanliness).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend_invoked: Option<&'static str>,
@@ -436,12 +436,12 @@ pub struct RecallResponse {
     /// hybrid response so downstream pipelines can lower their confidence.
     #[serde(skip_serializing_if = "std::option::Option::is_none")]
     pub warning: Option<String>,
-    /// v1.0.84 (ADR-0042): discriminador do backend LLM que efetivamente
-    /// executou o embedding live. `"claude" | "codex" | "none"`. Absent
+    /// v1.0.84 (ADR-0042): discriminator of the LLM backend that actually
+    /// ran the live embedding. `"claude" | "codex" | "none"`. Absent
     /// on the wire when `None` (kept for happy-path envelope cleanliness).
     #[serde(skip_serializing_if = "std::option::Option::is_none")]
     pub backend_invoked: Option<&'static str>,
-    /// v1.0.84 (ADR-0042): reason code discriminador de degradação
+    /// v1.0.84 (ADR-0042): reason code discriminating the degradation
     /// (`"embedding_failed" | "cancelled" | "timeout"`). Absent when
     /// `vec_degraded` is false.
     #[serde(skip_serializing_if = "std::option::Option::is_none")]

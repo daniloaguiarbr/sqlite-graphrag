@@ -1,25 +1,25 @@
-//! GAP-004 (v1.0.82): Semáforo cross-process para spawn de subprocessos LLM.
+//! GAP-004 (v1.0.82): cross-process semaphore for spawning LLM subprocesses.
 //!
-//! Quando N sessões Claude Code rodam em paralelo no mesmo host, cada `remember`/`edit`/
-//! `recall`/`hybrid-search`/`enrich`/`deep-research`/`ingest` quer spawnar seu próprio
-//! subprocesso `codex exec` ou `claude -p`. Sem coordenação, N subprocessos saturam
-//! o rate limit OAuth compartilhado (observado: 19+ codex simultâneos no transcript
-//! de 2026-06-15).
+//! When N Claude Code sessions run in parallel on the same host, each `remember`/`edit`/
+//! `recall`/`hybrid-search`/`enrich`/`deep-research`/`ingest` wants to spawn its own
+//! `codex exec` or `claude -p` subprocess. Without coordination, N subprocesses saturate
+//! the shared OAuth rate limit (observed: 19+ concurrent codex in the transcript
+//! of 2026-06-15).
 //!
-//! ## Solução
-//! - Slot files em `${XDG_RUNTIME_DIR:-~/.local/share}/sqlite-graphrag/llm-slots/slot-{0..N}.lock`
-//! - `fs4::FileExt::try_lock_exclusive` para atomic acquire cross-process (fcntl no Unix,
-//!   LockFileEx no Windows — `fs4` 0.9 com trustScore 9.6 confirmado via context7)
-//! - RAII guard `LlmSlotGuard` com `Drop` libera automaticamente em panic
-//! - Integração com `reaper.rs::scan_and_kill_orphans` para detectar slots órfãos
+//! ## Solution
+//! - Slot files at `${XDG_RUNTIME_DIR:-~/.local/share}/sqlite-graphrag/llm-slots/slot-{0..N}.lock`
+//! - `fs4::FileExt::try_lock_exclusive` for atomic cross-process acquire (fcntl on Unix,
+//!   LockFileEx on Windows — `fs4` 0.9 with trustScore 9.6 confirmed via context7)
+//! - RAII guard `LlmSlotGuard` with `Drop` releases automatically on panic
+//! - Integration with `reaper.rs::scan_and_kill_orphans` to detect orphaned slots
 //!
-//! ## Uso
+//! ## Usage
 //! ```rust,ignore
 //! use crate::llm_slots::acquire_llm_slot;
 //!
 //! let _guard = acquire_llm_slot(4, 30)?;
-//! // ... spawn subprocesso LLM ...
-//! // guard libera o slot automaticamente ao sair do escopo
+//! // ... spawn LLM subprocess ...
+//! // the guard releases the slot automatically when it leaves scope
 //! ```
 
 use fs4::fs_std::FileExt;
@@ -29,8 +29,8 @@ use std::time::{Duration, Instant};
 
 use crate::errors::AppError;
 
-/// RAII guard que libera o slot automaticamente em panic, cancelamento abrupto
-/// ou término normal do escopo.
+/// RAII guard that releases the slot automatically on panic, abrupt cancellation,
+/// or normal scope exit.
 pub struct LlmSlotGuard {
     #[allow(dead_code)]
     slot_file: File,
@@ -62,14 +62,14 @@ impl Drop for LlmSlotGuard {
     }
 }
 
-/// Adquire um slot LLM livre, aguardando até `wait_secs` segundos.
+/// Acquires a free LLM slot, waiting up to `wait_secs` seconds.
 ///
-/// Itera sobre `slot_id` em `[0, max_concurrent)` e tenta `create_new` + `try_lock_exclusive`.
-/// Se todos os slots estão ocupados, polling com `sleep(100ms)` até `wait_secs` expirar.
+/// Iterates over `slot_id` in `[0, max_concurrent)` and tries `create_new` + `try_lock_exclusive`.
+/// If all slots are busy, polls with `sleep(100ms)` until `wait_secs` expires.
 ///
-/// ## Erros
-/// - `AppError::LockBusy` (exit 75) se `wait_secs` expirar sem slot livre
-/// - `AppError::Io` se filesystem falhar
+/// ## Errors
+/// - `AppError::LockBusy` (exit 75) if `wait_secs` expires without a free slot
+/// - `AppError::Io` if the filesystem fails
 pub fn acquire_llm_slot(max_concurrent: u32, wait_secs: u64) -> Result<LlmSlotGuard, AppError> {
     if max_concurrent == 0 {
         return Err(AppError::Validation(
@@ -127,7 +127,7 @@ pub fn acquire_llm_slot(max_concurrent: u32, wait_secs: u64) -> Result<LlmSlotGu
     }
 }
 
-/// Retorna o status atual dos slots LLM (para subcomando `slots status --json`).
+/// Returns the current status of the LLM slots (for the `slots status --json` subcommand).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SlotStatus {
     pub max: u32,
@@ -158,7 +158,7 @@ pub fn read_status(max_concurrent: u32) -> SlotStatus {
     }
 }
 
-/// Libera um slot específico (para subcomando `slots release --slot-id N --yes`).
+/// Releases a specific slot (for the `slots release --slot-id N --yes` subcommand).
 pub fn force_release(slot_id: u32) -> Result<(), AppError> {
     let path = slot_path(slot_id);
     if path.exists() {
@@ -172,7 +172,7 @@ pub fn force_release(slot_id: u32) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Lista IDs de slots stale (PIDs órfãos) — para cleanup automático.
+/// Lists stale slot IDs (orphaned PIDs) — for automatic cleanup.
 pub fn find_stale_slots(max_concurrent: u32) -> Vec<u32> {
     let mut stale = Vec::new();
     for slot_id in 0..max_concurrent {
@@ -192,7 +192,7 @@ pub fn find_stale_slots(max_concurrent: u32) -> Vec<u32> {
     stale
 }
 
-/// Verifica se um PID está vivo no sistema (best-effort cross-platform).
+/// Checks whether a PID is alive on the system (best-effort cross-platform).
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
     // Tenta enviar signal 0 (no-op) para verificar existência

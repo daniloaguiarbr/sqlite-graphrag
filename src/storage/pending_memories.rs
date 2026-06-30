@@ -1,7 +1,7 @@
-//! GAP-001 (v1.0.82): DAO para tabela `pending_memories`.
+//! GAP-001 (v1.0.82): DAO for the `pending_memories` table.
 //!
-//! Persistência por estágios com checkpoint retomável. Permite ao `remember` retomar
-//! do Estágio B (embedding) sem re-validar Estágio A (parse + validate).
+//! Staged persistence with a resumable checkpoint. Lets `remember` resume
+//! from Stage B (embedding) without re-validating Stage A (parse + validate).
 //!
 //! Status transitions:
 //!   validated → embedding_in_progress → embedding_done → committed
@@ -12,8 +12,8 @@ use rusqlite::{params, Connection};
 
 use crate::errors::AppError;
 
-/// Status enum de uma entrada pending. Mapeia 1:1 para o CHECK constraint
-/// da tabela `pending_memories`.
+/// Status enum of a pending entry. Maps 1:1 to the CHECK constraint
+/// of the `pending_memories` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStatus {
@@ -38,7 +38,7 @@ impl PendingStatus {
     }
 }
 
-/// Representa uma entrada da tabela `pending_memories`.
+/// Represents an entry in the `pending_memories` table.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingMemory {
     pub pending_id: i64,
@@ -59,9 +59,9 @@ pub struct PendingMemory {
     pub updated_at: i64,
 }
 
-/// Insere uma nova entrada em `pending_memories` com status `validated`.
+/// Inserts a new entry into `pending_memories` with status `validated`.
 ///
-/// Retorna o `pending_id` gerado.
+/// Returns the generated `pending_id`.
 #[allow(clippy::too_many_arguments)]
 pub fn insert_validated(
     conn: &Connection,
@@ -93,7 +93,7 @@ pub fn insert_validated(
     Ok(conn.last_insert_rowid())
 }
 
-/// Atualiza status para `embedding_in_progress` e incrementa `attempt_count`.
+/// Updates the status to `embedding_in_progress` and increments `attempt_count`.
 pub fn update_to_embedding_in_progress(conn: &Connection, pending_id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE pending_memories
@@ -106,7 +106,7 @@ pub fn update_to_embedding_in_progress(conn: &Connection, pending_id: i64) -> Re
     Ok(())
 }
 
-/// Atualiza status para `embedding_done` e armazena o embedding BLOB.
+/// Updates the status to `embedding_done` and stores the embedding BLOB.
 pub fn update_to_embedding_done(
     conn: &Connection,
     pending_id: i64,
@@ -125,7 +125,7 @@ pub fn update_to_embedding_done(
     Ok(())
 }
 
-/// Marca como `committed` (chamado após Estágio C com sucesso).
+/// Marks as `committed` (called after a successful Stage C).
 pub fn mark_committed(conn: &Connection, pending_id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE pending_memories
@@ -137,7 +137,7 @@ pub fn mark_committed(conn: &Connection, pending_id: i64) -> Result<(), AppError
     Ok(())
 }
 
-/// Marca como `failed` com mensagem de erro.
+/// Marks as `failed` with an error message.
 pub fn mark_failed(conn: &Connection, pending_id: i64, error: &str) -> Result<(), AppError> {
     conn.execute(
         "UPDATE pending_memories
@@ -150,7 +150,7 @@ pub fn mark_failed(conn: &Connection, pending_id: i64, error: &str) -> Result<()
     Ok(())
 }
 
-/// Lista entradas por status, ordenadas por `updated_at` ascendente.
+/// Lists entries by status, ordered by `updated_at` ascending.
 pub fn list_by_status(
     conn: &Connection,
     status: PendingStatus,
@@ -199,7 +199,7 @@ pub fn list_by_status(
     Ok(pending)
 }
 
-/// Busca por `pending_id`.
+/// Looks up by `pending_id`.
 pub fn find_by_id(conn: &Connection, pending_id: i64) -> Result<Option<PendingMemory>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT pending_id, name, namespace, memory_type, description, body,
@@ -234,8 +234,8 @@ pub fn find_by_id(conn: &Connection, pending_id: i64) -> Result<Option<PendingMe
     }
 }
 
-/// Remove entradas `embedding_in_progress` mais velhas que `older_than_secs`.
-/// Retorna o número de entradas removidas.
+/// Removes `embedding_in_progress` entries older than `older_than_secs`.
+/// Returns the number of entries removed.
 pub fn cleanup_older_than(conn: &Connection, older_than_secs: i64) -> Result<usize, AppError> {
     let cutoff = chrono::Utc::now().timestamp() - older_than_secs;
     let count = conn.execute(

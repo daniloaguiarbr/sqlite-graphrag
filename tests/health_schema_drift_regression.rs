@@ -1,5 +1,5 @@
-//! GAP-E2E-007 (v1.0.89): health schema deve cobrir todas as 36 chaves emitidas por
-//! HealthResponse E deve usar política Must-Ignore (RFC 7493 I-JSON), não Must-Validate.
+//! GAP-E2E-007 (v1.0.89): the health schema must cover all 36 keys emitted by
+//! HealthResponse AND must use the Must-Ignore policy (RFC 7493 I-JSON), not Must-Validate.
 
 use std::fs;
 
