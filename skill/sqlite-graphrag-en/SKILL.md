@@ -247,11 +247,13 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - PASS `--until-empty` to loop scan->drain INTERNALLY until the eligible queue empties or `--max-runtime` expires, REPLACING the external bash drain loop
 - PASS `--max-runtime <SECONDS>` to cap the `--until-empty` wall-clock budget; default 3600
 - PASS `--max-attempts <N>` to bound Transient retries before an item turns `dead`; default 8, range 1..=20
-- PASS `--status` for a read-only JSON report of `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` and `waiting`; it calls NO LLM and acquires NO singleton (and requires NO `--operation`/`--mode`)
+- PASS `--status` for a read-only JSON report of `scan_backlog`, `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` and `waiting`; it calls NO LLM and acquires NO singleton (and requires NO `--operation`/`--mode`)
+- KNOW `scan_backlog` is the REAL per-operation database backlog a fresh scan would enqueue (DB semantics), DISTINCT from `unbound_backlog` (memory-bindings only) and from `queue_pending` (sidecar-queue semantics); it KILLS the false `pending=0` for `entity-descriptions`, `body-enrich` and `re-embed`, and the `state` field derives its `pending-scan` verdict from it
 - PASS `--rest-concurrency <N>` to set the REST fan-out for `--mode openrouter`; clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`
-- PASS `--list-dead` for a read-only JSON listing of every terminal `dead` item with its `error_class` and `message`; `--requeue-dead` moves those items back to `pending` for another pass; `--ignore-backoff` dequeues eligible items immediately, ignoring the `next_retry_at` cooldown
+- PASS `--list-dead` for a read-only JSON listing of every terminal `dead` item with its `error_class`, `message` and the truncation diagnostics `finish_reason`, `input_tokens` and `output_tokens` from the OpenRouter response; `--requeue-dead` moves those items back to `pending` for another pass; `--ignore-backoff` dequeues eligible items immediately, ignoring the `next_retry_at` cooldown
 - PASS `--prune-dead-orphans` to delete ONLY enrich-queue rows where `status='dead'` and `item_type='memory'` whose `item_key` (memory name) is ABSENT from the main DB; entity-keyed dead rows are UNTOUCHED; the main DB is read-only — ONLY the sidecar `.enrich-queue.sqlite` is mutated; the JSON `DeadSummary` includes a `pruned` field with the count of rows removed; NO `--operation`/`--mode`/LLM flags needed — it is a pure SQLite inspector with no singleton acquisition; FORMULA: `sqlite-graphrag enrich --prune-dead-orphans --json`; USE this BEFORE `--requeue-dead` to clear memory-orphan dead rows (memory renamed or purged AFTER enqueue, `error_class=permanent` 'not found') that `--requeue-dead` alone would only re-fail
-- KNOW the dead-letter queue HAS `error_class` and `next_retry_at` columns plus a terminal `dead` status: Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff, HardFailures (validation, parse) go terminal at once, and dequeue skips `dead` so the live set strictly shrinks toward convergence
+- KNOW the dead-letter queue HAS `error_class` and `next_retry_at` columns plus a terminal `dead` status: Transient failures (rate-limit, timeout, 5xx, an exhausted-internal-retry, and a not-yet-materialized entity a later pass will create) reschedule with exponential backoff bounded by `--max-attempts`, HardFailures (validation, parse) go terminal at once, and dequeue skips `dead` so the live set strictly shrinks toward convergence
+- KNOW a truncated OpenRouter completion (`finish_reason` = `length`) is NOT dead-lettered on sight: the chat path re-emits the request with a GROWN `max_tokens` budget before any JSON repair, so a length-truncated item retries with more room instead of failing identically
 - KNOW the enrich queue lives in a sidecar database `.enrich-queue.sqlite` next to the main `.sqlite`
 - STATUS formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json` (no LLM call, no singleton)
 - UNTIL-EMPTY formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --max-attempts 8 --rest-concurrency 8 --json`
@@ -302,7 +304,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - EDIT parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
 - RESTORE parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none restore --name <n> --version 2 --json`
 - RESTORE parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
-- MONITOR convergence between steps with `enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json`; when `eligible_now` is 0 and `queue_pending` is 0, the queue has converged
+- MONITOR convergence between steps with `enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json`; the queue has truly converged only when `scan_backlog` is 0 AND `queue_pending` is 0 AND `eligible_now` is 0, because a nonzero `scan_backlog` with an empty queue means a scan has NOT yet enqueued the remaining DB candidates
 - INSPECT terminal items with `--status`: `queue_dead` lists HardFailures that will NEVER be reprocessed; treat them as data debt, not a transient error
 
 
@@ -337,7 +339,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - EXIT 0 success; EXIT 1 validation error; EXIT 2 argument parsing (missing required flag); EXIT 3 optimistic lock conflict, reload and retry
 - EXIT 4 not found; EXIT 5 namespace error; EXIT 6 payload too large; EXIT 9 duplicate, use `--force-merge`
 - EXIT 10 database error, run `vacuum` plus `health`; EXIT 11 embedding failure, check backend, dimension and OAuth
-- EXIT 13 partial batch failure, reprocess failed only; EXIT 14 I/O error; EXIT 15 database busy, widen `--wait-lock`
+- EXIT 13 partial batch failure, reprocess failed only; EXIT 14 I/O error; EXIT 15 database busy (also the enrich dequeue under sustained lock contention), widen `--wait-lock`
 - EXIT 16 preflight failure, fix MCP config, NEVER treat as transient
 - EXIT 19 SHUTDOWN, retry MANDATORY, partial work discarded
 - EXIT 20 internal error; EXIT 75 slots exhausted or singleton locked, respect cooldown, NEVER retry immediately

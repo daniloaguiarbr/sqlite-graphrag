@@ -3,6 +3,36 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
+// Shared WHERE predicates (GAP-SG-77)
+//
+// Each operation-specific predicate lives in ONE place so the scanner and the
+// count-only `count_operation_backlog` cannot drift. Sharing the exact string
+// guarantees that the backlog reported by `enrich --status` matches the rows a
+// scan would actually select.
+// ---------------------------------------------------------------------------
+
+/// `memory-bindings`: memories with zero `memory_entities` rows.
+const UNBOUND_MEMORY_PREDICATE: &str =
+    "NOT EXISTS (SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id)";
+
+/// `entity-descriptions`: entities whose description is NULL or empty.
+const NULL_DESCRIPTION_PREDICATE: &str = "(description IS NULL OR description = '')";
+
+/// `body-enrich`: memory body shorter than the `?2` character threshold.
+const SHORT_BODY_PREDICATE: &str = "LENGTH(COALESCE(m.body,'')) < ?2";
+
+/// `description-enrich`: memories with generic/auto-generated descriptions.
+const GENERIC_DESCRIPTION_PREDICATE: &str = "(description LIKE '%ingested%' \
+     OR description LIKE '%imported%' OR description LIKE '%added%' \
+     OR length(description) < 30)";
+
+/// `weight-calibrate`: relationships strong enough to warrant recalibration.
+const HIGH_WEIGHT_PREDICATE: &str = "r.weight >= 0.7";
+
+/// `relation-reclassify`: relationships still using the generic `applies_to`.
+const GENERIC_RELATION_PREDICATE: &str = "r.relation = 'applies_to'";
+
+// ---------------------------------------------------------------------------
 
 /// Returns memories without any `memory_entities` binding.
 ///
@@ -24,9 +54,7 @@ pub(super) fn scan_unbound_memories(
              FROM memories m
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
-               AND NOT EXISTS (
-                   SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-               )
+               AND {UNBOUND_MEMORY_PREDICATE}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -53,9 +81,7 @@ pub(super) fn scan_unbound_memories(
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
                AND m.name IN ({in_clause})
-               AND NOT EXISTS (
-                   SELECT 1 FROM memory_entities me WHERE me.memory_id = m.id
-               )
+               AND {UNBOUND_MEMORY_PREDICATE}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -187,7 +213,7 @@ pub(super) fn scan_entities_without_description(
             "SELECT id, name, type
              FROM entities
              WHERE namespace = ?1
-               AND (description IS NULL OR description = '')
+               AND {NULL_DESCRIPTION_PREDICATE}
              ORDER BY id
              {limit_clause}"
         );
@@ -212,7 +238,7 @@ pub(super) fn scan_entities_without_description(
              FROM entities
              WHERE namespace = ?1
                AND name IN ({in_clause})
-               AND (description IS NULL OR description = '')
+               AND {NULL_DESCRIPTION_PREDICATE}
              ORDER BY id
              {limit_clause}"
         );
@@ -256,7 +282,7 @@ pub(super) fn scan_short_body_memories(
              FROM memories m
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
-               AND LENGTH(COALESCE(m.body,'')) < ?2
+               AND {SHORT_BODY_PREDICATE}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -282,7 +308,7 @@ pub(super) fn scan_short_body_memories(
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
                AND m.name IN ({in_clause})
-               AND LENGTH(COALESCE(m.body,'')) < ?2
+               AND {SHORT_BODY_PREDICATE}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -394,7 +420,7 @@ pub(super) fn scan_weight_candidates(
          FROM relationships r \
          JOIN entities e1 ON e1.id = r.source_id \
          JOIN entities e2 ON e2.id = r.target_id \
-         WHERE r.weight >= 0.7 AND e1.namespace = ?1 \
+         WHERE {HIGH_WEIGHT_PREDICATE} AND e1.namespace = ?1 \
          ORDER BY r.weight DESC {limit_clause}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -424,7 +450,7 @@ pub(super) fn scan_generic_relations(
          FROM relationships r \
          JOIN entities e1 ON e1.id = r.source_id \
          JOIN entities e2 ON e2.id = r.target_id \
-         WHERE r.relation = 'applies_to' AND e1.namespace = ?1 \
+         WHERE {GENERIC_RELATION_PREDICATE} AND e1.namespace = ?1 \
          ORDER BY r.id {limit_clause}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -587,7 +613,7 @@ pub(super) fn scan_generic_descriptions(
     let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
     let sql = format!(
         "SELECT id, name, description FROM memories WHERE namespace = ?1 AND deleted_at IS NULL \
-         AND (description LIKE '%ingested%' OR description LIKE '%imported%' OR description LIKE '%added%' OR length(description) < 30) \
+         AND {GENERIC_DESCRIPTION_PREDICATE} \
          ORDER BY id {limit_clause}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -597,6 +623,121 @@ pub(super) fn scan_generic_descriptions(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
+// Backlog counter (GAP-SG-77)
+// ---------------------------------------------------------------------------
+
+/// Count-only backlog for a single operation, using a cheap `SELECT COUNT(*)`.
+///
+/// This mirrors the dispatch of [`scan_operation`], reusing the SAME shared
+/// WHERE predicates so the count can never drift from the rows a scan would
+/// select. Unlike the scanners it materialises no rows.
+///
+/// The returned figure has DATABASE semantics — the real backlog of the
+/// operation against the store — which is distinct from the FILE (sidecar
+/// queue) semantics reported by `queue_pending`/`queue_dead`. It powers the
+/// `scan_backlog` field of `enrich --status` so that db-backed operations
+/// (`entity-descriptions`, `body-enrich`, `re-embed`, ...) no longer report a
+/// false `pending=0` when thousands of eligible items exist.
+///
+/// Notes on individual operations:
+/// - `body-enrich` uses the default [`DEFAULT_BODY_ENRICH_MIN_CHARS`] threshold
+///   (the same default the CLI applies when `--min-output-chars` is omitted).
+/// - `re-embed` counts memories with no `memory_embeddings` row via a
+///   `NOT EXISTS` anti-join, semantically identical to the scanner's
+///   `LEFT JOIN ... IS NULL`.
+/// - advisory / quadratic scan-only operations (`augment-bindings`,
+///   `entity-connect`, `cross-domain-bridges`, `domain-classify`,
+///   `graph-audit`, `deep-research-synth`, `body-extract`) have no closeable
+///   database deficit and report `0`.
+pub(super) fn count_operation_backlog(
+    conn: &Connection,
+    operation: &EnrichOperation,
+    namespace: &str,
+) -> Result<i64, AppError> {
+    let count = match operation {
+        EnrichOperation::MemoryBindings => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM memories m \
+                 WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
+                 AND {UNBOUND_MEMORY_PREDICATE}"
+            );
+            conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+        }
+        EnrichOperation::EntityDescriptions => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM entities \
+                 WHERE namespace = ?1 AND {NULL_DESCRIPTION_PREDICATE}"
+            );
+            conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+        }
+        EnrichOperation::BodyEnrich => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM memories m \
+                 WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
+                 AND {SHORT_BODY_PREDICATE}"
+            );
+            let min_chars = super::DEFAULT_BODY_ENRICH_MIN_CHARS as i64;
+            conn.query_row(&sql, rusqlite::params![namespace, min_chars], |r| {
+                r.get::<_, i64>(0)
+            })?
+        }
+        EnrichOperation::ReEmbed => {
+            // Anti-join equivalent to the scanner's LEFT JOIN ... IS NULL.
+            conn.query_row(
+                "SELECT COUNT(*) FROM memories m \
+                 WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
+                 AND NOT EXISTS (SELECT 1 FROM memory_embeddings me WHERE me.memory_id = m.id)",
+                rusqlite::params![namespace],
+                |r| r.get::<_, i64>(0),
+            )?
+        }
+        EnrichOperation::WeightCalibrate => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM relationships r \
+                 JOIN entities e1 ON e1.id = r.source_id \
+                 WHERE {HIGH_WEIGHT_PREDICATE} AND e1.namespace = ?1"
+            );
+            conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+        }
+        EnrichOperation::RelationReclassify => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM relationships r \
+                 JOIN entities e1 ON e1.id = r.source_id \
+                 WHERE {GENERIC_RELATION_PREDICATE} AND e1.namespace = ?1"
+            );
+            conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+        }
+        EnrichOperation::EntityTypeValidate => {
+            // Mirrors scan_entities_for_type_validation: every entity is a
+            // candidate for the type audit.
+            conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE namespace = ?1",
+                rusqlite::params![namespace],
+                |r| r.get::<_, i64>(0),
+            )?
+        }
+        EnrichOperation::DescriptionEnrich => {
+            let sql = format!(
+                "SELECT COUNT(*) FROM memories \
+                 WHERE namespace = ?1 AND deleted_at IS NULL \
+                 AND {GENERIC_DESCRIPTION_PREDICATE}"
+            );
+            conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+        }
+        // Advisory / quadratic scan-only operations have no closeable database
+        // backlog; report 0 (see the doc comment above).
+        EnrichOperation::AugmentBindings
+        | EnrichOperation::EntityConnect
+        | EnrichOperation::CrossDomainBridges
+        | EnrichOperation::DomainClassify
+        | EnrichOperation::GraphAudit
+        | EnrichOperation::DeepResearchSynth
+        | EnrichOperation::BodyExtract => 0,
+    };
+    Ok(count)
 }
 
 // ---------------------------------------------------------------------------
@@ -889,5 +1030,151 @@ mod tests {
         )
         .unwrap();
         assert_eq!(names, vec!["bound".to_string()]);
+    }
+
+    // -----------------------------------------------------------------------
+    // GAP-SG-77: count_operation_backlog — correctness + scan parity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn count_operation_backlog_entity_descriptions_counts_only_missing() {
+        let conn = open_test_db();
+        for i in 0..3 {
+            conn.execute(
+                &format!("INSERT INTO entities (namespace, name, type, description) VALUES ('global', 'ent-{i}', 'tool', NULL)"),
+                [],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO entities (namespace, name, type, description) VALUES ('global', 'described', 'tool', 'already has one')",
+            [],
+        )
+        .unwrap();
+
+        let n =
+            count_operation_backlog(&conn, &EnrichOperation::EntityDescriptions, "global").unwrap();
+        assert_eq!(n, 3);
+        // Parity: the count must equal what the scanner would materialise.
+        let scanned = scan_entities_without_description(&conn, "global", None, &[]).unwrap();
+        assert_eq!(n as usize, scanned.len());
+    }
+
+    #[test]
+    fn count_operation_backlog_re_embed_counts_missing_embeddings() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'no-vec', 'body one')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'has-vec', 'body two')",
+            [],
+        )
+        .unwrap();
+        let has_vec_id: i64 = conn
+            .query_row(
+                "SELECT id FROM memories WHERE namespace='global' AND name='has-vec'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let embedding = vec![0.0_f32; crate::constants::embedding_dim()];
+        crate::storage::memories::upsert_vec(
+            &conn, has_vec_id, "global", "note", &embedding, "has-vec", "body two",
+        )
+        .unwrap();
+
+        let n = count_operation_backlog(&conn, &EnrichOperation::ReEmbed, "global").unwrap();
+        assert_eq!(n, 1);
+        let scanned = scan_memories_without_embeddings(&conn, "global", None, &[]).unwrap();
+        assert_eq!(n as usize, scanned.len());
+    }
+
+    #[test]
+    fn count_operation_backlog_memory_bindings_counts_unbound() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'unbound', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'bound', 'b')",
+            [],
+        )
+        .unwrap();
+        let bound_id: i64 = conn
+            .query_row("SELECT id FROM memories WHERE name='bound'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO entities (namespace, name) VALUES ('global', 'e')",
+            [],
+        )
+        .unwrap();
+        let ent_id: i64 = conn
+            .query_row("SELECT id FROM entities WHERE name='e'", [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
+            rusqlite::params![bound_id, ent_id],
+        )
+        .unwrap();
+
+        let n = count_operation_backlog(&conn, &EnrichOperation::MemoryBindings, "global").unwrap();
+        assert_eq!(n, 1);
+        let scanned = scan_unbound_memories(&conn, "global", None, &[]).unwrap();
+        assert_eq!(n as usize, scanned.len());
+    }
+
+    #[test]
+    fn count_operation_backlog_body_enrich_uses_default_threshold() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'short', 'tiny')",
+            [],
+        )
+        .unwrap();
+        let long_body = "a".repeat(super::DEFAULT_BODY_ENRICH_MIN_CHARS + 100);
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'long', ?1)",
+            rusqlite::params![long_body],
+        )
+        .unwrap();
+
+        let n = count_operation_backlog(&conn, &EnrichOperation::BodyEnrich, "global").unwrap();
+        assert_eq!(n, 1);
+        // Parity against the scanner using the same default threshold.
+        let scanned = scan_short_body_memories(
+            &conn,
+            "global",
+            super::DEFAULT_BODY_ENRICH_MIN_CHARS,
+            None,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(n as usize, scanned.len());
+    }
+
+    #[test]
+    fn count_operation_backlog_advisory_ops_report_zero() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'm', 'b')",
+            [],
+        )
+        .unwrap();
+        for op in [
+            EnrichOperation::EntityConnect,
+            EnrichOperation::CrossDomainBridges,
+            EnrichOperation::GraphAudit,
+            EnrichOperation::BodyExtract,
+        ] {
+            let n = count_operation_backlog(&conn, &op, "global").unwrap();
+            assert_eq!(n, 0, "advisory op {op:?} must report zero backlog");
+        }
     }
 }

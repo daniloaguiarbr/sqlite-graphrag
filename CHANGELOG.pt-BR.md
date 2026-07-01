@@ -3,6 +3,26 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.1.0] - 2026-07-01
+
+Resolve o backlog dead-letter do enrichment na raiz: completions truncadas do OpenRouter são detectadas e retentadas com orçamento maior, a classificação de retry de erro é 100% tipada (sem casar substring de mensagem), o cliente HTTP do OpenRouter é desduplicado num módulo compartilhado, e o loop de dequeue da fila fica limitado sob contenção de lock. O schema permanece na versão 15 (a fila sidecar do enrich ganha colunas de diagnóstico via ALTER idempotente).
+
+### Corrigido
+- GAP-SG-70 — completions truncadas não viram mais dead-letter: o `chat_api` desserializa `choices[].finish_reason` e, em `"length"`, reemite a requisição com `max_tokens` crescido (limitado por `ENRICH_MAX_LENGTH_RETRIES`) antes de tentar o reparo de JSON, quebrando o loop em que o retry reusava o mesmo orçamento e truncava idêntico.
+- GAP-SG-73 — a classificação de retry é tipada, nunca por substring de mensagem: `classify_enrich_outcome` decide puramente por variante de `AppError`, e as falhas do OpenRouter carregam um `retry_class` computado na origem (status HTTP exato / código estruturado do provedor). A correção-chave do falso-permanente: uma falha de retry interno esgotado ("max retries exceeded") agora é `Transient` (elegível ao backoff `--max-attempts` da fila) em vez de dead-letter imediato.
+- GAP-SG-76 — o dequeue do enrich não gira mais para sempre nem subprocessa em silêncio: `open_queue_db` seta `busy_timeout`, e o dequeue reusa o `with_busy_retry` limitado (cap, backoff exponencial + jitter, consciente do kill-switch), falhando de forma explícita com exit 15 sob contenção sustentada em vez de colapsar `SQLITE_BUSY` num falso "backlog vazio" via `.ok()`.
+- GAP-SG-77 — o `enrich --status` reporta um `scan_backlog` real por operação (os candidatos do banco que um scan enfileiraria) em vez de apenas o `unbound_backlog` específico de memory-bindings, eliminando o falso `pending=0` para `entity-descriptions`, `body-enrich` e `re-embed`; o campo `state` deriva o veredito `pending-scan` do `scan_backlog` da operação atual. Uma nova função count-only `count_operation_backlog` compartilha os mesmos predicados WHERE com os scanners, de modo que o backlog reportado nunca diverge de um scan real.
+- GAP-SG-78 — uma entidade ainda não materializada é classificada como `Transient` (retentada, não vai a dead-letter na primeira ausência) via uma variante tipada `AppError::EntityNotYetMaterialized`, substituindo o `NotFound` de string nos dois call sites de entidade (`entity-descriptions`, `entity-type-validate`); o lookup cego a namespace em `call_entity_type_validate` (que ignorava `_namespace` e casava só por `name`) foi corrigido para `WHERE namespace = ?1 AND name = ?2`.
+
+### Adicionado
+- GAP-SG-72 — diagnóstico de dead-letter: a fila sidecar do enrich ganha as colunas `finish_reason`, `input_tokens`, `output_tokens` (ALTER idempotente); `complete()` retorna `ChatCompletion`/`ChatError` carregando esses campos, e `--list-dead --json` os expõe.
+- GAP-SG-71 — orçamento adaptativo de `max_tokens` no enrich: constantes nomeadas (`ENRICH_INITIAL_MAX_TOKENS`, `ENRICH_MAX_TOKENS_GROWTH_FACTOR`, `ENRICH_MAX_TOKENS_CEILING`, `ENRICH_MAX_LENGTH_RETRIES`) dimensionam o orçamento inicial e o crescimento, substituindo o antigo default ilimitado do provedor.
+
+### Alterado
+- GAP-SG-74 — DRY: o `ApiError`, `code_string`, `MAX_RETRIES` e `backoff` duplicados entre os clientes de chat e de embedding foram extraídos para o novo módulo `openrouter_http`, que também hospeda os classificadores `status_retry_class`/`provider_error_retry_class`.
+- GAP-SG-75 — o `User-Agent` HTTP do OpenRouter foi atualizado para `sqlite-graphrag/1.1.0` (estava divergente em 1.0.95/1.0.96).
+
+
 ## [1.0.99] - 2026-06-30
 
 Resolve o GAP-SG-67: a poda destrutiva global do degree cap foi removida, então uma escrita `remember`/`link` não pode mais deletar arestas históricas que pertencem a outras memórias. A escrita agora é puramente aditiva. O schema permanece na versão 15.

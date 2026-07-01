@@ -198,6 +198,9 @@ pub mod chat_api;
 /// HTTP client for the OpenRouter embeddings API (direct HTTP, no CLI subprocess).
 pub mod embedding_api;
 
+/// Shared HTTP primitives (`ApiError`, retry backoff) reused by [`chat_api`] and [`embedding_api`].
+pub mod openrouter_http;
+
 /// Canonical entity type taxonomy: 13 variants, ValueEnum + serde + rusqlite impls.
 pub mod entity_type;
 

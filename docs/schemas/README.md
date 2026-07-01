@@ -168,7 +168,7 @@
 - Structured Outputs (`response_format` `json_schema` `strict: true`) make the JUDGE output conform to the same entity/relationship structs the subprocess backends emit — no schema divergence
 
 ### Schema Changes in v1.0.96 → v1.0.97 (ADR-0055, GAP-SG-15/16/41/43)
-- v1.0.96 (ADR-0055): `enrich-status.schema.json` for the read-only `enrich --status` report (`unbound_backlog`, queue `pending`/`done`/`failed`/`dead`/`skipped`, `eligible_now`, `waiting`); the `.enrich-queue.sqlite` sidecar gains the `error_class`/`next_retry_at` columns and the `dead` terminal status via an idempotent `ALTER TABLE`
+- v1.0.96 (ADR-0055): `enrich-status.schema.json` for the read-only `enrich --status` report (`unbound_backlog`, per-operation `scan_backlog` (GAP-SG-77, v1.1.0), queue `pending`/`done`/`failed`/`dead`/`skipped`, `eligible_now`, `waiting`); the `.enrich-queue.sqlite` sidecar gains the `error_class`/`next_retry_at` columns and the `dead` terminal status via an idempotent `ALTER TABLE`
 - v1.0.97 (GAP-SG-15/16): `enrich-summary.schema.json` gains the `dead` and `waiting` count fields so the summary distinguishes terminal failures and cooldown from an empty backlog
 - v1.0.97 (GAP-SG-43): `stats.schema.json` gains a top-level `total_memories` integer
 - v1.0.97 (GAP-SG-41): `embedding-status.schema.json` gains a REQUIRED `coverage` object (`memories_total`/`memories_with_vec`/`entities_total`/`entities_with_vec`/`chunks_total`/`chunks_with_vec`) reporting real persisted-vector counts, distinct from the always-empty async `counts` queue; the live `embedding status` output always carries it

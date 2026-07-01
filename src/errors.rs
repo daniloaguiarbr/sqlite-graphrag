@@ -72,6 +72,28 @@ pub enum AppError {
     #[error("memory not found: id={id}")]
     MemoryNotFoundById { id: i64 },
 
+    /// GAP-SG-78: an entity referenced by a queued enrich item does not yet
+    /// exist in `entities`. Maps to exit code `4`.
+    ///
+    /// # Cause
+    ///
+    /// Distinct from the terminal [`Self::NotFound`] / [`Self::MemoryNotFound`]
+    /// cases (a memory that was deleted or renamed, permanently gone). An
+    /// entity can be referenced by a queue row BEFORE it is materialized: a
+    /// later enrich pass creates the entity, so its absence now is TRANSITORY,
+    /// not terminal. Collapsing both into a single `NotFound` string sent every
+    /// such item to the dead-letter on the first failure.
+    ///
+    /// # When it occurs
+    ///
+    /// Raised by the entity call-sites of `enrich` — `entity-descriptions`
+    /// (`call_entity_description`) and `entity-type-validate`
+    /// (`call_entity_type_validate`) — when the `(namespace, name)` lookup
+    /// returns no row. Classified as [`Self::is_retryable`] so the item is
+    /// rescheduled until `--max-attempts` is exhausted.
+    #[error("entity '{name}' not yet materialized in namespace '{namespace}'")]
+    EntityNotYetMaterialized { name: String, namespace: String },
+
     /// Namespace could not be resolved from flag, environment or markers. Maps to exit code `5`.
     #[error("namespace not resolved: {0}")]
     NamespaceError(String),
@@ -269,6 +291,7 @@ impl AppError {
             Self::NotFound(_) => 4,
             Self::MemoryNotFound { .. } => 4,
             Self::MemoryNotFoundById { .. } => 4,
+            Self::EntityNotYetMaterialized { .. } => 4,
             Self::NamespaceError(_) => 5,
             Self::LimitExceeded(_) => 6,
             Self::Database(_) => 10,
@@ -316,6 +339,7 @@ impl AppError {
                 | Self::LowMemory { .. }
                 | Self::RateLimited { .. }
                 | Self::Timeout { .. }
+                | Self::EntityNotYetMaterialized { .. }
         )
     }
 
@@ -463,6 +487,9 @@ impl AppError {
             Self::NotFound(msg) => pt::not_found(msg),
             Self::MemoryNotFound { name, namespace } => pt::memory_not_found(name, namespace),
             Self::MemoryNotFoundById { id } => pt::memory_not_found_by_id(*id),
+            Self::EntityNotYetMaterialized { name, namespace } => {
+                pt::entity_not_yet_materialized(name, namespace)
+            }
             Self::NamespaceError(msg) => pt::namespace_error(msg),
             Self::LimitExceeded(msg) => pt::limit_exceeded(msg),
             Self::Database(e) => pt::database(&e.to_string()),
@@ -824,6 +851,41 @@ mod tests {
             .exit_code(),
             1
         );
+    }
+
+    // GAP-SG-78: EntityNotYetMaterialized is a transitory absence (the entity is
+    // materialized on a later enrich pass), NOT a terminal not-found.
+    #[test]
+    fn entity_not_yet_materialized_exit_code_is_4() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn entity_not_yet_materialized_is_retryable_not_permanent() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert!(e.is_retryable());
+        assert!(!e.is_permanent());
+    }
+
+    #[test]
+    fn entity_not_yet_materialized_user_message_non_empty() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert!(!e
+            .localized_message_for(crate::i18n::Language::English)
+            .is_empty());
+        assert!(!e
+            .localized_message_for(crate::i18n::Language::Portuguese)
+            .is_empty());
     }
 
     #[test]

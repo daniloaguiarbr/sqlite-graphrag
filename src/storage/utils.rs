@@ -34,13 +34,13 @@ pub fn is_sqlite_busy(err: &AppError) -> bool {
 ///
 /// After all retries are exhausted the last `SQLITE_BUSY` error is converted
 /// to [`AppError::DbBusy`] so callers can route on exit-code `15`.
-pub fn with_busy_retry<F>(op: F) -> Result<(), AppError>
+pub fn with_busy_retry<T, F>(op: F) -> Result<T, AppError>
 where
-    F: Fn() -> Result<(), AppError>,
+    F: Fn() -> Result<T, AppError>,
 {
     for attempt in 0..MAX_SQLITE_BUSY_RETRIES {
         match op() {
-            Ok(()) => return Ok(()),
+            Ok(v) => return Ok(v),
             Err(e) if is_sqlite_busy(&e) => {
                 if crate::retry::is_kill_switch_active() {
                     tracing::warn!(target: "storage", "SQLITE_GRAPHRAG_DISABLE_RETRY=1, propagating SQLITE_BUSY immediately");
@@ -121,7 +121,7 @@ mod tests {
         let calls = Arc::new(AtomicU32::new(0));
         let calls_clone = Arc::clone(&calls);
 
-        let result = with_busy_retry(|| {
+        let result: Result<(), AppError> = with_busy_retry(|| {
             calls_clone.fetch_add(1, Ordering::SeqCst);
             Err(AppError::Validation("campo x".into()))
         });
@@ -173,7 +173,7 @@ mod tests {
         let calls = Arc::new(AtomicU32::new(0));
         let calls_clone = Arc::clone(&calls);
 
-        let result = with_busy_retry(|| {
+        let result: Result<(), AppError> = with_busy_retry(|| {
             calls_clone.fetch_add(1, Ordering::SeqCst);
             Err(make_busy_error())
         });
@@ -187,5 +187,31 @@ mod tests {
             matches!(result, Err(AppError::DbBusy(_))),
             "must convert to DbBusy after exhausting retries"
         );
+    }
+
+    /// GAP-SG-76/v1.1.00 fix: `with_busy_retry` was generalised from
+    /// `Result<(), AppError>` to `Result<T, AppError>` so the enrich dequeue
+    /// loops (which claim a non-unit `DequeueOutcome`) can reuse the bounded
+    /// helper instead of an unbounded `loop { ... continue; }` on
+    /// `SQLITE_BUSY`. This proves the generic path (a) still returns the
+    /// caller-typed `Ok(v)` on success and (b) is bounded (never spins
+    /// forever) when the wrapped operation always reports `SQLITE_BUSY`.
+    #[test]
+    fn with_busy_retry_is_generic_over_return_type() {
+        // (a) success path threads a non-unit T through unchanged.
+        let ok: Result<i64, AppError> = with_busy_retry(|| Ok(42i64));
+        assert_eq!(ok.unwrap(), 42);
+
+        // (b) exhaustion path is bounded for a non-unit T: exactly
+        // MAX_SQLITE_BUSY_RETRIES attempts, then Err(DbBusy), never an
+        // infinite retry loop.
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = Arc::clone(&calls);
+        let result: Result<i64, AppError> = with_busy_retry(|| {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Err(make_busy_error())
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_SQLITE_BUSY_RETRIES);
+        assert!(matches!(result, Err(AppError::DbBusy(_))));
     }
 }

@@ -19,6 +19,12 @@ use super::*;
 pub(super) fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connection, AppError> {
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "journal_mode", "wal")?;
+    // GAP-SG-76: without an explicit busy_timeout, a lock contention window
+    // between the dequeue claim and a concurrent worker/main-DB writer
+    // surfaces as SQLITE_BUSY immediately instead of retrying briefly.
+    // Reuses the project-wide canonical value (see rules_rust_sqlite.md —
+    // "DEFINIR busy_timeout em milissegundos explícitos por conexão").
+    conn.pragma_update(None, "busy_timeout", crate::constants::BUSY_TIMEOUT_MILLIS)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS queue (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +54,14 @@ pub(super) fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connec
     // operation instead of conflating a shared `item_key` space. Migrated
     // idempotently here for the same reason as the v1.0.96 columns.
     let mut has_operation = false;
+    // GAP-SG-72: dead-letter diagnostics carried from a typed OpenRouter
+    // `ChatError` (finish_reason + token counts) so `--list-dead` can show
+    // WHY an item died (e.g. truncated by max_tokens) instead of only the
+    // formatted error string. Migrated idempotently for the same reason as
+    // the columns above.
+    let mut has_finish_reason = false;
+    let mut has_input_tokens = false;
+    let mut has_output_tokens = false;
     {
         let mut stmt = conn.prepare("PRAGMA table_info(queue)")?;
         let names = stmt.query_map([], |r| r.get::<_, String>(1))?;
@@ -56,6 +70,9 @@ pub(super) fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connec
                 "error_class" => has_error_class = true,
                 "next_retry_at" => has_next_retry_at = true,
                 "operation" => has_operation = true,
+                "finish_reason" => has_finish_reason = true,
+                "input_tokens" => has_input_tokens = true,
+                "output_tokens" => has_output_tokens = true,
                 _ => {}
             }
         }
@@ -68,6 +85,15 @@ pub(super) fn open_queue_db<P: AsRef<std::path::Path>>(path: P) -> Result<Connec
     }
     if !has_operation {
         conn.execute_batch("ALTER TABLE queue ADD COLUMN operation TEXT")?;
+    }
+    if !has_finish_reason {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN finish_reason TEXT")?;
+    }
+    if !has_input_tokens {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN input_tokens INTEGER")?;
+    }
+    if !has_output_tokens {
+        conn.execute_batch("ALTER TABLE queue ADD COLUMN output_tokens INTEGER")?;
     }
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_enrich_queue_eligible ON queue(status, next_retry_at);
@@ -231,6 +257,13 @@ pub struct EnrichStatus {
     pub(super) operation: String,
     pub(super) namespace: String,
     pub(super) unbound_backlog: usize,
+    /// GAP-SG-77: DATABASE-semantics backlog for the queried operation, computed
+    /// by `scan::count_operation_backlog` via a `SELECT COUNT(*)` over the real
+    /// store. This is distinct from `queue_pending`/`queue_dead` (FILE/sidecar
+    /// queue semantics) and from the legacy `unbound_backlog` (memory-bindings
+    /// only). It fixes the false `pending=0` that db-backed operations
+    /// (entity-descriptions/body-enrich/re-embed) previously reported.
+    pub(super) scan_backlog: i64,
     pub(super) queue_pending: i64,
     pub(super) queue_processing: i64,
     pub(super) queue_done: i64,
@@ -268,6 +301,15 @@ pub struct DeadItem {
     pub(super) attempt: i64,
     pub(super) error_class: Option<String>,
     pub(super) error: Option<String>,
+    /// GAP-SG-72: `choices[0].finish_reason` from the OpenRouter response
+    /// that produced this failure, when one was decoded (e.g. `"length"`
+    /// for a max_tokens truncation). `None` for subprocess-provider modes
+    /// or failures that never reached a decoded response.
+    pub(super) finish_reason: Option<String>,
+    /// GAP-SG-72: `usage.prompt_tokens` from the same response, when known.
+    pub(super) input_tokens: Option<i64>,
+    /// GAP-SG-72: `usage.completion_tokens` from the same response, when known.
+    pub(super) output_tokens: Option<i64>,
 }
 
 /// GAP-SG-23/11: summary footer for `--list-dead` and `--requeue-dead`.
@@ -288,53 +330,69 @@ pub struct DeadSummary {
 
 /// Classifies an enrich item failure into a retry/dead-letter outcome.
 ///
-/// Transient errors (rate-limit, timeout, db-busy, or a message that smells
-/// like a recoverable network/5xx hiccup) are rescheduled with backoff.
-/// Everything else — validation, parse, invalid body, unknown — is a permanent
-/// `HardFailure` routed to the dead-letter sink so the backlog can converge.
+/// This is the FALLBACK classifier: it is only consulted when the failure
+/// did not already carry a typed [`crate::retry::AttemptOutcome`] computed at
+/// its origin (see [`record_item_failure_typed`], fed by
+/// [`crate::commands::enrich::extraction::take_last_openrouter_failure`] for
+/// OpenRouter chat/embedding calls). Classification is TYPED by `AppError`
+/// variant only — NEVER by matching the formatted message — per
+/// `rules_rust_retry_com_backoff.md` ("NUNCA usar string matching em
+/// mensagens de erro").
 pub(super) fn classify_enrich_outcome(e: &AppError) -> crate::retry::AttemptOutcome {
     use crate::retry::AttemptOutcome;
     match e {
         AppError::RateLimited { .. } | AppError::Timeout { .. } | AppError::DbBusy(_) => {
             AttemptOutcome::Transient
         }
+        // GAP-SG-78: a referenced entity that is not yet materialized is a
+        // TRANSITORY absence — a later enrich pass creates the entity — so the
+        // item is rescheduled, not dead-lettered on the first miss. Matched on
+        // the typed variant, never a message substring (rules_rust_retry: NUNCA
+        // string matching). The `--max-attempts` floor (default 8) still ends
+        // the item if the entity never materializes, mirroring the `Embedding`
+        // floor below.
+        AppError::EntityNotYetMaterialized { .. } => AttemptOutcome::Transient,
         // GAP-SG-09: errors that are genuinely PERMANENT for this item and must
         // dead-letter immediately (retrying cannot help): a structured provider
         // rejection (context-length overflow / refusal carried as ProviderError),
-        // or a memory/entity that no longer exists (deleted between scan and
-        // processing).
+        // or a MEMORY that no longer exists (deleted or renamed between scan and
+        // processing). Entity absence is handled above as transitory, NOT here.
         AppError::ProviderError { .. }
         | AppError::NotFound(_)
         | AppError::MemoryNotFound { .. }
         | AppError::MemoryNotFoundById { .. } => AttemptOutcome::HardFailure,
-        _ => {
-            let msg = format!("{e}").to_lowercase();
-            if msg.contains("server error")
-                || msg.contains("timed out")
-                || msg.contains("timeout")
-                || msg.contains("connection")
-                || msg.contains("5xx")
-                || msg.contains("502")
-                || msg.contains("503")
-                || msg.contains("504")
-            {
-                AttemptOutcome::Transient
-            } else if msg.contains("json")
-                || msg.contains("no structured content")
-                || msg.contains("non-object")
-                || msg.contains("missing '")
-            {
-                // GAP-SG-09: malformed / non-JSON / shape-invalid LLM output is a
-                // model HICCUP, not a permanent fault. deepseek-v4-flash:nitro
-                // emits the occasional non-JSON or shape-wrong generation; with
-                // strict-parse + repair (GAP-SG-10) most are recovered, and the
-                // rest must be RESCHEDULED with backoff (bounded by
-                // --max-attempts) instead of dead-lettering on the first try.
+        // GAP-SG-76: SQLITE_BUSY/LOCKED is a lock-contention hiccup between the
+        // queue writer and a concurrent claim — retry it; any other database
+        // error (constraint violation, corruption, I/O) is permanent.
+        AppError::Database(_) => {
+            if crate::storage::utils::is_sqlite_busy(e) {
                 AttemptOutcome::Transient
             } else {
                 AttemptOutcome::HardFailure
             }
         }
+        // GAP-SG-73: safe floor for the `re-embed` operation. `AppError::Embedding`
+        // reaches here only via `embed_with_fallback`'s backend-chain resolution
+        // (`crate::embedder`), which discards the origin-typed
+        // `EmbedError::retry_class` through `From<EmbedError> for AppError` before
+        // the error surfaces to the queue. Extracting the precise verdict would
+        // require bypassing the fallback chain to call the OpenRouter embedding
+        // client directly — out of scope here (touches `embedder.rs`, which is
+        // off-limits, and removes the multi-backend fallback safety net).
+        // Transient is the conservative choice: a persistently permanent failure
+        // still terminates via `--max-attempts` instead of retrying forever.
+        AppError::Embedding(_) => AttemptOutcome::Transient,
+        // Every other variant — including `Validation` without an
+        // origin-typed retry verdict attached — is treated as permanent.
+        // Previously this branch inspected the formatted message for
+        // substrings like "json" / "missing '" to guess at transience; that
+        // guesswork is now unnecessary because the OpenRouter chat path
+        // (the project's only supported enrich mode) attaches its retry
+        // verdict directly via `ChatError::retry_class`, computed at the
+        // exact HTTP status / provider code in `chat_api.rs`, and
+        // `record_item_failure_typed` consumes it BEFORE ever falling back
+        // to this classifier.
+        _ => AttemptOutcome::HardFailure,
     }
 }
 
@@ -345,6 +403,11 @@ pub(super) fn classify_enrich_outcome(e: &AppError) -> crate::retry::AttemptOutc
 /// cap is rescheduled to `pending` with an exponential-backoff `next_retry_at`.
 /// Returns the [`crate::retry::AttemptOutcome`] so the caller can feed the
 /// existing circuit breaker.
+///
+/// GAP-SG-73: delegates to [`record_item_failure_typed`] with the outcome
+/// computed by the untyped fallback classifier and no diagnostics — the
+/// entry point for callers that only have a bare `&AppError` (subprocess
+/// providers, persistence failures).
 pub(super) fn record_item_failure(
     queue_conn: &rusqlite::Connection,
     queue_id: i64,
@@ -352,9 +415,42 @@ pub(super) fn record_item_failure(
     max_attempts: u32,
     err: &AppError,
 ) -> crate::retry::AttemptOutcome {
-    use crate::retry::AttemptOutcome;
     let outcome = classify_enrich_outcome(err);
     let err_str = format!("{err}");
+    record_item_failure_typed(
+        queue_conn,
+        queue_id,
+        attempt,
+        max_attempts,
+        outcome,
+        &err_str,
+        None,
+        None,
+        None,
+    )
+}
+
+/// GAP-SG-72/73: applies a failure outcome to a single queue row using an
+/// [`crate::retry::AttemptOutcome`] the caller ALREADY computed at the
+/// failure's origin (e.g. `ChatError::retry_class` from an OpenRouter chat
+/// call), plus whatever truncation diagnostics (`finish_reason` and token
+/// counts) were available. This is the precise counterpart to
+/// [`record_item_failure`], which falls back to the untyped
+/// [`classify_enrich_outcome`] classifier when no origin-typed verdict
+/// exists. Both share this single write path (DRY).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn record_item_failure_typed(
+    queue_conn: &rusqlite::Connection,
+    queue_id: i64,
+    attempt: i64,
+    max_attempts: u32,
+    outcome: crate::retry::AttemptOutcome,
+    err_str: &str,
+    finish_reason: Option<&str>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+) -> crate::retry::AttemptOutcome {
+    use crate::retry::AttemptOutcome;
     let error_class = match outcome {
         AttemptOutcome::Transient => "transient",
         AttemptOutcome::HardFailure => "permanent",
@@ -364,8 +460,16 @@ pub(super) fn record_item_failure(
     let terminal = matches!(outcome, AttemptOutcome::HardFailure) || attempt >= max_attempts as i64;
     if terminal {
         let _ = queue_conn.execute(
-            "UPDATE queue SET status='dead', error=?1, error_class=?2, done_at=datetime('now') WHERE id=?3",
-            rusqlite::params![err_str, error_class, queue_id],
+            "UPDATE queue SET status='dead', error=?1, error_class=?2, done_at=datetime('now'), \
+             finish_reason=?3, input_tokens=?4, output_tokens=?5 WHERE id=?6",
+            rusqlite::params![
+                err_str,
+                error_class,
+                finish_reason,
+                input_tokens,
+                output_tokens,
+                queue_id
+            ],
         );
     } else {
         let delay = crate::retry::compute_delay(
@@ -375,11 +479,51 @@ pub(super) fn record_item_failure(
         let secs = delay.as_secs().max(1);
         let modifier = format!("+{secs} seconds");
         let _ = queue_conn.execute(
-            "UPDATE queue SET status='pending', error=?1, error_class=?2, next_retry_at=datetime('now', ?3) WHERE id=?4",
-            rusqlite::params![err_str, error_class, modifier, queue_id],
+            "UPDATE queue SET status='pending', error=?1, error_class=?2, next_retry_at=datetime('now', ?3), \
+             finish_reason=?4, input_tokens=?5, output_tokens=?6 WHERE id=?7",
+            rusqlite::params![
+                err_str,
+                error_class,
+                modifier,
+                finish_reason,
+                input_tokens,
+                output_tokens,
+                queue_id
+            ],
         );
     }
     outcome
+}
+
+/// GAP-SG-76: outcome of claiming the next pending queue row. Distinguishes
+/// a genuinely empty backlog (`QueryReturnedNoRows`) from lock contention
+/// (`SQLITE_BUSY`/`SQLITE_LOCKED`) so the caller retries briefly on the
+/// latter instead of breaking out of the drain loop early. Both the serial
+/// loop and the parallel worker loop share this (DRY) — previously each
+/// collapsed every `query_row` error into `.ok()`, silently treating a busy
+/// database the same as an empty queue.
+pub(super) enum DequeueOutcome {
+    Claimed((i64, String, String, i64)),
+    Empty,
+}
+
+pub(super) fn dequeue_next_pending(
+    queue_conn: &rusqlite::Connection,
+    backoff_clause: &str,
+) -> Result<DequeueOutcome, AppError> {
+    let dequeue_sql = format!(
+        "UPDATE queue SET status='processing', attempt=attempt+1 \
+         WHERE id = (SELECT id FROM queue WHERE status='pending' {backoff_clause} \
+                     ORDER BY id LIMIT 1) \
+         RETURNING id, item_key, item_type, attempt"
+    );
+    match queue_conn.query_row(&dequeue_sql, [], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    }) {
+        Ok(claimed) => Ok(DequeueOutcome::Claimed(claimed)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(DequeueOutcome::Empty),
+        Err(e) => Err(AppError::Database(e)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -622,7 +766,14 @@ mod tests {
     }
 
     #[test]
-    fn classify_non_json_and_shape_errors_are_transient() {
+    fn classify_validation_never_infers_transience_from_message() {
+        // GAP-SG-73: the fallback classifier is TYPED-only now. Messages
+        // that used to be sniffed for "json" / "missing '" substrings and
+        // treated as Transient are HardFailure here — the OpenRouter chat
+        // path (the project's only supported enrich mode) attaches its own
+        // typed `ChatError::retry_class` for these exact shape failures
+        // BEFORE `record_item_failure_typed` ever falls back to this
+        // classifier, so no message-based guessing survives in the fallback.
         for msg in [
             "model 'x' returned non-object JSON after repair (got string)",
             "model 'x' returned content that could not be parsed even after JSON repair",
@@ -632,10 +783,213 @@ mod tests {
         ] {
             assert_eq!(
                 classify_enrich_outcome(&AppError::Validation(msg.into())),
-                crate::retry::AttemptOutcome::Transient,
-                "expected transient for: {msg}"
+                crate::retry::AttemptOutcome::HardFailure,
+                "expected hard failure for: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn classify_embedding_error_is_transient_floor() {
+        assert_eq!(
+            classify_enrich_outcome(&AppError::Embedding("dimension mismatch".into())),
+            crate::retry::AttemptOutcome::Transient
+        );
+    }
+
+    // GAP-SG-78: entity absence is Transient (own typed variant); memory
+    // absence and the untyped NotFound string stay HardFailure. No substring.
+    #[test]
+    fn classify_entity_not_yet_materialized_is_transient() {
+        assert_eq!(
+            classify_enrich_outcome(&AppError::EntityNotYetMaterialized {
+                name: "acme".into(),
+                namespace: "global".into(),
+            }),
+            crate::retry::AttemptOutcome::Transient
+        );
+    }
+
+    #[test]
+    fn classify_memory_absence_stays_hard_failure() {
+        assert_eq!(
+            classify_enrich_outcome(&AppError::MemoryNotFound {
+                name: "mem-x".into(),
+                namespace: "global".into(),
+            }),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+        assert_eq!(
+            classify_enrich_outcome(&AppError::MemoryNotFoundById { id: 42 }),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+        assert_eq!(
+            classify_enrich_outcome(&AppError::NotFound("gone".into())),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+    }
+
+    #[test]
+    fn classify_database_busy_is_transient_non_busy_is_hard() {
+        let busy = AppError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some("database is locked".into()),
+        ));
+        assert_eq!(
+            classify_enrich_outcome(&busy),
+            crate::retry::AttemptOutcome::Transient
+        );
+        let constraint = AppError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+            Some("UNIQUE constraint failed".into()),
+        ));
+        assert_eq!(
+            classify_enrich_outcome(&constraint),
+            crate::retry::AttemptOutcome::HardFailure
+        );
+    }
+
+    #[test]
+    fn record_item_failure_typed_persists_diagnostics_on_dead_letter() {
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-diag");
+        let outcome = record_item_failure_typed(
+            &conn,
+            id,
+            1,
+            5,
+            crate::retry::AttemptOutcome::HardFailure,
+            "truncated response",
+            Some("length"),
+            Some(120),
+            Some(4096),
+        );
+        assert_eq!(outcome, crate::retry::AttemptOutcome::HardFailure);
+        let (status, finish_reason, input_tokens, output_tokens): (
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT status, finish_reason, input_tokens, output_tokens FROM queue WHERE id=?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "dead");
+        assert_eq!(finish_reason.as_deref(), Some("length"));
+        assert_eq!(input_tokens, Some(120));
+        assert_eq!(output_tokens, Some(4096));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn record_item_failure_typed_reschedules_transient_below_max_attempts() {
+        // GAP-SG-72-chat: a transient failure (e.g. a truncated OpenRouter
+        // response) below max_attempts must stay `pending` with a
+        // future `next_retry_at`, not go straight to `dead` — and it must
+        // still persist the finish_reason/token diagnostics for later
+        // inspection via `--list-dead` / `--status`.
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-retry");
+        let outcome = record_item_failure_typed(
+            &conn,
+            id,
+            1,
+            5,
+            crate::retry::AttemptOutcome::Transient,
+            "truncated response",
+            Some("length"),
+            Some(120),
+            Some(64),
+        );
+        assert_eq!(outcome, crate::retry::AttemptOutcome::Transient);
+        let (status, error_class, finish_reason, next_retry_at): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT status, error_class, finish_reason, next_retry_at FROM queue WHERE id=?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "pending");
+        assert_eq!(error_class, "transient");
+        assert_eq!(finish_reason.as_deref(), Some("length"));
+        assert!(
+            next_retry_at.is_some(),
+            "a rescheduled item must carry a next_retry_at"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// GAP-SG-76/v1.1.00 fix: proves the enrich drain loops' composition
+    /// `with_busy_retry(|| dequeue_next_pending(...))` is BOUNDED under
+    /// sustained lock contention instead of the previous
+    /// `loop { ... continue; }`, which retried `SQLITE_BUSY` forever. A
+    /// second connection holds an exclusive write lock for the whole test;
+    /// the queue connection under test has `busy_timeout=0` so SQLite
+    /// reports `SQLITE_BUSY` immediately instead of blocking internally,
+    /// isolating `with_busy_retry`'s own bounded backoff (5 attempts) as the
+    /// only source of delay.
+    #[test]
+    fn with_busy_retry_bounds_dequeue_under_sustained_contention() {
+        let (conn, path) = open_temp_queue();
+        insert_pending(&conn, "mem-busy");
+        conn.pragma_update(None, "busy_timeout", 0i64)
+            .expect("busy_timeout override must succeed");
+
+        // Second connection holds an EXCLUSIVE write lock so every dequeue
+        // attempt on `conn` observes SQLITE_BUSY, never SQLITE_LOCKED-then-
+        // clears-up.
+        let blocker = Connection::open(&path).expect("blocker connection must open");
+        blocker
+            .execute_batch("BEGIN EXCLUSIVE;")
+            .expect("exclusive lock must be acquired");
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let calls_clone = std::sync::Arc::clone(&calls);
+        let result: Result<DequeueOutcome, AppError> =
+            crate::storage::utils::with_busy_retry(|| {
+                calls_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                dequeue_next_pending(&conn, "")
+            });
+
+        assert!(
+            matches!(result, Err(AppError::DbBusy(_))),
+            "sustained SQLITE_BUSY must convert to DbBusy, not hang or silently report Empty"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            crate::constants::MAX_SQLITE_BUSY_RETRIES,
+            "must attempt exactly MAX_SQLITE_BUSY_RETRIES times, never retry unbounded"
+        );
+
+        blocker
+            .execute_batch("ROLLBACK;")
+            .expect("releasing the exclusive lock must succeed");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dequeue_next_pending_distinguishes_empty_from_claimed() {
+        let (conn, path) = open_temp_queue();
+        let id = insert_pending(&conn, "mem-dequeue");
+        let claimed = dequeue_next_pending(&conn, "").expect("dequeue must succeed");
+        match claimed {
+            DequeueOutcome::Claimed((claimed_id, key, _, _)) => {
+                assert_eq!(claimed_id, id);
+                assert_eq!(key, "mem-dequeue");
+            }
+            DequeueOutcome::Empty => panic!("expected a claimed row"),
+        }
+        let empty = dequeue_next_pending(&conn, "").expect("dequeue must succeed");
+        assert!(matches!(empty, DequeueOutcome::Empty));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

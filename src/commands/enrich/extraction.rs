@@ -29,12 +29,60 @@ pub(super) fn call_claude(
     Ok((result.value, result.cost_usd, result.is_oauth))
 }
 
+/// GAP-SG-72/73 (v1.1.00): per-item failure diagnostics captured from a
+/// [`crate::chat_api::ChatError`] returned by [`call_openrouter`]. The
+/// `retry_class` is computed AT THE ORIGIN by `chat_api.rs` (the exact HTTP
+/// status / provider code), never inferred downstream by matching the
+/// formatted error string. `finish_reason` and the token counts are the raw
+/// truncation diagnostics OpenRouter attached to the failing response, when
+/// one was decoded.
+pub(super) struct OpenRouterFailureDiagnostics {
+    pub(super) retry_class: crate::retry::AttemptOutcome,
+    pub(super) finish_reason: Option<String>,
+    pub(super) prompt_tokens: Option<i64>,
+    pub(super) completion_tokens: Option<i64>,
+}
+
+// GAP-SG-72/73: `call_openrouter` returns the same `(Value, f64, bool)` tuple
+// shape as the subprocess providers (`call_claude`/`call_codex`/
+// `call_opencode`) so every `call_*` helper above can keep matching on
+// `mode` uniformly. That tuple has no room for `ChatError`'s typed
+// `retry_class` / truncation diagnostics, so they are stashed here on
+// failure and drained by the caller in `mod.rs` right after every
+// `call_result` (mirrors the `ENRICH_LAST_BACKEND` accumulator in
+// `postprocess.rs`). `thread_local` — NOT a process-wide `Mutex` — because
+// the parallel worker loop runs one item per OS thread at a time: a
+// process-wide slot would let a diagnostic from one worker's item leak into
+// another worker's unrelated failure.
+thread_local! {
+    static LAST_OPENROUTER_FAILURE: std::cell::RefCell<Option<OpenRouterFailureDiagnostics>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Drains the diagnostics stashed by the most recent [`call_openrouter`]
+/// failure on THIS thread. Callers must invoke this unconditionally right
+/// after every `call_result` (success or failure) so a diagnostic never
+/// survives past the item that produced it — see the doc comment on
+/// [`OpenRouterFailureDiagnostics`].
+pub(super) fn take_last_openrouter_failure() -> Option<OpenRouterFailureDiagnostics> {
+    LAST_OPENROUTER_FAILURE.with(|cell| cell.borrow_mut().take())
+}
+
 /// v1.0.95 (ADR-0054): route a single JUDGE turn through the OpenRouter
 /// chat-completions REST API. Unlike the subprocess runners there is no
 /// `binary` argument: the process-wide chat client (initialised in `run()`
 /// before scan) is fetched from the singleton and driven synchronously via
 /// the shared tokio runtime. Returns `(value, cost_usd, is_oauth=false)`
 /// where `cost_usd` is read from the response `usage.cost`.
+///
+/// v1.1.00 (GAP-SG-70/72/73): `complete` now returns a typed
+/// `Result<ChatCompletion, ChatError>` carrying `finish_reason` / token
+/// diagnostics and an origin-computed `retry_class`. On success those
+/// diagnostics are simply discarded (the item succeeded); on failure they
+/// are stashed via [`take_last_openrouter_failure`] so the queue recorder in
+/// `mod.rs` can call `record_item_failure_typed` with the precise verdict
+/// instead of falling back to the untyped `classify_enrich_outcome` message
+/// sniffing.
 pub(super) fn call_openrouter(
     prompt: &str,
     json_schema: &str,
@@ -52,7 +100,25 @@ pub(super) fn call_openrouter(
         )
     })?;
     let runtime = crate::embedder::shared_runtime()?;
-    runtime.block_on(client.complete(prompt, input_text, json_schema, None))
+    match runtime.block_on(client.complete(
+        prompt,
+        input_text,
+        json_schema,
+        Some(crate::constants::ENRICH_INITIAL_MAX_TOKENS),
+    )) {
+        Ok(completion) => Ok((completion.value, completion.cost_usd, false)),
+        Err(chat_err) => {
+            LAST_OPENROUTER_FAILURE.with(|cell| {
+                *cell.borrow_mut() = Some(OpenRouterFailureDiagnostics {
+                    retry_class: chat_err.retry_class,
+                    finish_reason: chat_err.finish_reason.clone(),
+                    prompt_tokens: chat_err.prompt_tokens.map(i64::from),
+                    completion_tokens: chat_err.completion_tokens.map(i64::from),
+                });
+            });
+            Err(chat_err.source)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,9 +245,10 @@ pub(super) fn call_entity_description(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => {
-                AppError::NotFound(format!("entity '{entity_name}' not found"))
-            }
+            rusqlite::Error::QueryReturnedNoRows => AppError::EntityNotYetMaterialized {
+                name: entity_name.to_string(),
+                namespace: namespace.to_string(),
+            },
             other => AppError::Database(other),
         })?;
 
@@ -428,6 +495,11 @@ pub(super) fn call_body_enrich(
     })
 }
 
+// GAP-SG-73: failures from `reembed_memory_vector` below reach the queue
+// as bare `AppError::Embedding`, not a typed `EmbedError` — see the doc
+// comment on the `AppError::Embedding` arm of `classify_enrich_outcome` in
+// `queue.rs` for why the origin-typed `retry_class` is not threaded through
+// here, and why Transient is the documented, deliberate safe floor.
 pub(super) fn call_reembed(
     conn: &Connection,
     namespace: &str,
@@ -781,7 +853,7 @@ pub(super) fn call_entity_connect(
 /// G27 P2: Validate entity type assignment via LLM.
 pub(super) fn call_entity_type_validate(
     conn: &Connection,
-    _namespace: &str,
+    namespace: &str,
     item_key: &str,
     binary: &Path,
     model: Option<&str>,
@@ -790,11 +862,17 @@ pub(super) fn call_entity_type_validate(
 ) -> Result<EnrichItemResult, AppError> {
     let (ent_id, ent_name, ent_type): (i64, String, String) = conn
         .query_row(
-            "SELECT id, name, type FROM entities WHERE name = ?1",
-            rusqlite::params![item_key],
+            "SELECT id, name, type FROM entities WHERE namespace = ?1 AND name = ?2",
+            rusqlite::params![namespace, item_key],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
-        .map_err(|_| AppError::NotFound(format!("entity '{item_key}' not found")))?;
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::EntityNotYetMaterialized {
+                name: item_key.to_string(),
+                namespace: namespace.to_string(),
+            },
+            other => AppError::Database(other),
+        })?;
     let input_text = format!("Entity: {ent_name}\nCurrent type: {ent_type}");
     let (value, cost, is_oauth) = match mode {
         EnrichMode::ClaudeCode => call_claude(

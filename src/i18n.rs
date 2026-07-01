@@ -471,6 +471,12 @@ pub mod validation {
             not_found(&format!("memory not found: id={id}"))
         }
 
+        // GAP-SG-78: transitory entity absence (materialized on a later enrich
+        // pass). Own pt-BR string, distinct from the terminal not-found chain.
+        pub fn entity_not_yet_materialized(name: &str, namespace: &str) -> String {
+            format!("entidade '{name}' ainda não materializada no namespace '{namespace}'")
+        }
+
         pub fn namespace_error(msg: &str) -> String {
             format!("namespace não resolvido: {msg}")
         }

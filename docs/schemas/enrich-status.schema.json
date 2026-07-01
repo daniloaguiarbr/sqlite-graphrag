@@ -37,6 +37,12 @@
       "format": "int64",
       "type": "integer"
     },
+    "scan_backlog": {
+      "description": "GAP-SG-77 (v1.1.0): per-operation database backlog the scan would enqueue, sharing the scanners' WHERE predicates; distinct from unbound_backlog (memory-bindings queue). The `state` field derives its `pending-scan` verdict from this.",
+      "format": "int64",
+      "minimum": 0,
+      "type": "integer"
+    },
     "status_report": {
       "type": "boolean"
     },
@@ -60,6 +66,7 @@
     "queue_pending",
     "queue_processing",
     "queue_skipped",
+    "scan_backlog",
     "status_report",
     "unbound_backlog",
     "waiting"

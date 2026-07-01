@@ -153,7 +153,8 @@ fn openrouter_chat_real_model_matrix() {
                 .complete(SYSTEM_PROMPT, INPUT_TEXT, BINDINGS_SCHEMA, Some(2048))
                 .await
             {
-                Ok((value, _cost, _is_oauth)) => {
+                Ok(completion) => {
+                    let value = completion.value;
                     let conforms = value.get("entities").is_some_and(|v| v.is_array())
                         && value.get("relationships").is_some_and(|v| v.is_array());
                     if conforms {

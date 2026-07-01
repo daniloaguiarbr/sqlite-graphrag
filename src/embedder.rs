@@ -1185,7 +1185,13 @@ pub fn embed_passages_parallel_with_embedding_choice(
                 let owned: Vec<String> = chunk.to_vec();
                 set.spawn(async move {
                     let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-                    let r = client.embed_batch(&refs, client.default_input_type()).await;
+                    // `EmbedChunkResult` carries `AppError` (retry_class is
+                    // only consumed by callers that match `EmbedError`
+                    // directly, e.g. the enrich re-embed path).
+                    let r = client
+                        .embed_batch(&refs, client.default_input_type())
+                        .await
+                        .map_err(AppError::from);
                     (idx, r)
                 });
             }

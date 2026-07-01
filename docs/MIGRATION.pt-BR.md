@@ -56,7 +56,7 @@ Volte para v1.0.97 reinstalando o binário anterior. Nenhuma mudança de banco a
 ## v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
 
 ### O Que Mudou
-- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (default 5 na v1.0.96; elevado para 8 na v1.0.97) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
+- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (padrão 8, range 1..=20) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: o embedding REST para `--mode openrouter` faz fan-out por lote com um `tokio::task::JoinSet` bounded (sem dependência nova), com clamp in-flight 1..16 (faixa Cloudflare-safe). A ordem dos chunks é preservada por índice; as escritas SQLite permanecem serializadas via WAL + claim atômico (single-writer intacto).
 
 ### Migração da Fila — Automática e In-Place
@@ -66,8 +66,8 @@ Volte para v1.0.97 reinstalando o binário anterior. Nenhuma mudança de banco a
 ### Flags Novas do enrich
 - `--until-empty` — loop interno scan→drain até a fila esvaziar de itens elegíveis ou `--max-runtime` expirar; substitui o loop bash externo.
 - `--max-runtime <SECONDS>` — teto wall-clock para `--until-empty`; default 3600.
-- `--max-attempts <N>` — orçamento de retries transientes antes de `dead`; default 5; range 1..=20.
-- `--status` — relatório JSON read-only das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM, NÃO adquire o singleton.
+- `--max-attempts <N>` — orçamento de retries transientes antes de `dead`; default 8; range 1..=20.
+- `--status` — relatório JSON read-only das contagens da fila (`unbound_backlog`, `scan_backlog` por operação, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM, NÃO adquire o singleton; o `scan_backlog` (GAP-SG-77, v1.1.0) é o backlog real do banco por operação que um scan enfileiraria — elimina o falso `pending=0` para `entity-descriptions`/`body-enrich`/`re-embed`, e o `state` deriva o `pending-scan` dele.
 - `--rest-concurrency <N>` — concorrência REST para `--mode openrouter`; clamp 1..=16; default 8; distinta de `--llm-parallelism`.
 
 ### Nada Quebra
@@ -78,7 +78,7 @@ Volte para v1.0.97 reinstalando o binário anterior. Nenhuma mudança de banco a
 # Levar o backlog à convergência de forma headless (sem loop externo)
 sqlite-graphrag enrich --operation memory-bindings --mode openrouter \
   --openrouter-model MODEL --until-empty --max-runtime 1800 \
-  --max-attempts 5 --rest-concurrency 8 --json
+  --max-attempts 8 --rest-concurrency 8 --json
 
 # Inspecionar a fila sem spawnar o LLM nem adquirir o singleton
 sqlite-graphrag enrich --status --json

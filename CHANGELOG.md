@@ -5,6 +5,26 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.1.0] - 2026-07-01
+
+Resolves the enrichment dead-letter backlog at its root: truncated OpenRouter completions are detected and retried with a larger budget, error retry-classification is fully typed (no message-substring matching), the OpenRouter HTTP client is de-duplicated into a shared module, and the queue dequeue loop is bounded under lock contention. The schema stays at version 15 (the enrich sidecar queue gains diagnostic columns via idempotent ALTER).
+
+### Fixed
+- GAP-SG-70 — truncated completions no longer dead-letter: `chat_api` deserializes `choices[].finish_reason` and, on `"length"`, re-emits the request with a grown `max_tokens` (bounded by `ENRICH_MAX_LENGTH_RETRIES`) before attempting JSON repair, breaking the loop where a retry reused the same budget and truncated identically.
+- GAP-SG-73 — error retry-classification is typed, never by message substring: `classify_enrich_outcome` decides purely by `AppError` variant, and OpenRouter failures carry a `retry_class` computed at the origin (exact HTTP status / structured provider code). The key false-permanent fix: an exhausted-internal-retry failure ("max retries exceeded") is now `Transient` (eligible for the queue `--max-attempts` backoff) instead of an immediate dead-letter.
+- GAP-SG-76 — the enrich dequeue no longer spins forever nor silently under-processes: `open_queue_db` sets `busy_timeout`, and the dequeue reuses the bounded `with_busy_retry` (capped, exponential backoff + jitter, kill-switch-aware), failing loud with exit 15 on sustained contention instead of `.ok()`-collapsing `SQLITE_BUSY` into a false "empty backlog".
+- GAP-SG-77 — `enrich --status` reports a real per-operation `scan_backlog` (the database candidates a scan would enqueue) instead of only the memory-bindings `unbound_backlog`, eliminating the false `pending=0` for `entity-descriptions`, `body-enrich` and `re-embed`; the `state` field derives its `pending-scan` verdict from the current operation's `scan_backlog`. A new count-only `count_operation_backlog` shares the exact WHERE predicates with the scanners so the reported backlog can never diverge from a real scan.
+- GAP-SG-78 — a not-yet-materialized entity is classified `Transient` (retried, not dead-lettered on first miss) via a typed `AppError::EntityNotYetMaterialized`, replacing the string `NotFound` at the two entity call sites (`entity-descriptions`, `entity-type-validate`); the namespace-blind lookup in `call_entity_type_validate` (which ignored `_namespace` and matched on `name` alone) is corrected to `WHERE namespace = ?1 AND name = ?2`.
+
+### Added
+- GAP-SG-72 — dead-letter diagnostics: the enrich sidecar queue gains `finish_reason`, `input_tokens`, `output_tokens` columns (idempotent ALTER); `complete()` returns a `ChatCompletion`/`ChatError` carrying these, and `--list-dead --json` exposes them.
+- GAP-SG-71 — adaptive `max_tokens` budget for enrich: named constants (`ENRICH_INITIAL_MAX_TOKENS`, `ENRICH_MAX_TOKENS_GROWTH_FACTOR`, `ENRICH_MAX_TOKENS_CEILING`, `ENRICH_MAX_LENGTH_RETRIES`) size the initial budget and its growth, replacing the previous unbounded provider default.
+
+### Changed
+- GAP-SG-74 — DRY: the duplicated `ApiError`, `code_string`, `MAX_RETRIES`, and `backoff` shared by the chat and embedding clients are extracted into a new `openrouter_http` module, which also hosts the `status_retry_class`/`provider_error_retry_class` classifiers.
+- GAP-SG-75 — the OpenRouter HTTP `User-Agent` is bumped to `sqlite-graphrag/1.1.0` (was drifting at 1.0.95/1.0.96).
+
+
 ## [1.0.99] - 2026-06-30
 
 Resolves GAP-SG-67: the destructive global degree-cap pruning is removed, so a `remember`/`link` write can no longer delete historical edges that belong to other memories. Writes are now purely additive. The schema stays at version 15.

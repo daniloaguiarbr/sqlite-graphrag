@@ -7,6 +7,7 @@
 //! errors (401, 400).
 
 use crate::errors::AppError;
+use crate::retry::AttemptOutcome;
 use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -15,7 +16,6 @@ const OPENROUTER_EMBEDDINGS_URL: &str = "https://openrouter.ai/api/v1/embeddings
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 const MAX_BATCH_SIZE: usize = 32;
-const MAX_RETRIES: u32 = 4;
 
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
@@ -61,27 +61,76 @@ struct EmbeddingEnvelope {
     error: Option<ApiError>,
 }
 
-/// Structured OpenRouter error object. `code` is a `serde_json::Value` because
-/// the provider sends it as either a JSON number or string depending on the
-/// failure; `message` defaults to empty so a malformed error object never
-/// re-introduces the missing-field masking.
-#[derive(Deserialize)]
-struct ApiError {
-    #[serde(default)]
-    code: Option<serde_json::Value>,
-    #[serde(default)]
-    message: String,
+// ApiError and code_string() moved to `crate::openrouter_http` (GAP-SG-74):
+// this client and `crate::chat_api::OpenRouterChatClient` decode the exact
+// same structured error envelope, so the type is shared instead of
+// duplicated.
+use crate::openrouter_http::ApiError;
+
+/// [`OpenRouterClient::embed_single`] / [`OpenRouterClient::embed_batch`]
+/// failure (reauditor addendum, mirrors [`crate::chat_api::ChatError`]).
+///
+/// `retry_class` is the retry verdict computed AT THE ORIGIN (the exact HTTP
+/// status, or the provider's structured error `code`) via the same
+/// [`crate::openrouter_http::status_retry_class`] /
+/// [`crate::openrouter_http::provider_error_retry_class`] classifiers
+/// [`crate::chat_api::OpenRouterChatClient`] uses (GAP-SG-74 DRY) — never
+/// inferred downstream from `source.to_string()`. The enrich `re-embed`
+/// consumer reads this field directly instead of pattern-matching the
+/// formatted message.
+#[derive(Debug)]
+pub struct EmbedError {
+    /// Underlying cause, preserved via `source()` rather than restated.
+    pub source: AppError,
+    /// Typed retry verdict computed where the failure originated (HTTP
+    /// status / provider code), not by matching `source`'s message.
+    pub retry_class: AttemptOutcome,
 }
 
-impl ApiError {
-    /// Renders `code` as a plain string without JSON quoting, falling back to
-    /// `unknown` when the provider omitted it.
-    fn code_string(&self) -> String {
-        match &self.code {
-            Some(serde_json::Value::String(s)) => s.clone(),
-            Some(other) => other.to_string(),
-            None => "unknown".to_string(),
+impl EmbedError {
+    fn new(source: AppError, retry_class: AttemptOutcome) -> Self {
+        Self {
+            source,
+            retry_class,
         }
+    }
+}
+
+impl std::fmt::Display for EmbedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl std::error::Error for EmbedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Converts a bare `AppError` into an `EmbedError` with `retry_class:
+/// HardFailure`. Used by the `?` operator on call sites that predate the
+/// origin-typed classification (the GAP-SG-02 oversized-input guard, the
+/// dimension-mismatch guard in [`OpenRouterClient::truncate_embedding`], and
+/// the batch-size-mismatch check) — all of those are genuine permanent
+/// client/config errors, never transient. Every `EmbedError` constructed
+/// inside `execute_with_retry` uses [`EmbedError::new`] explicitly with a
+/// retry verdict computed at the exact HTTP status / provider code instead.
+impl From<AppError> for EmbedError {
+    fn from(source: AppError) -> Self {
+        Self::new(source, AttemptOutcome::HardFailure)
+    }
+}
+
+/// Unwraps `EmbedError` back down to its `source`, discarding `retry_class`.
+/// Lets the many pre-existing `?`-based callers of [`OpenRouterClient::embed_single`]
+/// / [`OpenRouterClient::embed_batch`] (in [`crate::embedder`]) keep compiling
+/// unchanged; callers that need the typed retry verdict (the enrich
+/// `re-embed` path) should match on `EmbedError` directly instead of relying
+/// on this conversion.
+impl From<EmbedError> for AppError {
+    fn from(err: EmbedError) -> Self {
+        err.source
     }
 }
 
@@ -92,6 +141,11 @@ pub struct OpenRouterClient {
     dim: usize,
     supports_mrl: bool,
     default_input_type: Option<&'static str>,
+    /// Endpoint each request is POSTed to. Always
+    /// [`OPENROUTER_EMBEDDINGS_URL`] in production; only the test-only
+    /// [`Self::new_with_url`] constructor repoints it at a local mock server
+    /// (mirrors `crate::chat_api::OpenRouterChatClient`).
+    base_url: String,
 }
 
 fn model_supports_mrl(model: &str) -> bool {
@@ -117,7 +171,7 @@ impl OpenRouterClient {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
-            .user_agent("sqlite-graphrag/1.0.96")
+            .user_agent("sqlite-graphrag/1.1.00")
             .build()
             .map_err(|e| AppError::Embedding(format!("failed to build HTTP client: {e}")))?;
 
@@ -131,7 +185,23 @@ impl OpenRouterClient {
             dim,
             supports_mrl,
             default_input_type,
+            base_url: OPENROUTER_EMBEDDINGS_URL.to_string(),
         })
+    }
+
+    /// Test-only constructor that POSTs to an arbitrary `base_url` (such as a
+    /// `wiremock::MockServer`) instead of the public OpenRouter endpoint.
+    /// Behaviour is otherwise identical to [`Self::new`].
+    #[cfg(test)]
+    fn new_with_url(
+        api_key: SecretBox<String>,
+        model: String,
+        dim: usize,
+        base_url: String,
+    ) -> Result<Self, AppError> {
+        let mut client = Self::new(api_key, model, dim)?;
+        client.base_url = base_url;
+        Ok(client)
     }
 
     pub fn default_input_type(&self) -> Option<&'static str> {
@@ -142,7 +212,7 @@ impl OpenRouterClient {
         &self,
         text: &str,
         input_type: Option<&str>,
-    ) -> Result<Vec<f32>, AppError> {
+    ) -> Result<Vec<f32>, EmbedError> {
         // GAP-SG-02: reject an input that would overflow the model's token
         // window BEFORE the HTTP request, surfacing a clear Validation error
         // instead of a provider context-length rejection paid for round-trip.
@@ -169,14 +239,14 @@ impl OpenRouterClient {
             .ok_or_else(|| AppError::Embedding("empty response from OpenRouter".into()))?
             .embedding;
 
-        self.truncate_embedding(embedding)
+        Ok(self.truncate_embedding(embedding)?)
     }
 
     pub async fn embed_batch(
         &self,
         texts: &[&str],
         input_type: Option<&str>,
-    ) -> Result<Vec<Vec<f32>>, AppError> {
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -210,7 +280,8 @@ impl OpenRouterClient {
                     "expected {} embeddings, got {}",
                     chunk.len(),
                     response.data.len()
-                )));
+                ))
+                .into());
             }
 
             let mut sorted = response.data;
@@ -239,16 +310,22 @@ impl OpenRouterClient {
         }
     }
 
+    /// Runs the request/retry loop, classifying every failure into an
+    /// [`EmbedError`] with `retry_class` set AT THE ORIGIN (the exact HTTP
+    /// status, or the provider's structured error code) via the same
+    /// classifiers [`crate::chat_api::OpenRouterChatClient`] uses
+    /// (GAP-SG-74 DRY) — never inferred downstream from a formatted message
+    /// (reauditor addendum).
     async fn execute_with_retry(
         &self,
         request: &EmbeddingRequest<'_>,
-    ) -> Result<EmbeddingResponse, AppError> {
-        let mut last_err = None;
+    ) -> Result<EmbeddingResponse, EmbedError> {
+        let mut last_err: Option<EmbedError> = None;
 
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..crate::openrouter_http::MAX_RETRIES {
             let result = self
                 .client
-                .post(OPENROUTER_EMBEDDINGS_URL)
+                .post(&self.base_url)
                 .header(
                     "Authorization",
                     format!("Bearer {}", self.api_key.expose_secret()),
@@ -260,11 +337,17 @@ impl OpenRouterClient {
             let resp = match result {
                 Ok(r) => r,
                 Err(e) if e.is_timeout() => {
-                    return Err(AppError::Embedding("OpenRouter request timed out".into()));
+                    return Err(EmbedError::new(
+                        AppError::Embedding("OpenRouter request timed out".into()),
+                        AttemptOutcome::Transient,
+                    ));
                 }
                 Err(e) => {
-                    last_err = Some(AppError::Embedding(format!("HTTP request failed: {e}")));
-                    Self::backoff(attempt).await;
+                    last_err = Some(EmbedError::new(
+                        AppError::Embedding(format!("HTTP request failed: {e}")),
+                        AttemptOutcome::Transient,
+                    ));
+                    crate::openrouter_http::backoff(attempt).await;
                     continue;
                 }
             };
@@ -273,19 +356,27 @@ impl OpenRouterClient {
 
             if status.is_success() {
                 let body = resp.text().await.map_err(|e| {
-                    AppError::Embedding(format!("failed to read response body: {e}"))
+                    EmbedError::new(
+                        AppError::Embedding(format!("failed to read response body: {e}")),
+                        AttemptOutcome::Transient,
+                    )
                 })?;
                 match serde_json::from_str::<EmbeddingEnvelope>(&body) {
                     Ok(env) => {
-                        // A structured error object inside a 2xx body is a
-                        // PERMANENT provider rejection (e.g. context-length
-                        // overflow). Surface the REAL code/message instead of
-                        // masking it as a parse failure, and do not retry.
+                        // A structured error object inside a 2xx body is
+                        // classified by its own `code` (GAP-SG-01 surfaces
+                        // the real code/message instead of masking it as a
+                        // parse failure).
                         if let Some(api_err) = env.error {
-                            return Err(AppError::ProviderError {
-                                code: api_err.code_string(),
-                                message: api_err.message,
-                            });
+                            let retry_class =
+                                crate::openrouter_http::provider_error_retry_class(&api_err);
+                            return Err(EmbedError::new(
+                                AppError::ProviderError {
+                                    code: api_err.code_string(),
+                                    message: api_err.message,
+                                },
+                                retry_class,
+                            ));
                         }
                         match env.data {
                             Some(data) => return Ok(EmbeddingResponse { data }),
@@ -295,10 +386,13 @@ impl OpenRouterClient {
                                     body_len = body.len(),
                                     "HTTP 200 with neither data nor error (retrying)"
                                 );
-                                last_err = Some(AppError::Embedding(
-                                    "OpenRouter 200 response had neither data nor error".into(),
+                                last_err = Some(EmbedError::new(
+                                    AppError::Embedding(
+                                        "OpenRouter 200 response had neither data nor error".into(),
+                                    ),
+                                    AttemptOutcome::Transient,
                                 ));
-                                Self::backoff(attempt).await;
+                                crate::openrouter_http::backoff(attempt).await;
                                 continue;
                             }
                         }
@@ -309,26 +403,29 @@ impl OpenRouterClient {
                             body_len = body.len(),
                             "HTTP 200 but JSON unparseable (retrying): {e}"
                         );
-                        last_err = Some(AppError::Embedding(format!(
-                            "failed to parse embedding response: {e}"
-                        )));
-                        Self::backoff(attempt).await;
+                        last_err = Some(EmbedError::new(
+                            AppError::Embedding(format!("failed to parse embedding response: {e}")),
+                            AttemptOutcome::Transient,
+                        ));
+                        crate::openrouter_http::backoff(attempt).await;
                         continue;
                     }
                 }
             }
 
             if status.as_u16() == 401 {
-                return Err(AppError::Embedding(
-                    "invalid OpenRouter API key (HTTP 401)".into(),
+                return Err(EmbedError::new(
+                    AppError::Embedding("invalid OpenRouter API key (HTTP 401)".into()),
+                    AttemptOutcome::HardFailure,
                 ));
             }
 
             if status.as_u16() == 400 || status.as_u16() == 404 {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(AppError::Embedding(format!(
-                    "OpenRouter returned {status}: {body}"
-                )));
+                return Err(EmbedError::new(
+                    AppError::Embedding(format!("OpenRouter returned {status}: {body}")),
+                    AttemptOutcome::HardFailure,
+                ));
             }
 
             if status.as_u16() == 429 {
@@ -347,39 +444,43 @@ impl OpenRouterClient {
                 // every attempt is rate limited, the loop exits with this
                 // RateLimited error (retryable) carrying the server-advised
                 // wait, instead of a generic max-retries-exceeded message.
-                last_err = Some(AppError::RateLimited {
-                    detail: format!("OpenRouter HTTP 429 (retry-after {retry_after}s)"),
-                });
+                last_err = Some(EmbedError::new(
+                    AppError::RateLimited {
+                        detail: format!("OpenRouter HTTP 429 (retry-after {retry_after}s)"),
+                    },
+                    AttemptOutcome::Transient,
+                ));
                 tokio::time::sleep(Duration::from_secs(retry_after)).await;
                 continue;
             }
 
             if status.is_server_error() {
                 tracing::warn!(attempt, status = %status, "OpenRouter server error, retrying");
-                last_err = Some(AppError::Embedding(format!(
-                    "OpenRouter server error: {status}"
-                )));
-                Self::backoff(attempt).await;
+                last_err = Some(EmbedError::new(
+                    AppError::Embedding(format!("OpenRouter server error: {status}")),
+                    AttemptOutcome::Transient,
+                ));
+                crate::openrouter_http::backoff(attempt).await;
                 continue;
             }
 
             let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::Embedding(format!(
-                "unexpected HTTP {status}: {body}"
-            )));
+            return Err(EmbedError::new(
+                AppError::Embedding(format!("unexpected HTTP {status}: {body}")),
+                crate::openrouter_http::status_retry_class(status),
+            ));
         }
 
+        // Reauditor addendum: exhausting every retry against a transient
+        // condition (429/5xx/timeout/network) is ITSELF transient — it is
+        // exactly the case the queue's re-embed `--max-attempts` backoff
+        // covers, and must never be reclassified as a permanent failure.
         Err(last_err.unwrap_or_else(|| {
-            AppError::Embedding("max retries exceeded for OpenRouter request".into())
+            EmbedError::new(
+                AppError::Embedding("max retries exceeded for OpenRouter request".into()),
+                AttemptOutcome::Transient,
+            )
         }))
-    }
-
-    async fn backoff(attempt: u32) {
-        let base_ms = 1000u64 * 2u64.pow(attempt);
-        let jitter = fastrand::u64(0..500);
-        let sleep_ms = base_ms + jitter;
-        tracing::debug!(attempt, sleep_ms, "exponential backoff");
-        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
     }
 }
 
@@ -506,8 +607,89 @@ mod tests {
         let client = OpenRouterClient::new(api_key, "qwen/qwen3-embedding-8b".into(), 384).unwrap();
         let big = "word ".repeat(crate::constants::EMBEDDING_REQUEST_MAX_TOKENS + 5_000);
         match client.embed_single(&big, None).await {
-            Err(AppError::Validation(msg)) => assert!(msg.contains("tokens")),
+            Err(EmbedError {
+                source: AppError::Validation(msg),
+                retry_class,
+            }) => {
+                assert!(msg.contains("tokens"));
+                assert_eq!(
+                    retry_class,
+                    AttemptOutcome::HardFailure,
+                    "an oversized input is a permanent client error"
+                );
+            }
             other => unreachable!("expected Validation before request, got: {other:?}"),
         }
+    }
+
+    async fn client_for(server: &wiremock::MockServer, model: &str) -> OpenRouterClient {
+        OpenRouterClient::new_with_url(
+            SecretBox::new(Box::new("test-key".to_string())),
+            model.to_string(),
+            384,
+            format!("{}/embeddings", server.uri()),
+        )
+        .expect("test client builds")
+    }
+
+    #[tokio::test]
+    async fn embed_single_401_is_hard_failure() {
+        // Reauditor addendum: classification happens at the HTTP status, not
+        // by matching the error message downstream.
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server, "qwen/qwen3-embedding-8b").await;
+        let err = client
+            .embed_single("hello", None)
+            .await
+            .expect_err("401 is an error");
+        assert_eq!(err.retry_class, AttemptOutcome::HardFailure);
+    }
+
+    #[tokio::test]
+    async fn embed_single_exhausted_5xx_is_transient() {
+        // Reauditor addendum: exhausting every retry against a persistent
+        // 5xx is TRANSIENT — the caller's --max-attempts is what eventually
+        // dead-letters it, never a HardFailure from this layer.
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server, "qwen/qwen3-embedding-8b").await;
+        let err = client
+            .embed_single("hello", None)
+            .await
+            .expect_err("persistent 5xx exhausts retries");
+        assert_eq!(err.retry_class, AttemptOutcome::Transient);
+    }
+
+    #[tokio::test]
+    async fn embed_single_provider_error_code_classifies_by_code_not_message() {
+        // Reauditor addendum: a 200 body carrying a structured provider error
+        // is classified by its `code`, reusing the exact same classifier
+        // `chat_api` uses (GAP-SG-74 DRY).
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "error": { "code": "context_length_exceeded", "message": "too many tokens" }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server, "qwen/qwen3-embedding-8b").await;
+        let err = client
+            .embed_single("hello", None)
+            .await
+            .expect_err("provider error must surface");
+        assert_eq!(err.retry_class, AttemptOutcome::HardFailure);
     }
 }
