@@ -63,6 +63,8 @@ const MAX_NAME_COLLISION_SUFFIX: usize = 1000;
     sqlite-graphrag ingest ./docs --type document\n\n  \
     # Ingest .txt files recursively under ./notes\n  \
     sqlite-graphrag ingest ./notes --type note --pattern '*.txt' --recursive\n\n  \
+    # Namespace derived names with a kebab-case prefix (projx-<derived>)\n  \
+    sqlite-graphrag ingest ./docs --name-prefix projx- --dry-run\n\n  \
     # Enable automatic URL extraction (URL-regex only since v1.0.79)\n  \
     sqlite-graphrag ingest ./big-corpus --type reference --enable-ner\n\n  \
     # Preview file-to-name mapping without ingesting\n  \
@@ -217,6 +219,18 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = crate::constants::DERIVED_NAME_MAX_LEN,
           help = "Maximum length for derived memory names (default: 60)")]
     pub max_name_length: usize,
+
+    /// v1.1.1 (P12): kebab-case prefix prepended to every derived memory name,
+    /// AFTER the basename is normalized. Namespaces a corpus inside a shared
+    /// database (e.g. `--name-prefix projx-` yields `projx-<derived>`). The
+    /// derived part's budget shrinks so the final name always respects the
+    /// 80-char name cap. Only supported with `--mode none` or `gliner`.
+    #[arg(
+        long,
+        value_name = "PREFIX",
+        help = "Kebab-case prefix applied to every derived memory name (e.g. 'projx-')"
+    )]
+    pub name_prefix: Option<String>,
 
     /// Extraction mode: `none` (body-only, default), `claude-code`/`codex` (LLM-curated), or `gliner` (DEPRECATED: URL-regex only since v1.0.79).
     #[arg(long, value_enum, default_value_t = IngestMode::None)]
@@ -571,15 +585,17 @@ fn stage_file(
 
     let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
     if file_size > MAX_MEMORY_BODY_LEN as u64 {
-        return Err(AppError::LimitExceeded(
-            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-        ));
+        return Err(AppError::BodyTooLarge {
+            bytes: file_size,
+            limit: MAX_MEMORY_BODY_LEN as u64,
+        });
     }
     let raw_body = std::fs::read_to_string(path).map_err(AppError::Io)?;
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
-        return Err(AppError::LimitExceeded(
-            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-        ));
+        return Err(AppError::BodyTooLarge {
+            bytes: raw_body.len() as u64,
+            limit: MAX_MEMORY_BODY_LEN as u64,
+        });
     }
     if raw_body.trim().is_empty() {
         return Err(AppError::Validation(crate::i18n::validation::empty_body()));
@@ -737,11 +753,10 @@ fn stage_one_body(
 
     let chunks_info = chunking::split_into_chunks_hierarchical(&raw_body);
     if chunks_info.len() > REMEMBER_MAX_SAFE_MULTI_CHUNKS {
-        return Err(AppError::LimitExceeded(format!(
-            "document produces {} chunks; current safe operational limit is {} chunks; split the document before using remember",
-            chunks_info.len(),
-            REMEMBER_MAX_SAFE_MULTI_CHUNKS
-        )));
+        return Err(AppError::TooManyChunks {
+            chunks: chunks_info.len(),
+            limit: REMEMBER_MAX_SAFE_MULTI_CHUNKS,
+        });
     }
 
     let mut chunk_embeddings_opt: Option<Vec<Vec<f32>>> = None;
@@ -1181,6 +1196,16 @@ fn validate_mode_conditional_flags_ingest(args: &IngestArgs) -> Result<(), AppEr
 
     let is_local_mode = args.mode == IngestMode::None || args.mode == IngestMode::Gliner;
 
+    // v1.1.1 (P12): --name-prefix is only applied by the local staging path;
+    // rejecting it under LLM modes avoids a silently unprefixed corpus.
+    if args.name_prefix.is_some() && !is_local_mode {
+        return Err(AppError::Validation(
+            "--name-prefix is not supported with --mode claude-code/codex/opencode; \
+             use --mode none (default) or gliner"
+                .to_string(),
+        ));
+    }
+
     if is_local_mode {
         if args.claude_binary.is_some() {
             conflicts.push("--claude-binary is ignored when --mode is none or gliner".to_string());
@@ -1479,7 +1504,12 @@ pub fn run(
         ))
     })?;
 
-    let max_name_length = args.max_name_length;
+    // v1.1.1 (P12): validate the prefix once and shrink the derived-name
+    // budget so `prefix + derived` always fits MAX_MEMORY_NAME_LEN.
+    let max_name_length = match args.name_prefix.as_deref() {
+        Some(prefix) => validate_name_prefix(prefix, args.max_name_length)?,
+        None => args.max_name_length,
+    };
     for path in &files {
         let file_str = path.to_string_lossy().into_owned();
         let (derived_base, name_truncated, original_name) =
@@ -1509,6 +1539,14 @@ pub fn run(
             });
             continue;
         }
+
+        // v1.1.1 (P12): prefix applied AFTER kebab normalization of the
+        // basename; the shrunken budget above guarantees the final length
+        // fits MAX_MEMORY_NAME_LEN.
+        let derived_base = match args.name_prefix.as_deref() {
+            Some(prefix) => format!("{prefix}{derived_base}"),
+            None => derived_base,
+        };
 
         match unique_name(&derived_base, &taken_names) {
             Ok(derived_name) => {
@@ -2065,6 +2103,7 @@ pub fn run(
             operation: Some(super::enrich::EnrichOperation::MemoryBindings),
             mode: Some(super::enrich::EnrichMode::ClaudeCode),
             limit: None,
+            target: super::enrich::ReEmbedTarget::Memories,
             dry_run: false,
             namespace: args.namespace.clone(),
             claude_binary: args.claude_binary.clone(),
@@ -2189,6 +2228,45 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
 /// fallback (emoji, CJK ideographs, symbols) are dropped silently. This
 /// preserves meaningful word content rather than collapsing the basename
 /// to a few stray ASCII letters as the previous filter did.
+/// v1.1.1 (P12): validates `--name-prefix` and returns the effective budget
+/// for the DERIVED part of the name, so `prefix + derived` never exceeds
+/// [`crate::constants::MAX_MEMORY_NAME_LEN`]. The prefix is applied verbatim
+/// AFTER kebab normalization of the basename, so it must itself be a valid
+/// slug head: starting with a lowercase letter and containing only
+/// lowercase letters, digits and hyphens.
+pub(crate) fn validate_name_prefix(
+    prefix: &str,
+    max_name_length: usize,
+) -> Result<usize, AppError> {
+    if prefix.is_empty() {
+        return Err(AppError::Validation(
+            "--name-prefix cannot be empty".to_string(),
+        ));
+    }
+    let starts_lower = prefix
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase());
+    let all_slug_chars = prefix
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !starts_lower || !all_slug_chars {
+        return Err(AppError::Validation(format!(
+            "--name-prefix '{prefix}' must start with a lowercase letter and contain \
+             only lowercase letters, digits and hyphens (kebab-case)"
+        )));
+    }
+    let cap = crate::constants::MAX_MEMORY_NAME_LEN;
+    if prefix.len() >= cap {
+        return Err(AppError::LimitExceeded(format!(
+            "--name-prefix is {} chars; prefixed names would exceed the {cap}-char \
+             name cap (MAX_MEMORY_NAME_LEN)",
+            prefix.len()
+        )));
+    }
+    Ok(max_name_length.min(cap - prefix.len()))
+}
+
 pub(crate) fn derive_kebab_name(path: &Path, max_len: usize) -> (String, bool, Option<String>) {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let lowered: String = stem
@@ -2286,6 +2364,49 @@ fn collapse_dashes(s: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    // v1.1.1 (P12): --name-prefix validation and budget arithmetic.
+    #[test]
+    fn validate_name_prefix_shrinks_budget_to_fit_name_cap() {
+        // 80-char cap; a 10-char prefix leaves 70 for the derived part, but
+        // the caller's budget (60) is smaller, so it wins.
+        let budget = validate_name_prefix("projx-team", 60).unwrap();
+        assert_eq!(budget, 60);
+        // A long prefix shrinks the budget below the caller's 60.
+        let long_prefix = "p".repeat(75);
+        let budget = validate_name_prefix(&long_prefix, 60).unwrap();
+        assert_eq!(budget, 5, "80-char cap minus 75-char prefix leaves 5");
+    }
+
+    #[test]
+    fn validate_name_prefix_rejects_invalid_slugs() {
+        for bad in ["", "-lead", "Upper", "has_underscore", "acentuação", "1x"] {
+            let err = validate_name_prefix(bad, 60).unwrap_err();
+            assert_eq!(err.exit_code(), 1, "prefix '{bad}' must be Validation");
+        }
+    }
+
+    #[test]
+    fn validate_name_prefix_too_long_is_limit_exceeded() {
+        let huge = "p".repeat(crate::constants::MAX_MEMORY_NAME_LEN);
+        let err = validate_name_prefix(&huge, 60).unwrap_err();
+        assert_eq!(err.exit_code(), 6, "prefix >= name cap must be exit 6");
+        assert!(
+            err.to_string().contains("MAX_MEMORY_NAME_LEN"),
+            "obtido: {err}"
+        );
+    }
+
+    #[test]
+    fn name_prefix_applies_after_kebab_normalization_and_fits_cap() {
+        let prefix = "projx-";
+        let budget = validate_name_prefix(prefix, 60).unwrap();
+        let (base, _, _) = derive_kebab_name(&PathBuf::from("My File Name.md"), budget);
+        let final_name = format!("{prefix}{base}");
+        assert_eq!(final_name, "projx-my-file-name");
+        assert!(final_name.len() <= crate::constants::MAX_MEMORY_NAME_LEN);
+        assert!(crate::constants::name_slug_regex().is_match(&final_name));
+    }
 
     /// GAP-SG-29: `ingest --mode none --resume` is rejected fail-fast by the
     /// mode-conditional validator, which `run()` invokes as its very first

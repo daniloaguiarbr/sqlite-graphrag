@@ -1,3 +1,58 @@
+# MIGRANDO PARA v1.1.01 — Backfill de Embedding, graph recompute-degree, Reclassify Literal de Relação
+
+> Este guia cobre a atualização de v1.1.0 para v1.1.01. Nenhuma migração roda no banco principal; o schema permanece em v15 — `migrate` NÃO é necessário. O nome oficial da release é v1.1.01; o `Cargo.toml` carrega `1.1.1` porque o SemVer rejeita zero à esquerda no segmento de patch. Binário ~19 MiB. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.1.01 — Backfill de Embedding, graph recompute-degree, Reclassify Literal de Relação
+
+### O Que Mudou
+- **P1**: o embedding de entidade agora roteia pelo caminho REST do OpenRouter mesmo com `--llm-backend none`; um guard de vetor vazio nos upserts previne blobs de embedding de zero bytes.
+- **P2**: `enrich --operation re-embed --target memories|entities|chunks|all` seleciona qual tabela de embedding recebe o backfill; `--status` reporta o `scan_backlog` por alvo.
+- **P3**: novo comando `graph recompute-degree` recomputa o grau de todas as entidades em uma transação única; suporta `--dry-run`; o envelope reporta `{total, updated, zeroed, unchanged}`.
+- **P4**: `reclassify-relation --literal-from` casa a relação armazenada de forma verbatim, bypassando a normalização do clap; mutuamente exclusiva com `--from-relation`.
+- **P5**: `merge-entities --ids <a,b> --into-id <N>` e `rename-entity --id <N>` endereçam entidades por id numérico.
+- **P6**: `health --json` ganha `vec_memories_missing` / `vec_entities_missing` / `vec_chunks_missing` mais `vec_*_coverage_pct`; `embedding status --json` ganha `memories_missing` / `entities_missing` / `chunks_missing` dentro de `coverage`.
+- **P7**: mensagens de erro de `EntityType` listam os 13 tipos canônicos de entidade.
+- **P10**: o predicado do re-embed também cobre linhas com dimensão divergente e blob vazio, não apenas linhas ausentes.
+- **P11**: `AppError::BodyTooLarge` / `AppError::TooManyChunks` são variantes tipadas; o exit 6 é preservado e a mensagem do envelope JSON agora é específica.
+- **P12**: `ingest --name-prefix <PREFIX>` prefixa os nomes de memória gerados (apenas no caminho de staging local).
+- SEM migração de schema do banco principal (permanece em v15). SEM migração de arquivo de sidecar.
+
+### Mudanças Quebrantes
+- Nenhuma. Todas as mudanças são aditivas; invocações existentes não são afetadas.
+
+### Passivo Operacional Recomendado Pós-Upgrade (bancos existentes)
+Bancos existentes tipicamente carregam embeddings de entidade/chunk ausentes, drift de grau acumulado historicamente e arestas legadas de relação com underscore. Rode uma vez após o upgrade:
+
+```bash
+# 1. Backfill de embeddings ausentes de entidade e chunk
+sqlite-graphrag enrich --operation re-embed --target entities \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+sqlite-graphrag enrich --operation re-embed --target chunks \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+
+# 2. Corrigir graus de entidade acumulados historicamente (preview primeiro)
+sqlite-graphrag graph recompute-degree --dry-run --json
+sqlite-graphrag graph recompute-degree --json
+
+# 3. Migrar arestas legadas de relação com underscore (match verbatim)
+sqlite-graphrag reclassify-relation --literal-from applies_to \
+  --to-relation applies-to --batch --json
+
+# Verificar a cobertura de embeddings depois
+sqlite-graphrag health --json | jaq '{memories: .vec_memories_missing, entities: .vec_entities_missing, chunks: .vec_chunks_missing}'
+```
+
+### Fixação da API da Biblioteca
+Troque o pin exato de `=1.1.0` para `=1.1.1` (a API da lib permanece instável dentro de v1.x.y, ADR-0032):
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.1.1"
+```
+
+### Rollback
+Volte para v1.1.0 reinstalando o binário anterior. Nenhuma mudança de banco a desfazer — o schema permanece inalterado em v15; embeddings de backfill e graus recomputados continuam dados válidos sob a v1.1.0.
+
 # MIGRANDO PARA v1.0.99 — Remoção da Poda Destrutiva do Degree-Cap (ADR-0059, GAP-SG-67)
 
 > Este guia cobre a atualização para v1.0.99. Nenhuma migração roda no banco principal; o schema permanece em v15. UMA mudança quebrante: a flag `--max-entity-degree` foi removida de `remember`/`link`. Reinstale com `cargo install sqlite-graphrag --locked --force`.

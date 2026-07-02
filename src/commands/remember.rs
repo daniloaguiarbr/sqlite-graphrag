@@ -339,9 +339,10 @@ pub fn run(
     } else if let Some(ref path) = args.body_file {
         let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         match std::fs::read_to_string(path) {
             Ok(s) => s,
@@ -365,22 +366,30 @@ pub fn run(
     if let Some(path) = args.entities_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-        graph.entities = serde_json::from_str(&content)?;
+        // v1.1.1 (P7): boundary validation with context — an invalid
+        // entity_type surfaces the FromStr message (13 valid values + hints)
+        // as a Validation error instead of a bare Json error (exit 20).
+        graph.entities = serde_json::from_str(&content)
+            .map_err(|e| AppError::Validation(format!("invalid JSON in --entities-file: {e}")))?;
     }
     if let Some(path) = args.relationships_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-        graph.relationships = serde_json::from_str(&content)?;
+        graph.relationships = serde_json::from_str(&content).map_err(|e| {
+            AppError::Validation(format!("invalid JSON in --relationships-file: {e}"))
+        })?;
     }
     if args.graph_stdin {
         graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
@@ -397,9 +406,10 @@ pub fn run(
     if let Some(path) = args.graph_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         let mut gf = serde_json::from_str::<GraphInput>(&content)
@@ -433,9 +443,10 @@ pub fn run(
     normalize_and_validate_graph_input(&mut graph)?;
 
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
-        return Err(AppError::LimitExceeded(
-            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-        ));
+        return Err(AppError::BodyTooLarge {
+            bytes: raw_body.len() as u64,
+            limit: MAX_MEMORY_BODY_LEN as u64,
+        });
     }
 
     // v1.0.22 P1: reject empty or whitespace-only body when no external graph is provided.
@@ -457,9 +468,10 @@ pub fn run(
     } else if let Some(path) = args.metadata_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         serde_json::from_str(&content)?
@@ -691,10 +703,10 @@ pub fn run(
     );
 
     if chunks_created > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS {
-        return Err(AppError::LimitExceeded(format!(
-            "document produces {chunks_created} chunks; current safe operational limit is {} chunks; split the document before using remember",
-            crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS
-        )));
+        return Err(AppError::TooManyChunks {
+            chunks: chunks_created,
+            limit: crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS,
+        });
     }
 
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");

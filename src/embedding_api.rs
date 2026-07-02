@@ -72,8 +72,8 @@ use crate::openrouter_http::ApiError;
 ///
 /// `retry_class` is the retry verdict computed AT THE ORIGIN (the exact HTTP
 /// status, or the provider's structured error `code`) via the same
-/// [`crate::openrouter_http::status_retry_class`] /
-/// [`crate::openrouter_http::provider_error_retry_class`] classifiers
+/// `openrouter_http::status_retry_class` /
+/// `openrouter_http::provider_error_retry_class` classifiers (private helpers)
 /// [`crate::chat_api::OpenRouterChatClient`] uses (GAP-SG-74 DRY) — never
 /// inferred downstream from `source.to_string()`. The enrich `re-embed`
 /// consumer reads this field directly instead of pattern-matching the
@@ -111,10 +111,10 @@ impl std::error::Error for EmbedError {
 /// Converts a bare `AppError` into an `EmbedError` with `retry_class:
 /// HardFailure`. Used by the `?` operator on call sites that predate the
 /// origin-typed classification (the GAP-SG-02 oversized-input guard, the
-/// dimension-mismatch guard in [`OpenRouterClient::truncate_embedding`], and
+/// dimension-mismatch guard in `OpenRouterClient::truncate_embedding`, and
 /// the batch-size-mismatch check) — all of those are genuine permanent
 /// client/config errors, never transient. Every `EmbedError` constructed
-/// inside `execute_with_retry` uses [`EmbedError::new`] explicitly with a
+/// inside `execute_with_retry` uses `EmbedError::new` explicitly with a
 /// retry verdict computed at the exact HTTP status / provider code instead.
 impl From<AppError> for EmbedError {
     fn from(source: AppError) -> Self {
@@ -171,7 +171,9 @@ impl OpenRouterClient {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
-            .user_agent("sqlite-graphrag/1.1.00")
+            // Derived from the crate version so the UA never drifts again
+            // (GAP-SG-75 recurrence caught at the v1.1.01 release gate).
+            .user_agent(concat!("sqlite-graphrag/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| AppError::Embedding(format!("failed to build HTTP client: {e}")))?;
 

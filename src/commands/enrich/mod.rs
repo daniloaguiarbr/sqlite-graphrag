@@ -38,8 +38,9 @@ use postprocess::{
 };
 pub use queue::{cleanup_queue_entry, DeadItem, DeadSummary, EnrichStatus, WaitingItem};
 use queue::{
-    dequeue_next_pending, enqueue_candidate, item_type_for, open_queue_db, prune_dead_orphans,
-    record_item_failure, record_item_failure_typed, skipped_item_keys, DequeueOutcome,
+    dequeue_next_pending, enqueue_candidate, item_type_for, item_type_for_key, open_queue_db,
+    prune_dead_orphans, record_item_failure, record_item_failure_typed, skipped_item_keys,
+    DequeueOutcome,
 };
 use scan::{
     count_operation_backlog, scan_isolated_entity_pairs, scan_operation, scan_unbound_memories,
@@ -354,6 +355,25 @@ pub enum EnrichOperation {
     BodyExtract,
 }
 
+/// v1.1.1 (P2): which embedding table the `re-embed` operation backfills.
+///
+/// `memories` is the historical behaviour (and the default, so existing
+/// invocations are unchanged); `entities` and `chunks` close the retroactive
+/// coverage gap for `entity_embeddings` / `chunk_embeddings`; `all` runs the
+/// three scans in one invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReEmbedTarget {
+    /// Memories without a live vector in `memory_embeddings` (default).
+    Memories,
+    /// Entities without a live vector in `entity_embeddings`.
+    Entities,
+    /// Chunks without a live vector in `chunk_embeddings`.
+    Chunks,
+    /// All three targets in a single run.
+    All,
+}
+
 /// LLM provider for enrichment.
 #[derive(Debug, Clone, PartialEq, Eq, clap::ValueEnum)]
 pub enum EnrichMode {
@@ -453,6 +473,16 @@ pub struct EnrichArgs {
     /// Maximum number of items to process in this run. Omit for all.
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,
+
+    /// v1.1.1 (P2): embedding table backfilled by `--operation re-embed`.
+    /// `memories` (default) preserves the historical behaviour; `entities`
+    /// and `chunks` rebuild `entity_embeddings` / `chunk_embeddings`; `all`
+    /// covers the three tables in one run. The scan also selects rows whose
+    /// stored `dim` diverges from the configured `--embedding-dim` (P10),
+    /// so legacy-dimension vectors are regenerated, not only missing ones.
+    /// Ignored (rejected) for every other operation.
+    #[arg(long, value_enum, value_name = "TARGET", default_value_t = ReEmbedTarget::Memories)]
+    pub target: ReEmbedTarget,
 
     /// Preview items without calling the LLM (zero tokens consumed).
     #[arg(long)]
@@ -1245,6 +1275,22 @@ pub fn run(
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_enrich(args)?;
 
+    // v1.1.1 (P2): --target only means something for re-embed. Fail loud
+    // instead of silently ignoring it under another operation.
+    if args.target != ReEmbedTarget::Memories
+        && !matches!(args.operation(), EnrichOperation::ReEmbed)
+    {
+        let target_label = match args.target {
+            ReEmbedTarget::Memories => "memories",
+            ReEmbedTarget::Entities => "entities",
+            ReEmbedTarget::Chunks => "chunks",
+            ReEmbedTarget::All => "all",
+        };
+        return Err(AppError::Validation(format!(
+            "--target {target_label} only applies to --operation re-embed"
+        )));
+    }
+
     // GAP-ENRICH-BACKLOG-CONVERGE: --status is a read-only report. It never
     // calls the LLM, never initialises the OpenRouter client, and never
     // acquires the job singleton, so it is safe to run while a real enrich is
@@ -1359,7 +1405,8 @@ pub fn run(
         let unbound_backlog = scan_unbound_memories(&conn, &namespace, None, &[])?.len();
         // GAP-SG-77: DB-semantics backlog for the queried operation (fixes the
         // false pending=0 for entity-descriptions/body-enrich/re-embed).
-        let scan_backlog = count_operation_backlog(&conn, &args.operation(), &namespace)?;
+        let scan_backlog =
+            count_operation_backlog(&conn, &args.operation(), &namespace, args.target)?;
         let queue_path = crate::paths::sidecar_path(&paths.db, ".enrich-queue.sqlite");
         let queue_conn = open_queue_db(&queue_path)?;
         let op_label = format!("{:?}", args.operation());
@@ -1727,7 +1774,11 @@ pub fn run(
     let op_label = format!("{:?}", args.operation());
     let item_type = item_type_for(&args.operation());
     for key in scan_result.iter() {
-        enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
+        // v1.1.1 (P2): re-embed keys may be prefixed (`entity:` / `chunk:`);
+        // derive the row item_type from the key so prune-dead-orphans never
+        // mistakes an entity/chunk row for an orphaned memory.
+        let it = item_type_for_key(key, item_type);
+        enqueue_candidate(&queue_conn, &conn, &namespace, key, it, &op_label);
     }
 
     // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
@@ -1870,7 +1921,8 @@ pub fn run(
                 }
             }
             for key in &rescan {
-                enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
+                let it = item_type_for_key(key, item_type);
+                enqueue_candidate(&queue_conn, &conn, &namespace, key, it, &op_label);
             }
         }
         let completed_before = completed;

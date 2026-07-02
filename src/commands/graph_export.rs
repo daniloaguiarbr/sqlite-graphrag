@@ -23,6 +23,8 @@ pub enum GraphSubcommand {
     Stats(GraphStatsArgs),
     /// List entities stored in the graph with optional filters
     Entities(GraphEntitiesArgs),
+    /// Reconcile the cached `degree` column with the real edge counts (P3)
+    RecomputeDegree(GraphRecomputeDegreeArgs),
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +183,35 @@ pub struct GraphEntitiesArgs {
     pub db: Option<String>,
 }
 
+#[derive(clap::Args)]
+#[command(after_long_help = "EXAMPLES:\n  \
+    # Preview divergences without writing (recommended first run)\n  \
+    sqlite-graphrag graph recompute-degree --dry-run\n\n  \
+    # Reconcile every namespace\n  \
+    sqlite-graphrag graph recompute-degree\n\n  \
+    # Reconcile a single namespace\n  \
+    sqlite-graphrag graph recompute-degree --namespace project-x\n\n\
+NOTES:\n  \
+    `entities.degree` is a derived cache (incremented on link, recalculated\n  \
+    on merge/delete) that drifts when edges are written by paths that skip\n  \
+    the recalculation. This command recomputes every entity's degree from\n  \
+    the real `relationships` rows (same semantics as the canonical\n  \
+    `recalculate_degree` helper: COUNT(*) WHERE source_id = id OR\n  \
+    target_id = id) inside one transaction. Entities left with zero edges\n  \
+    are zeroed. Envelope: {total, updated, zeroed, unchanged}.")]
+pub struct GraphRecomputeDegreeArgs {
+    /// Namespace to reconcile. Omit to reconcile ALL namespaces.
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Report divergences without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long, hide = true, help = "No-op; JSON is always emitted on stdout")]
+    pub json: bool,
+    #[arg(long, env = "SQLITE_GRAPHRAG_DB_PATH")]
+    pub db: Option<String>,
+}
+
 #[derive(Serialize, Clone)]
 struct NodeOut {
     id: i64,
@@ -298,7 +329,128 @@ pub fn run(args: GraphArgs) -> Result<(), AppError> {
             }
             run_entities(a)
         }
+        Some(GraphSubcommand::RecomputeDegree(mut a)) => {
+            if a.db.is_none() {
+                a.db = args.db;
+            }
+            if a.namespace.is_none() {
+                a.namespace = args.namespace;
+            }
+            run_recompute_degree(a)
+        }
     }
+}
+
+/// v1.1.1 (P3): summary of one degree-reconciliation pass.
+///
+/// `total` is every entity scanned; `updated` diverged to a non-zero real
+/// degree; `zeroed` diverged to zero (no live edges); `unchanged` already
+/// matched. `updated + zeroed + unchanged == total`.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct RecomputeDegreeSummary {
+    total: i64,
+    updated: i64,
+    zeroed: i64,
+    unchanged: i64,
+}
+
+#[derive(Serialize)]
+struct RecomputeDegreeResponse {
+    namespace: Option<String>,
+    dry_run: bool,
+    total: i64,
+    updated: i64,
+    zeroed: i64,
+    unchanged: i64,
+    elapsed_ms: u64,
+}
+
+/// v1.1.1 (P3): recomputes `entities.degree` from the real `relationships`
+/// rows inside one IMMEDIATE transaction.
+///
+/// Uses the SAME per-entity semantics as the canonical
+/// [`entities::recalculate_degree`] helper (`COUNT(*) WHERE source_id = id OR
+/// target_id = id` — a self-loop counts once), so a reconciled graph is
+/// byte-identical to one maintained exclusively through link/merge/delete.
+/// With `dry_run` the transaction never writes and is rolled back on drop.
+fn recompute_degrees(
+    conn: &mut rusqlite::Connection,
+    namespace: Option<&str>,
+    dry_run: bool,
+) -> Result<RecomputeDegreeSummary, AppError> {
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+    const SELECT_BASE: &str = "SELECT e.id, e.degree, \
+         (SELECT COUNT(*) FROM relationships r \
+          WHERE r.source_id = e.id OR r.target_id = e.id) \
+         FROM entities e";
+    let rows: Vec<(i64, i64, i64)> = if let Some(ns) = namespace {
+        let mut stmt = tx.prepare(&format!("{SELECT_BASE} WHERE e.namespace = ?1"))?;
+        let r = stmt
+            .query_map(rusqlite::params![ns], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        r
+    } else {
+        let mut stmt = tx.prepare(SELECT_BASE)?;
+        let r = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        r
+    };
+
+    let mut summary = RecomputeDegreeSummary {
+        total: rows.len() as i64,
+        updated: 0,
+        zeroed: 0,
+        unchanged: 0,
+    };
+    for (id, stored, real) in rows {
+        if stored == real {
+            summary.unchanged += 1;
+            continue;
+        }
+        if !dry_run {
+            tx.execute(
+                "UPDATE entities SET degree = ?1, updated_at = unixepoch() WHERE id = ?2",
+                rusqlite::params![real, id],
+            )?;
+        }
+        if real == 0 {
+            summary.zeroed += 1;
+        } else {
+            summary.updated += 1;
+        }
+    }
+
+    if dry_run {
+        // Dropping the transaction rolls back; nothing was written anyway.
+        drop(tx);
+    } else {
+        tx.commit()?;
+    }
+    Ok(summary)
+}
+
+fn run_recompute_degree(args: GraphRecomputeDegreeArgs) -> Result<(), AppError> {
+    let inicio = Instant::now();
+    let paths = AppPaths::resolve(args.db.as_deref())?;
+    crate::storage::connection::ensure_db_ready(&paths)?;
+    let mut conn = crate::storage::connection::open_rw(&paths.db)?;
+
+    let summary = recompute_degrees(&mut conn, args.namespace.as_deref(), args.dry_run)?;
+
+    output::emit_json(&RecomputeDegreeResponse {
+        namespace: args.namespace,
+        dry_run: args.dry_run,
+        total: summary.total,
+        updated: summary.updated,
+        zeroed: summary.zeroed,
+        unchanged: summary.unchanged,
+        elapsed_ms: inicio.elapsed().as_millis() as u64,
+    })?;
+    Ok(())
 }
 
 fn run_entities_snapshot(
@@ -1179,6 +1331,140 @@ mod tests {
                         matches!(e.order, SortOrder::Asc),
                         "order must default to Asc"
                     );
+                }
+                _ => unreachable!("unexpected subcommand"),
+            },
+            _ => unreachable!("unexpected command"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // v1.1.1 (P3): graph recompute-degree — reconciliação do cache `degree`
+    // -----------------------------------------------------------------------
+
+    fn setup_migrated_db() -> (tempfile::TempDir, rusqlite::Connection) {
+        crate::storage::connection::register_vec_extension();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut conn = rusqlite::Connection::open(&db_path).expect("open");
+        crate::migrations::runner().run(&mut conn).expect("migrate");
+        (tmp, conn)
+    }
+
+    fn insert_entity_with_degree(
+        conn: &rusqlite::Connection,
+        ns: &str,
+        name: &str,
+        degree: i64,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO entities (namespace, name, type, degree) VALUES (?1, ?2, 'concept', ?3)",
+            rusqlite::params![ns, name, degree],
+        )
+        .expect("insert entity");
+        conn.last_insert_rowid()
+    }
+
+    fn insert_edge(conn: &rusqlite::Connection, ns: &str, source: i64, target: i64) {
+        conn.execute(
+            "INSERT INTO relationships (namespace, source_id, target_id, relation, weight) \
+             VALUES (?1, ?2, ?3, 'uses', 0.5)",
+            rusqlite::params![ns, source, target],
+        )
+        .expect("insert edge");
+    }
+
+    #[test]
+    fn recompute_degrees_reconciles_updated_zeroed_and_unchanged() {
+        let (_tmp, mut conn) = setup_migrated_db();
+        // a—b conectadas mas com degree armazenado errado (0 e 5); c órfã com
+        // degree fantasma 7; d já correta com degree 0.
+        let a = insert_entity_with_degree(&conn, "global", "ent-a", 0);
+        let b = insert_entity_with_degree(&conn, "global", "ent-b", 5);
+        let c = insert_entity_with_degree(&conn, "global", "ent-c", 7);
+        let d = insert_entity_with_degree(&conn, "global", "ent-d", 0);
+        insert_edge(&conn, "global", a, b);
+
+        let summary = recompute_degrees(&mut conn, Some("global"), false).expect("recompute");
+        assert_eq!(
+            summary,
+            RecomputeDegreeSummary {
+                total: 4,
+                updated: 2,
+                zeroed: 1,
+                unchanged: 1,
+            }
+        );
+
+        let degree_of = |id: i64| -> i64 {
+            conn.query_row(
+                "SELECT degree FROM entities WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(degree_of(a), 1);
+        assert_eq!(degree_of(b), 1);
+        assert_eq!(degree_of(c), 0, "entidade sem arestas deve ser zerada");
+        assert_eq!(degree_of(d), 0);
+
+        // Segunda passada converge: tudo unchanged.
+        let second = recompute_degrees(&mut conn, Some("global"), false).expect("recompute 2");
+        assert_eq!(second.updated + second.zeroed, 0);
+        assert_eq!(second.unchanged, 4);
+    }
+
+    #[test]
+    fn recompute_degrees_dry_run_reports_without_writing() {
+        let (_tmp, mut conn) = setup_migrated_db();
+        let a = insert_entity_with_degree(&conn, "global", "ent-a", 9);
+
+        let summary = recompute_degrees(&mut conn, Some("global"), true).expect("dry-run");
+        assert_eq!(summary.zeroed, 1, "divergência reportada no dry-run");
+
+        let stored: i64 = conn
+            .query_row(
+                "SELECT degree FROM entities WHERE id = ?1",
+                rusqlite::params![a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, 9, "dry-run não pode escrever");
+    }
+
+    #[test]
+    fn recompute_degrees_scopes_by_namespace_and_none_covers_all() {
+        let (_tmp, mut conn) = setup_migrated_db();
+        insert_entity_with_degree(&conn, "ns1", "ent-ns1", 3);
+        insert_entity_with_degree(&conn, "ns2", "ent-ns2", 4);
+
+        let only_ns1 = recompute_degrees(&mut conn, Some("ns1"), false).expect("ns1");
+        assert_eq!(only_ns1.total, 1);
+
+        // ns2 permanece divergente até uma passada sem namespace (todas).
+        let all = recompute_degrees(&mut conn, None, false).expect("all");
+        assert_eq!(all.total, 2);
+        assert_eq!(all.zeroed, 1, "só ns2 ainda divergia");
+        assert_eq!(all.unchanged, 1);
+    }
+
+    #[test]
+    fn graph_recompute_degree_cli_parses_flags() {
+        let parsed = Cli::try_parse_from([
+            "sqlite-graphrag",
+            "graph",
+            "recompute-degree",
+            "--dry-run",
+            "--namespace",
+            "project-x",
+        ])
+        .expect("recompute-degree must parse");
+        match parsed.command {
+            Some(Commands::Graph(args)) => match args.subcommand {
+                Some(GraphSubcommand::RecomputeDegree(a)) => {
+                    assert!(a.dry_run);
+                    assert_eq!(a.namespace.as_deref(), Some("project-x"));
                 }
                 _ => unreachable!("unexpected subcommand"),
             },

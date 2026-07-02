@@ -1,3 +1,58 @@
+# MIGRATING TO v1.1.01 — Embedding Backfill, graph recompute-degree, Literal Relation Reclassify
+
+> This guide covers upgrading from v1.1.0 to v1.1.01. No migration runs on the main database; the schema remains at v15 — `migrate` is NOT required. The official release name is v1.1.01; `Cargo.toml` carries `1.1.1` because SemVer rejects a leading zero in the patch segment. Binary ~19 MiB. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+
+## v1.1.01 — Embedding Backfill, graph recompute-degree, Literal Relation Reclassify
+
+### What Changed
+- **P1**: entity embedding now routes through the OpenRouter REST path even with `--llm-backend none`; an empty-vector guard on the upserts prevents zero-byte embedding blobs.
+- **P2**: `enrich --operation re-embed --target memories|entities|chunks|all` selects which embedding table to backfill; `--status` reports the per-target `scan_backlog`.
+- **P3**: new command `graph recompute-degree` recomputes every entity degree in a single transaction; supports `--dry-run`; the envelope reports `{total, updated, zeroed, unchanged}`.
+- **P4**: `reclassify-relation --literal-from` matches the stored relation verbatim, bypassing clap normalisation; mutually exclusive with `--from-relation`.
+- **P5**: `merge-entities --ids <a,b> --into-id <N>` and `rename-entity --id <N>` address entities by numeric id.
+- **P6**: `health --json` gains `vec_memories_missing` / `vec_entities_missing` / `vec_chunks_missing` plus `vec_*_coverage_pct`; `embedding status --json` gains `memories_missing` / `entities_missing` / `chunks_missing` under `coverage`.
+- **P7**: `EntityType` error messages list the 13 canonical entity types.
+- **P10**: the re-embed predicate also covers divergent-dimension and empty-blob rows, not only missing rows.
+- **P11**: `AppError::BodyTooLarge` / `AppError::TooManyChunks` are typed variants; exit 6 is preserved and the JSON envelope message is now specific.
+- **P12**: `ingest --name-prefix <PREFIX>` prefixes generated memory names (local staging path only).
+- NO main-database schema migration (stays at v15). NO sidecar file migration.
+
+### Breaking Changes
+- None. All changes are additive; existing invocations are untouched.
+
+### Recommended Post-Upgrade Pass (existing databases)
+Existing databases typically carry missing entity/chunk embeddings, historically accumulated degree drift, and legacy underscore relation edges. Run once after upgrading:
+
+```bash
+# 1. Backfill missing entity and chunk embeddings
+sqlite-graphrag enrich --operation re-embed --target entities \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+sqlite-graphrag enrich --operation re-embed --target chunks \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+
+# 2. Fix historically accumulated entity degrees (preview first)
+sqlite-graphrag graph recompute-degree --dry-run --json
+sqlite-graphrag graph recompute-degree --json
+
+# 3. Migrate legacy underscore relation edges (verbatim match)
+sqlite-graphrag reclassify-relation --literal-from applies_to \
+  --to-relation applies-to --batch --json
+
+# Verify embedding coverage afterwards
+sqlite-graphrag health --json | jaq '{memories: .vec_memories_missing, entities: .vec_entities_missing, chunks: .vec_chunks_missing}'
+```
+
+### Library API Pinning
+Change the exact pin from `=1.1.0` to `=1.1.1` (the lib API remains unstable within v1.x.y, ADR-0032):
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.1.1"
+```
+
+### Rollback
+Roll back to v1.1.0 by reinstalling the previous binary. No database changes to undo — the schema is unchanged at v15; backfilled embeddings and recomputed degrees remain valid data under v1.1.0.
+
 # MIGRATING TO v1.0.99 — Remove Destructive Degree-Cap Pruning (ADR-0059, GAP-SG-67)
 
 > This guide covers upgrading to v1.0.99. No migration runs on the main database; the schema remains at v15. ONE breaking change: the `--max-entity-degree` flag is removed from `remember`/`link`. Reinstall with `cargo install sqlite-graphrag --locked --force`.

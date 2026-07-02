@@ -256,11 +256,34 @@
         "null"
       ]
     },
+    "vec_chunks_coverage_pct": {
+      "format": "double",
+      "type": "number"
+    },
+    "vec_chunks_missing": {
+      "description": "v1.1.1 (P6a): memory_chunks rows without a row in chunk_embeddings/vec_chunks.",
+      "format": "int64",
+      "type": "integer"
+    },
     "vec_chunks_ok": {
       "type": "boolean"
     },
+    "vec_entities_coverage_pct": {
+      "format": "double",
+      "type": "number"
+    },
+    "vec_entities_missing": {
+      "description": "v1.1.1 (P6a): entities without a row in entity_embeddings/vec_entities. Completeness (coverage), distinct from the table-existence consistency reported by `vec_entities_ok`.",
+      "format": "int64",
+      "type": "integer"
+    },
     "vec_entities_ok": {
       "type": "boolean"
+    },
+    "vec_memories_coverage_pct": {
+      "description": "v1.1.1 (P6a): vector coverage percentages in [0.0, 100.0] — fraction of source rows (active memories / entities / chunks) that have a vector. 100.0 when there is nothing to cover.",
+      "format": "double",
+      "type": "number"
     },
     "vec_memories_missing": {
       "format": "int64",
@@ -296,8 +319,13 @@
     "schema_version",
     "sqlite_version",
     "status",
+    "vec_chunks_coverage_pct",
+    "vec_chunks_missing",
     "vec_chunks_ok",
+    "vec_entities_coverage_pct",
+    "vec_entities_missing",
     "vec_entities_ok",
+    "vec_memories_coverage_pct",
     "vec_memories_missing",
     "vec_memories_ok",
     "vec_memories_orphaned",

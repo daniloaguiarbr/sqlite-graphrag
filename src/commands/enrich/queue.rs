@@ -167,6 +167,23 @@ pub(super) fn item_type_for(operation: &EnrichOperation) -> &'static str {
     }
 }
 
+/// v1.1.1 (P2): per-key `item_type` override for the re-embed targets.
+///
+/// Re-embed keys are prefixed with `entity:` / `chunk:` when `--target`
+/// selects a non-memory table; the queue row must carry the real item type
+/// so `prune_dead_orphans` (which only reaps `item_type='memory'` rows)
+/// never mistakes an entity/chunk key for an orphaned memory name.
+/// Unprefixed keys keep the operation-level default.
+pub(super) fn item_type_for_key(key: &str, default: &'static str) -> &'static str {
+    if key.starts_with("entity:") {
+        "entity"
+    } else if key.starts_with("chunk:") {
+        "chunk"
+    } else {
+        default
+    }
+}
+
 /// GAP-SG-13: remove a memory's enrich-queue entry when the memory is deleted or
 /// force-merged, so the dead-letter / pending sidecar never references a row
 /// that no longer exists. Best-effort and a no-op when the queue file is absent
@@ -1157,6 +1174,19 @@ mod tests {
         assert_eq!(item_type_for(&EnrichOperation::MemoryBindings), "memory");
         assert_eq!(item_type_for(&EnrichOperation::AugmentBindings), "memory");
         assert_eq!(item_type_for(&EnrichOperation::BodyExtract), "memory");
+    }
+
+    // v1.1.1 (P2): prefixed re-embed keys override the operation default so
+    // prune_dead_orphans never reaps entity/chunk rows as orphaned memories.
+    #[test]
+    fn item_type_for_key_honours_reembed_prefixes() {
+        assert_eq!(item_type_for_key("plain-memory-name", "memory"), "memory");
+        assert_eq!(
+            item_type_for_key("entity:tokio-runtime", "memory"),
+            "entity"
+        );
+        assert_eq!(item_type_for_key("chunk:42", "memory"), "chunk");
+        assert_eq!(item_type_for_key("some-entity", "entity"), "entity");
     }
 
     #[test]

@@ -31,10 +31,16 @@ use serde::Serialize;
     # Batch rename only edges whose source is a 'tool' entity\n  \
     sqlite-graphrag reclassify-relation \\\n  \
         --from-relation uses --to-relation depends_on --batch \\\n  \
-        --filter-source-type tool\n\n\
+        --filter-source-type tool\n\n  \
+    # Migrate edges stored with a LITERAL hyphenated relation (P4):\n  \
+    # --from-relation normalizes 'applies-to' to 'applies_to' and never\n  \
+    # matches the raw stored value; --literal-from matches it verbatim.\n  \
+    sqlite-graphrag reclassify-relation \\\n  \
+        --literal-from applies-to --to-relation applies_to --batch\n\n\
 NOTE:\n  \
-    Single mode requires --source, --target and --from-relation.\n  \
-    Batch mode requires --from-relation, --to-relation and --batch.\n  \
+    Single mode requires --source, --target and --from-relation (or --literal-from).\n  \
+    Batch mode requires --from-relation (or --literal-from), --to-relation and --batch.\n  \
+    --from-relation and --literal-from are mutually exclusive; exactly one is required.\n  \
     --filter-source-type and --filter-target-type are only effective in batch mode.")]
 pub struct ReclassifyRelationArgs {
     /// Source entity name (single mode). Mutually exclusive with --batch.
@@ -43,9 +49,23 @@ pub struct ReclassifyRelationArgs {
     /// Target entity name (single mode). Mutually exclusive with --batch.
     #[arg(long, conflicts_with = "batch", value_name = "ENTITY")]
     pub target: Option<String>,
-    /// Current relation type to rename. Required in both single and batch modes.
-    #[arg(long, value_parser = crate::parsers::parse_relation, value_name = "RELATION")]
-    pub from_relation: String,
+    /// Current relation type to rename (normalized: hyphens become
+    /// underscores at the CLI boundary). Required in both single and batch
+    /// modes unless --literal-from is given.
+    #[arg(
+        long,
+        value_parser = crate::parsers::parse_relation,
+        value_name = "RELATION",
+        required_unless_present = "literal_from",
+        conflicts_with = "literal_from"
+    )]
+    pub from_relation: Option<String>,
+    /// v1.1.1 (P4): current relation type to rename, matched LITERALLY —
+    /// no normalization is applied, so edges stored with hyphenated values
+    /// (e.g. `applies-to`) become reachable. Mutually exclusive with
+    /// --from-relation.
+    #[arg(long, value_name = "RELATION")]
+    pub literal_from: Option<String>,
     /// New relation type to assign. Required in both single and batch modes.
     #[arg(long, value_parser = crate::parsers::parse_relation, value_name = "RELATION")]
     pub to_relation: String,
@@ -85,6 +105,21 @@ struct ReclassifyRelationResponse {
     elapsed_ms: u64,
 }
 
+impl ReclassifyRelationArgs {
+    /// v1.1.1 (P4): the relation value used in every WHERE clause.
+    ///
+    /// `--literal-from` wins and is matched VERBATIM (no normalization);
+    /// otherwise the clap-normalized `--from-relation` applies. Clap
+    /// guarantees exactly one of the two is present
+    /// (`required_unless_present` + `conflicts_with`).
+    fn effective_from(&self) -> &str {
+        self.literal_from
+            .as_deref()
+            .or(self.from_relation.as_deref())
+            .unwrap_or_default()
+    }
+}
+
 pub fn run(args: ReclassifyRelationArgs) -> Result<(), AppError> {
     let inicio = std::time::Instant::now();
     let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
@@ -93,13 +128,17 @@ pub fn run(args: ReclassifyRelationArgs) -> Result<(), AppError> {
     crate::storage::connection::ensure_db_ready(&paths)?;
 
     // Emit warnings for non-canonical relation values.
-    crate::parsers::warn_if_non_canonical(&args.from_relation);
+    crate::parsers::warn_if_non_canonical(args.effective_from());
     crate::parsers::warn_if_non_canonical(&args.to_relation);
 
-    // Reject same-value renames: nothing to do and would silently remove duplicates.
-    if args.from_relation == args.to_relation {
+    // Reject same-value renames: nothing to do and would silently remove
+    // duplicates. The comparison uses the EFFECTIVE from value, so migrating
+    // a literal hyphenated relation onto its normalized form (e.g.
+    // `--literal-from applies-to --to-relation applies_to`) is a VALID
+    // migration, not an equality.
+    if args.effective_from() == args.to_relation {
         return Err(AppError::Validation(
-            "--from-relation and --to-relation must be different".to_string(),
+            "--from-relation/--literal-from and --to-relation must be different".to_string(),
         ));
     }
 
@@ -164,14 +203,14 @@ fn run_single(
     let original_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM relationships
          WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3 AND namespace = ?4",
-        params![source_id, target_id, args.from_relation, namespace],
+        params![source_id, target_id, args.effective_from(), namespace],
         |r| r.get(0),
     )?;
 
     if original_count == 0 {
         return Err(AppError::NotFound(format!(
             "edge '{source_name}' --[{}]--> '{target_name}' not found in namespace '{namespace}'",
-            args.from_relation
+            args.effective_from()
         )));
     }
 
@@ -197,7 +236,7 @@ fn run_single(
             args.to_relation,
             source_id,
             target_id,
-            args.from_relation,
+            args.effective_from(),
             namespace
         ],
     )?;
@@ -206,7 +245,7 @@ fn run_single(
     let deleted = tx.execute(
         "DELETE FROM relationships
          WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3 AND namespace = ?4",
-        params![source_id, target_id, args.from_relation, namespace],
+        params![source_id, target_id, args.effective_from(), namespace],
     )?;
 
     tx.commit()?;
@@ -248,21 +287,21 @@ fn run_batch(
                  JOIN entities tgt ON tgt.id = r.target_id
                  WHERE r.relation = ?1 AND r.namespace = ?2{source_filter}{target_filter}"
             ),
-            params![args.from_relation, namespace],
+            params![args.effective_from(), namespace],
             |r| r.get(0),
         )?
     } else {
         conn.query_row(
             "SELECT COUNT(*) FROM relationships
              WHERE relation = ?1 AND namespace = ?2",
-            params![args.from_relation, namespace],
+            params![args.effective_from(), namespace],
             |r| r.get(0),
         )?
     };
 
     if original_count == 0 {
         tracing::warn!(target: "reclassify_relation",
-            from_relation = %args.from_relation,
+            from_relation = %args.effective_from(),
             namespace = %namespace,
             "reclassify-relation batch matched zero edges — verify --from-relation value"
         );
@@ -292,7 +331,7 @@ fn run_batch(
                  WHERE r.relation = ?1 AND r.namespace = ?2{source_filter}{target_filter}"
             ))?;
             let collected: Vec<i64> = stmt
-                .query_map(params![args.from_relation, namespace], |r| r.get(0))?
+                .query_map(params![args.effective_from(), namespace], |r| r.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
             collected
         };
@@ -313,7 +352,7 @@ fn run_batch(
             "UPDATE OR IGNORE relationships
              SET relation = ?1
              WHERE relation = ?2 AND namespace = ?3",
-            params![args.to_relation, args.from_relation, namespace],
+            params![args.to_relation, args.effective_from(), namespace],
         )?
     };
 
@@ -328,12 +367,12 @@ fn run_batch(
                      WHERE r.relation = ?1 AND r.namespace = ?2{source_filter}{target_filter}
                  )"
             ),
-            params![args.from_relation, namespace],
+            params![args.effective_from(), namespace],
         )?
     } else {
         tx.execute(
             "DELETE FROM relationships WHERE relation = ?1 AND namespace = ?2",
-            params![args.from_relation, namespace],
+            params![args.effective_from(), namespace],
         )?
     };
 
@@ -360,7 +399,7 @@ fn emit_response(
 ) -> Result<(), AppError> {
     let response = ReclassifyRelationResponse {
         action: action.to_string(),
-        from_relation: args.from_relation.clone(),
+        from_relation: args.effective_from().to_string(),
         to_relation: args.to_relation.clone(),
         count,
         merged_duplicates,
@@ -373,7 +412,7 @@ fn emit_response(
         OutputFormat::Text | OutputFormat::Markdown => {
             output::emit_text(&format!(
                 "{action}: {count} edges '{}' → '{}' [{namespace}] (duplicates merged: {merged_duplicates})",
-                args.from_relation, args.to_relation
+                args.effective_from(), args.to_relation
             ));
         }
     }
@@ -470,5 +509,164 @@ mod tests {
             from == to,
             "same-value rename must be caught before DB access"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // v1.1.1 (P4): --literal-from — filtro sem normalização
+    // -----------------------------------------------------------------------
+
+    fn base_args() -> ReclassifyRelationArgs {
+        ReclassifyRelationArgs {
+            source: None,
+            target: None,
+            from_relation: None,
+            literal_from: None,
+            to_relation: "applies_to".to_string(),
+            batch: true,
+            filter_source_type: None,
+            filter_target_type: None,
+            dry_run: false,
+            namespace: Some("global".to_string()),
+            format: OutputFormat::Json,
+            json: true,
+            db: None,
+        }
+    }
+
+    #[test]
+    fn effective_from_prefers_literal_and_falls_back_to_normalized() {
+        let mut args = base_args();
+        args.from_relation = Some("applies_to".to_string());
+        assert_eq!(args.effective_from(), "applies_to");
+
+        args.literal_from = Some("applies-to".to_string());
+        assert_eq!(
+            args.effective_from(),
+            "applies-to",
+            "literal value must win and stay verbatim"
+        );
+
+        // Migração literal→normalizado é VÁLIDA (não é igualdade).
+        assert_ne!(args.effective_from(), args.to_relation);
+    }
+
+    fn setup_migrated_db() -> (tempfile::TempDir, rusqlite::Connection) {
+        crate::storage::connection::register_vec_extension();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let mut conn = rusqlite::Connection::open(&db_path).expect("open");
+        crate::migrations::runner().run(&mut conn).expect("migrate");
+        (tmp, conn)
+    }
+
+    #[test]
+    fn literal_from_migrates_hyphenated_edge_unreachable_by_normalized_filter() {
+        let (_tmp, mut conn) = setup_migrated_db();
+        conn.execute(
+            "INSERT INTO entities (namespace, name, type) VALUES ('global','ent-a','concept')",
+            [],
+        )
+        .unwrap();
+        let a = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO entities (namespace, name, type) VALUES ('global','ent-b','concept')",
+            [],
+        )
+        .unwrap();
+        let b = conn.last_insert_rowid();
+        // Aresta gravada com o valor LITERAL com hífen — inalcançável pelo
+        // --from-relation (que normaliza para 'applies_to' na borda clap).
+        conn.execute(
+            "INSERT INTO relationships (namespace, source_id, target_id, relation, weight) \
+             VALUES ('global', ?1, ?2, 'applies-to', 0.5)",
+            params![a, b],
+        )
+        .unwrap();
+
+        let mut args = base_args();
+        args.literal_from = Some("applies-to".to_string());
+        run_batch(
+            args,
+            std::time::Instant::now(),
+            "global".to_string(),
+            &mut conn,
+        )
+        .expect("batch literal migration");
+
+        let migrated: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM relationships WHERE relation = 'applies_to'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(migrated, 1, "hyphenated edge must be migrated");
+        let leftover: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM relationships WHERE relation = 'applies-to'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0, "no literal edge may remain");
+    }
+
+    #[test]
+    fn cli_rejects_literal_from_combined_with_from_relation() {
+        use clap::Parser;
+        let err = match crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "reclassify-relation",
+            "--from-relation",
+            "mentions",
+            "--literal-from",
+            "applies-to",
+            "--to-relation",
+            "related",
+            "--batch",
+        ]) {
+            Err(e) => e,
+            Ok(_) => panic!("mutually exclusive flags must fail to parse"),
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn cli_requires_one_of_from_relation_or_literal_from() {
+        use clap::Parser;
+        let err = match crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "reclassify-relation",
+            "--to-relation",
+            "related",
+            "--batch",
+        ]) {
+            Err(e) => e,
+            Ok(_) => panic!("one of the from flags is required"),
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn cli_accepts_literal_from_alone_and_keeps_it_verbatim() {
+        use clap::Parser;
+        let parsed = crate::cli::Cli::try_parse_from([
+            "sqlite-graphrag",
+            "reclassify-relation",
+            "--literal-from",
+            "applies-to",
+            "--to-relation",
+            "applies_to",
+            "--batch",
+        ])
+        .expect("literal-from alone must parse");
+        match parsed.command {
+            Some(crate::cli::Commands::ReclassifyRelation(a)) => {
+                assert_eq!(a.literal_from.as_deref(), Some("applies-to"));
+                assert!(a.from_relation.is_none());
+                assert_eq!(a.effective_from(), "applies-to");
+            }
+            _ => unreachable!("unexpected command"),
+        }
     }
 }

@@ -101,7 +101,12 @@ This section updates the framework to cover the documentation generated for the 
 - New ADR: ADR-0059 (EN + PT-BR); docs/decisions/INDEX.md updated.
 - Updated: README, CHANGELOG, AGENTS, INTEGRATIONS (root EN+PT); docs/AGENTS, MIGRATION (EN+PT); DOCUMENTATION_FRAMEWORK; llms.txt, llms.pt-BR.txt, llms-full.txt.
 
-### Documentation Drift Status (as of v1.0.99)
+### v1.1.01 — Production-Database Audit Remediation (12-priority roadmap, gaps.md)
+- Official release name is v1.1.01; the crate manifest carries `version = "1.1.1"` (SemVer rejects a leading zero in the patch component). Schema stays v15 (no migration). Binary ~19 MiB.
+- New command: `graph recompute-degree` (P3) reconciles the `entities.degree` cache from the real `relationships` rows; new schema `docs/schemas/graph-recompute-degree.schema.json`.
+- New flags: `--target` (`enrich --operation re-embed`), `--literal-from` (`reclassify-relation`), `--ids`/`--into-id` (`merge-entities`, response gains required `target_id`), `--id` (`rename-entity`), `--name-prefix` (`ingest`).
+- Coverage observability (P6): `health` and `embedding status` gain `*_missing` counters (LEFT JOIN, absent embedding table reports ALL missing); `embedding-status.schema.json` and `health.schema.json` updated.
+- Exit code 6 limit errors are fully typed (structured message instead of a generic payload error).
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|

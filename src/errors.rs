@@ -99,8 +99,42 @@ pub enum AppError {
     NamespaceError(String),
 
     /// Payload exceeded one of the configured body, name or batch limits. Maps to exit code `6`.
+    ///
+    /// v1.1.1 (P11): kept for caps other than the body-bytes and chunk-count
+    /// ceilings, which now have the typed [`Self::BodyTooLarge`] and
+    /// [`Self::TooManyChunks`] variants so the operator can tell WHICH cap
+    /// fired without parsing the message.
     #[error("limit exceeded: {0}")]
     LimitExceeded(String),
+
+    /// Body payload exceeded [`crate::constants::MAX_MEMORY_BODY_LEN`] bytes.
+    /// Maps to exit code `6` (same contract as [`Self::LimitExceeded`]).
+    ///
+    /// v1.1.1 (P11): the two independent write ceilings — body bytes and chunk
+    /// count — used to collapse into the generic `LimitExceeded` string, so an
+    /// operator hitting exit 6 could not tell WHICH cap fired. This variant
+    /// carries the measured size and the cap, and the message names the
+    /// constant, so both the stderr line and the JSON envelope identify the
+    /// ceiling deterministically (never by substring matching).
+    #[error(
+        "limit exceeded: body is {bytes} bytes, above the {limit}-byte cap \
+         (MAX_MEMORY_BODY_LEN); split the content into multiple memories"
+    )]
+    BodyTooLarge { bytes: u64, limit: u64 },
+
+    /// Chunking produced more chunks than
+    /// [`crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS`]. Maps to exit
+    /// code `6` (same contract as [`Self::LimitExceeded`]).
+    ///
+    /// v1.1.1 (P11): counterpart of [`Self::BodyTooLarge`] for the chunk-count
+    /// ceiling. Carries the measured chunk count and the cap so the operator
+    /// can distinguish a chunk overflow from a byte overflow on exit 6.
+    #[error(
+        "limit exceeded: document produces {chunks} chunks, above the \
+         {limit}-chunk cap (REMEMBER_MAX_SAFE_MULTI_CHUNKS); split the \
+         document before writing"
+    )]
+    TooManyChunks { chunks: usize, limit: usize },
 
     /// Low-level SQLite error propagated from `rusqlite`. Maps to exit code `10`.
     #[error("database error: {0}")]
@@ -294,6 +328,8 @@ impl AppError {
             Self::EntityNotYetMaterialized { .. } => 4,
             Self::NamespaceError(_) => 5,
             Self::LimitExceeded(_) => 6,
+            Self::BodyTooLarge { .. } => 6,
+            Self::TooManyChunks { .. } => 6,
             Self::Database(_) => 10,
             Self::Embedding(_) => 11,
             Self::VecExtension(_) => 12,
@@ -390,6 +426,8 @@ impl AppError {
                 | Self::MemoryNotFoundById { .. }
                 | Self::NamespaceError(_)
                 | Self::LimitExceeded(_)
+                | Self::BodyTooLarge { .. }
+                | Self::TooManyChunks { .. }
                 | Self::VecExtension(_)
                 | Self::PreFlightFailed { .. }
                 | Self::ProviderError { .. }
@@ -422,6 +460,12 @@ impl AppError {
             }
             Self::LimitExceeded(_) => {
                 Some("split the input into smaller memories or raise the documented cap before retrying")
+            }
+            Self::BodyTooLarge { .. } => {
+                Some("the body-bytes cap (MAX_MEMORY_BODY_LEN) fired; split the content into multiple memories or use --body-file")
+            }
+            Self::TooManyChunks { .. } => {
+                Some("the chunk-count cap (REMEMBER_MAX_SAFE_MULTI_CHUNKS) fired; split the document into smaller memories before writing")
             }
             Self::Embedding(_) => Some(
                 "verify the embedding backend and OPENROUTER_API_KEY; re-run `enrich --operation re-embed` once resolved",
@@ -492,6 +536,8 @@ impl AppError {
             }
             Self::NamespaceError(msg) => pt::namespace_error(msg),
             Self::LimitExceeded(msg) => pt::limit_exceeded(msg),
+            Self::BodyTooLarge { bytes, limit } => pt::body_too_large(*bytes, *limit),
+            Self::TooManyChunks { chunks, limit } => pt::too_many_chunks(*chunks, *limit),
             Self::Database(e) => pt::database(&e.to_string()),
             Self::Embedding(msg) => pt::embedding(msg),
             Self::VecExtension(msg) => pt::vec_extension(msg),
@@ -579,6 +625,97 @@ mod tests {
             AppError::LimitExceeded("body too large".into()).exit_code(),
             6
         );
+    }
+
+    // v1.1.1 (P11): both typed ceiling variants keep the exit 6 contract.
+    #[test]
+    fn exit_code_body_too_large_and_too_many_chunks_return_6() {
+        assert_eq!(
+            AppError::BodyTooLarge {
+                bytes: 600_000,
+                limit: 512_000
+            }
+            .exit_code(),
+            6
+        );
+        assert_eq!(
+            AppError::TooManyChunks {
+                chunks: 700,
+                limit: 512
+            }
+            .exit_code(),
+            6
+        );
+    }
+
+    // v1.1.1 (P11): the message identifies WHICH cap fired, with the measured
+    // value and the limit — bytes vs chunks are distinguishable without
+    // substring classification of a generic string.
+    #[test]
+    fn body_too_large_message_identifies_bytes_cap() {
+        let err = AppError::BodyTooLarge {
+            bytes: 600_000,
+            limit: 512_000,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("limit exceeded"), "obtido: {msg}");
+        assert!(msg.contains("600000 bytes"), "obtido: {msg}");
+        assert!(msg.contains("512000-byte cap"), "obtido: {msg}");
+        assert!(msg.contains("MAX_MEMORY_BODY_LEN"), "obtido: {msg}");
+        assert!(!msg.contains("chunk"), "obtido: {msg}");
+    }
+
+    #[test]
+    fn too_many_chunks_message_identifies_chunk_cap() {
+        let err = AppError::TooManyChunks {
+            chunks: 700,
+            limit: 512,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("limit exceeded"), "obtido: {msg}");
+        assert!(msg.contains("700 chunks"), "obtido: {msg}");
+        assert!(msg.contains("512-chunk cap"), "obtido: {msg}");
+        assert!(
+            msg.contains("REMEMBER_MAX_SAFE_MULTI_CHUNKS"),
+            "obtido: {msg}"
+        );
+        assert!(!msg.contains("byte cap"), "obtido: {msg}");
+    }
+
+    #[test]
+    fn typed_limit_variants_are_permanent_with_suggestion() {
+        let body = AppError::BodyTooLarge { bytes: 1, limit: 1 };
+        let chunks = AppError::TooManyChunks {
+            chunks: 1,
+            limit: 1,
+        };
+        assert!(body.is_permanent());
+        assert!(chunks.is_permanent());
+        assert!(!body.is_retryable());
+        assert!(!chunks.is_retryable());
+        assert!(body.suggestion().unwrap().contains("MAX_MEMORY_BODY_LEN"));
+        assert!(chunks
+            .suggestion()
+            .unwrap()
+            .contains("REMEMBER_MAX_SAFE_MULTI_CHUNKS"));
+    }
+
+    #[test]
+    fn typed_limit_variants_localize_to_pt() {
+        let body = AppError::BodyTooLarge {
+            bytes: 600_000,
+            limit: 512_000,
+        };
+        let pt = body.localized_message_for(crate::i18n::Language::Portuguese);
+        assert!(pt.contains("limite excedido"), "obtido: {pt}");
+        assert!(pt.contains("600000"), "obtido: {pt}");
+        let chunks = AppError::TooManyChunks {
+            chunks: 700,
+            limit: 512,
+        };
+        let pt = chunks.localized_message_for(crate::i18n::Language::Portuguese);
+        assert!(pt.contains("limite excedido"), "obtido: {pt}");
+        assert!(pt.contains("700"), "obtido: {pt}");
     }
 
     #[test]

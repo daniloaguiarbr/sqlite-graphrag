@@ -4,13 +4,14 @@
   "title": "MergeEntitiesResponse",
   "description": "Response emitted by `sqlite-graphrag merge-entities --json` on stdout as a single JSON line.",
   "type": "object",
-  "required": ["action", "sources", "target", "namespace", "relationships_moved", "entities_removed", "elapsed_ms"],
+  "required": ["action", "sources", "target", "namespace", "target_id", "relationships_moved", "entities_removed", "elapsed_ms"],
   "additionalProperties": false,
   "properties": {
     "action":               { "type": "string", "const": "merged", "description": "Always 'merged' on success." },
     "sources":              { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Names of the source entities that were merged into the target." },
     "target":               { "type": "string", "description": "Name of the surviving target entity after the merge." },
     "namespace":            { "type": "string", "description": "Namespace in which the merge was performed." },
+    "target_id":            { "type": "integer", "description": "v1.1.1 (P5): resolved target entity ID, echoed for unambiguous auditing." },
     "relationships_moved":  { "type": "integer", "minimum": 0, "description": "Number of graph relationships re-pointed to the target entity." },
     "entities_removed":     { "type": "integer", "minimum": 0, "description": "Number of source entities permanently removed after the merge." },
     "elapsed_ms":           { "type": "integer", "minimum": 0, "description": "Handler wall-clock time in milliseconds." }

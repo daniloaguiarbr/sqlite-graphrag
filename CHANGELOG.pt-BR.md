@@ -3,6 +3,29 @@ Leia este documento em [inglês (EN)](CHANGELOG.md).
 
 # Changelog
 
+## [1.1.01] - 2026-07-02
+
+Fecha o roteiro de 12 prioridades catalogado no `gaps.md` a partir da auditoria do banco de produção: vetores de entidade/chunk passam a ser gravados e reprocessados pelo mesmo caminho REST OpenRouter das memórias, o cache `degree` torna-se reconciliável, relações literais (com hífen) tornam-se alcançáveis, a manutenção de entidades ganha seleção por ID, a cobertura torna-se observável e os erros de teto exit 6 são totalmente tipados. O schema permanece na versão 15. Nota: o nome oficial do release é v1.1.01; o manifest do crate carrega `version = "1.1.1"` porque o parser SemVer rejeita zero à esquerda no componente patch.
+
+### Corrigido
+- P1 — vetores de entidade não são mais silenciosamente pulados na escrita: com `--embedding-backend openrouter` a chain de embedding de entidade resolve para `[OpenRouter]` mesmo com `--llm-backend none` (REST, sem subprocesso), e um vetor vazio nunca persiste linha — `upsert_entity_vec`, `upsert_chunk_vec` e `memories::upsert_vec` ganham guarda de embedding vazio para que itens sem vetor permaneçam visíveis ao backfill do re-embed em vez de mascarados por um BLOB vazio.
+- P10 — os predicados do `re-embed` selecionam linhas cujo `dim` armazenado diverge do `--embedding-dim` configurado (ou cujo blob está vazio), não apenas linhas ausentes, nas três tabelas de vetor (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`); vetores de dimensão legada finalmente são regenerados.
+- P4 — `reclassify-relation --literal-from` casa a relação armazenada VERBATIM (sem normalização hífen→underscore na borda clap), tornando alcançáveis arestas legadas com hífen (ex.: `applies-to`); mutuamente exclusiva com `--from-relation`, e a guarda from==to compara o literal cru com o `--to-relation` normalizado, então `--literal-from applies-to --to-relation applies_to` é uma migração válida.
+- P11 — os tetos de bytes/chunks levantam erros tipados com contexto acionável em vez de string genérica: `AppError::BodyTooLarge { bytes, limit }` e `AppError::TooManyChunks { chunks, limit }` (exit 6 preservado, mensagens PT-BR via `i18n`), substituindo `LimitExceeded` em todos os call-sites de tamanho de corpo (`remember`, `edit`, `ingest`, template de prompt do `enrich`).
+- Task 8 — `cargo doc --no-deps` emite ZERO warnings: os links do doc de módulo do `chat_api` agora usam caminhos completos `crate::…` (o rustdoc resolve docs mesclados outer+inner no escopo do `lib.rs`), e docs públicas do `embedding_api` não fazem mais link intra-doc para itens privados.
+
+### Adicionado
+- P2 — backfill retroativo de embeddings: `enrich --operation re-embed --target memories|entities|chunks|all` (default `memories`, totalmente retrocompatível). Novos scanners para entidades/chunks sem vetor vivo, chaves de fila prefixadas `entity:`/`chunk:` com `item_type` por chave, dispatch por prefixo dentro de `call_reembed`, e `count_operation_backlog` reporta o `scan_backlog` por alvo no `--status` (paridade GAP-SG-77 preservada via predicados compartilhados).
+- P3 — `graph recompute-degree`: reconcilia o cache `entities.degree` com a contagem real de arestas numa única transação IMMEDIATE, por namespace (ou todos), com `--dry-run` e o envelope `{namespace, dry_run, total, updated, zeroed, unchanged, elapsed_ms}`. Semântica alinhada ao helper canônico `recalculate_degree` (self-loop conta uma vez).
+- P5 — desambiguação por ID na manutenção de entidades: `merge-entities --ids/--into-id` e `rename-entity --id`, com escopo de namespace, para que nomes duplicados entre namespaces deixem de bloquear merges/renomeações.
+- P6 — observabilidade de cobertura real: `health --json` ganha `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` e os campos por tabela `vec_*_coverage_pct`; `embedding status --json` ganha os contadores `*_missing` por tabela.
+- P12 — `ingest --name-prefix <PREFIX>`: prefixo kebab-case aplicado a todo nome de memória derivado, com o orçamento da parte derivada reduzido para que `prefixo + derivado` sempre respeite o teto de 80 caracteres.
+
+### Alterado
+- P7 — a desserialização de `EntityType` é um `Deserialize` manual com erro de borda rico (13 valores válidos + dicas) exposto como erro de Validation (exit 1) com validação precoce em `remember --entities-file`, em vez de erro serde/Json cru (exit 20); os vocabulários canônicos (tipos de entidade, relações) e a semântica de namespaces estão documentados.
+- O `User-Agent` HTTP do OpenRouter agora é derivado de `CARGO_PKG_VERSION` em tempo de build (`sqlite-graphrag/1.1.1`), então não pode mais divergir da versão do crate como acontecia antes do GAP-SG-75.
+
+
 ## [1.1.0] - 2026-07-01
 
 Resolve o backlog dead-letter do enrichment na raiz: completions truncadas do OpenRouter são detectadas e retentadas com orçamento maior, a classificação de retry de erro é 100% tipada (sem casar substring de mensagem), o cliente HTTP do OpenRouter é desduplicado num módulo compartilhado, e o loop de dequeue da fila fica limitado sob contenção de lock. O schema permanece na versão 15 (a fila sidecar do enrich ganha colunas de diagnóstico via ALTER idempotente).

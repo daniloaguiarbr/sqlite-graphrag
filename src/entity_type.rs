@@ -11,9 +11,7 @@ use crate::errors::AppError;
 ///
 /// Values are serialized as lowercase strings (`"person"`, `"organization"`,
 /// etc.) matching the pre-enum wire format and the SQLite `type` column.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, clap::ValueEnum,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 #[clap(rename_all = "snake_case")]
 pub enum EntityType {
@@ -112,6 +110,23 @@ impl EntityType {
     }
 }
 
+/// v1.1.1 (P7, Limitação 9): manual `Deserialize` that delegates to
+/// [`std::str::FromStr`], so EVERY JSON entry point (`--graph-stdin`,
+/// `--entities-file`, `--graph-file`, enrich payloads) rejects an invalid
+/// `entity_type` EARLY — before any embedding — with the full list of the 13
+/// valid values and the memory-type→entity-type hints (`reference`→`concept`,
+/// `document`→`file`, `user`→`person`), instead of serde's terse
+/// `unknown variant`. Also case-insensitive, matching the CLI parse path.
+impl<'de> serde::Deserialize<'de> for EntityType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<EntityType>().map_err(serde::de::Error::custom)
+    }
+}
+
 impl std::fmt::Display for EntityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -181,6 +196,43 @@ impl rusqlite::types::ToSql for EntityType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // v1.1.1 (P7): serde now delegates to FromStr — invalid entity_type fails
+    // at the JSON boundary with the full valid-values list and hints.
+    #[test]
+    fn deserialize_invalid_entity_type_lists_valid_values_and_hint() {
+        let err = serde_json::from_str::<EntityType>("\"reference\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("MEMORY type"), "obtido: {msg}");
+        assert!(msg.contains("Try 'concept'"), "obtido: {msg}");
+        assert!(msg.contains("issue_tracker"), "obtido: {msg}");
+
+        let err = serde_json::from_str::<EntityType>("\"banana\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected one of"), "obtido: {msg}");
+        assert!(msg.contains("dashboard"), "obtido: {msg}");
+    }
+
+    #[test]
+    fn deserialize_valid_and_case_insensitive_entity_type() {
+        assert_eq!(
+            serde_json::from_str::<EntityType>("\"issue_tracker\"").unwrap(),
+            EntityType::IssueTracker
+        );
+        // FromStr lowercases, so serde now accepts mixed case like the CLI.
+        assert_eq!(
+            serde_json::from_str::<EntityType>("\"Tool\"").unwrap(),
+            EntityType::Tool
+        );
+    }
+
+    #[test]
+    fn serialize_stays_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&EntityType::IssueTracker).unwrap(),
+            "\"issue_tracker\""
+        );
+    }
 
     #[test]
     fn from_str_lowercase_roundtrip() {

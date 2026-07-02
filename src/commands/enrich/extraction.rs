@@ -364,9 +364,10 @@ pub(super) fn call_body_enrich(
             })?
             .len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         std::fs::read_to_string(tmpl_path).map_err(|e| {
             AppError::Io(std::io::Error::new(
@@ -503,11 +504,35 @@ pub(super) fn call_body_enrich(
 pub(super) fn call_reembed(
     conn: &Connection,
     namespace: &str,
-    memory_name: &str,
+    item_key: &str,
     paths: &crate::paths::AppPaths,
     llm_backend: crate::cli::LlmBackendChoice,
     embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<EnrichItemResult, AppError> {
+    // v1.1.1 (P2): prefixed keys route to the entity/chunk backfill paths
+    // (`re-embed --target entities|chunks|all`); bare keys keep the
+    // historical memory behaviour, so pre-v1.1.1 queue rows still work.
+    if let Some(entity_name) = item_key.strip_prefix("entity:") {
+        return call_reembed_entity(
+            conn,
+            namespace,
+            entity_name,
+            paths,
+            llm_backend,
+            embedding_backend,
+        );
+    }
+    if let Some(chunk_key) = item_key.strip_prefix("chunk:") {
+        return call_reembed_chunk(
+            conn,
+            namespace,
+            chunk_key,
+            paths,
+            llm_backend,
+            embedding_backend,
+        );
+    }
+    let memory_name = item_key;
     let (memory_id, body, memory_type): (i64, String, String) = conn
         .query_row(
             "SELECT id, COALESCE(body,''), COALESCE(type,'note')
@@ -548,6 +573,133 @@ pub(super) fn call_reembed(
         rels: 0,
         chars_before: Some(body.chars().count()),
         chars_after: Some(body.chars().count()),
+        cost: 0.0,
+        is_oauth: true,
+    })
+}
+
+/// v1.1.1 (P2): rebuilds the vector of a single entity
+/// (`re-embed --target entities`).
+///
+/// Embeds the same text formula the write path uses (the entity name, plus
+/// the description when present) so backfilled vectors are comparable to the
+/// ones produced at write time by `remember`/`ingest`.
+fn call_reembed_entity(
+    conn: &Connection,
+    namespace: &str,
+    entity_name: &str,
+    paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<EnrichItemResult, AppError> {
+    let (entity_id, description, entity_type): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, COALESCE(description,''), type
+             FROM entities
+             WHERE namespace=?1 AND name=?2",
+            rusqlite::params![namespace, entity_name],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::NotFound(format!("entity '{entity_name}' not found"))
+            }
+            other => AppError::Database(other),
+        })?;
+
+    let text = if description.is_empty() {
+        entity_name.to_string()
+    } else {
+        format!("{entity_name} {description}")
+    };
+    let (embedding, backend_kind) = crate::embedder::embed_passage_with_embedding_choice(
+        &paths.models,
+        &text,
+        embedding_backend,
+        llm_backend,
+    )?;
+    if embedding.is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "embedding backend returned an empty vector (chain resolved to none)"
+                .to_string(),
+        });
+    }
+    super::postprocess::record_enrich_backend(backend_kind.as_str());
+    entities::upsert_entity_vec(
+        conn,
+        entity_id,
+        namespace,
+        EntityType::map_to_canonical(&entity_type),
+        &embedding,
+        entity_name,
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: Some(entity_id),
+        entities: 1,
+        rels: 0,
+        chars_before: Some(text.chars().count()),
+        chars_after: Some(text.chars().count()),
+        cost: 0.0,
+        is_oauth: true,
+    })
+}
+
+/// v1.1.1 (P2): rebuilds the vector of a single chunk
+/// (`re-embed --target chunks`). The key carries the `memory_chunks.id`.
+fn call_reembed_chunk(
+    conn: &Connection,
+    namespace: &str,
+    chunk_key: &str,
+    paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<EnrichItemResult, AppError> {
+    let chunk_id: i64 = chunk_key.parse().map_err(|_| {
+        AppError::Validation(format!("invalid chunk id in re-embed key: {chunk_key}"))
+    })?;
+    let (memory_id, chunk_idx, chunk_text): (i64, i32, String) = conn
+        .query_row(
+            "SELECT c.memory_id, c.chunk_idx, c.chunk_text
+             FROM memory_chunks c
+             JOIN memories m ON m.id = c.memory_id
+             WHERE c.id = ?1 AND m.namespace = ?2 AND m.deleted_at IS NULL",
+            rusqlite::params![chunk_id, namespace],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!(
+                "chunk {chunk_id} not found in namespace '{namespace}'"
+            )),
+            other => AppError::Database(other),
+        })?;
+
+    if chunk_text.trim().is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "chunk text is empty".to_string(),
+        });
+    }
+    let (embedding, backend_kind) = crate::embedder::embed_passage_with_embedding_choice(
+        &paths.models,
+        &chunk_text,
+        embedding_backend,
+        llm_backend,
+    )?;
+    if embedding.is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "embedding backend returned an empty vector (chain resolved to none)"
+                .to_string(),
+        });
+    }
+    super::postprocess::record_enrich_backend(backend_kind.as_str());
+    crate::storage::chunks::upsert_chunk_vec(conn, chunk_id, memory_id, chunk_idx, &embedding)?;
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(memory_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: Some(chunk_text.chars().count()),
+        chars_after: Some(chunk_text.chars().count()),
         cost: 0.0,
         is_oauth: true,
     })

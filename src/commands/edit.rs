@@ -135,18 +135,20 @@ pub fn run(
         } else if let Some(path) = &args.body_file {
             let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
             if file_size > MAX_MEMORY_BODY_LEN as u64 {
-                return Err(AppError::LimitExceeded(
-                    crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-                ));
+                return Err(AppError::BodyTooLarge {
+                    bytes: file_size,
+                    limit: MAX_MEMORY_BODY_LEN as u64,
+                });
             }
             std::fs::read_to_string(path).map_err(AppError::Io)?
         } else {
             crate::stdin_helper::read_stdin_with_timeout(60)?
         };
         if b.len() > MAX_MEMORY_BODY_LEN {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: b.len() as u64,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         raw_body = Some(b);
     }

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/daniloaguiarbr/sqlite-graphrag/schemas/graph-recompute-degree.schema.json",
+  "title": "RecomputeDegreeResponse",
+  "description": "v1.1.1 (P3): response emitted by `sqlite-graphrag graph recompute-degree` on stdout as a single JSON line. Summarizes one degree-reconciliation pass over `entities.degree` computed from the real `relationships` rows. Invariant: updated + zeroed + unchanged == total.",
+  "type": "object",
+  "required": ["namespace", "dry_run", "total", "updated", "zeroed", "unchanged", "elapsed_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "namespace": { "type": ["string", "null"], "description": "Namespace filter applied, or null when all namespaces are reconciled." },
+    "dry_run": { "type": "boolean", "description": "True when the pass only reported divergences without writing; the transaction is rolled back." },
+    "total": { "type": "integer", "minimum": 0, "description": "Every entity scanned in the selected scope." },
+    "updated": { "type": "integer", "minimum": 0, "description": "Entities whose stored degree diverged and was reconciled to a non-zero real degree." },
+    "zeroed": { "type": "integer", "minimum": 0, "description": "Entities whose stored degree diverged and was reconciled to zero (no live edges)." },
+    "unchanged": { "type": "integer", "minimum": 0, "description": "Entities whose stored degree already matched the real degree." },
+    "elapsed_ms": { "type": "integer", "minimum": 0, "description": "Wall-clock duration of the command in milliseconds." }
+  }
+}

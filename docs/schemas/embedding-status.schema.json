@@ -29,14 +29,29 @@
       "description": "GAP-SG-41 (v1.0.97): real persisted-vector coverage queried from the vector tables, distinct from the always-empty async `counts` queue. Always present.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["memories_total", "memories_with_vec", "entities_total", "entities_with_vec", "chunks_total", "chunks_with_vec"],
+      "required": ["memories_total", "memories_with_vec", "memories_missing", "entities_total", "entities_with_vec", "entities_missing", "chunks_total", "chunks_with_vec", "chunks_missing"],
       "properties": {
         "memories_total": { "type": "integer", "minimum": 0 },
         "memories_with_vec": { "type": "integer", "minimum": 0 },
+        "memories_missing": {
+          "description": "v1.1.1 (P6b): active memories without a row in memory_embeddings (LEFT JOIN, so orphaned vectors never mask a gap).",
+          "type": "integer",
+          "minimum": 0
+        },
         "entities_total": { "type": "integer", "minimum": 0 },
         "entities_with_vec": { "type": "integer", "minimum": 0 },
+        "entities_missing": {
+          "description": "v1.1.1 (P6b): entities without a row in entity_embeddings.",
+          "type": "integer",
+          "minimum": 0
+        },
         "chunks_total": { "type": "integer", "minimum": 0 },
-        "chunks_with_vec": { "type": "integer", "minimum": 0 }
+        "chunks_with_vec": { "type": "integer", "minimum": 0 },
+        "chunks_missing": {
+          "description": "v1.1.1 (P6b): memory_chunks rows without a row in chunk_embeddings.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     }
   }

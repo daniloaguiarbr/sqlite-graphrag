@@ -67,7 +67,19 @@ pub struct HealthResponse {
     vec_memories_missing: i64,
     vec_memories_orphaned: i64,
     vec_entities_ok: bool,
+    /// v1.1.1 (P6a): entities without a row in entity_embeddings/vec_entities.
+    /// Completeness (coverage), distinct from the table-existence consistency
+    /// reported by `vec_entities_ok`.
+    vec_entities_missing: i64,
     vec_chunks_ok: bool,
+    /// v1.1.1 (P6a): memory_chunks rows without a row in chunk_embeddings/vec_chunks.
+    vec_chunks_missing: i64,
+    /// v1.1.1 (P6a): vector coverage percentages in [0.0, 100.0] — fraction of
+    /// source rows (active memories / entities / chunks) that have a vector.
+    /// 100.0 when there is nothing to cover.
+    vec_memories_coverage_pct: f64,
+    vec_entities_coverage_pct: f64,
+    vec_chunks_coverage_pct: f64,
     fts_ok: bool,
     /// Whether a live FTS5 MATCH query against fts_memories succeeded.
     fts_query_ok: bool,
@@ -218,6 +230,66 @@ fn memory_embedding_health(conn: &rusqlite::Connection) -> (bool, i64, i64, i64)
     (true, total, missing, orphaned)
 }
 
+/// v1.1.1 (P6a): completeness check for entity vectors, mirroring the
+/// `vec_memories_missing` pattern. Returns `(table_ok, missing)` where
+/// `missing` counts entities without a row in the embedding table —
+/// COVERAGE, distinct from the mere table-existence reported by
+/// `vec_entities_ok`.
+fn entity_embedding_health(conn: &rusqlite::Connection) -> (bool, i64) {
+    let Some(table_name) = first_existing_table(conn, ENTITY_EMBEDDING_TABLES) else {
+        return (false, 0);
+    };
+    let missing = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM entities e
+                 LEFT JOIN {table_name} ee ON ee.entity_id = e.id
+                 WHERE ee.entity_id IS NULL"
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    (true, missing)
+}
+
+/// v1.1.1 (P6a): completeness check for chunk vectors. Returns
+/// `(table_ok, missing)` where `missing` counts `memory_chunks` rows without
+/// a row in the chunk embedding table.
+fn chunk_embedding_health(conn: &rusqlite::Connection) -> (bool, i64) {
+    let Some(table_name) = first_existing_table(conn, CHUNK_EMBEDDING_TABLES) else {
+        return (false, 0);
+    };
+    let missing = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM memory_chunks c
+                 LEFT JOIN {table_name} ce ON ce.chunk_id = c.id
+                 WHERE ce.chunk_id IS NULL"
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    (true, missing)
+}
+
+/// v1.1.1 (P6a): coverage percentage in [0.0, 100.0]. 100.0 when there is
+/// nothing to cover (total 0); 0.0 when the vector table itself is absent
+/// but source rows exist.
+fn coverage_pct(table_ok: bool, total: i64, missing: i64) -> f64 {
+    if total <= 0 {
+        return 100.0;
+    }
+    if !table_ok {
+        return 0.0;
+    }
+    let covered = (total - missing).max(0) as f64;
+    (covered / total as f64) * 100.0
+}
+
 pub fn run(args: HealthArgs) -> Result<(), AppError> {
     let start = Instant::now();
     let _ = args.json; // --json is a no-op because output is already JSON by default
@@ -268,7 +340,12 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
             vec_memories_missing: 0,
             vec_memories_orphaned: 0,
             vec_entities_ok: false,
+            vec_entities_missing: 0,
             vec_chunks_ok: false,
+            vec_chunks_missing: 0,
+            vec_memories_coverage_pct: 0.0,
+            vec_entities_coverage_pct: 0.0,
+            vec_chunks_coverage_pct: 0.0,
             fts_ok: false,
             fts_query_ok: false,
             model_ok: false,
@@ -423,9 +500,26 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
 
     let schema_ok = schema_version > 0;
 
-    // Checks vector tables via sqlite_master
-    let vec_entities_ok = first_existing_table(&conn, ENTITY_EMBEDDING_TABLES).is_some();
-    let vec_chunks_ok = first_existing_table(&conn, CHUNK_EMBEDDING_TABLES).is_some();
+    // Checks vector tables via sqlite_master (consistency: table exists)
+    // and counts source rows without a vector (completeness: coverage).
+    let (vec_entities_ok, vec_entities_missing) = entity_embedding_health(&conn);
+    let (vec_chunks_ok, vec_chunks_missing) = chunk_embedding_health(&conn);
+
+    // v1.1.1 (P6a): coverage percentages. The memory total is global (the
+    // vec_memories_missing count above is namespace-agnostic too).
+    let memories_total_global: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    let chunks_total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memory_chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+    let vec_memories_coverage_pct =
+        coverage_pct(vec_memories_ok, memories_total_global, vec_memories_missing);
+    let vec_entities_coverage_pct =
+        coverage_pct(vec_entities_ok, entities_count, vec_entities_missing);
+    let vec_chunks_coverage_pct = coverage_pct(vec_chunks_ok, chunks_total, vec_chunks_missing);
 
     tracing::info!(target: "health", vec_memories_ok = %vec_memories_ok, vec_entities_ok = %vec_entities_ok, vec_missing = vec_memories_missing, vec_orphaned = vec_memories_orphaned, "vector table checks complete");
     let fts_ok = table_exists(&conn, "fts_memories");
@@ -651,7 +745,12 @@ pub fn run(args: HealthArgs) -> Result<(), AppError> {
         vec_memories_missing,
         vec_memories_orphaned,
         vec_entities_ok,
+        vec_entities_missing,
         vec_chunks_ok,
+        vec_chunks_missing,
+        vec_memories_coverage_pct,
+        vec_entities_coverage_pct,
+        vec_chunks_coverage_pct,
         fts_ok,
         fts_query_ok,
         model_ok,
@@ -765,6 +864,69 @@ mod tests {
         assert_eq!(orphaned, 2);
     }
 
+    // v1.1.1 (P6a): a DB with entities/chunks lacking vector rows must report
+    // them as missing — coverage, not just table existence.
+    #[test]
+    fn entity_and_chunk_embedding_health_count_missing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE entities (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE entity_embeddings (
+                entity_id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                embedding BLOB NOT NULL
+            );
+            CREATE TABLE memory_chunks (id INTEGER PRIMARY KEY, memory_id INTEGER);
+            CREATE TABLE chunk_embeddings (
+                chunk_id INTEGER PRIMARY KEY,
+                memory_id INTEGER NOT NULL,
+                embedding BLOB NOT NULL
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entity_embeddings (entity_id, namespace, embedding)
+             VALUES (1, 'global', X'00')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_chunks (id, memory_id) VALUES (10, 1), (11, 1)",
+            [],
+        )
+        .unwrap();
+
+        let (e_ok, e_missing) = entity_embedding_health(&conn);
+        assert!(e_ok, "entity_embeddings exists");
+        assert_eq!(e_missing, 2, "2 of 3 entities lack a vector row");
+        let (c_ok, c_missing) = chunk_embedding_health(&conn);
+        assert!(c_ok, "chunk_embeddings exists");
+        assert_eq!(c_missing, 2, "both chunks lack a vector row");
+    }
+
+    #[test]
+    fn entity_embedding_health_absent_table_reports_not_ok() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE entities (id INTEGER PRIMARY KEY, name TEXT);")
+            .unwrap();
+        let (ok, missing) = entity_embedding_health(&conn);
+        assert!(!ok, "no entity vector table exists");
+        assert_eq!(missing, 0);
+    }
+
+    #[test]
+    fn coverage_pct_boundaries() {
+        assert!((coverage_pct(true, 0, 0) - 100.0).abs() < 1e-9);
+        assert!((coverage_pct(false, 5, 0) - 0.0).abs() < 1e-9);
+        assert!((coverage_pct(true, 4, 1) - 75.0).abs() < 1e-9);
+        assert!((coverage_pct(true, 4, 0) - 100.0).abs() < 1e-9);
+    }
+
     #[test]
     fn first_existing_table_falls_back_to_legacy_vec_name() {
         let conn = Connection::open_in_memory().unwrap();
@@ -793,7 +955,12 @@ mod tests {
             vec_memories_missing: 0,
             vec_memories_orphaned: 0,
             vec_entities_ok: true,
+            vec_entities_missing: 0,
             vec_chunks_ok: true,
+            vec_chunks_missing: 0,
+            vec_memories_coverage_pct: 100.0,
+            vec_entities_coverage_pct: 100.0,
+            vec_chunks_coverage_pct: 100.0,
             fts_ok: true,
             fts_query_ok: true,
             model_ok: false,
@@ -849,6 +1016,12 @@ mod tests {
         assert_eq!(json["vec_memories_ok"], true);
         assert_eq!(json["vec_entities_ok"], true);
         assert_eq!(json["vec_chunks_ok"], true);
+        // v1.1.1 (P6a): coverage fields always serialize (additive contract).
+        assert_eq!(json["vec_entities_missing"], 0);
+        assert_eq!(json["vec_chunks_missing"], 0);
+        assert!((json["vec_memories_coverage_pct"].as_f64().unwrap() - 100.0).abs() < 1e-9);
+        assert!((json["vec_entities_coverage_pct"].as_f64().unwrap() - 100.0).abs() < 1e-9);
+        assert!((json["vec_chunks_coverage_pct"].as_f64().unwrap() - 100.0).abs() < 1e-9);
         assert_eq!(json["fts_ok"], true);
         assert_eq!(json["model_ok"], false);
         assert_eq!(json["db_size_bytes"], 4096u64);
@@ -910,7 +1083,12 @@ mod tests {
             vec_memories_missing: 0,
             vec_memories_orphaned: 0,
             vec_entities_ok: true,
+            vec_entities_missing: 0,
             vec_chunks_ok: true,
+            vec_chunks_missing: 0,
+            vec_memories_coverage_pct: 100.0,
+            vec_entities_coverage_pct: 100.0,
+            vec_chunks_coverage_pct: 100.0,
             fts_ok: true,
             fts_query_ok: true,
             model_ok: true,
@@ -993,7 +1171,12 @@ mod tests {
             vec_memories_missing: 0,
             vec_memories_orphaned: 0,
             vec_entities_ok: true,
+            vec_entities_missing: 0,
             vec_chunks_ok: true,
+            vec_chunks_missing: 0,
+            vec_memories_coverage_pct: 100.0,
+            vec_entities_coverage_pct: 100.0,
+            vec_chunks_coverage_pct: 100.0,
             fts_ok: true,
             fts_query_ok: true,
             model_ok: true,

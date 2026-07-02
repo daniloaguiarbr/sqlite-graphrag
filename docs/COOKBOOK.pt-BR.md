@@ -66,7 +66,7 @@ Em modo estrito, apenas `PATH` é preservado. As vars de custom-provider ficam n
 | --- | --- | --- |
 | `exit 11` com `401 Invalid authentication credentials` | v1.0.82 ou anterior; env_clear descartou o token | Atualizar para v1.0.83 (`cargo install sqlite-graphrag --version 1.0.83 --force`) |
 | `exit 1` com `OAuth-only mandate violated` | `ANTHROPIC_API_KEY` está setada; guard rejeita | Unsetar `ANTHROPIC_API_KEY`; usar `ANTHROPIC_AUTH_TOKEN` em vez |
-| Embedding sucede mas `recall` não retorna nada | Provider retornou dimensionalidade diferente da do banco | Rodar `sqlite-graphrag enrich --operation re-embed --limit 100 --mode codex` para refrescar embeddings na dim ativa do provider |
+| Embedding sucede mas `recall` não retorna nada | Provider retornou dimensionalidade diferente da do banco | Rodar `sqlite-graphrag enrich --operation re-embed --target all --limit 100 --mode codex` para refrescar embeddings na dim ativa do provider (`--target all` desde a v1.1.01; omita em binários mais antigos) |
 | Token aparece em logs do stderr | (nunca deve acontecer; teste de auditoria enforça) | Reportar bug com captura do stderr; o teste no-leak `audit_no_token_leak_in_subprocess_stderr` enforça esse invariante |
 
 
@@ -217,6 +217,17 @@ sqlite-graphrag --embedding-backend openrouter \
 - Receita "Como Bootstrapar O Banco De Memória Em 60 Segundos"
 - Receita "Como Fazer Benchmark De hybrid-search Contra recall Vetorial Puro"
 
+
+## Como Atualizar Para a v1.1.01 (Backfill de Cobertura Vetorial + Manutenção do Grafo)
+- Sem migração de banco; schema permanece em v15. Basta `cargo install sqlite-graphrag --locked --force` (nome de release v1.1.01; versão do `Cargo.toml` é `1.1.1`; binário ~19 MiB).
+- `enrich --operation re-embed` ganha `--target memories|entities|chunks|all` (P2): embeddings de entidades e chunks agora podem receber backfill, e `enrich --status` reporta `scan_backlog` por alvo.
+- Novo comando de manutenção `graph recompute-degree` (P3): recalcula `entities.degree` a partir das arestas reais em transação única; prévia com `--dry-run`; envelope `{total, updated, zeroed, unchanged}`.
+- `reclassify-relation --literal-from` (P4): match verbatim do valor de relação gravado, contornando a normalização do clap — a receita canônica migra arestas legadas com underscore (ex.: `applies_to`) para a forma canônica com hífen.
+- Manutenção de entidades por ID (P5): `merge-entities --ids "1,2,3" --into-id 4` e `rename-entity --id N --new-name x`.
+- Diagnóstico de cobertura vetorial (P6): `health --json` agora emite `vec_memories_missing`/`vec_entities_missing`/`vec_chunks_missing` mais `vec_*_coverage_pct`; `embedding status --json` adiciona `memories_missing`/`entities_missing`/`chunks_missing` em `coverage`.
+- `ingest --name-prefix <prefixo>` (P12): prefixa os nomes das memórias ingeridas para evitar colisões entre projetos que compartilham um namespace.
+- Contexto: o embedding de entidade agora passa pelo REST do OpenRouter mesmo com `--llm-backend none` (P1); o exit 6 agora traz mensagem tipada indicando qual teto estourou — o corpo de 512000 bytes ou o limite de 512 chunks (P11).
+- Veja "Receitas adicionadas na v1.1.01" no fim deste cookbook.
 
 ## Como Atualizar Para a v1.0.99 (Remoção do Degree-Cap — BREAKING)
 - Sem migração de banco; schema permanece em v15. Basta `cargo install sqlite-graphrag --locked --force`.
@@ -2174,7 +2185,7 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Usar Codex em vez de Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`
 - Enriquecer via OpenRouter REST sem CLI local: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model <model> --json` — `--openrouter-model` é obrigatório (sem default; ausência sai com exit 1 antes de qualquer chamada de rede) e a chave vem de `OPENROUTER_API_KEY`; o JUDGE roda sobre `/chat/completions` com `json_schema` strict, e `--openrouter-timeout` tem padrão de 300s (`--openrouter-base-url` opcional)
 - Drenar o backlog até convergir (v1.0.96, sem loop externo): `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --until-empty --rest-concurrency 8 --json` — `--until-empty` escaneia e drena até não restarem itens elegíveis ou `--max-runtime` (padrão 3600s) expirar; a fila dead-letter (`error_class`/`next_retry_at`, terminal `dead` após `--max-attempts`, padrão 8) garante que o conjunto vivo decresce estritamente
-- Inspecionar a fila sem rodar o LLM (v1.0.96): `sqlite-graphrag enrich --status --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json` — contagens read-only (`unbound_backlog`, `scan_backlog` por operação, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); nunca spawna o LLM e nunca adquire o singleton, então é seguro fazer poll durante o drain; o `scan_backlog` (GAP-SG-77, v1.1.0) é o backlog real do banco por operação que um scan enfileiraria — elimina o falso `pending=0` para `entity-descriptions`/`body-enrich`/`re-embed`, e o `state` deriva o `pending-scan` dele
+- Inspecionar a fila sem rodar o LLM (v1.0.96): `sqlite-graphrag enrich --status --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json` — contagens read-only (`unbound_backlog`, `scan_backlog` por operação, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); nunca spawna o LLM e nunca adquire o singleton, então é seguro fazer poll durante o drain; o `scan_backlog` (GAP-SG-77, v1.1.0) é o backlog real do banco por operação que um scan enfileiraria — elimina o falso `pending=0` para `entity-descriptions`/`body-enrich`/`re-embed`, e o `state` deriva o `pending-scan` dele; desde a v1.1.01, o `re-embed` reporta `scan_backlog` por `--target` (memories/entities/chunks)
 - Rodar com workers LLM em paralelo: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 
@@ -2669,3 +2680,80 @@ memórias existentes.
 - `docs/HOW_TO_USE.pt-BR.md` → "O Que Mudou na v1.0.93 — Backend de Embedding
   OpenRouter (GAP-OR-INGEST)"
 - Receita "Como ingerir um diretório de arquivos markdown no grafo"
+
+
+## Receitas adicionadas na v1.1.01
+### Receita — Backfill de Embeddings de Entidades e Chunks com `re-embed --target` (P2)
+```bash
+# Backfill apenas dos embeddings de entidades
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  enrich --operation re-embed --target entities --limit 100 \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+
+# Backfill de tudo em uma passada (memórias + entidades + chunks)
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  enrich --operation re-embed --target all --limit 100 \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+
+# Inspecionar o backlog por alvo sem spawnar o LLM
+sqlite-graphrag enrich --operation re-embed --status \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+```
+- `--target` tem padrão `memories`, preservando o comportamento pré-v1.1.01
+- `--status` reporta `scan_backlog` por alvo, então você sabe quando cada tabela de embedding convergiu para backlog zero
+- Combine com a receita de cobertura vetorial abaixo para decidir qual alvo ainda precisa de trabalho
+
+### Receita — Recalcular Graus de Entidades Após Manutenção em Massa do Grafo (P3)
+```bash
+# Prévia do drift sem escrever
+sqlite-graphrag graph recompute-degree --dry-run --json
+
+# Aplicar — recalculado a partir das arestas reais em transação única
+sqlite-graphrag graph recompute-degree --json
+# {"total":812,"updated":37,"zeroed":4,"unchanged":771}
+```
+- `entities.degree` pode driftar após `prune-relations`, `merge-entities`, `delete-entity` ou `unlink` em massa
+- O envelope reporta `total`, `updated`, `zeroed` (entidades que ficaram sem arestas) e `unchanged`
+- Rode antes de confiar em rankings de `graph entities --sort-by degree`
+
+### Receita — Migrar Relações Legadas com Underscore via `--literal-from` (P4)
+```bash
+# Receita canônica: applies_to (underscore legado) -> applies-to (hífen canônico)
+sqlite-graphrag reclassify-relation \
+  --literal-from "applies_to" --to-relation applies-to --batch --json
+```
+- `--literal-from` casa o valor de relação gravado de forma verbatim, contornando a normalização do clap que reescreveria `applies_to` antes do match
+- Use para qualquer aresta legada cuja grafia gravada difira da forma canônica com hífen
+
+### Receita — Mesclar e Renomear Entidades por ID (P5)
+```bash
+# Mesclar duplicatas por ID quando os nomes são ambíguos
+sqlite-graphrag merge-entities --ids "1,2,3" --into-id 4 --json
+
+# Renomear uma entidade por ID
+sqlite-graphrag rename-entity --id 12 --new-name jwt-auth --json
+```
+- Os IDs vêm de `graph entities --json`; endereçar por ID desambigua entidades com nomes confusos ou fora do kebab-case
+- As formas por nome (`--names`/`--into`, `--name`/`--new-name`) continuam funcionando sem mudança
+
+### Receita — Diagnosticar Cobertura Vetorial com health e embedding status (P6)
+```bash
+sqlite-graphrag health --json | jaq '{vec_memories_missing, vec_entities_missing, vec_chunks_missing, vec_memories_coverage_pct, vec_entities_coverage_pct, vec_chunks_coverage_pct}'
+
+sqlite-graphrag embedding status --json | jaq '.coverage'
+```
+- `health --json` expõe contadores `vec_*_missing` mais percentuais `vec_*_coverage_pct` por tabela de embedding
+- `embedding status --json` reporta `memories_missing`/`entities_missing`/`chunks_missing` em `coverage`
+- Qualquer contador `*_missing` não-zero aponta direto para a receita de `re-embed --target` acima
+
+### Receita — Prefixar Nomes de Memórias Ingeridas por Projeto (P12)
+```bash
+sqlite-graphrag --llm-backend none ingest ./docs \
+  --recursive --pattern "*.md" --name-prefix projeto-x- --json
+```
+- Cada nome de memória ingerida recebe o prefixo, então dois projetos que ingerem `README.md` no mesmo namespace deixam de colidir
+- Combine com `--namespace` quando quiser isolamento em vez de mera desambiguação

@@ -17,7 +17,8 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - USE `--llm-backend` para escolher QUAL subprocesso roda o embedding LLM quando `--embedding-backend llm`: `codex`, `claude`, `opencode`, `none`
 - USE `--extraction-backend` (e `enrich --mode`) para escolher QUAL backend extrai entidades e relações: `codex`, `claude-code`, `opencode` (CLIs headless) ou `openrouter` (REST `/chat/completions`, sem CLI local)
 - SEPARE escrita de enrichment SEMPRE: uma escrita produz embeddings; uma invocação SEPARADA de `enrich` extrai o grafo
-- PASSE `--llm-backend none` em TODA escrita (`remember`, `remember-batch`, `ingest`, `edit`, `restore`) para PULAR o embedding inline de entidades e evitar o timeout do subprocesso codex
+- PASSE `--llm-backend none` em TODA escrita (`remember`, `remember-batch`, `ingest`, `edit`, `restore`) para ELIMINAR o subprocesso LLM e seu timeout; com `--embedding-backend openrouter` os embeddings de entidade e chunk CONTINUAM sendo produzidos, porque a cadeia de embedding de entidade resolve para o REST do OpenRouter mesmo com `--llm-backend none`
+- SAIBA que vetor vazio NUNCA é persistido: a guarda de upsert rejeita embeddings vazios em memórias, entidades e chunks, então a cobertura reportada reflete apenas vetores reais
 - RODE `enrich` somente DEPOIS que a escrita retornar exit 0, como comando DISTINTO, NUNCA encadeado na escrita
 - PARSEIE `backend_invoked` em todo envelope de embedding para CONFIRMAR qual backend realmente rodou
 
@@ -171,6 +172,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - INVOQUE `ingest <DIR> --recursive --pattern "*.md" --mode none` para importar um diretório como body-only, depois enriqueça SEPARADAMENTE
 - SAIBA que `ingest --mode` aceita `none` (padrão body-only), `claude-code`, `codex`; opencode NÃO é um modo de ingest, então enriqueça com opencode em uma etapa SEPARADA
 - USE `--resume` para continuar da fila após interrupção; `--retry-failed` apenas para itens falhados; `--auto-describe` para sintetizar descrições
+- PASSE `--name-prefix <prefixo>` no `ingest` para prefixar os nomes derivados dos arquivos (ex: `--name-prefix projx-` gera `projx-<derivado>`); o prefixo conta no teto de tamanho do nome e vale APENAS para a ingestão de diretório local
 - PASSE `--force-merge` no `ingest` para ATUALIZAR arquivos duplicados em vez de pulá-los; o ingest deduplica por `body_hash`, então um arquivo inalterado é pulado mesmo após renomear
 - SAIBA que o `ingest` divide nativamente um corpo grande demais em múltiplos chunks, então um arquivo acima do limite por corpo é chunkado, NÃO rejeitado
 - RESPEITE o limite de 512000 bytes e 512 chunks por corpo
@@ -203,16 +205,21 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - INVOQUE `graph stats --json` para inspecionar `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - INVOQUE `graph traverse --from <root> --depth <N> --json` para travessia de subgrafo; EXPORTE com `--format json|dot|mermaid --output <path>`
 - INVOQUE `rename-entity --name <old> --new-name <new>` para renomear uma entidade preservando arestas
+- INVOQUE `rename-entity --id <N> --new-name <new>` para renomear por ID e desambiguar entidades homônimas entre namespaces
 - INVOQUE `delete-entity --name <n> --cascade` para deletar uma entidade e suas arestas
 - INVOQUE `merge-entities --names "a,b,c" --into <target>` para mesclar duplicatas
+- INVOQUE `merge-entities --ids 12,17 --into-id 3` para mesclar por ID quando nomes são ambíguos; `--ids`/`--into-id` conflitam com `--names`/`--into` e IDs são globalmente únicos, então dispensam desambiguação de namespace
 - INVOQUE `reclassify --name <n> --new-type <kind>` para uma entidade, ou `--from-type <old> --to-type <new> --batch` para migração de tipo em massa
-- INVOQUE `reclassify-relation --from-relation <old> --to-relation <new> --batch` para migração de tipo de relação em massa; FILTRE com `--filter-source-type` e `--filter-target-type`
+- INVOQUE `reclassify-relation --from-relation <old> --to-relation <new> --batch` para migração de tipo de relação em massa; FILTRE com `--filter-source-type` e `--filter-target-type`; PASSE `--literal-from <valor>` para casar a relação armazenada VERBATIM sem normalização kebab-case (`--from-relation` e `--literal-from` são mutuamente exclusivos e exatamente um é obrigatório; USE `--literal-from applies_to --to-relation applies-to --batch` para migrar arestas legadas com underscore)
 - INVOQUE `prune-relations --relation mentions --dry-run` para preview de arestas de baixo valor, depois remova `--dry-run` com `--yes`
 - INVOQUE `normalize-entities --yes` para normalizar todos os nomes para kebab-case ASCII
 - INVOQUE `prune-ner --entity <n>` para remover bindings NER; `prune-ner --all --yes` para todo o namespace
 - INVOQUE `memory-entities --name <memory>` para lookup forward, ou `--entity <name>` para lookup reverso
 - SAIBA que a escrita no grafo é puramente ADITIVA: NÃO existe cap de grau, então hubs crescem sem limite e nenhuma escrita poda arestas; NORMALIZE somente via comandos de manutenção explícitos (`prune-relations`, `merge-entities`, `normalize-entities`), NUNCA durante uma escrita
+- INVOQUE `graph recompute-degree --json` para recalcular o grau de TODAS as entidades do namespace a partir das arestas vivas em transação única; PASSE `--dry-run` para preview; LEIA o envelope `{total, updated, zeroed, unchanged}` onde `updated + zeroed + unchanged == total`
+- RODE `graph recompute-degree` após `delete-entity`, `merge-entities` ou `prune-relations`, porque o grau armazenado NÃO é recalculado automaticamente pelas operações de manutenção
 - TIPOS canônicos de entidade: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
+- SAIBA que um `entity_type` inválido falha CEDO na desserialização com mensagem listando os 13 valores válidos, antes de qualquer escrita no banco
 - VALIDE nomes de entidade: mínimo 2 chars, sem newlines, sem ALL_CAPS curto de 4 chars ou menos
 - NUNCA use `mentions` como relação padrão
 
@@ -242,6 +249,9 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 - PASSE `--codex-model`, `--claude-model`, `--opencode-model` ou `--openrouter-model` para escolher o modelo de extração compatível com o modo escolhido
 - SAIBA que `--mode openrouter` exige `--openrouter-model` (sem default), lê a chave de `OPENROUTER_API_KEY`, faz uma chamada REST `/chat/completions` SEM CLI local, envia `response_format` json_schema strict com `provider.require_parameters:true`, e cobra tokens via `usage.cost`; os outros três modos são OAuth ou auth próprio zero-token
 - PASSE `--limit N --resume` para `re-embed`; `--retry-failed` para reprocessar apenas itens falhados; `--dry-run` para preview
+- PASSE `--target memories|entities|chunks|all` no `re-embed` para escolher QUAL tabela de vetor recebe o backfill; o padrão é `memories`; `--target` pertence SOMENTE ao `re-embed`
+- SAIBA que os predicados do `re-embed` selecionam vetor AUSENTE, blob VAZIO ou dimensão DIVERGENTE da configurada, então mudar `--embedding-dim` torna todas as linhas antigas elegíveis e o `--status` soma o `scan_backlog` sobre os alvos selecionados por `--target`
+- FÓRMULA BACKFILL COMPLETO: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 enrich --operation re-embed --target all --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --json`, depois CONFIRME a cobertura com `health --json`
 - PASSE `--min-output-chars N` para proteger o comprimento de saída do `body-enrich`; `--fallback-mode codex` para sobreviver a um rate limit do Claude
 - NUNCA rode `enrich` em paralelo contra o mesmo banco; ele adquire um singleton por namespace
 - PASSE `--until-empty` para loopar scan->drain INTERNAMENTE até a fila elegível esvaziar ou `--max-runtime` expirar, SUBSTITUINDO o loop bash externo de drain
@@ -319,12 +329,12 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 
 
 ## Diagnóstico e Manutenção
-- INIT: `sqlite-graphrag init --namespace <ns>`; HEALTH: `sqlite-graphrag health --json | jaq '{integrity_ok, schema_version}'`
+- INIT: `sqlite-graphrag init --namespace <ns>`; HEALTH: `sqlite-graphrag health --json | jaq '{integrity_ok, schema_version, vec_memories_missing, vec_entities_missing, vec_chunks_missing}'`; LEIA `vec_*_coverage_pct` para a cobertura real de vetor por tabela e DISPARE `enrich --operation re-embed --target <alvo>` quando qualquer `vec_*_missing` for maior que zero
 - MIGRATE: `sqlite-graphrag migrate --dry-run --json` para preview, depois `migrate --json` após um upgrade do binário
 - OPTIMIZE: `sqlite-graphrag optimize --json` para refrescar estatísticas do planner; VACUUM: `sqlite-graphrag vacuum --json` após um purge grande
 - FTS: `fts check --json` para integridade, `fts stats --json` para contagens, `fts rebuild --json` quando `health.fts_degraded` for true
 - VEC: `vec orphan-list --json` depois `vec purge-orphan --yes`; `vec stats --json` para saúde de vetor
-- EMBEDDING: `embedding --status --json` para contagens mais um objeto `coverage` reportando as contagens reais de vetor por tabela; `pending-embeddings --status --json` depois `pending-embeddings process --json` para reprocessar falhas
+- EMBEDDING: `embedding --status --json` para contagens mais um objeto `coverage` reportando as contagens reais de vetor por tabela e os contadores `memories_missing`, `entities_missing`, `chunks_missing` que apontam o alvo exato do backfill; `pending-embeddings --status --json` depois `pending-embeddings process --json` para reprocessar falhas
 - SLOTS: `slots status --json` para inspecionar o semáforo do host; `slots release --slot-id <N> --yes` para órfãos
 - PENDING: `pending list --filter-status queued --json`; `pending show <id>`; `pending cleanup --yes`
 - EXPORT: `export --namespace <ns> --type <kind> --json` como NDJSON; STATS: `stats --json` para contagens e tamanhos, incluindo um `total_memories` no topo
@@ -337,7 +347,7 @@ description: Esta skill DEVE ativar para toda operação da CLI sqlite-graphrag 
 
 ## Códigos de Saída e Estratégia de Retry
 - EXIT 0 sucesso; EXIT 1 erro de validação; EXIT 2 parsing de argumento (flag obrigatória ausente); EXIT 3 conflito de lock otimista, recarregue e retente
-- EXIT 4 não encontrado; EXIT 5 erro de namespace; EXIT 6 payload grande demais; EXIT 9 duplicada, use `--force-merge`
+- EXIT 4 não encontrado; EXIT 5 erro de namespace; EXIT 6 payload grande demais — o envelope tipado distingue corpo acima do limite de bytes (reporta `bytes` e `limit`) de excesso de chunks (reporta `chunks` e `limit`), então DIVIDA o corpo em múltiplas memórias; EXIT 9 duplicada, use `--force-merge`
 - EXIT 10 erro de banco, execute `vacuum` mais `health`; EXIT 11 falha de embedding, verifique backend, dimensão e OAuth
 - EXIT 13 falha parcial de batch, reprocesse apenas falhados; EXIT 14 erro de I/O; EXIT 15 banco ocupado (também o dequeue do enrich sob contenção de lock sustentada), amplie `--wait-lock`
 - EXIT 16 falha preflight, corrija config MCP, NUNCA trate como transitório

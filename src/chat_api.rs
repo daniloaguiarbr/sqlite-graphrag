@@ -18,12 +18,14 @@
 //! v1.1.00 (GAP-SG-70/72-chat): the OpenAI-compatible contract surfaces
 //! `choices[].finish_reason` and `usage.{prompt_tokens,completion_tokens}`.
 //! `finish_reason == "length"` means the response was truncated because
-//! `max_tokens` was too small — not a malformed generation. [`Self::complete`]
+//! `max_tokens` was too small — not a malformed generation.
+//! [`OpenRouterChatClient::complete`](crate::chat_api::OpenRouterChatClient::complete)
 //! now detects this BEFORE attempting JSON repair, grows `max_tokens` and
 //! re-issues the request (bounded by
 //! [`crate::constants::ENRICH_MAX_LENGTH_RETRIES`]), and always reports the
 //! diagnostics (`finish_reason`, token counts) to the caller via
-//! [`ChatCompletion`] on success or [`ChatError`] on failure.
+//! [`ChatCompletion`](crate::chat_api::ChatCompletion) on success or
+//! [`ChatError`](crate::chat_api::ChatError) on failure.
 
 use crate::errors::AppError;
 use crate::retry::AttemptOutcome;
@@ -256,7 +258,9 @@ impl OpenRouterChatClient {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
-            .user_agent("sqlite-graphrag/1.1.00")
+            // Derived from the crate version so the UA never drifts again
+            // (GAP-SG-75 recurrence caught at the v1.1.01 release gate).
+            .user_agent(concat!("sqlite-graphrag/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| AppError::Validation(format!("failed to build HTTP client: {e}")))?;
 

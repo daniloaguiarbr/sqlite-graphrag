@@ -493,6 +493,23 @@ pub mod validation {
             format!("limite excedido: {translated}")
         }
 
+        // v1.1.1 (P11): typed ceiling variants. Own pt-BR strings mirroring
+        // the English `#[error]` text of `BodyTooLarge`/`TooManyChunks`,
+        // naming the constant so the operator knows WHICH cap fired.
+        pub fn body_too_large(bytes: u64, limit: u64) -> String {
+            format!(
+                "limite excedido: corpo tem {bytes} bytes, acima do teto de {limit} bytes \
+                 (MAX_MEMORY_BODY_LEN); divida o conteúdo em múltiplas memórias"
+            )
+        }
+
+        pub fn too_many_chunks(chunks: usize, limit: usize) -> String {
+            format!(
+                "limite excedido: documento produz {chunks} chunks, acima do teto de {limit} \
+                 chunks (REMEMBER_MAX_SAFE_MULTI_CHUNKS); divida o documento antes da escrita"
+            )
+        }
+
         pub fn database(err: &str) -> String {
             format!("erro de banco de dados: {err}")
         }

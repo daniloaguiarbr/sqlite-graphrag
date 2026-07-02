@@ -19,11 +19,23 @@ use serde::Serialize;
     # Rename an entity\n  \
     sqlite-graphrag rename-entity --name old-name --new-name new-name\n\n  \
     # Rename with namespace\n  \
-    sqlite-graphrag rename-entity --name auth --new-name authentication --namespace my-project")]
+    sqlite-graphrag rename-entity --name auth --new-name authentication --namespace my-project\n\n  \
+    # Rename by ID (unambiguous when homonyms exist across namespaces)\n  \
+    sqlite-graphrag rename-entity --id 42 --new-name authentication")]
 pub struct RenameEntityArgs {
     /// Current entity name to rename.
-    #[arg(long, value_name = "NAME")]
-    pub name: String,
+    #[arg(
+        long,
+        value_name = "NAME",
+        required_unless_present = "id",
+        conflicts_with = "id"
+    )]
+    pub name: Option<String>,
+    /// v1.1.1 (P5): entity ID to rename. IDs are globally unique, so --id
+    /// disambiguates homonyms across namespaces. Conflicts with --name; the
+    /// entity must belong to the resolved namespace.
+    #[arg(long, value_name = "ID")]
+    pub id: Option<i64>,
     /// New name for the entity.
     #[arg(long, value_name = "NEW_NAME")]
     pub new_name: String,
@@ -47,6 +59,31 @@ struct RenameEntityResponse {
     elapsed_ms: u64,
 }
 
+/// v1.1.1 (P5): resolves an entity ID to `(id, type, stored name)`, enforcing
+/// that the entity exists AND belongs to the namespace — IDs are global, so a
+/// bare existence check could silently cross namespaces.
+fn lookup_entity_by_id(
+    conn: &rusqlite::Connection,
+    namespace: &str,
+    id: i64,
+) -> Result<(i64, EntityType, String), AppError> {
+    let mut stmt = conn
+        .prepare_cached("SELECT id, type, name FROM entities WHERE id = ?1 AND namespace = ?2")?;
+    match stmt.query_row(params![id, namespace], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, EntityType>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    }) {
+        Ok(row) => Ok(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err(AppError::NotFound(format!(
+            "entity id={id} not found in namespace '{namespace}'"
+        ))),
+        Err(e) => Err(AppError::Database(e)),
+    }
+}
+
 pub fn run(
     args: RenameEntityArgs,
     llm_backend: crate::cli::LlmBackendChoice,
@@ -60,29 +97,42 @@ pub fn run(
 
     let mut conn = open_rw(&paths.db)?;
 
-    // Verify source entity exists and fetch its id and type.
-    // Normalize the lookup name to match the normalized stored names.
-    let lookup_name = crate::parsers::normalize_entity_name(&args.name);
-    let row: Option<(i64, EntityType)> = {
-        let mut stmt = conn
-            .prepare_cached("SELECT id, type FROM entities WHERE namespace = ?1 AND name = ?2")?;
-        match stmt.query_row(params![namespace, lookup_name], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, EntityType>(1)?))
-        }) {
-            Ok(row) => Some(row),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(e) => return Err(AppError::Database(e)),
+    // Verify the source entity exists and fetch id, type and stored name —
+    // by ID (v1.1.1 P5, unambiguous across homonyms) or by normalized name.
+    // Existence is validated here, BEFORE any mutation.
+    let (entity_id, entity_type, old_name) = match args.id {
+        Some(id) => lookup_entity_by_id(&conn, &namespace, id)?,
+        None => {
+            let Some(ref raw_name) = args.name else {
+                return Err(AppError::Validation(
+                    "--name or --id is required".to_string(),
+                ));
+            };
+            // Normalize the lookup name to match the normalized stored names.
+            let lookup_name = crate::parsers::normalize_entity_name(raw_name);
+            let mut stmt = conn.prepare_cached(
+                "SELECT id, type FROM entities WHERE namespace = ?1 AND name = ?2",
+            )?;
+            match stmt.query_row(params![namespace, lookup_name], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, EntityType>(1)?))
+            }) {
+                Ok((id, ty)) => (id, ty, lookup_name),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(AppError::NotFound(errors_msg::entity_not_found(
+                        raw_name, &namespace,
+                    )))
+                }
+                Err(e) => return Err(AppError::Database(e)),
+            }
         }
     };
-    let (entity_id, entity_type) = row
-        .ok_or_else(|| AppError::NotFound(errors_msg::entity_not_found(&args.name, &namespace)))?;
 
     // Validate the raw new name first (catches short ALL_CAPS NER noise),
     // then normalize it for storage to preserve the normalized-name invariant.
     entities::validate_entity_name(&args.new_name)?;
     let new_name = crate::parsers::normalize_entity_name(&args.new_name);
 
-    if lookup_name == new_name {
+    if old_name == new_name {
         return Err(AppError::Validation(
             "source and target entity names are identical".to_string(),
         ));
@@ -129,7 +179,7 @@ pub fn run(
 
     let response = RenameEntityResponse {
         action: "renamed".to_string(),
-        old_name: args.name,
+        old_name,
         new_name,
         entity_id,
         namespace: namespace.clone(),
@@ -152,6 +202,70 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // v1.1.1 (P5): ID lookup is namespace-scoped and returns the stored name,
+    // so homonyms across namespaces resolve deterministically.
+    #[test]
+    fn lookup_entity_by_id_disambiguates_homonyms_across_namespaces() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE entities (
+                id INTEGER PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                UNIQUE(namespace, name)
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, namespace, name, type)
+             VALUES (1, 'ns-a', 'auth', 'concept'), (2, 'ns-b', 'auth', 'tool')",
+            [],
+        )
+        .unwrap();
+
+        let (id, ty, name) = lookup_entity_by_id(&conn, "ns-b", 2).unwrap();
+        assert_eq!(id, 2);
+        assert_eq!(name, "auth");
+        assert_eq!(ty, EntityType::Tool);
+
+        let err = lookup_entity_by_id(&conn, "ns-b", 1).unwrap_err();
+        assert_eq!(err.exit_code(), 4, "cross-namespace ID must be NotFound");
+        assert!(err.to_string().contains("id=1"), "obtido: {err}");
+    }
+
+    // v1.1.1 (P5): --name and --id are mutually exclusive at the clap level,
+    // and at least one selector is required.
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: RenameEntityArgs,
+    }
+
+    #[test]
+    fn clap_rejects_name_combined_with_id() {
+        use clap::Parser;
+        let err =
+            match TestCli::try_parse_from(["t", "--name", "auth", "--id", "42", "--new-name", "x"])
+            {
+                Ok(_) => panic!("expected argument conflict"),
+                Err(e) => e,
+            };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn clap_requires_name_or_id() {
+        use clap::Parser;
+        assert!(TestCli::try_parse_from(["t", "--new-name", "x"]).is_err());
+        let ok = match TestCli::try_parse_from(["t", "--id", "7", "--new-name", "x"]) {
+            Ok(cli) => cli,
+            Err(e) => panic!("expected successful parse: {e}"),
+        };
+        assert_eq!(ok.args.id, Some(7));
+        assert!(ok.args.name.is_none());
+    }
 
     #[test]
     fn rename_entity_response_serializes_all_fields() {

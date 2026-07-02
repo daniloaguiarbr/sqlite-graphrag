@@ -5,6 +5,29 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.1.01] - 2026-07-02
+
+Closes the 12-priority roadmap catalogued in `gaps.md` from the production-database audit: entity/chunk vectors are written and backfilled through the same OpenRouter REST path as memories, the `degree` cache is reconcilable, literal (hyphenated) relations become reachable, entity maintenance gains ID-based selection, coverage becomes observable, and the exit-6 limit errors are fully typed. The schema stays at version 15. Note: the official release name is v1.1.01; the crate manifest carries `version = "1.1.1"` because the SemVer parser rejects a leading zero in the patch component.
+
+### Fixed
+- P1 — entity vectors are no longer silently skipped at write time: with `--embedding-backend openrouter` the entity-embedding chain resolves to `[OpenRouter]` even under `--llm-backend none` (REST, no subprocess), and an empty vector never persists a row — `upsert_entity_vec`, `upsert_chunk_vec` and `memories::upsert_vec` gain an empty-embedding guard so vector-less items stay visible to the re-embed backfill instead of being masked by an empty BLOB.
+- P10 — the `re-embed` predicates select rows whose stored `dim` diverges from the configured `--embedding-dim` (or whose blob is empty), not only missing rows, across all three vector tables (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`); legacy-dimension vectors are finally regenerated.
+- P4 — `reclassify-relation --literal-from` matches the stored relation VERBATIM (no hyphen→underscore normalization at the clap boundary), making legacy hyphenated edges (e.g. `applies-to`) reachable; mutually exclusive with `--from-relation`, and the from==to guard compares the raw literal against the normalized `--to-relation` so `--literal-from applies-to --to-relation applies_to` is a valid migration.
+- P11 — the byte/chunk ceilings raise typed errors with actionable context instead of a generic string: `AppError::BodyTooLarge { bytes, limit }` and `AppError::TooManyChunks { chunks, limit }` (exit 6 preserved, PT-BR messages via `i18n`), replacing `LimitExceeded` at every body-size call site (`remember`, `edit`, `ingest`, `enrich` prompt template).
+- Task 8 — `cargo doc --no-deps` emits ZERO warnings: the module-doc links in `chat_api` now use full `crate::…` paths (rustdoc resolves merged outer+inner module docs in the `lib.rs` scope), and public docs in `embedding_api` no longer intra-doc-link private items.
+
+### Added
+- P2 — retroactive embedding backfill: `enrich --operation re-embed --target memories|entities|chunks|all` (default `memories`, fully retro-compatible). New scanners for entities/chunks without a live vector, queue keys prefixed `entity:`/`chunk:` with per-key `item_type`, prefix dispatch inside `call_reembed`, and `count_operation_backlog` reports the `scan_backlog` per target in `--status` (GAP-SG-77 parity preserved via shared predicates).
+- P3 — `graph recompute-degree`: reconciles the cached `entities.degree` with the real edge counts in one IMMEDIATE transaction, per namespace (or all), with `--dry-run` and the envelope `{namespace, dry_run, total, updated, zeroed, unchanged, elapsed_ms}`. Semantics match the canonical `recalculate_degree` helper (self-loop counts once).
+- P5 — ID-based disambiguation for entity maintenance: `merge-entities --ids/--into-id` and `rename-entity --id`, namespace-scoped, so duplicated names across namespaces stop blocking merges/renames.
+- P6 — real coverage observability: `health --json` gains `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` and the per-table `vec_*_coverage_pct` fields; `embedding status --json` gains the per-table `*_missing` counters.
+- P12 — `ingest --name-prefix <PREFIX>`: kebab-case prefix applied to every derived memory name, with the derived-part budget shrunk so `prefix + derived` always respects the 80-char name cap.
+
+### Changed
+- P7 — `EntityType` deserialization is a manual `Deserialize` with a rich boundary error (13 valid values + hints) surfaced as a Validation error (exit 1) with early validation in `remember --entities-file`, instead of a bare serde/Json error (exit 20); canonical vocabularies (entity types, relations) and namespace semantics are documented.
+- The OpenRouter HTTP `User-Agent` is now derived from `CARGO_PKG_VERSION` at build time (`sqlite-graphrag/1.1.1`), so it can no longer drift from the crate version as it did before GAP-SG-75.
+
+
 ## [1.1.0] - 2026-07-01
 
 Resolves the enrichment dead-letter backlog at its root: truncated OpenRouter completions are detected and retried with a larger budget, error retry-classification is fully typed (no message-substring matching), the OpenRouter HTTP client is de-duplicated into a shared module, and the queue dequeue loop is bounded under lock contention. The schema stays at version 15 (the enrich sidecar queue gains diagnostic columns via idempotent ALTER).

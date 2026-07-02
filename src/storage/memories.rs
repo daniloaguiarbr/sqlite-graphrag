@@ -278,6 +278,15 @@ pub fn upsert_vec(
     _name: &str,
     _snippet: &str,
 ) -> Result<(), AppError> {
+    // v1.1.1 (P1): skip empty vectors so the memory stays visible to the
+    // re-embed backfill scanner instead of persisting a vector-less row.
+    if embedding.is_empty() {
+        tracing::debug!(
+            memory_id,
+            "empty memory embedding: skipping memory_embeddings row (backfill via enrich re-embed)"
+        );
+        return Ok(());
+    }
     let embedding_bytes = f32_to_bytes(embedding);
     with_busy_retry(|| {
         conn.execute(
@@ -1154,6 +1163,25 @@ mod tests {
             |r| r.get(0),
         )?;
         assert_eq!(count, 1);
+        Ok(())
+    }
+
+    // v1.1.1 (P1): an empty embedding must NOT create a vector row, so the
+    // memory stays visible to `enrich re-embed`.
+    #[test]
+    fn upsert_vec_empty_embedding_skips_row() -> TestResult {
+        let conn = setup_conn()?;
+        let m = new_memory("mem-vec-vazia");
+        let id = insert(&conn, &m)?;
+
+        upsert_vec(&conn, id, "global", "user", &[], "mem-vec-vazia", "s")?;
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(count, 0, "empty embedding must not persist a row");
         Ok(())
     }
 

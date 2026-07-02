@@ -33,6 +33,42 @@ const HIGH_WEIGHT_PREDICATE: &str = "r.weight >= 0.7";
 const GENERIC_RELATION_PREDICATE: &str = "r.relation = 'applies_to'";
 
 // ---------------------------------------------------------------------------
+// v1.1.1 (P2/P10): `re-embed` predicates.
+//
+// A row is a candidate when it has NO live vector for the CONFIGURED
+// dimensionality. "Live" means the vector row exists, its blob is non-empty
+// and its stored `dim` matches the configured `--embedding-dim`; vectors
+// written under a legacy dimension (P10) and empty blobs are re-selected,
+// not only missing rows. Built as functions (not consts) because the dim is
+// resolved at runtime; scanner and counter share the same builder so they
+// cannot drift (GAP-SG-77).
+// ---------------------------------------------------------------------------
+
+/// `re-embed --target memories`: memory `m` lacks a live vector.
+fn reembed_memory_predicate(dim: usize) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM memory_embeddings me WHERE me.memory_id = m.id \
+         AND me.dim = {dim} AND LENGTH(me.embedding) > 0)"
+    )
+}
+
+/// `re-embed --target entities`: entity `e` lacks a live vector.
+fn reembed_entity_predicate(dim: usize) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM entity_embeddings ev WHERE ev.entity_id = e.id \
+         AND ev.dim = {dim} AND LENGTH(ev.embedding) > 0)"
+    )
+}
+
+/// `re-embed --target chunks`: chunk `c` lacks a live vector.
+fn reembed_chunk_predicate(dim: usize) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM chunk_embeddings ce WHERE ce.chunk_id = c.id \
+         AND ce.dim = {dim} AND LENGTH(ce.embedding) > 0)"
+    )
+}
+
+// ---------------------------------------------------------------------------
 
 /// Returns memories without any `memory_entities` binding.
 ///
@@ -336,9 +372,11 @@ pub(super) fn scan_short_body_memories(
     }
 }
 
-/// Returns live memories that still have no row in `memory_embeddings`.
+/// Returns live memories without a live vector in `memory_embeddings`.
 ///
-/// These are the targets for `re-embed`.
+/// These are the targets for `re-embed` (`--target memories`). v1.1.1 (P10):
+/// the predicate also selects memories whose stored vector has a stale `dim`
+/// or an empty blob, so legacy-dimension vectors are regenerated too.
 pub(super) fn scan_memories_without_embeddings(
     conn: &Connection,
     namespace: &str,
@@ -346,15 +384,15 @@ pub(super) fn scan_memories_without_embeddings(
     name_filter: &[String],
 ) -> Result<Vec<(i64, String, String)>, AppError> {
     let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let predicate = reembed_memory_predicate(crate::constants::embedding_dim());
 
     if name_filter.is_empty() {
         let sql = format!(
             "SELECT m.id, m.name, COALESCE(m.body,'')
              FROM memories m
-             LEFT JOIN memory_embeddings me ON me.memory_id = m.id
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
-               AND me.memory_id IS NULL
+               AND {predicate}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -377,11 +415,10 @@ pub(super) fn scan_memories_without_embeddings(
         let sql = format!(
             "SELECT m.id, m.name, COALESCE(m.body,'')
              FROM memories m
-             LEFT JOIN memory_embeddings me ON me.memory_id = m.id
              WHERE m.namespace = ?1
                AND m.deleted_at IS NULL
                AND m.name IN ({in_clause})
-               AND me.memory_id IS NULL
+               AND {predicate}
              ORDER BY m.id
              {limit_clause}"
         );
@@ -401,6 +438,124 @@ pub(super) fn scan_memories_without_embeddings(
                         r.get::<_, String>(2)?,
                     ))
                 },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// v1.1.1 (P2): entities without a live vector in `entity_embeddings` for the
+/// configured dimensionality — targets for `re-embed --target entities`.
+/// `name_filter` (when present) restricts by entity name.
+pub(super) fn scan_entities_missing_embeddings(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+    name_filter: &[String],
+) -> Result<Vec<(i64, String)>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let predicate = reembed_entity_predicate(crate::constants::embedding_dim());
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT e.id, e.name
+             FROM entities e
+             WHERE e.namespace = ?1
+               AND {predicate}
+             ORDER BY e.id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT e.id, e.name
+             FROM entities e
+             WHERE e.namespace = ?1
+               AND e.name IN ({in_clause})
+               AND {predicate}
+             ORDER BY e.id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+        params_vec.push(&namespace);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// v1.1.1 (P2): chunk rows without a live vector in `chunk_embeddings` for
+/// the configured dimensionality — targets for `re-embed --target chunks`.
+/// `name_filter` (when present) restricts by PARENT memory name.
+pub(super) fn scan_chunks_missing_embeddings(
+    conn: &Connection,
+    namespace: &str,
+    limit: Option<usize>,
+    name_filter: &[String],
+) -> Result<Vec<i64>, AppError> {
+    let limit_clause = limit.map(|n| format!("LIMIT {n}")).unwrap_or_default();
+    let predicate = reembed_chunk_predicate(crate::constants::embedding_dim());
+
+    if name_filter.is_empty() {
+        let sql = format!(
+            "SELECT c.id
+             FROM memory_chunks c
+             JOIN memories m ON m.id = c.memory_id
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND {predicate}
+             ORDER BY c.id
+             {limit_clause}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |r| r.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let placeholders: Vec<String> = (2..=name_filter.len() + 1)
+            .map(|i| format!("?{i}"))
+            .collect();
+        let in_clause = placeholders.join(", ");
+        let sql = format!(
+            "SELECT c.id
+             FROM memory_chunks c
+             JOIN memories m ON m.id = c.memory_id
+             WHERE m.namespace = ?1
+               AND m.deleted_at IS NULL
+               AND m.name IN ({in_clause})
+               AND {predicate}
+             ORDER BY c.id
+             {limit_clause}"
+        );
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + name_filter.len());
+        params_vec.push(&namespace);
+        for n in name_filter {
+            params_vec.push(n);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params_vec.iter().copied()),
+                |r| r.get::<_, i64>(0),
             )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -509,8 +664,28 @@ pub(super) fn scan_operation(
             Ok(rows.into_iter().map(|(_, name, _)| name).collect())
         }
         EnrichOperation::ReEmbed => {
-            let rows = scan_memories_without_embeddings(conn, namespace, args.limit, &name_filter)?;
-            Ok(rows.into_iter().map(|(_, name, _)| name).collect())
+            // v1.1.1 (P2): --target selects which embedding table to backfill.
+            // Non-memory keys carry an `entity:` / `chunk:` prefix so the
+            // drain dispatch (`call_reembed`) and the queue `item_type` can
+            // tell them apart; bare memory names stay unprefixed for full
+            // retro-compatibility with pre-v1.1.1 queue rows.
+            let mut keys: Vec<String> = Vec::new();
+            if matches!(args.target, ReEmbedTarget::Memories | ReEmbedTarget::All) {
+                let rows =
+                    scan_memories_without_embeddings(conn, namespace, args.limit, &name_filter)?;
+                keys.extend(rows.into_iter().map(|(_, name, _)| name));
+            }
+            if matches!(args.target, ReEmbedTarget::Entities | ReEmbedTarget::All) {
+                let rows =
+                    scan_entities_missing_embeddings(conn, namespace, args.limit, &name_filter)?;
+                keys.extend(rows.into_iter().map(|(_, name)| format!("entity:{name}")));
+            }
+            if matches!(args.target, ReEmbedTarget::Chunks | ReEmbedTarget::All) {
+                let ids =
+                    scan_chunks_missing_embeddings(conn, namespace, args.limit, &name_filter)?;
+                keys.extend(ids.into_iter().map(|id| format!("chunk:{id}")));
+            }
+            Ok(keys)
         }
         EnrichOperation::WeightCalibrate => {
             let rows = scan_weight_candidates(conn, namespace, args.limit)?;
@@ -645,9 +820,9 @@ pub(super) fn scan_generic_descriptions(
 /// Notes on individual operations:
 /// - `body-enrich` uses the default [`DEFAULT_BODY_ENRICH_MIN_CHARS`] threshold
 ///   (the same default the CLI applies when `--min-output-chars` is omitted).
-/// - `re-embed` counts memories with no `memory_embeddings` row via a
-///   `NOT EXISTS` anti-join, semantically identical to the scanner's
-///   `LEFT JOIN ... IS NULL`.
+/// - `re-embed` (v1.1.1 P2/P10) sums the dim-aware backlog of every table
+///   selected by `--target` (memories / entities / chunks / all), sharing the
+///   `reembed_*_predicate` builders with the scanners.
 /// - advisory / quadratic scan-only operations (`augment-bindings`,
 ///   `entity-connect`, `cross-domain-bridges`, `domain-classify`,
 ///   `graph-audit`, `deep-research-synth`, `body-extract`) have no closeable
@@ -656,6 +831,7 @@ pub(super) fn count_operation_backlog(
     conn: &Connection,
     operation: &EnrichOperation,
     namespace: &str,
+    reembed_target: ReEmbedTarget,
 ) -> Result<i64, AppError> {
     let count = match operation {
         EnrichOperation::MemoryBindings => {
@@ -685,14 +861,40 @@ pub(super) fn count_operation_backlog(
             })?
         }
         EnrichOperation::ReEmbed => {
-            // Anti-join equivalent to the scanner's LEFT JOIN ... IS NULL.
-            conn.query_row(
-                "SELECT COUNT(*) FROM memories m \
-                 WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
-                 AND NOT EXISTS (SELECT 1 FROM memory_embeddings me WHERE me.memory_id = m.id)",
-                rusqlite::params![namespace],
-                |r| r.get::<_, i64>(0),
-            )?
+            // v1.1.1 (P2/P10): same dim-aware predicates as the scanners,
+            // summed over the targets selected by --target.
+            let dim = crate::constants::embedding_dim();
+            let mut total = 0i64;
+            if matches!(reembed_target, ReEmbedTarget::Memories | ReEmbedTarget::All) {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM memories m \
+                     WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
+                     AND {}",
+                    reembed_memory_predicate(dim)
+                );
+                total +=
+                    conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?;
+            }
+            if matches!(reembed_target, ReEmbedTarget::Entities | ReEmbedTarget::All) {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM entities e WHERE e.namespace = ?1 AND {}",
+                    reembed_entity_predicate(dim)
+                );
+                total +=
+                    conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?;
+            }
+            if matches!(reembed_target, ReEmbedTarget::Chunks | ReEmbedTarget::All) {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM memory_chunks c \
+                     JOIN memories m ON m.id = c.memory_id \
+                     WHERE m.namespace = ?1 AND m.deleted_at IS NULL \
+                     AND {}",
+                    reembed_chunk_predicate(dim)
+                );
+                total +=
+                    conn.query_row(&sql, rusqlite::params![namespace], |r| r.get::<_, i64>(0))?;
+            }
+            total
         }
         EnrichOperation::WeightCalibrate => {
             let sql = format!(
@@ -797,6 +999,33 @@ mod tests {
             CREATE TABLE memory_embeddings (
                 memory_id   INTEGER PRIMARY KEY,
                 namespace   TEXT NOT NULL,
+                embedding   BLOB NOT NULL,
+                source      TEXT NOT NULL,
+                model       TEXT NOT NULL DEFAULT '',
+                dim         INTEGER NOT NULL DEFAULT 384,
+                created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE entity_embeddings (
+                entity_id   INTEGER PRIMARY KEY,
+                namespace   TEXT NOT NULL,
+                embedding   BLOB NOT NULL,
+                source      TEXT NOT NULL,
+                model       TEXT NOT NULL DEFAULT '',
+                dim         INTEGER NOT NULL DEFAULT 384,
+                created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE memory_chunks (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id    INTEGER NOT NULL,
+                chunk_idx    INTEGER NOT NULL,
+                chunk_text   TEXT NOT NULL,
+                start_offset INTEGER NOT NULL DEFAULT 0,
+                end_offset   INTEGER NOT NULL DEFAULT 0,
+                token_count  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE chunk_embeddings (
+                chunk_id    INTEGER PRIMARY KEY,
+                memory_id   INTEGER NOT NULL,
                 embedding   BLOB NOT NULL,
                 source      TEXT NOT NULL,
                 model       TEXT NOT NULL DEFAULT '',
@@ -1052,8 +1281,13 @@ mod tests {
         )
         .unwrap();
 
-        let n =
-            count_operation_backlog(&conn, &EnrichOperation::EntityDescriptions, "global").unwrap();
+        let n = count_operation_backlog(
+            &conn,
+            &EnrichOperation::EntityDescriptions,
+            "global",
+            ReEmbedTarget::Memories,
+        )
+        .unwrap();
         assert_eq!(n, 3);
         // Parity: the count must equal what the scanner would materialise.
         let scanned = scan_entities_without_description(&conn, "global", None, &[]).unwrap();
@@ -1086,7 +1320,13 @@ mod tests {
         )
         .unwrap();
 
-        let n = count_operation_backlog(&conn, &EnrichOperation::ReEmbed, "global").unwrap();
+        let n = count_operation_backlog(
+            &conn,
+            &EnrichOperation::ReEmbed,
+            "global",
+            ReEmbedTarget::Memories,
+        )
+        .unwrap();
         assert_eq!(n, 1);
         let scanned = scan_memories_without_embeddings(&conn, "global", None, &[]).unwrap();
         assert_eq!(n as usize, scanned.len());
@@ -1124,7 +1364,13 @@ mod tests {
         )
         .unwrap();
 
-        let n = count_operation_backlog(&conn, &EnrichOperation::MemoryBindings, "global").unwrap();
+        let n = count_operation_backlog(
+            &conn,
+            &EnrichOperation::MemoryBindings,
+            "global",
+            ReEmbedTarget::Memories,
+        )
+        .unwrap();
         assert_eq!(n, 1);
         let scanned = scan_unbound_memories(&conn, "global", None, &[]).unwrap();
         assert_eq!(n as usize, scanned.len());
@@ -1145,7 +1391,13 @@ mod tests {
         )
         .unwrap();
 
-        let n = count_operation_backlog(&conn, &EnrichOperation::BodyEnrich, "global").unwrap();
+        let n = count_operation_backlog(
+            &conn,
+            &EnrichOperation::BodyEnrich,
+            "global",
+            ReEmbedTarget::Memories,
+        )
+        .unwrap();
         assert_eq!(n, 1);
         // Parity against the scanner using the same default threshold.
         let scanned = scan_short_body_memories(
@@ -1173,8 +1425,228 @@ mod tests {
             EnrichOperation::GraphAudit,
             EnrichOperation::BodyExtract,
         ] {
-            let n = count_operation_backlog(&conn, &op, "global").unwrap();
+            let n = count_operation_backlog(&conn, &op, "global", ReEmbedTarget::Memories).unwrap();
             assert_eq!(n, 0, "advisory op {op:?} must report zero backlog");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // v1.1.1 (P2/P10): re-embed targets — entity/chunk backfill scanners and
+    // dim-divergence selection.
+    // -----------------------------------------------------------------------
+
+    /// Inserts a raw vector row with the given dim and blob length (bytes).
+    fn insert_entity_vec_raw(conn: &Connection, entity_id: i64, dim: usize, blob_len: usize) {
+        conn.execute(
+            "INSERT INTO entity_embeddings (entity_id, namespace, embedding, source, model, dim) \
+             VALUES (?1, 'global', ?2, 'test', 'test', ?3)",
+            rusqlite::params![entity_id, vec![0u8; blob_len], dim as i64],
+        )
+        .unwrap();
+    }
+
+    fn insert_entity_named(conn: &Connection, name: &str) -> i64 {
+        conn.execute(
+            &format!(
+                "INSERT INTO entities (namespace, name, type) VALUES ('global', '{name}', 'tool')"
+            ),
+            [],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn scan_entities_missing_embeddings_selects_missing_stale_and_empty() {
+        let conn = open_test_db();
+        let dim = crate::constants::embedding_dim();
+
+        let e_missing = insert_entity_named(&conn, "ent-missing");
+        let e_live = insert_entity_named(&conn, "ent-live");
+        let e_stale = insert_entity_named(&conn, "ent-stale-dim");
+        let e_empty = insert_entity_named(&conn, "ent-empty-blob");
+
+        insert_entity_vec_raw(&conn, e_live, dim, dim * 4);
+        insert_entity_vec_raw(&conn, e_stale, 64, 64 * 4);
+        insert_entity_vec_raw(&conn, e_empty, dim, 0);
+
+        let rows = scan_entities_missing_embeddings(&conn, "global", None, &[]).unwrap();
+        let names: Vec<&str> = rows.iter().map(|(_, n)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["ent-missing", "ent-stale-dim", "ent-empty-blob"],
+            "missing, stale-dim and empty-blob entities must be selected; live must not"
+        );
+        assert!(!names.contains(&"ent-live"));
+        let _ = e_missing;
+    }
+
+    #[test]
+    fn scan_entities_missing_embeddings_respects_name_filter() {
+        let conn = open_test_db();
+        insert_entity_named(&conn, "ent-a");
+        insert_entity_named(&conn, "ent-b");
+
+        let rows = scan_entities_missing_embeddings(&conn, "global", None, &["ent-b".to_string()])
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, "ent-b");
+    }
+
+    fn insert_chunk_row(conn: &Connection, memory_id: i64, chunk_idx: i32) -> i64 {
+        conn.execute(
+            "INSERT INTO memory_chunks (memory_id, chunk_idx, chunk_text) \
+             VALUES (?1, ?2, 'chunk text')",
+            rusqlite::params![memory_id, chunk_idx],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn insert_chunk_vec_raw(conn: &Connection, chunk_id: i64, memory_id: i64, dim: usize) {
+        conn.execute(
+            "INSERT INTO chunk_embeddings (chunk_id, memory_id, embedding, source, model, dim) \
+             VALUES (?1, ?2, ?3, 'test', 'test', ?4)",
+            rusqlite::params![chunk_id, memory_id, vec![0u8; dim * 4], dim as i64],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn scan_chunks_missing_embeddings_selects_missing_and_stale_dim() {
+        let conn = open_test_db();
+        let dim = crate::constants::embedding_dim();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'chunked', 'b')",
+            [],
+        )
+        .unwrap();
+        let mem_id: i64 = conn
+            .query_row("SELECT id FROM memories WHERE name='chunked'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+
+        let c_live = insert_chunk_row(&conn, mem_id, 0);
+        let c_stale = insert_chunk_row(&conn, mem_id, 1);
+        let c_missing = insert_chunk_row(&conn, mem_id, 2);
+        insert_chunk_vec_raw(&conn, c_live, mem_id, dim);
+        insert_chunk_vec_raw(&conn, c_stale, mem_id, 64);
+
+        let ids = scan_chunks_missing_embeddings(&conn, "global", None, &[]).unwrap();
+        assert_eq!(
+            ids,
+            vec![c_stale, c_missing],
+            "stale-dim and missing chunks must be selected; live must not"
+        );
+
+        // Name filter restricts by PARENT memory name.
+        let filtered =
+            scan_chunks_missing_embeddings(&conn, "global", None, &["other-mem".to_string()])
+                .unwrap();
+        assert!(filtered.is_empty());
+        let filtered =
+            scan_chunks_missing_embeddings(&conn, "global", None, &["chunked".to_string()])
+                .unwrap();
+        assert_eq!(filtered, vec![c_stale, c_missing]);
+    }
+
+    // P10: a memory whose stored vector has a divergent dim is re-scanned.
+    #[test]
+    fn scan_memories_with_stale_dim_are_rescanned() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'stale-dim', 'body')",
+            [],
+        )
+        .unwrap();
+        let mem_id: i64 = conn
+            .query_row("SELECT id FROM memories WHERE name='stale-dim'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO memory_embeddings (memory_id, namespace, embedding, source, model, dim) \
+             VALUES (?1, 'global', ?2, 'test', 'test', 64)",
+            rusqlite::params![mem_id, vec![0u8; 64 * 4]],
+        )
+        .unwrap();
+
+        let rows = scan_memories_without_embeddings(&conn, "global", None, &[]).unwrap();
+        assert_eq!(rows.len(), 1, "legacy-dim vector must be re-selected");
+        assert_eq!(rows[0].1, "stale-dim");
+    }
+
+    #[test]
+    fn count_operation_backlog_re_embed_targets_match_scanners() {
+        let conn = open_test_db();
+        let dim = crate::constants::embedding_dim();
+
+        // One memory without vector, one entity stale, one chunk missing.
+        conn.execute(
+            "INSERT INTO memories (namespace, name, body) VALUES ('global', 'no-vec', 'b')",
+            [],
+        )
+        .unwrap();
+        let mem_id: i64 = conn
+            .query_row("SELECT id FROM memories WHERE name='no-vec'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let eid = insert_entity_named(&conn, "ent-stale");
+        insert_entity_vec_raw(&conn, eid, 64, 64 * 4);
+        insert_chunk_row(&conn, mem_id, 0);
+        let _ = dim;
+
+        let n_mem = count_operation_backlog(
+            &conn,
+            &EnrichOperation::ReEmbed,
+            "global",
+            ReEmbedTarget::Memories,
+        )
+        .unwrap();
+        assert_eq!(
+            n_mem as usize,
+            scan_memories_without_embeddings(&conn, "global", None, &[])
+                .unwrap()
+                .len()
+        );
+
+        let n_ent = count_operation_backlog(
+            &conn,
+            &EnrichOperation::ReEmbed,
+            "global",
+            ReEmbedTarget::Entities,
+        )
+        .unwrap();
+        assert_eq!(
+            n_ent as usize,
+            scan_entities_missing_embeddings(&conn, "global", None, &[])
+                .unwrap()
+                .len()
+        );
+
+        let n_chunk = count_operation_backlog(
+            &conn,
+            &EnrichOperation::ReEmbed,
+            "global",
+            ReEmbedTarget::Chunks,
+        )
+        .unwrap();
+        assert_eq!(
+            n_chunk as usize,
+            scan_chunks_missing_embeddings(&conn, "global", None, &[])
+                .unwrap()
+                .len()
+        );
+
+        let n_all = count_operation_backlog(
+            &conn,
+            &EnrichOperation::ReEmbed,
+            "global",
+            ReEmbedTarget::All,
+        )
+        .unwrap();
+        assert_eq!(n_all, n_mem + n_ent + n_chunk, "all = soma dos três alvos");
     }
 }

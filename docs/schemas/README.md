@@ -43,6 +43,7 @@
 | `graph traverse` | `graph-traverse.schema.json` |
 | `graph stats` | `graph-stats.schema.json` |
 | `graph entities` | `graph-entities.schema.json` |
+| `graph recompute-degree` (v1.1.01, P3) | `graph-recompute-degree.schema.json` |
 | `cleanup-orphans` | `cleanup-orphans.schema.json` |
 | `prune-relations` | `prune-relations.schema.json` |
 | `reclassify-relation` | `reclassify-relation.schema.json` |

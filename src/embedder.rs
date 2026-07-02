@@ -2183,6 +2183,25 @@ mod tests {
         assert!((hit[0] - 0.42).abs() < 1e-6);
     }
 
+    // v1.1.1 (P1): com `--embedding-backend openrouter` a chain de embedding
+    // de entidade é exatamente `[OpenRouter]` mesmo com `--llm-backend none`
+    // — o short-circuit de vetor vazio de embed_entity_texts_cached (chain ==
+    // [None]) NÃO dispara, então a entidade ganha vetor via REST na escrita.
+    #[test]
+    fn p1_openrouter_chain_ignores_llm_backend_none() {
+        use crate::cli::{EmbeddingBackendChoice, LlmBackendChoice};
+        let chain = EmbeddingBackendChoice::Openrouter.to_chain(LlmBackendChoice::None);
+        assert_eq!(
+            chain,
+            vec![LlmBackendKind::OpenRouter],
+            "openrouter embedding must not be silenced by --llm-backend none"
+        );
+        // O curto-circuito de vetor vazio existe SOMENTE para a chain [None]
+        // (`--embedding-backend llm --llm-backend none`).
+        let none_chain = EmbeddingBackendChoice::Llm.to_chain(LlmBackendChoice::None);
+        assert_eq!(none_chain, vec![LlmBackendKind::None]);
+    }
+
     #[test]
     fn g56_empty_texts_short_circuits_with_zero_stats() {
         // Cannot call embed_entity_texts_cached without an LLM on PATH,
