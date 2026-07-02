@@ -17,7 +17,8 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - USE `--llm-backend` to choose WHICH subprocess runs LLM embedding when `--embedding-backend llm`: `codex`, `claude`, `opencode`, `none`
 - USE `--extraction-backend` (and `enrich --mode`) to choose WHICH backend extracts entities and relations: `codex`, `claude-code`, `opencode` (headless CLIs) or `openrouter` (REST `/chat/completions`, no local CLI)
 - SEPARATE writing from enriching ALWAYS: a write produces embeddings; a SEPARATE `enrich` invocation extracts the graph
-- PASS `--llm-backend none` on EVERY write (`remember`, `remember-batch`, `ingest`, `edit`, `restore`) to SKIP inline entity embedding and avoid the codex subprocess timeout
+- PASS `--llm-backend none` on EVERY write (`remember`, `remember-batch`, `ingest`, `edit`, `restore`) to ELIMINATE the LLM subprocess and its timeout; with `--embedding-backend openrouter` the entity and chunk embeddings ARE STILL produced because the entity-embedding chain resolves to the OpenRouter REST path even with `--llm-backend none`
+- KNOW an empty vector is NEVER persisted: the upsert guard rejects empty embeddings for memories, entities and chunks, so reported coverage reflects only real vectors
 - RUN `enrich` only AFTER a write returns exit 0, as a DISTINCT command, NEVER chained into the write
 - PARSE `backend_invoked` in every embedding envelope to CONFIRM which backend actually ran
 
@@ -171,6 +172,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - INVOKE `ingest <DIR> --recursive --pattern "*.md" --mode none` to import a directory as body-only, then enrich SEPARATELY
 - KNOW `ingest --mode` accepts `none` (default body-only), `claude-code`, `codex`; opencode is NOT an ingest mode, so enrich with opencode in a SEPARATE step
 - USE `--resume` to continue from the queue after interruption; `--retry-failed` for failed items only; `--auto-describe` to synthesize descriptions
+- PASS `--name-prefix <prefix>` on `ingest` to prefix derived file names (e.g. `--name-prefix projx-` yields `projx-<derived>`); the prefix counts toward the name-length ceiling and applies ONLY to local directory ingestion
 - PASS `--force-merge` on `ingest` to UPDATE duplicate files instead of skipping them; ingest dedups by `body_hash`, so an unchanged file is skipped even after a rename
 - KNOW `ingest` natively auto-splits an oversized body into multiple chunks, so a file above the per-body limit is chunked, NOT rejected
 - RESPECT the 512000 bytes and 512 chunks limit per body
@@ -199,20 +201,25 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - INVOKE `link --from <a> --to <b> --relation <type> --create-missing --weight <float>` to create an edge
 - INVOKE `unlink --from <a> --to <b> --relation <type>` to remove one edge, or `--entity <name> --all` to drop all edges of an entity
 - INVOKE `unlink --memory <name> --entity <name>` to remove a single curated memory-to-entity binding without touching entity-to-entity edges
-- INVOKE `graph entities --json` to list entities via `.entities[]` (NOT `.items[]`); ORDER with `--sort-by degree|name|created_at`; PAGINATE with `--limit N --offset N`
+- INVOKE `graph entities --json` to list entities via `.entities[]` (NOT `.items[]`); ORDER with `--sort-by name|degree|created-at` plus `--order asc|desc` (default `asc`; when `--sort-by` is omitted the default is name ascending); USE `--order desc` for most-connected-first; PAGINATE with `--limit N --offset N`
 - INVOKE `graph stats --json` to inspect `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - INVOKE `graph traverse --from <root> --depth <N> --json` for subgraph traversal; EXPORT with `--format json|dot|mermaid --output <path>`
 - INVOKE `rename-entity --name <old> --new-name <new>` to rename an entity preserving edges
+- INVOKE `rename-entity --id <N> --new-name <new>` to rename by ID and disambiguate same-named entities across namespaces
 - INVOKE `delete-entity --name <n> --cascade` to delete an entity and its edges
 - INVOKE `merge-entities --names "a,b,c" --into <target>` to merge duplicates
+- INVOKE `merge-entities --ids 12,17 --into-id 3` to merge by ID when names are ambiguous; `--ids` and `--into-id` conflict with `--names` and `--into`; IDs are globally unique so they need no namespace disambiguation
 - INVOKE `reclassify --name <n> --new-type <kind>` for one entity, or `--from-type <old> --to-type <new> --batch` for bulk type migration
-- INVOKE `reclassify-relation --from-relation <old> --to-relation <new> --batch` for bulk relation-type migration; FILTER with `--filter-source-type` and `--filter-target-type`
+- INVOKE `reclassify-relation --from-relation <old> --to-relation <new> --batch` for bulk relation-type migration; FILTER with `--filter-source-type` and `--filter-target-type`; PASS `--literal-from <value>` to match the stored relation VERBATIM without kebab-case normalization; `--from-relation` and `--literal-from` are mutually exclusive and exactly one is required; USE `--literal-from applies_to --to-relation applies-to --batch` to migrate legacy underscore edges
 - INVOKE `prune-relations --relation mentions --dry-run` to preview low-value edges, then drop `--dry-run` with `--yes`
 - INVOKE `normalize-entities --yes` to normalize all names to kebab-case ASCII
 - INVOKE `prune-ner --entity <n>` to remove NER bindings; `prune-ner --all --yes` for the whole namespace
 - INVOKE `memory-entities --name <memory>` for forward lookup, or `--entity <name>` for reverse lookup
-- PASS `--max-entity-degree N` on `link` to warn when an entity exceeds N connections
+- KNOW that graph writes are purely ADDITIVE: there is NO degree cap, so hubs grow unbounded and no write prunes edges; NORMALIZE only via explicit maintenance commands (`prune-relations`, `merge-entities`, `normalize-entities`), NEVER during a write
+- INVOKE `graph recompute-degree --json` to recompute every entity degree in the namespace from live edges in a single transaction; PASS `--dry-run` for preview; READ the envelope `{total, updated, zeroed, unchanged}` where `updated + zeroed + unchanged == total`
+- RUN `graph recompute-degree` after `delete-entity`, `merge-entities` or `prune-relations`, because stored degree is NOT recomputed automatically by maintenance operations
 - CANONICAL entity types: `project`, `tool`, `person`, `file`, `concept`, `incident`, `decision`, `memory`, `dashboard`, `issue_tracker`, `organization`, `location`, `date`
+- KNOW an invalid `entity_type` fails EARLY at deserialization with a message listing the 13 valid values, before any database write
 - VALIDATE entity names: minimum 2 chars, no newlines, no short ALL_CAPS of 4 chars or less
 - NEVER use `mentions` as a default relation
 
@@ -242,16 +249,21 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - PASS `--codex-model`, `--claude-model`, `--opencode-model`, or `--openrouter-model` to pick the extraction model matching the chosen mode
 - KNOW `--mode openrouter` requires `--openrouter-model` (no default), reads the key from `OPENROUTER_API_KEY`, makes a REST `/chat/completions` call with NO local CLI, sends `response_format` json_schema strict with `provider.require_parameters:true`, and bills tokens via `usage.cost`; the other three modes are OAuth or own-auth zero-token
 - PASS `--limit N --resume` for `re-embed`; `--retry-failed` to reprocess only failed items; `--dry-run` to preview
+- PASS `--target memories|entities|chunks|all` on `re-embed` to choose WHICH vector table gets the backfill; default is `memories`; `--target` belongs ONLY to `re-embed`
+- KNOW the `re-embed` predicates select MISSING vectors, EMPTY blobs, or a dimension DIVERGENT from the configured one, so changing `--embedding-dim` makes all old rows eligible, and `--status` sums `scan_backlog` over the targets selected by `--target`
+- FULL BACKFILL FORMULA: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 enrich --operation re-embed --target all --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --json`, then CONFIRM coverage with `health --json`
 - PASS `--min-output-chars N` to guard `body-enrich` output length; `--fallback-mode codex` to survive a Claude rate limit
 - NEVER run `enrich` in parallel against the same database; it acquires a per-namespace singleton
 - PASS `--until-empty` to loop scan->drain INTERNALLY until the eligible queue empties or `--max-runtime` expires, REPLACING the external bash drain loop
 - PASS `--max-runtime <SECONDS>` to cap the `--until-empty` wall-clock budget; default 3600
 - PASS `--max-attempts <N>` to bound Transient retries before an item turns `dead`; default 8, range 1..=20
-- PASS `--status` for a read-only JSON report of `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` and `waiting`; it calls NO LLM and acquires NO singleton (and requires NO `--operation`/`--mode`)
+- PASS `--status` for a read-only JSON report of `scan_backlog`, `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now` and `waiting`; it calls NO LLM and acquires NO singleton (and requires NO `--operation`/`--mode`)
+- KNOW `scan_backlog` is the REAL per-operation database backlog a fresh scan would enqueue (DB semantics), DISTINCT from `unbound_backlog` (memory-bindings only) and from `queue_pending` (sidecar-queue semantics); it KILLS the false `pending=0` for `entity-descriptions`, `body-enrich` and `re-embed`, and the `state` field derives its `pending-scan` verdict from it
 - PASS `--rest-concurrency <N>` to set the REST fan-out for `--mode openrouter`; clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`
-- PASS `--list-dead` for a read-only JSON listing of every terminal `dead` item with its `error_class` and `message`; `--requeue-dead` moves those items back to `pending` for another pass; `--ignore-backoff` dequeues eligible items immediately, ignoring the `next_retry_at` cooldown
+- PASS `--list-dead` for a read-only JSON listing of every terminal `dead` item with its `error_class`, `message` and the truncation diagnostics `finish_reason`, `input_tokens` and `output_tokens` from the OpenRouter response; `--requeue-dead` moves those items back to `pending` for another pass; `--ignore-backoff` dequeues eligible items immediately, ignoring the `next_retry_at` cooldown
 - PASS `--prune-dead-orphans` to delete ONLY enrich-queue rows where `status='dead'` and `item_type='memory'` whose `item_key` (memory name) is ABSENT from the main DB; entity-keyed dead rows are UNTOUCHED; the main DB is read-only — ONLY the sidecar `.enrich-queue.sqlite` is mutated; the JSON `DeadSummary` includes a `pruned` field with the count of rows removed; NO `--operation`/`--mode`/LLM flags needed — it is a pure SQLite inspector with no singleton acquisition; FORMULA: `sqlite-graphrag enrich --prune-dead-orphans --json`; USE this BEFORE `--requeue-dead` to clear memory-orphan dead rows (memory renamed or purged AFTER enqueue, `error_class=permanent` 'not found') that `--requeue-dead` alone would only re-fail
-- KNOW the dead-letter queue HAS `error_class` and `next_retry_at` columns plus a terminal `dead` status: Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff, HardFailures (validation, parse) go terminal at once, and dequeue skips `dead` so the live set strictly shrinks toward convergence
+- KNOW the dead-letter queue HAS `error_class` and `next_retry_at` columns plus a terminal `dead` status: Transient failures (rate-limit, timeout, 5xx, an exhausted-internal-retry, and a not-yet-materialized entity a later pass will create) reschedule with exponential backoff bounded by `--max-attempts`, HardFailures (validation, parse) go terminal at once, and dequeue skips `dead` so the live set strictly shrinks toward convergence
+- KNOW a truncated OpenRouter completion (`finish_reason` = `length`) is NOT dead-lettered on sight: the chat path re-emits the request with a GROWN `max_tokens` budget before any JSON repair, so a length-truncated item retries with more room instead of failing identically
 - KNOW the enrich queue lives in a sidecar database `.enrich-queue.sqlite` next to the main `.sqlite`
 - STATUS formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json` (no LLM call, no singleton)
 - UNTIL-EMPTY formula: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --until-empty --max-runtime 3600 --max-attempts 8 --rest-concurrency 8 --json`
@@ -302,7 +314,7 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 - EDIT parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
 - RESTORE parallel step 1: `sqlite-graphrag --embedding-backend openrouter --embedding-model qwen/qwen3-embedding-8b --embedding-dim 384 --openrouter-api-key $OPENROUTER_API_KEY --llm-parallelism 8 --llm-backend none restore --name <n> --version 2 --json`
 - RESTORE parallel step 2: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --rest-concurrency 8 --until-empty --json`
-- MONITOR convergence between steps with `enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json`; when `eligible_now` is 0 and `queue_pending` is 0, the queue has converged
+- MONITOR convergence between steps with `enrich --operation memory-bindings --mode openrouter --openrouter-model openai/gpt-oss-120b --status --json`; the queue has truly converged only when `scan_backlog` is 0 AND `queue_pending` is 0 AND `eligible_now` is 0, because a nonzero `scan_backlog` with an empty queue means a scan has NOT yet enqueued the remaining DB candidates
 - INSPECT terminal items with `--status`: `queue_dead` lists HardFailures that will NEVER be reprocessed; treat them as data debt, not a transient error
 
 
@@ -317,12 +329,12 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 
 
 ## Diagnostics and Maintenance
-- INIT: `sqlite-graphrag init --namespace <ns>`; HEALTH: `sqlite-graphrag health --json | jaq '{integrity_ok, schema_version}'`
+- INIT: `sqlite-graphrag init --namespace <ns>`; HEALTH: `sqlite-graphrag health --json | jaq '{integrity_ok, schema_version, vec_memories_missing, vec_entities_missing, vec_chunks_missing}'`; READ `vec_*_coverage_pct` for the real per-table vector coverage and TRIGGER `enrich --operation re-embed --target <target>` whenever any `vec_*_missing` is greater than zero
 - MIGRATE: `sqlite-graphrag migrate --dry-run --json` to preview, then `migrate --json` after a binary upgrade
 - OPTIMIZE: `sqlite-graphrag optimize --json` to refresh planner stats; VACUUM: `sqlite-graphrag vacuum --json` after a large purge
 - FTS: `fts check --json` for integrity, `fts stats --json` for counts, `fts rebuild --json` when `health.fts_degraded` is true
 - VEC: `vec orphan-list --json` then `vec purge-orphan --yes`; `vec stats --json` for vector health
-- EMBEDDING: `embedding --status --json` for counts plus a `coverage` object reporting the real vector counts per table; `pending-embeddings --status --json` then `pending-embeddings process --json` to reprocess failures
+- EMBEDDING: `embedding --status --json` for counts plus a `coverage` object reporting the real vector counts per table; READ the per-table counters `memories_missing`, `entities_missing`, `chunks_missing` to pinpoint the exact backfill target for `enrich --operation re-embed --target <target>`; `pending-embeddings --status --json` then `pending-embeddings process --json` to reprocess failures
 - SLOTS: `slots status --json` to inspect the host semaphore; `slots release --slot-id <N> --yes` for orphans
 - PENDING: `pending list --filter-status queued --json`; `pending show <id>`; `pending cleanup --yes`
 - EXPORT: `export --namespace <ns> --type <kind> --json` as NDJSON; STATS: `stats --json` for counts and sizes, including a top-level `total_memories`
@@ -335,9 +347,9 @@ description: This skill MUST activate for every sqlite-graphrag CLI operation co
 
 ## Exit Codes and Retry Strategy
 - EXIT 0 success; EXIT 1 validation error; EXIT 2 argument parsing (missing required flag); EXIT 3 optimistic lock conflict, reload and retry
-- EXIT 4 not found; EXIT 5 namespace error; EXIT 6 payload too large; EXIT 9 duplicate, use `--force-merge`
+- EXIT 4 not found; EXIT 5 namespace error; EXIT 6 payload too large, the typed envelope distinguishes a body over the byte limit (reports `bytes` and `limit`) from too many chunks (reports `chunks` and `limit`), so SPLIT the body into multiple memories; EXIT 9 duplicate, use `--force-merge`
 - EXIT 10 database error, run `vacuum` plus `health`; EXIT 11 embedding failure, check backend, dimension and OAuth
-- EXIT 13 partial batch failure, reprocess failed only; EXIT 14 I/O error; EXIT 15 database busy, widen `--wait-lock`
+- EXIT 13 partial batch failure, reprocess failed only; EXIT 14 I/O error; EXIT 15 database busy (also the enrich dequeue under sustained lock contention), widen `--wait-lock`
 - EXIT 16 preflight failure, fix MCP config, NEVER treat as transient
 - EXIT 19 SHUTDOWN, retry MANDATORY, partial work discarded
 - EXIT 20 internal error; EXIT 75 slots exhausted or singleton locked, respect cooldown, NEVER retry immediately

@@ -95,6 +95,21 @@
 
 The Claude Backend Split test plan (ADR-0042) and the Five-Gap Remediation test plan (ADR-0043) are consolidated into this document; their standalone snapshot files were retired in v1.0.96.
 
+## v1.0.99 Test Plan — Degree-Cap Removal + Doc/Convergence Fixes (ADR-0059, GAP-SG-67/68/69)
+
+### Layer 1 (unit) changes
+- GAP-SG-67: the 5 `enforce_degree_cap` unit tests and the `setup_cap_db` helper were removed with the function; no replacement regression test — the additive property is enforced by construction (no `DELETE FROM relationships` remains in the `remember`/`link` write path).
+- GAP-SG-68: the 6 `build_order_by_*` tests pin the ascending default and the `--order desc` ordering the realigned doc-comment promises.
+- GAP-SG-69: `skipped_item_keys_excludes_only_skipped_for_operation` pins that only `status='skipped'` rows for the operation are returned, so the body-enrich rescan converges.
+
+### Manual / E2E validation
+- GAP-SG-67: `remember`/`link` referencing a high-degree hub (degree > 50) — confirm via `graph stats` that the total relationship count does NOT decrease and the hub degree stays intact; passing `--max-entity-degree` must now fail with clap exit 2.
+- GAP-SG-68: `graph entities --sort-by degree --json` returns ascending by default; `--order desc` returns most-connected-first.
+- GAP-SG-69: run `enrich --operation body-enrich --mode openrouter ... --until-empty` against a DB with non-expandable short bodies — the backlog converges (empirically 55→3) and the `.enrich-queue.sqlite` sidecar is retained while `skipped` verdicts remain.
+
+### Gate
+- No migration; schema stays v15; `Cargo.toml` is 1.0.99.
+
 ## v1.0.97 Test Plan — Queue Sidecar from `--db` + Prune Dead-Letter Orphans (ADR-0056/0057/0058, GAP-SG-57..66)
 
 ### Layer 1 (unit) additions

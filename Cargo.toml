@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-graphrag"
-version = "1.0.98"
+version = "1.1.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Persistent GraphRAG memory for Claude Code, Codex, Cursor, and 24+ AI agents in a single 19 MiB Rust binary. LLM-only and one-shot in v1.0.78: every `remember` / `ingest` spawns a headless claude code or codex subprocess (OAuth, no MCP, no hooks). v1.0.93: optional OpenRouter API embedding backend (~100-500ms vs 20-60s subprocess). No daemon. No ONNX runtime. No model download. Graph-native retrieval with FTS5 + cosine + multi-hop traversal. OAuth-only enforcement for LLM backends: API keys ABORT the spawn."

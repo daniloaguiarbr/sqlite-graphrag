@@ -5,6 +5,63 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.1.01] - 2026-07-02
+
+Closes the 12-priority roadmap catalogued in `gaps.md` from the production-database audit: entity/chunk vectors are written and backfilled through the same OpenRouter REST path as memories, the `degree` cache is reconcilable, literal (hyphenated) relations become reachable, entity maintenance gains ID-based selection, coverage becomes observable, and the exit-6 limit errors are fully typed. The schema stays at version 15. Note: the official release name is v1.1.01; the crate manifest carries `version = "1.1.1"` because the SemVer parser rejects a leading zero in the patch component.
+
+### Fixed
+- P1 — entity vectors are no longer silently skipped at write time: with `--embedding-backend openrouter` the entity-embedding chain resolves to `[OpenRouter]` even under `--llm-backend none` (REST, no subprocess), and an empty vector never persists a row — `upsert_entity_vec`, `upsert_chunk_vec` and `memories::upsert_vec` gain an empty-embedding guard so vector-less items stay visible to the re-embed backfill instead of being masked by an empty BLOB.
+- P10 — the `re-embed` predicates select rows whose stored `dim` diverges from the configured `--embedding-dim` (or whose blob is empty), not only missing rows, across all three vector tables (`memory_embeddings`, `entity_embeddings`, `chunk_embeddings`); legacy-dimension vectors are finally regenerated.
+- P4 — `reclassify-relation --literal-from` matches the stored relation VERBATIM (no hyphen→underscore normalization at the clap boundary), making legacy hyphenated edges (e.g. `applies-to`) reachable; mutually exclusive with `--from-relation`, and the from==to guard compares the raw literal against the normalized `--to-relation` so `--literal-from applies-to --to-relation applies_to` is a valid migration.
+- P11 — the byte/chunk ceilings raise typed errors with actionable context instead of a generic string: `AppError::BodyTooLarge { bytes, limit }` and `AppError::TooManyChunks { chunks, limit }` (exit 6 preserved, PT-BR messages via `i18n`), replacing `LimitExceeded` at every body-size call site (`remember`, `edit`, `ingest`, `enrich` prompt template).
+- Task 8 — `cargo doc --no-deps` emits ZERO warnings: the module-doc links in `chat_api` now use full `crate::…` paths (rustdoc resolves merged outer+inner module docs in the `lib.rs` scope), and public docs in `embedding_api` no longer intra-doc-link private items.
+
+### Added
+- P2 — retroactive embedding backfill: `enrich --operation re-embed --target memories|entities|chunks|all` (default `memories`, fully retro-compatible). New scanners for entities/chunks without a live vector, queue keys prefixed `entity:`/`chunk:` with per-key `item_type`, prefix dispatch inside `call_reembed`, and `count_operation_backlog` reports the `scan_backlog` per target in `--status` (GAP-SG-77 parity preserved via shared predicates).
+- P3 — `graph recompute-degree`: reconciles the cached `entities.degree` with the real edge counts in one IMMEDIATE transaction, per namespace (or all), with `--dry-run` and the envelope `{namespace, dry_run, total, updated, zeroed, unchanged, elapsed_ms}`. Semantics match the canonical `recalculate_degree` helper (self-loop counts once).
+- P5 — ID-based disambiguation for entity maintenance: `merge-entities --ids/--into-id` and `rename-entity --id`, namespace-scoped, so duplicated names across namespaces stop blocking merges/renames.
+- P6 — real coverage observability: `health --json` gains `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` and the per-table `vec_*_coverage_pct` fields; `embedding status --json` gains the per-table `*_missing` counters.
+- P12 — `ingest --name-prefix <PREFIX>`: kebab-case prefix applied to every derived memory name, with the derived-part budget shrunk so `prefix + derived` always respects the 80-char name cap.
+
+### Changed
+- P7 — `EntityType` deserialization is a manual `Deserialize` with a rich boundary error (13 valid values + hints) surfaced as a Validation error (exit 1) with early validation in `remember --entities-file`, instead of a bare serde/Json error (exit 20); canonical vocabularies (entity types, relations) and namespace semantics are documented.
+- The OpenRouter HTTP `User-Agent` is now derived from `CARGO_PKG_VERSION` at build time (`sqlite-graphrag/1.1.1`), so it can no longer drift from the crate version as it did before GAP-SG-75.
+
+
+## [1.1.0] - 2026-07-01
+
+Resolves the enrichment dead-letter backlog at its root: truncated OpenRouter completions are detected and retried with a larger budget, error retry-classification is fully typed (no message-substring matching), the OpenRouter HTTP client is de-duplicated into a shared module, and the queue dequeue loop is bounded under lock contention. The schema stays at version 15 (the enrich sidecar queue gains diagnostic columns via idempotent ALTER).
+
+### Fixed
+- GAP-SG-70 — truncated completions no longer dead-letter: `chat_api` deserializes `choices[].finish_reason` and, on `"length"`, re-emits the request with a grown `max_tokens` (bounded by `ENRICH_MAX_LENGTH_RETRIES`) before attempting JSON repair, breaking the loop where a retry reused the same budget and truncated identically.
+- GAP-SG-73 — error retry-classification is typed, never by message substring: `classify_enrich_outcome` decides purely by `AppError` variant, and OpenRouter failures carry a `retry_class` computed at the origin (exact HTTP status / structured provider code). The key false-permanent fix: an exhausted-internal-retry failure ("max retries exceeded") is now `Transient` (eligible for the queue `--max-attempts` backoff) instead of an immediate dead-letter.
+- GAP-SG-76 — the enrich dequeue no longer spins forever nor silently under-processes: `open_queue_db` sets `busy_timeout`, and the dequeue reuses the bounded `with_busy_retry` (capped, exponential backoff + jitter, kill-switch-aware), failing loud with exit 15 on sustained contention instead of `.ok()`-collapsing `SQLITE_BUSY` into a false "empty backlog".
+- GAP-SG-77 — `enrich --status` reports a real per-operation `scan_backlog` (the database candidates a scan would enqueue) instead of only the memory-bindings `unbound_backlog`, eliminating the false `pending=0` for `entity-descriptions`, `body-enrich` and `re-embed`; the `state` field derives its `pending-scan` verdict from the current operation's `scan_backlog`. A new count-only `count_operation_backlog` shares the exact WHERE predicates with the scanners so the reported backlog can never diverge from a real scan.
+- GAP-SG-78 — a not-yet-materialized entity is classified `Transient` (retried, not dead-lettered on first miss) via a typed `AppError::EntityNotYetMaterialized`, replacing the string `NotFound` at the two entity call sites (`entity-descriptions`, `entity-type-validate`); the namespace-blind lookup in `call_entity_type_validate` (which ignored `_namespace` and matched on `name` alone) is corrected to `WHERE namespace = ?1 AND name = ?2`.
+
+### Added
+- GAP-SG-72 — dead-letter diagnostics: the enrich sidecar queue gains `finish_reason`, `input_tokens`, `output_tokens` columns (idempotent ALTER); `complete()` returns a `ChatCompletion`/`ChatError` carrying these, and `--list-dead --json` exposes them.
+- GAP-SG-71 — adaptive `max_tokens` budget for enrich: named constants (`ENRICH_INITIAL_MAX_TOKENS`, `ENRICH_MAX_TOKENS_GROWTH_FACTOR`, `ENRICH_MAX_TOKENS_CEILING`, `ENRICH_MAX_LENGTH_RETRIES`) size the initial budget and its growth, replacing the previous unbounded provider default.
+
+### Changed
+- GAP-SG-74 — DRY: the duplicated `ApiError`, `code_string`, `MAX_RETRIES`, and `backoff` shared by the chat and embedding clients are extracted into a new `openrouter_http` module, which also hosts the `status_retry_class`/`provider_error_retry_class` classifiers.
+- GAP-SG-75 — the OpenRouter HTTP `User-Agent` is bumped to `sqlite-graphrag/1.1.0` (was drifting at 1.0.95/1.0.96).
+
+
+## [1.0.99] - 2026-06-30
+
+Resolves GAP-SG-67: the destructive global degree-cap pruning is removed, so a `remember`/`link` write can no longer delete historical edges that belong to other memories. Writes are now purely additive. The schema stays at version 15.
+
+### Fixed
+- GAP-SG-67 — `remember`/`link` no longer delete historical edges of other memories: the destructive global degree-cap pruning was removed, so a write referencing a high-degree hub keeps every preexisting edge intact and the total relationship count never decreases on a normal write.
+- GAP-SG-68 — `graph entities --sort-by degree` doc/behaviour mismatch fixed: the `EntitySortField::Degree` doc-comment (and the inherited `--help`) promised "descending by default" but the sort is ascending; the doc was aligned to the actual ascending behaviour ("Use `--order desc` for most-connected-first"). No SQL contract change; the 6 `build_order_by_*` tests stay green.
+- GAP-SG-69 — `enrich --operation body-enrich --until-empty` now converges: the scan no longer re-enqueues short bodies already vetoed `status='skipped'` by the trigram-Jaccard preservation guard. New `skipped_item_keys` helper; initial scan and rescan exclude vetoed keys; the `.enrich-queue.sqlite` sidecar is kept while `skipped` verdicts remain (removed only when `dead==0` AND `skipped==0`); `cleanup_queue_entry` clears the veto when a body changes. Empirically items_total dropped 55→3 on the second pass.
+
+### Removed (BREAKING)
+- `--max-entity-degree` flag dropped from `remember` and `link`; scripts that still pass it now get a clap argument error (exit 2), and the obsolete `--max-entity-degree 0` mitigation is no longer needed.
+- Internal `graph::enforce_degree_cap` function and its two call sites in `remember` and `link` removed; writes never prune, delete edges, or emit a degree warning.
+
+
 ## [1.0.98] - 2026-06-29
 
 Maintenance release that turns the CI pipeline green and restores the GitHub Release flow after the 1.0.97 publish. The crates.io 1.0.97 artifact is immutable, so the source-level fixes (English doc comments, the `anyhow` advisory, the OpenRouter preflight scope) ship here; the rest are CI/infrastructure changes that do not affect the published crate.

@@ -1,3 +1,97 @@
+# MIGRANDO PARA v1.1.01 — Backfill de Embedding, graph recompute-degree, Reclassify Literal de Relação
+
+> Este guia cobre a atualização de v1.1.0 para v1.1.01. Nenhuma migração roda no banco principal; o schema permanece em v15 — `migrate` NÃO é necessário. O nome oficial da release é v1.1.01; o `Cargo.toml` carrega `1.1.1` porque o SemVer rejeita zero à esquerda no segmento de patch. Binário ~19 MiB. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.1.01 — Backfill de Embedding, graph recompute-degree, Reclassify Literal de Relação
+
+### O Que Mudou
+- **P1**: o embedding de entidade agora roteia pelo caminho REST do OpenRouter mesmo com `--llm-backend none`; um guard de vetor vazio nos upserts previne blobs de embedding de zero bytes.
+- **P2**: `enrich --operation re-embed --target memories|entities|chunks|all` seleciona qual tabela de embedding recebe o backfill; `--status` reporta o `scan_backlog` por alvo.
+- **P3**: novo comando `graph recompute-degree` recomputa o grau de todas as entidades em uma transação única; suporta `--dry-run`; o envelope reporta `{total, updated, zeroed, unchanged}`.
+- **P4**: `reclassify-relation --literal-from` casa a relação armazenada de forma verbatim, bypassando a normalização do clap; mutuamente exclusiva com `--from-relation`.
+- **P5**: `merge-entities --ids <a,b> --into-id <N>` e `rename-entity --id <N>` endereçam entidades por id numérico.
+- **P6**: `health --json` ganha `vec_memories_missing` / `vec_entities_missing` / `vec_chunks_missing` mais `vec_*_coverage_pct`; `embedding status --json` ganha `memories_missing` / `entities_missing` / `chunks_missing` dentro de `coverage`.
+- **P7**: mensagens de erro de `EntityType` listam os 13 tipos canônicos de entidade.
+- **P10**: o predicado do re-embed também cobre linhas com dimensão divergente e blob vazio, não apenas linhas ausentes.
+- **P11**: `AppError::BodyTooLarge` / `AppError::TooManyChunks` são variantes tipadas; o exit 6 é preservado e a mensagem do envelope JSON agora é específica.
+- **P12**: `ingest --name-prefix <PREFIX>` prefixa os nomes de memória gerados (apenas no caminho de staging local).
+- SEM migração de schema do banco principal (permanece em v15). SEM migração de arquivo de sidecar.
+
+### Mudanças Quebrantes
+- Nenhuma. Todas as mudanças são aditivas; invocações existentes não são afetadas.
+
+### Passivo Operacional Recomendado Pós-Upgrade (bancos existentes)
+Bancos existentes tipicamente carregam embeddings de entidade/chunk ausentes, drift de grau acumulado historicamente e arestas legadas de relação com underscore. Rode uma vez após o upgrade:
+
+```bash
+# 1. Backfill de embeddings ausentes de entidade e chunk
+sqlite-graphrag enrich --operation re-embed --target entities \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+sqlite-graphrag enrich --operation re-embed --target chunks \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+
+# 2. Corrigir graus de entidade acumulados historicamente (preview primeiro)
+sqlite-graphrag graph recompute-degree --dry-run --json
+sqlite-graphrag graph recompute-degree --json
+
+# 3. Migrar arestas legadas de relação com underscore (match verbatim)
+sqlite-graphrag reclassify-relation --literal-from applies_to \
+  --to-relation applies-to --batch --json
+
+# Verificar a cobertura de embeddings depois
+sqlite-graphrag health --json | jaq '{memories: .vec_memories_missing, entities: .vec_entities_missing, chunks: .vec_chunks_missing}'
+```
+
+### Fixação da API da Biblioteca
+Troque o pin exato de `=1.1.0` para `=1.1.1` (a API da lib permanece instável dentro de v1.x.y, ADR-0032):
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.1.1"
+```
+
+### Rollback
+Volte para v1.1.0 reinstalando o binário anterior. Nenhuma mudança de banco a desfazer — o schema permanece inalterado em v15; embeddings de backfill e graus recomputados continuam dados válidos sob a v1.1.0.
+
+# MIGRANDO PARA v1.0.99 — Remoção da Poda Destrutiva do Degree-Cap (ADR-0059, GAP-SG-67)
+
+> Este guia cobre a atualização para v1.0.99. Nenhuma migração roda no banco principal; o schema permanece em v15. UMA mudança quebrante: a flag `--max-entity-degree` foi removida de `remember`/`link`. Reinstale com `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.99 — Remoção da Poda Destrutiva do Degree-Cap (ADR-0059, GAP-SG-67)
+
+### O Que Mudou
+- **GAP-SG-67 (ADR-0059)**: a poda destrutiva GLOBAL do degree-cap foi removida. A função `graph::enforce_degree_cap` e seus dois call sites (`remember`, `link`) foram deletados, então uma escrita agora é 100% aditiva — nunca poda/deleta arestas nem emite warn, e a contagem total de `relationships` nunca diminui numa escrita normal. Trade-off: o grau dos hubs cresce sem limite; qualquer normalização futura precisa ser um comando de MANUTENÇÃO explícito.
+- **GAP-SG-68**: correção apenas de documentação no doc-comment de `graph entities --sort-by degree` (agora descreve o default ascendente; use `--order desc` para o mais-conectado-primeiro). Sem mudança de comportamento.
+- **GAP-SG-69**: `enrich --operation body-enrich --until-empty` agora converge ao excluir dos rescans os corpos vetados pelo guard de preservação (`skipped`). Interno apenas — sem mudança de CLI.
+- SEM migração de schema do banco principal (permanece em v15). SEM migração de arquivo de sidecar.
+
+### Mudança Quebrante — `--max-entity-degree` foi removida
+
+A flag `--max-entity-degree <N>` em `remember` e `link` foi REMOVIDA. Passá-la é rejeitado pelo clap (exit 2). A mitigação anterior `--max-entity-degree 0` ficou obsoleta e desnecessária — não existe mais poda de degree-cap.
+
+**Antes (v1.0.97 — falha na v1.0.99 com exit 2):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --max-entity-degree 50 --json
+sqlite-graphrag link --from a --to b --relation uses --max-entity-degree 0 --json
+```
+
+**Depois (v1.0.99 — remova a flag):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --json
+sqlite-graphrag link --from a --to b --relation uses --json
+```
+
+### Quem É Afetado
+- Qualquer script, pipeline de CI ou job agendado que passe `--max-entity-degree` (incluindo a mitigação no-op `--max-entity-degree 0`) para `remember` ou `link`.
+
+### Como Atualizar
+1. Audite suas invocações: `rg -- "--max-entity-degree" seus-scripts/`
+2. Remova cada ocorrência de `--max-entity-degree <N>` das chamadas de `remember` / `link`.
+3. Reinstale: `cargo install sqlite-graphrag --locked --force`. Sem migração de banco — o schema permanece em v15.
+
+### Rollback
+Volte para v1.0.97 reinstalando o binário anterior. Nenhuma mudança de banco a desfazer — as escritas eram aditivas e o schema permanece inalterado em v15.
+
 # MIGRANDO PARA v1.0.97 — Sidecar de Fila Derivado do `--db` (ADR-0057)
 
 > Este guia cobre a atualização para v1.0.97. Nenhuma migração roda no banco principal; o schema permanece em v15. Os sidecars de fila `.enrich-queue.sqlite` / `.ingest-queue.sqlite` agora são derivados do diretório do `--db` (ADR-0057) em vez do CWD do processo — sem ação do operador no banco default canônico. Reinstale com `cargo install sqlite-graphrag --locked --force`.
@@ -17,7 +111,7 @@
 ## v1.0.96 — Dead-Letter do Enrich + Concorrência REST (ADR-0055)
 
 ### O Que Mudou
-- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (default 5 na v1.0.96; elevado para 8 na v1.0.97) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
+- **GAP-ENRICH-BACKLOG-CONVERGE**: o `enrich` agora leva o backlog à convergência via fila dead-letter. O banco `.enrich-queue.sqlite` ganha duas colunas por `ALTER TABLE` IDEMPOTENTE — `error_class` e `next_retry_at` — mais o índice `idx_enrich_queue_eligible ON queue(status, next_retry_at)` e um novo status terminal `dead`. Falhas transientes (rate-limit/timeout/5xx) reagendam `next_retry_at` com backoff exponencial; falhas duras (validação/parse) viram terminais imediatamente. Um item vira `dead` após `--max-attempts` retries transientes (padrão 8, range 1..=20) ou na primeira falha dura. O dequeue respeita `next_retry_at` e exclui `dead`, então o conjunto vivo é estritamente decrescente.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: o embedding REST para `--mode openrouter` faz fan-out por lote com um `tokio::task::JoinSet` bounded (sem dependência nova), com clamp in-flight 1..16 (faixa Cloudflare-safe). A ordem dos chunks é preservada por índice; as escritas SQLite permanecem serializadas via WAL + claim atômico (single-writer intacto).
 
 ### Migração da Fila — Automática e In-Place
@@ -27,8 +121,8 @@
 ### Flags Novas do enrich
 - `--until-empty` — loop interno scan→drain até a fila esvaziar de itens elegíveis ou `--max-runtime` expirar; substitui o loop bash externo.
 - `--max-runtime <SECONDS>` — teto wall-clock para `--until-empty`; default 3600.
-- `--max-attempts <N>` — orçamento de retries transientes antes de `dead`; default 5; range 1..=20.
-- `--status` — relatório JSON read-only das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM, NÃO adquire o singleton.
+- `--max-attempts <N>` — orçamento de retries transientes antes de `dead`; default 8; range 1..=20.
+- `--status` — relatório JSON read-only das contagens da fila (`unbound_backlog`, `scan_backlog` por operação, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM, NÃO adquire o singleton; o `scan_backlog` (GAP-SG-77, v1.1.0) é o backlog real do banco por operação que um scan enfileiraria — elimina o falso `pending=0` para `entity-descriptions`/`body-enrich`/`re-embed`, e o `state` deriva o `pending-scan` dele.
 - `--rest-concurrency <N>` — concorrência REST para `--mode openrouter`; clamp 1..=16; default 8; distinta de `--llm-parallelism`.
 
 ### Nada Quebra
@@ -39,7 +133,7 @@
 # Levar o backlog à convergência de forma headless (sem loop externo)
 sqlite-graphrag enrich --operation memory-bindings --mode openrouter \
   --openrouter-model MODEL --until-empty --max-runtime 1800 \
-  --max-attempts 5 --rest-concurrency 8 --json
+  --max-attempts 8 --rest-concurrency 8 --json
 
 # Inspecionar a fila sem spawnar o LLM nem adquirir o singleton
 sqlite-graphrag enrich --status --json

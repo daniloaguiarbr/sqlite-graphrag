@@ -30,7 +30,7 @@ use extraction::{
     call_body_enrich, call_body_extract, call_deep_research_synth, call_description_enrich,
     call_domain_classify, call_entity_connect, call_entity_description, call_entity_type_validate,
     call_graph_audit, call_memory_bindings, call_reembed, call_relation_reclassify,
-    call_weight_calibrate, find_codex_binary, EnrichItemResult,
+    call_weight_calibrate, find_codex_binary, take_last_openrouter_failure, EnrichItemResult,
 };
 use postprocess::{
     persist_enriched_body, persist_entity_description, persist_memory_bindings,
@@ -38,9 +38,13 @@ use postprocess::{
 };
 pub use queue::{cleanup_queue_entry, DeadItem, DeadSummary, EnrichStatus, WaitingItem};
 use queue::{
-    enqueue_candidate, item_type_for, open_queue_db, prune_dead_orphans, record_item_failure,
+    dequeue_next_pending, enqueue_candidate, item_type_for, item_type_for_key, open_queue_db,
+    prune_dead_orphans, record_item_failure, record_item_failure_typed, skipped_item_keys,
+    DequeueOutcome,
 };
-use scan::{scan_isolated_entity_pairs, scan_operation, scan_unbound_memories};
+use scan::{
+    count_operation_backlog, scan_isolated_entity_pairs, scan_operation, scan_unbound_memories,
+};
 
 use crate::commands::ingest_claude::find_claude_binary;
 use crate::constants::MAX_MEMORY_BODY_LEN;
@@ -351,6 +355,25 @@ pub enum EnrichOperation {
     BodyExtract,
 }
 
+/// v1.1.1 (P2): which embedding table the `re-embed` operation backfills.
+///
+/// `memories` is the historical behaviour (and the default, so existing
+/// invocations are unchanged); `entities` and `chunks` close the retroactive
+/// coverage gap for `entity_embeddings` / `chunk_embeddings`; `all` runs the
+/// three scans in one invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReEmbedTarget {
+    /// Memories without a live vector in `memory_embeddings` (default).
+    Memories,
+    /// Entities without a live vector in `entity_embeddings`.
+    Entities,
+    /// Chunks without a live vector in `chunk_embeddings`.
+    Chunks,
+    /// All three targets in a single run.
+    All,
+}
+
 /// LLM provider for enrichment.
 #[derive(Debug, Clone, PartialEq, Eq, clap::ValueEnum)]
 pub enum EnrichMode {
@@ -450,6 +473,16 @@ pub struct EnrichArgs {
     /// Maximum number of items to process in this run. Omit for all.
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,
+
+    /// v1.1.1 (P2): embedding table backfilled by `--operation re-embed`.
+    /// `memories` (default) preserves the historical behaviour; `entities`
+    /// and `chunks` rebuild `entity_embeddings` / `chunk_embeddings`; `all`
+    /// covers the three tables in one run. The scan also selects rows whose
+    /// stored `dim` diverges from the configured `--embedding-dim` (P10),
+    /// so legacy-dimension vectors are regenerated, not only missing ones.
+    /// Ignored (rejected) for every other operation.
+    #[arg(long, value_enum, value_name = "TARGET", default_value_t = ReEmbedTarget::Memories)]
+    pub target: ReEmbedTarget,
 
     /// Preview items without calling the LLM (zero tokens consumed).
     #[arg(long)]
@@ -1242,6 +1275,22 @@ pub fn run(
     // Surfaces flags that the wrong mode would silently discard.
     validate_mode_conditional_flags_enrich(args)?;
 
+    // v1.1.1 (P2): --target only means something for re-embed. Fail loud
+    // instead of silently ignoring it under another operation.
+    if args.target != ReEmbedTarget::Memories
+        && !matches!(args.operation(), EnrichOperation::ReEmbed)
+    {
+        let target_label = match args.target {
+            ReEmbedTarget::Memories => "memories",
+            ReEmbedTarget::Entities => "entities",
+            ReEmbedTarget::Chunks => "chunks",
+            ReEmbedTarget::All => "all",
+        };
+        return Err(AppError::Validation(format!(
+            "--target {target_label} only applies to --operation re-embed"
+        )));
+    }
+
     // GAP-ENRICH-BACKLOG-CONVERGE: --status is a read-only report. It never
     // calls the LLM, never initialises the OpenRouter client, and never
     // acquires the job singleton, so it is safe to run while a real enrich is
@@ -1283,7 +1332,8 @@ pub fn run(
         }
         if args.list_dead {
             let mut stmt = queue_conn.prepare(
-                "SELECT item_key, item_type, attempt, error_class, error FROM queue \
+                "SELECT item_key, item_type, attempt, error_class, error, \
+                         finish_reason, input_tokens, output_tokens FROM queue \
                  WHERE status='dead' AND (operation = ?1 OR operation IS NULL) ORDER BY id",
             )?;
             let rows = stmt
@@ -1295,6 +1345,9 @@ pub fn run(
                         attempt: r.get(2)?,
                         error_class: r.get(3)?,
                         error: r.get(4)?,
+                        finish_reason: r.get(5)?,
+                        input_tokens: r.get(6)?,
+                        output_tokens: r.get(7)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1350,6 +1403,10 @@ pub fn run(
         let conn = open_rw(&paths.db)?;
         let namespace = crate::namespace::resolve_namespace(args.namespace.as_deref())?;
         let unbound_backlog = scan_unbound_memories(&conn, &namespace, None, &[])?.len();
+        // GAP-SG-77: DB-semantics backlog for the queried operation (fixes the
+        // false pending=0 for entity-descriptions/body-enrich/re-embed).
+        let scan_backlog =
+            count_operation_backlog(&conn, &args.operation(), &namespace, args.target)?;
         let queue_path = crate::paths::sidecar_path(&paths.db, ".enrich-queue.sqlite");
         let queue_conn = open_queue_db(&queue_path)?;
         let op_label = format!("{:?}", args.operation());
@@ -1415,7 +1472,7 @@ pub fn run(
             "draining"
         } else if waiting > 0 {
             "cooldown"
-        } else if queue_pending == 0 && unbound_backlog > 0 {
+        } else if queue_pending == 0 && scan_backlog > 0 {
             "pending-scan"
         } else {
             "empty"
@@ -1425,6 +1482,7 @@ pub fn run(
             operation: op_label,
             namespace,
             unbound_backlog,
+            scan_backlog,
             queue_pending,
             queue_processing,
             queue_done,
@@ -1615,7 +1673,23 @@ pub fn run(
     }
 
     // SCAN phase
-    let scan_result = scan_operation(&conn, &namespace, args)?;
+    let mut scan_result = scan_operation(&conn, &namespace, args)?;
+    // GAP-SG-69: body-enrich candidates are scanned purely by `LENGTH(body) <
+    // min_output_chars`, so a short body whose rewrite the preservation guard
+    // keeps rejecting is re-scanned every pass — items_total never reaches 0 and
+    // `--until-empty` never converges (the detached worker reported a stuck
+    // backlog for 30+ min). Exclude memories already vetoed `status='skipped'`
+    // for this operation in the sidecar queue; `cleanup_queue_entry`
+    // (remember/edit/forget/purge) clears the veto when the body actually
+    // changes, so a genuinely updated memory is reconsidered automatically.
+    if matches!(args.operation(), EnrichOperation::BodyEnrich) {
+        let q_path = crate::paths::sidecar_path(&paths.db, ".enrich-queue.sqlite");
+        if let Ok(q) = open_queue_db(&q_path) {
+            if let Ok(vetoed) = skipped_item_keys(&q, &format!("{:?}", args.operation())) {
+                scan_result.retain(|k| !vetoed.contains(k));
+            }
+        }
+    }
     let total = scan_result.len();
 
     emit_json(&PhaseEvent {
@@ -1700,7 +1774,11 @@ pub fn run(
     let op_label = format!("{:?}", args.operation());
     let item_type = item_type_for(&args.operation());
     for key in scan_result.iter() {
-        enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
+        // v1.1.1 (P2): re-embed keys may be prefixed (`entity:` / `chunk:`);
+        // derive the row item_type from the key so prune-dead-orphans never
+        // mistakes an entity/chunk row for an orphaned memory.
+        let it = item_type_for_key(key, item_type);
+        enqueue_candidate(&queue_conn, &conn, &namespace, key, it, &op_label);
     }
 
     // G19: parallel LLM processing via std::thread::scope when parallelism > 1.
@@ -1832,9 +1910,19 @@ pub fn run(
             // Re-scan and re-enqueue eligible candidates each iteration.
             // INSERT OR IGNORE never resurrects a dead-letter row (item_key is
             // UNIQUE), so the backlog converges instead of looping forever.
-            let rescan = scan_operation(&conn, &namespace, args)?;
+            let mut rescan = scan_operation(&conn, &namespace, args)?;
+            // GAP-SG-69: drop memories already vetoed `status='skipped'` so the
+            // re-scan converges instead of re-enqueuing a non-expandable short
+            // body every iteration (body-enrich only; the verdict persists in
+            // the sidecar queue and is cleared by cleanup_queue_entry on edit).
+            if matches!(args.operation(), EnrichOperation::BodyEnrich) {
+                if let Ok(vetoed) = skipped_item_keys(&queue_conn, &op_label) {
+                    rescan.retain(|k| !vetoed.contains(k));
+                }
+            }
             for key in &rescan {
-                enqueue_candidate(&queue_conn, &conn, &namespace, key, item_type, &op_label);
+                let it = item_type_for_key(key, item_type);
+                enqueue_candidate(&queue_conn, &conn, &namespace, key, it, &op_label);
             }
         }
         let completed_before = completed;
@@ -1857,6 +1945,11 @@ pub fn run(
                 skipped: usize,
                 cost: f64,
                 oauth: bool,
+                // GAP-SG-76 fix: distinct signal for "worker aborted because
+                // SQLITE_BUSY exhausted all bounded retries" so the caller
+                // fails loud (exit 15) instead of silently treating it like
+                // an exhausted/empty backlog.
+                db_busy: bool,
             }
 
             let results: Vec<WorkerResult> = std::thread::scope(|s| {
@@ -1875,14 +1968,14 @@ pub fn run(
                             Ok(c) => c,
                             Err(e) => {
                                 tracing::error!(target: "enrich", worker = worker_id, error = %e, "worker failed to open DB");
-                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false };
+                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false, db_busy: false };
                             }
                         };
                         let w_queue = match open_queue_db(queue_path) {
                             Ok(c) => c,
                             Err(e) => {
                                 tracing::error!(target: "enrich", worker = worker_id, error = %e, "worker failed to open queue DB");
-                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false };
+                                return WorkerResult { completed: 0, failed: 0, skipped: 0, cost: 0.0, oauth: false, db_busy: false };
                             }
                         };
                         let mut w_completed = 0usize;
@@ -1890,6 +1983,7 @@ pub fn run(
                         let mut w_skipped = 0usize;
                         let mut w_cost = 0.0f64;
                         let mut w_oauth = false;
+                        let mut w_db_busy = false;
                         let mut w_backoff = DEFAULT_RATE_LIMIT_WAIT;
                         let w_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
                         // G28-D: per-worker circuit breaker that aborts the
@@ -1915,19 +2009,36 @@ pub fn run(
                             // GAP-SG-16: --ignore-backoff drops the next_retry_at
                             // cooldown filter so items waiting on backoff are
                             // claimed immediately.
-                            let dequeue_sql = format!(
-                                "UPDATE queue SET status='processing', attempt=attempt+1 \
-                                 WHERE id = (SELECT id FROM queue WHERE status='pending' {backoff_clause} \
-                                             ORDER BY id LIMIT 1) \
-                                 RETURNING id, item_key, item_type, attempt"
-                            );
-                            let pending: Option<(i64, String, String, i64)> = w_queue
-                                .query_row(
-                                    &dequeue_sql,
-                                    [],
-                                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                                )
-                                .ok();
+                            // GAP-SG-76: distinguish a genuinely empty backlog
+                            // (QueryReturnedNoRows) from SQLITE_BUSY lock
+                            // contention with the main writer or another
+                            // worker — a busy claim retries briefly instead of
+                            // breaking the drain loop early.
+                            // GAP-SG-76/v1.1.00 fix: bounded busy-retry via the
+                            // shared with_busy_retry helper (5 attempts, exponential
+                            // half-jitter backoff, kill-switch aware) instead of an
+                            // unbounded `loop { ... continue; }` on SQLITE_BUSY. When
+                            // retries are exhausted, with_busy_retry converts to
+                            // AppError::DbBusy — that is NOT treated as an empty
+                            // backlog. It sets w_db_busy and stops this worker; the
+                            // caller (after collecting all workers) fails loud with
+                            // exit code 15 instead of silently under-reporting a
+                            // convergent drain.
+                            let pending = match crate::storage::utils::with_busy_retry(|| {
+                                dequeue_next_pending(&w_queue, backoff_clause)
+                            }) {
+                                Ok(DequeueOutcome::Claimed(p)) => Some(p),
+                                Ok(DequeueOutcome::Empty) => None,
+                                Err(AppError::DbBusy(msg)) => {
+                                    tracing::error!(target: "enrich", worker = worker_id, error = %msg, "SQLITE_BUSY exhausted bounded retries, worker aborting");
+                                    w_db_busy = true;
+                                    None
+                                }
+                                Err(e) => {
+                                    tracing::error!(target: "enrich", worker = worker_id, error = %e, "dequeue failed");
+                                    None
+                                }
+                            };
                             let (queue_id, item_key, _item_type, attempt_current) = match pending {
                                 Some(p) => p,
                                 None => break,
@@ -1956,6 +2067,12 @@ pub fn run(
                                 EnrichOperation::DeepResearchSynth => call_deep_research_synth(&w_conn, namespace, &item_key, provider_bin, provider_model, provider_timeout, mode),
                                 EnrichOperation::BodyExtract => call_body_extract(&w_conn, namespace, &item_key, provider_bin, provider_model, provider_timeout, mode, args.body_extract_graph_only),
                             };
+                            // GAP-SG-72/73: drain UNCONDITIONALLY right after
+                            // every call_result (success or failure) so a
+                            // diagnostic never survives past the item that
+                            // produced it — see the doc comment on
+                            // OpenRouterFailureDiagnostics.
+                            let openrouter_diag = take_last_openrouter_failure();
 
                             match call_result {
                                 Ok(EnrichItemResult::Done { cost, is_oauth, memory_id, entity_id, entities, rels, chars_before, chars_after }) => {
@@ -2029,7 +2146,26 @@ pub fn run(
                                         }
                                     }
                                     w_failed += 1;
-                                    let outcome = record_item_failure(&w_queue, queue_id, attempt_current, args.max_attempts, &e);
+                                    // GAP-SG-73: prefer the origin-typed verdict
+                                    // (ChatError::retry_class, computed at the
+                                    // exact HTTP status / provider code in
+                                    // chat_api.rs) over the untyped fallback
+                                    // classifier whenever this item's failure
+                                    // came from an OpenRouter chat call.
+                                    let outcome = match openrouter_diag {
+                                        Some(diag) => record_item_failure_typed(
+                                            &w_queue,
+                                            queue_id,
+                                            attempt_current,
+                                            args.max_attempts,
+                                            diag.retry_class,
+                                            &err_str,
+                                            diag.finish_reason.as_deref(),
+                                            diag.prompt_tokens,
+                                            diag.completion_tokens,
+                                        ),
+                                        None => record_item_failure(&w_queue, queue_id, attempt_current, args.max_attempts, &e),
+                                    };
                                     let _guard = stdout_mu.lock();
                                     emit_json(&ItemEvent { item: &item_key, status: "failed", memory_id: None, entity_id: None, entities: None, rels: None, chars_before: None, chars_after: None, cost_usd: None, elapsed_ms: Some(item_started.elapsed().as_millis() as u64), error: Some(err_str), index: current_index, total });
                                     // G28-D: feed the classified outcome to the breaker (transient
@@ -2045,7 +2181,7 @@ pub fn run(
                                 }
                             }
                         }
-                        WorkerResult { completed: w_completed, failed: w_failed, skipped: w_skipped, cost: w_cost, oauth: w_oauth }
+                        WorkerResult { completed: w_completed, failed: w_failed, skipped: w_skipped, cost: w_cost, oauth: w_oauth, db_busy: w_db_busy }
                     })
                 })
                 .collect();
@@ -2058,10 +2194,23 @@ pub fn run(
                             skipped: 0,
                             cost: 0.0,
                             oauth: false,
+                            db_busy: false,
                         })
                     })
                     .collect()
             });
+
+            // GAP-SG-76 fix: a worker that aborted due to exhausted
+            // SQLITE_BUSY retries must fail the whole `enrich` invocation
+            // loudly (exit code 15 via AppError::DbBusy) rather than being
+            // folded silently into the completed/failed/skipped counters,
+            // which would understate a genuinely unfinished drain.
+            if results.iter().any(|r| r.db_busy) {
+                return Err(AppError::DbBusy(
+                    "SQLITE_BUSY exhausted bounded retries while dequeuing (parallel worker)"
+                        .into(),
+                ));
+            }
 
             for r in &results {
                 completed += r.completed;
@@ -2090,17 +2239,33 @@ pub fn run(
 
                 // Dequeue next pending item (GAP-SG-16: --ignore-backoff drops
                 // the next_retry_at cooldown filter).
-                let dequeue_sql = format!(
-                    "UPDATE queue SET status='processing', attempt=attempt+1 \
-                     WHERE id = (SELECT id FROM queue WHERE status='pending' {backoff_clause} \
-                                 ORDER BY id LIMIT 1) \
-                     RETURNING id, item_key, item_type, attempt"
-                );
-                let pending: Option<(i64, String, String, i64)> = queue_conn
-                    .query_row(&dequeue_sql, [], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                    })
-                    .ok();
+                // GAP-SG-76: distinguish a genuinely empty backlog
+                // (QueryReturnedNoRows) from SQLITE_BUSY lock contention with
+                // a concurrent writer — a busy claim retries briefly instead
+                // of breaking the drain loop early.
+                // GAP-SG-76/v1.1.00 fix: bounded busy-retry via the shared
+                // with_busy_retry helper (5 attempts, exponential half-jitter
+                // backoff, kill-switch aware) instead of an unbounded
+                // `loop { ... continue; }` on SQLITE_BUSY. When retries are
+                // exhausted, with_busy_retry converts to AppError::DbBusy,
+                // which we propagate immediately (fail loud, exit code 15)
+                // instead of silently treating sustained contention as an
+                // empty backlog — that would end the drain early and under-
+                // report queue_pending as converged.
+                let pending = match crate::storage::utils::with_busy_retry(|| {
+                    dequeue_next_pending(&queue_conn, backoff_clause)
+                }) {
+                    Ok(DequeueOutcome::Claimed(p)) => Some(p),
+                    Ok(DequeueOutcome::Empty) => None,
+                    Err(e @ AppError::DbBusy(_)) => {
+                        tracing::error!(target: "enrich", error = %e, "SQLITE_BUSY exhausted bounded retries, aborting drain loop");
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        tracing::error!(target: "enrich", error = %e, "dequeue failed");
+                        None
+                    }
+                };
 
                 let (queue_id, item_key, item_type, attempt_current) = match pending {
                     Some(p) => p,
@@ -2245,6 +2410,9 @@ pub fn run(
                         args.body_extract_graph_only,
                     ),
                 };
+                // GAP-SG-72/73: drain UNCONDITIONALLY right after every
+                // call_result (mirrors the worker loop above).
+                let openrouter_diag = take_last_openrouter_failure();
 
                 match call_result {
                     Ok(EnrichItemResult::Done {
@@ -2424,13 +2592,30 @@ pub fn run(
                         }
 
                         failed += 1;
-                        let _outcome = record_item_failure(
-                            &queue_conn,
-                            queue_id,
-                            attempt_current,
-                            args.max_attempts,
-                            &e,
-                        );
+                        // GAP-SG-73: prefer the origin-typed verdict
+                        // (ChatError::retry_class) over the untyped fallback
+                        // classifier whenever this item's failure came from
+                        // an OpenRouter chat call.
+                        let _outcome = match openrouter_diag {
+                            Some(diag) => record_item_failure_typed(
+                                &queue_conn,
+                                queue_id,
+                                attempt_current,
+                                args.max_attempts,
+                                diag.retry_class,
+                                &err_str,
+                                diag.finish_reason.as_deref(),
+                                diag.prompt_tokens,
+                                diag.completion_tokens,
+                            ),
+                            None => record_item_failure(
+                                &queue_conn,
+                                queue_id,
+                                attempt_current,
+                                args.max_attempts,
+                                &e,
+                            ),
+                        };
                         emit_json(&ItemEvent {
                             item: &item_key,
                             status: "failed",
@@ -2524,7 +2709,19 @@ pub fn run(
                 r.get(0)
             })
             .unwrap_or(0);
-        if dead == 0 {
+        // GAP-SG-69: keep the sidecar queue while it still holds `skipped`
+        // verdicts. Those rows tell the next scan which short bodies are
+        // non-expandable; removing the file would lose the veto and the
+        // body-enrich backlog would never converge. cleanup_queue_entry clears
+        // a row when its memory is edited/forgotten, so the veto is not permanent.
+        let skipped_remaining: i64 = queue_conn
+            .query_row(
+                "SELECT COUNT(*) FROM queue WHERE status='skipped'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if dead == 0 && skipped_remaining == 0 {
             let _ = std::fs::remove_file(&queue_path);
         }
     }

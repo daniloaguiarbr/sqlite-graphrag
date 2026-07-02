@@ -80,10 +80,6 @@ pub struct LinkArgs {
         help = "Reject non-canonical relation types with exit 1"
     )]
     pub strict_relations: bool,
-    /// Emit a warning (but do not reject) when creating an edge would push either endpoint
-    /// entity above this degree. Default 50. Set 0 to disable the check.
-    #[arg(long, default_value_t = 50, value_name = "N")]
-    pub max_entity_degree: u32,
 }
 
 #[derive(Serialize)]
@@ -235,22 +231,6 @@ pub fn run(args: LinkArgs) -> Result<(), AppError> {
     if was_created {
         entities::recalculate_degree(&tx, source_id)?;
         entities::recalculate_degree(&tx, target_id)?;
-
-        if args.max_entity_degree > 0 {
-            let cap = args.max_entity_degree as i64;
-            // GAP-SG-49: enforce the cap instead of only warning. Prune the
-            // weakest incident edge(s) until each endpoint is back under the
-            // cap; if the just-created edge is the weakest it is the one
-            // refused.
-            for (entity_id, entity_name) in [(source_id, &norm_from), (target_id, &norm_to)] {
-                let pruned = crate::graph::enforce_degree_cap(&tx, entity_id, cap)?;
-                if pruned > 0 {
-                    output::emit_progress(&format!(
-                        "entity '{entity_name}' exceeded degree cap {cap}; pruned {pruned} lowest-weight edge(s)"
-                    ));
-                }
-            }
-        }
     }
     tx.commit()?;
 

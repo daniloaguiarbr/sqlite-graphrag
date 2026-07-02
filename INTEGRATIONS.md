@@ -27,6 +27,18 @@
 - For LLM-curated entity/relationship extraction use `ingest --mode claude-code` or `ingest --mode codex`.
 - Entity types now include `organization`, `location`, `date` alongside `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## New Commands and Flags (since v1.1.01)
+- The official release name is v1.1.01; the crate manifest carries `version = "1.1.1"` because the SemVer parser rejects a leading zero in the patch component — pin with `=1.1.1`. The HTTP `User-Agent` is `sqlite-graphrag/1.1.1` (derived from `CARGO_PKG_VERSION`); the release binary is approximately 19 MiB; the schema stays at version 15 with no migration
+- Entity vectors are written through the OpenRouter REST path even under `--llm-backend none` (the entity-embedding chain resolves to `[OpenRouter]`, no subprocess), and an empty-embedding guard in `upsert_entity_vec`/`upsert_chunk_vec`/`memories::upsert_vec` keeps vector-less rows visible to the re-embed backfill instead of masking them behind an empty BLOB (P1)
+- `enrich --operation re-embed --target memories|entities|chunks|all` — retroactive embedding backfill per vector table (default `memories`, fully retro-compatible); `enrich --status` reports the `scan_backlog` per target; the re-embed predicates also select rows whose stored `dim` diverges from the configured `--embedding-dim` or whose blob is empty (P2, P10)
+- `graph recompute-degree` — reconciles the cached `entities.degree` with the real edge counts in one IMMEDIATE transaction, per namespace (or all), with `--dry-run` and the envelope `{namespace, dry_run, total, updated, zeroed, unchanged, elapsed_ms}` (P3)
+- `reclassify-relation --literal-from <REL>` — matches the stored relation VERBATIM (no hyphen→underscore normalization at the clap boundary), making legacy hyphenated edges such as `applies-to` reachable; mutually exclusive with `--from-relation` (P4)
+- `merge-entities --ids <a,b> --into-id <N>` and `rename-entity --id <N>` — ID-based, namespace-scoped selection for entity maintenance when duplicated names across namespaces block merges and renames (P5)
+- `health --json` gains `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` and the per-table `vec_*_coverage_pct` fields; `embedding status --json` gains the per-table `*_missing` counters (P6)
+- `EntityType` deserialization is a manual `Deserialize` with a rich boundary error listing the 13 valid values, surfaced as a Validation error (exit 1) with early validation of curated graph input (`--graph-stdin`, `--entities-file`) instead of a bare serde error (exit 20) (P7)
+- The exit-6 limit errors are typed: `AppError::BodyTooLarge { bytes, limit }` and `AppError::TooManyChunks { chunks, limit }` replace the generic `LimitExceeded` message at every body-size call site — the exit CODE stays 6, only the envelope MESSAGE gains actionable context (P11)
+- `ingest --name-prefix <PREFIX>` — kebab-case prefix applied to every derived memory name, with the derived-part budget shrunk so `prefix + derived` always respects the 80-char name cap (P12)
+
 ## New Commands and Flags (since v1.0.94)
 - `--embedding-backend auto|openrouter|llm` — select embedding backend (global flag)
 - `--embedding-model MODEL` — select embedding model for OpenRouter (global flag, REQUIRED with openrouter)
@@ -59,7 +71,7 @@
 - `enrich --until-empty` — internal scan→drain loop that runs until the queue holds no eligible items or `--max-runtime` expires; replaces the external bash retry loop (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
 - `--max-runtime <SECONDS>` — wall-clock ceiling for `--until-empty` (default 3600)
 - `--max-attempts <N>` — Transient retry budget before an item becomes terminal `dead` (default 5, range 1..=20)
-- `--status` — read-only JSON report of the queue counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); does NOT call the LLM and does NOT acquire the singleton — its deterministic output is ideal for hook/timer integration
+- `--status` — read-only JSON report of the queue counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) plus the per-operation `scan_backlog` (the real database candidates a scan would enqueue, sharing the scanners' WHERE predicates so it never diverges from a real scan; GAP-SG-77 kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it); does NOT call the LLM and does NOT acquire the singleton — its deterministic output is ideal for hook/timer integration
 - `--rest-concurrency <N>` — bounded REST fan-out for `--mode openrouter` embedding batches; clamp 1..=16 (default 8), distinct from `--llm-parallelism`
 - Dead-letter convergence: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status; Transient failures (rate-limit/timeout/5xx) reschedule with exponential backoff, HardFailures (validation/parse) go terminal immediately, and dequeue excludes `dead` so the live set strictly decreases
 
@@ -179,7 +191,7 @@
 - `normalize-entities --yes` normalizes all entity names to lowercase kebab-case ASCII; auto-merges collisions; `--dry-run` previews
 - `enrich --operation <op> --mode claude-code` LLM-augmented graph quality; operations: `memory-bindings`, `entity-descriptions`, `body-enrich`; `--dry-run` previews without LLM; `--max-cost-usd`, `--resume`, `--retry-failed`
 - `deep-research` new flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05)), `--max-neighbors-per-hop`
-- `--max-entity-degree N` on `link` and `remember` emits `tracing::warn!` when an entity exceeds N connections
+- `--max-entity-degree` flag REMOVED from `link` and `remember` in v1.0.99 — writes are now purely additive and NEVER prune, delete edges, or emit a degree warning (passing the flag now yields a clap exit 2)
 - `health` reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` when any relation exceeds 40%
 - Entity names are normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
 

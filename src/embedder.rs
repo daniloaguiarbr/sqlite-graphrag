@@ -1185,7 +1185,13 @@ pub fn embed_passages_parallel_with_embedding_choice(
                 let owned: Vec<String> = chunk.to_vec();
                 set.spawn(async move {
                     let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-                    let r = client.embed_batch(&refs, client.default_input_type()).await;
+                    // `EmbedChunkResult` carries `AppError` (retry_class is
+                    // only consumed by callers that match `EmbedError`
+                    // directly, e.g. the enrich re-embed path).
+                    let r = client
+                        .embed_batch(&refs, client.default_input_type())
+                        .await
+                        .map_err(AppError::from);
                     (idx, r)
                 });
             }
@@ -2175,6 +2181,25 @@ mod tests {
         let hit = guard.get(&key).expect("cache must return stored value");
         assert_eq!(hit.len(), crate::constants::embedding_dim());
         assert!((hit[0] - 0.42).abs() < 1e-6);
+    }
+
+    // v1.1.1 (P1): com `--embedding-backend openrouter` a chain de embedding
+    // de entidade é exatamente `[OpenRouter]` mesmo com `--llm-backend none`
+    // — o short-circuit de vetor vazio de embed_entity_texts_cached (chain ==
+    // [None]) NÃO dispara, então a entidade ganha vetor via REST na escrita.
+    #[test]
+    fn p1_openrouter_chain_ignores_llm_backend_none() {
+        use crate::cli::{EmbeddingBackendChoice, LlmBackendChoice};
+        let chain = EmbeddingBackendChoice::Openrouter.to_chain(LlmBackendChoice::None);
+        assert_eq!(
+            chain,
+            vec![LlmBackendKind::OpenRouter],
+            "openrouter embedding must not be silenced by --llm-backend none"
+        );
+        // O curto-circuito de vetor vazio existe SOMENTE para a chain [None]
+        // (`--embedding-backend llm --llm-backend none`).
+        let none_chain = EmbeddingBackendChoice::Llm.to_chain(LlmBackendChoice::None);
+        assert_eq!(none_chain, vec![LlmBackendKind::None]);
     }
 
     #[test]

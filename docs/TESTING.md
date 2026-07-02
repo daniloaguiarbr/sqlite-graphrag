@@ -99,6 +99,13 @@ All five tests are gated by `#[serial_test::serial(env)]` to prevent PATH-pollut
   - `auto_describe_ignores_short_and_blank_lines` — short lines (<21 chars) and blank lines are skipped
 - `tests/binary_size_documented_regression.rs::assert_documented_size_matches_real` — GAP-E2E-001. Verifies `Cargo.toml:6` description matches the actual binary size within ±5%
 - `tests/health_schema_drift_regression.rs::assert_all_health_keys_in_schema` — GAP-E2E-007. Verifies that all 17 new fields are present in the regenerated `health.schema.json` and that `additionalProperties: true` (Must-Ignore policy per RFC 7493 I-JSON) is honored
+## v1.0.99 — Degree-Cap Removal + Doc/Convergence Fixes (ADR-0059, GAP-SG-67/68/69)
+
+- **GAP-SG-67 (test removal)**: `graph::enforce_degree_cap` and its 5 unit tests (plus the `setup_cap_db` helper) were DELETED together with the function. There is no new dedicated regression test — the additive guarantee is structural: with the prune code gone from the write path, a normal `remember`/`link` can no longer delete edges, so the total `relationships` count cannot decrease on a write. `cargo clippy --all-targets -- -D warnings` confirms no dangling reference to `enforce_degree_cap`/`max_entity_degree` remains.
+- **GAP-SG-68**: the 6 `build_order_by_*` tests in `src/commands/graph_export.rs` (`build_order_by_defaults_to_name_asc`, `build_order_by_name_desc`, `build_order_by_degree_desc`, `build_order_by_degree_asc`, `build_order_by_created_at_asc`, `build_order_by_created_at_desc`) stay green; they pin the ascending default and the `--order desc` path the realigned doc-comment now describes.
+- **GAP-SG-69**: `src/commands/enrich/queue.rs::tests::skipped_item_keys_excludes_only_skipped_for_operation` proves the new `skipped_item_keys` helper returns only `status='skipped'` rows for the queried operation, so the `--until-empty` body-enrich rescan no longer re-enqueues vetoed short bodies and the sidecar is retained while `skipped` verdicts remain (empirically 55→3).
+- No migration; schema stays v15; `Cargo.toml` is 1.0.99. Suite totals were not re-baselined in this documentation pass — run `cargo nextest -P ci` for the live count.
+
 ## v1.0.97 — Post-Sealing Audit Tests (ADR-0056/0057/0058, GAP-SG-57..66)
 
 - `commands::enrich::queue::tests::prune_dead_orphans_removes_only_orphan_memory_rows` — GAP-SG-66. Proves `enrich --prune-dead-orphans` deletes only orphan `dead` memory rows, keeps the live memory row, and never touches entity-keyed rows (returns 1).

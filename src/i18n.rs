@@ -471,6 +471,12 @@ pub mod validation {
             not_found(&format!("memory not found: id={id}"))
         }
 
+        // GAP-SG-78: transitory entity absence (materialized on a later enrich
+        // pass). Own pt-BR string, distinct from the terminal not-found chain.
+        pub fn entity_not_yet_materialized(name: &str, namespace: &str) -> String {
+            format!("entidade '{name}' ainda não materializada no namespace '{namespace}'")
+        }
+
         pub fn namespace_error(msg: &str) -> String {
             format!("namespace não resolvido: {msg}")
         }
@@ -485,6 +491,23 @@ pub mod validation {
                     "relacionamentos excedem limite",
                 );
             format!("limite excedido: {translated}")
+        }
+
+        // v1.1.1 (P11): typed ceiling variants. Own pt-BR strings mirroring
+        // the English `#[error]` text of `BodyTooLarge`/`TooManyChunks`,
+        // naming the constant so the operator knows WHICH cap fired.
+        pub fn body_too_large(bytes: u64, limit: u64) -> String {
+            format!(
+                "limite excedido: corpo tem {bytes} bytes, acima do teto de {limit} bytes \
+                 (MAX_MEMORY_BODY_LEN); divida o conteúdo em múltiplas memórias"
+            )
+        }
+
+        pub fn too_many_chunks(chunks: usize, limit: usize) -> String {
+            format!(
+                "limite excedido: documento produz {chunks} chunks, acima do teto de {limit} \
+                 chunks (REMEMBER_MAX_SAFE_MULTI_CHUNKS); divida o documento antes da escrita"
+            )
         }
 
         pub fn database(err: &str) -> String {

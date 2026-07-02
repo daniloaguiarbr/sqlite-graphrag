@@ -28,6 +28,10 @@ fn cmd_base(tmp: &TempDir) -> Command {
     c.env("PATH", common::prepend_path(&mock_dir));
     c.env("SQLITE_GRAPHRAG_DB_PATH", tmp.path().join("test.sqlite"));
     c.env("SQLITE_GRAPHRAG_CACHE_DIR", tmp.path().join("cache"));
+    // Isola o slot semaphore host-global: slots_dir() prefere XDG_RUNTIME_DIR
+    // sobre SQLITE_GRAPHRAG_CACHE_DIR, então sem este override os slot files
+    // vazam para /run/user/<uid> e colidem com processos concorrentes.
+    c.env("XDG_RUNTIME_DIR", tmp.path().join("cache"));
     c.env("SQLITE_GRAPHRAG_LOG_LEVEL", "error");
     c.arg("--skip-memory-guard");
     c

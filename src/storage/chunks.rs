@@ -68,6 +68,16 @@ pub fn upsert_chunk_vec(
     chunk_idx: i32,
     embedding: &[f32],
 ) -> Result<(), AppError> {
+    // v1.1.1 (P1): skip empty vectors so the chunk stays visible to the
+    // re-embed backfill scanner instead of persisting a vector-less row.
+    if embedding.is_empty() {
+        tracing::debug!(
+            memory_id,
+            chunk_idx,
+            "empty chunk embedding: skipping chunk_embeddings row (backfill via enrich re-embed --target chunks)"
+        );
+        return Ok(());
+    }
     conn.execute(
         "INSERT OR REPLACE INTO chunk_embeddings(chunk_id, memory_id, embedding, source, model, dim)
          VALUES (
@@ -400,6 +410,34 @@ mod tests {
         let embedding = vec![0.0f32; embedding_dim()];
         let resultado = knn_search_chunks(&conn, &embedding, 5).unwrap();
         assert!(resultado.is_empty());
+    }
+
+    // v1.1.1 (P1): an empty embedding must NOT create a chunk vector row, so
+    // the chunk stays visible to `enrich re-embed --target chunks`.
+    #[test]
+    fn test_upsert_chunk_vec_empty_embedding_skips_row() {
+        let (_tmp, conn) = setup_db();
+        let memory_id = insert_memory(&conn);
+        let chunk = Chunk {
+            memory_id,
+            chunk_idx: 0,
+            chunk_text: "sem vetor".to_string(),
+            start_offset: 0,
+            end_offset: 9,
+            token_count: 2,
+        };
+        insert_chunks(&conn, &[chunk]).unwrap();
+
+        upsert_chunk_vec(&conn, 0, memory_id, 0, &[]).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunk_embeddings WHERE memory_id = ?1",
+                params![memory_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "empty embedding must not persist a chunk row");
     }
 
     #[test]

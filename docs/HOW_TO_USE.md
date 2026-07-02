@@ -8,7 +8,7 @@
 - No new telemetry: the fix is silent. No `tracing::info!` macro logs which provider is in use. The no-leak audit test `audit_no_token_leak_in_subprocess_stderr` in `tests/claude_runner_env.rs` enforces that the literal token value NEVER appears in stdout or stderr even with `RUST_LOG=trace`
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` and `docs/COOKBOOK.md#how-to-use-custom-anthropic-compatible-providers-v1083` for the full recipe
 - Resolves GAP-058 partially: custom-provider env vars route around OAuth quota contention; `recall`/`hybrid-search` stay deterministic under official OAuth fatigue
-# HOW TO USE sqlite-graphrag (v1.0.93 — OpenRouter Embedding, GAP-OR-PROPAGATION, 1059 tests)
+# HOW TO USE sqlite-graphrag (v1.1.01 — Entity/Chunk Embedding Backfill, graph recompute-degree, schema v15)
 
 > Ship persistent memory to any AI agent with one local binary, a
 > single SQLite file, and the LLM CLI you already trust.
@@ -16,10 +16,44 @@
 - Versão em português: [HOW_TO_USE.pt-BR.md](HOW_TO_USE.pt-BR.md)
 - Voltar ao [README.md](../README.md) para referência de comandos
 
+## What Changed in v1.1.01 — Entity/Chunk Embedding Backfill, Targeted Re-Embed, graph recompute-degree
+- The official release name is **v1.1.01**; `Cargo.toml` carries `1.1.1` because SemVer rejects a leading zero in the patch segment. Schema is UNCHANGED at v15 — upgrading does NOT require `migrate`. Binary ~19 MiB. Library consumers pin `=1.1.1`.
+- **P1**: entity embedding now routes through the OpenRouter REST path even with `--llm-backend none`; an empty-vector guard on the upserts prevents zero-byte embedding blobs.
+- **P2**: `enrich --operation re-embed --target memories|entities|chunks|all` selects which embedding table to backfill; `--status` reports the per-target `scan_backlog`.
+- **P3**: new command `graph recompute-degree` recomputes every entity degree in a single transaction; supports `--dry-run`; the envelope reports `{total, updated, zeroed, unchanged}`. Use it to fix historically accumulated degree drift.
+- **P4**: `reclassify-relation --literal-from` matches the stored relation verbatim (bypasses clap normalisation); mutually exclusive with `--from-relation`. The tool for migrating legacy underscore edges such as `applies_to`.
+- **P5**: `merge-entities --ids <a,b> --into-id <N>` and `rename-entity --id <N>` address entities by numeric id instead of name.
+- **P6**: `health --json` gains `vec_memories_missing` / `vec_entities_missing` / `vec_chunks_missing` plus `vec_*_coverage_pct`; `embedding status --json` gains `memories_missing` / `entities_missing` / `chunks_missing` under `coverage`.
+- **P7**: `EntityType` error messages now list the 13 canonical entity types.
+- **P10**: the re-embed predicate also covers divergent-dimension and empty-blob rows, not only missing rows.
+- **P11**: `AppError::BodyTooLarge` / `AppError::TooManyChunks` are typed variants; exit 6 is preserved and the JSON envelope message is now specific.
+- **P12**: `ingest --name-prefix <PREFIX>` prefixes the generated memory names (local staging path only).
+
+```bash
+# Backfill missing entity/chunk embeddings (v1.1.01)
+sqlite-graphrag enrich --operation re-embed --target entities \
+  --mode openrouter --openrouter-model MODEL --json
+sqlite-graphrag enrich --operation re-embed --target chunks \
+  --mode openrouter --openrouter-model MODEL --json
+
+# Recompute all entity degrees in one transaction
+sqlite-graphrag graph recompute-degree --dry-run --json
+sqlite-graphrag graph recompute-degree --json
+
+# Audit embedding coverage
+sqlite-graphrag health --json | jaq '{memories: .vec_memories_missing, entities: .vec_entities_missing, chunks: .vec_chunks_missing}'
+```
+
+## What Changed in v1.0.99 — Degree-Cap Removal + Doc/Convergence Fixes (GAP-SG-67/68/69, ADR-0059)
+- **GAP-SG-67 (BREAKING)**: the `--max-entity-degree` flag is REMOVED from `remember` and `link`; passing it now fails with clap exit 2, and the old `--max-entity-degree 0` mitigation is obsolete. The destructive global degree-cap pruning (`graph::enforce_degree_cap`) is deleted, so a write is 100% additive — it never prunes/deletes edges nor emits a degree warning, and the total `relationships` count never decreases on a normal write. Trade-off: hub degree grows unbounded; future normalisation is an explicit MAINTENANCE command only.
+- **GAP-SG-68**: `graph entities --sort-by degree` is documented correctly — it sorts ascending by default; use `--order desc` for most-connected-first. Doc-only fix, no behaviour change.
+- **GAP-SG-69**: `enrich --operation body-enrich ... --until-empty` now converges; vetoed `status='skipped'` short bodies are no longer re-enqueued on rescan, and the `.enrich-queue.sqlite` sidecar is kept while `skipped` verdicts remain (empirically 55→3).
+- No migration; schema stays v15. See ADR-0059 and MIGRATION.md.
+
 ## What Changed in v1.0.96 — Enrich Dead-Letter + OpenRouter REST Fan-Out (GAP-ENRICH-BACKLOG-CONVERGE, GAP-OPENROUTER-REST-CONCURRENCY, ADR-0055)
 - **GAP-ENRICH-BACKLOG-CONVERGE**: the enrich queue gains a terminal `dead` status plus `error_class` and `next_retry_at` columns (idempotent `ALTER TABLE` + `idx_enrich_queue_eligible`). Transient outcomes (rate-limit/timeout/5xx) reschedule with exponential backoff; a HardFailure goes terminal at once; an item turns `dead` after `--max-attempts` Transient retries. The dequeue honours `next_retry_at` and excludes `dead`, so the live set strictly decreases and the backlog always converges.
-- `--until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime` (default 3600s) expires — it replaces the external bash retry loop. `--max-attempts <N>` (default 5, range 1..=20) is the Transient retry budget before `dead`.
-- `--status` prints a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It NEVER calls the LLM and NEVER acquires the singleton — safe to poll while a drain runs.
+- `--until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime` (default 3600s) expires — it replaces the external bash retry loop. `--max-attempts <N>` (default 8, range 1..=20) is the Transient retry budget before `dead`.
+- `--status` prints a read-only JSON queue report (`unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It NEVER calls the LLM and NEVER acquires the singleton — safe to poll while a drain runs. `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: `--rest-concurrency <N>` (default 8, clamp 1..=16) caps a bounded `JoinSet` REST fan-out for `--mode openrouter` (distinct from `--llm-parallelism`). Embedding batches 32 passages with per-chunk order preserved; the SQLite write stays serialized via WAL + atomic claim (single-writer intact).
 - No migration; schema stays v15. nextest: 1086 passed, 0 failed, 6 skipped. See ADR-0055.
 
@@ -314,14 +348,14 @@ set in a parent process.
 ## Install
 
 ```bash
-cargo install sqlite-graphrag --version 1.0.91 --force
+cargo install sqlite-graphrag --version 1.1.1 --force
 ```
 
 This installs the LLM-only default build. Verify:
 
 ```bash
 sqlite-graphrag --version
-# sqlite-graphrag 1.0.91
+# sqlite-graphrag 1.1.1
 ```
 
 For the legacy fastembed pipeline (REMOVED in v1.0.79):
@@ -439,10 +473,11 @@ includes the schema and the response is larger).
 - `--codex-model-validate` (default true) checks `--codex-model` against the ChatGPT Pro OAuth accepted-model list BEFORE the subprocess is spawned. Use `--codex-model-fallback <MODEL>` to auto-substitute a known-good model instead of aborting.
 - `--dry-run` previews the candidate set without spawning any LLM. Output is NDJSON with one event per memory and a final summary.
 - `--resume` continues a previously interrupted batch from the queue DB. `--retry-failed` retries only the failed items.
-- `--until-empty` (v1.0.96) runs an internal scan→drain loop until the queue holds no eligible items or `--max-runtime <SECONDS>` (default 3600) expires — it replaces the external `while` retry loop. `--max-attempts <N>` (v1.0.96, default raised to 8 in v1.0.97, range 1..=20) is the Transient retry budget; an item turns terminal `dead` after that budget or on the first HardFailure (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055).
-- `--status` (v1.0.96) prints a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It never calls the LLM and never acquires the singleton, so it is safe to poll while a drain is running.
+- `--until-empty` (v1.0.96) runs an internal scan→drain loop until the queue holds no eligible items or `--max-runtime <SECONDS>` (default 3600) expires — it replaces the external `while` retry loop. `--max-attempts <N>` (default 8, range 1..=20) is the Transient retry budget; an item turns terminal `dead` after that budget or on the first HardFailure (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055).
+- `--status` (v1.0.96) prints a read-only JSON queue report (`unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`). It never calls the LLM and never acquires the singleton, so it is safe to poll while a drain is running. `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it.
 - `--rest-concurrency <N>` (v1.0.96, default 8, clamp 1..=16) caps the bounded `JoinSet` REST fan-out for `--mode openrouter`; it is distinct from `--llm-parallelism`. Embedding batches 32 passages with per-chunk order preserved while the SQLite write stays single-writer via WAL + atomic claim (GAP-OPENROUTER-REST-CONCURRENCY).
 - `--prune-dead-orphans` (v1.0.97, GAP-SG-66, ADR-0058) is a read-only inspector (no LLM, no singleton, no `--operation`/`--mode`) that deletes ONLY enrich-queue rows with `status='dead'` and `item_type='memory'` whose `item_key` (the memory name) is absent from the main database; entity-keyed dead rows are untouched and only the `.enrich-queue.sqlite` sidecar is mutated. The JSON `DeadSummary` reports a `pruned` count. Use it to clear orphan dead-letter left when a memory is renamed or purged after it was enqueued — `--requeue-dead` would only re-fail those.
+- `--target <memories|entities|chunks|all>` (v1.1.01) selects which embedding table `re-embed` backfills; only valid with `--operation re-embed` (fails loud otherwise). `--status` reports the per-target `scan_backlog`.
 ### `vec` — Vector Index Maintenance (G39)
 - `vec orphan-list --json` lists memory embedding rows whose `memory_id` no longer exists in the `memories` table. Each row reports the `vector_hash` (BLAKE3 of the embedding blob) for traceability.
 - `vec purge-orphan --yes --dry-run --json` previews the deletion count without removing anything.

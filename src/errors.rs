@@ -72,13 +72,69 @@ pub enum AppError {
     #[error("memory not found: id={id}")]
     MemoryNotFoundById { id: i64 },
 
+    /// GAP-SG-78: an entity referenced by a queued enrich item does not yet
+    /// exist in `entities`. Maps to exit code `4`.
+    ///
+    /// # Cause
+    ///
+    /// Distinct from the terminal [`Self::NotFound`] / [`Self::MemoryNotFound`]
+    /// cases (a memory that was deleted or renamed, permanently gone). An
+    /// entity can be referenced by a queue row BEFORE it is materialized: a
+    /// later enrich pass creates the entity, so its absence now is TRANSITORY,
+    /// not terminal. Collapsing both into a single `NotFound` string sent every
+    /// such item to the dead-letter on the first failure.
+    ///
+    /// # When it occurs
+    ///
+    /// Raised by the entity call-sites of `enrich` — `entity-descriptions`
+    /// (`call_entity_description`) and `entity-type-validate`
+    /// (`call_entity_type_validate`) — when the `(namespace, name)` lookup
+    /// returns no row. Classified as [`Self::is_retryable`] so the item is
+    /// rescheduled until `--max-attempts` is exhausted.
+    #[error("entity '{name}' not yet materialized in namespace '{namespace}'")]
+    EntityNotYetMaterialized { name: String, namespace: String },
+
     /// Namespace could not be resolved from flag, environment or markers. Maps to exit code `5`.
     #[error("namespace not resolved: {0}")]
     NamespaceError(String),
 
     /// Payload exceeded one of the configured body, name or batch limits. Maps to exit code `6`.
+    ///
+    /// v1.1.1 (P11): kept for caps other than the body-bytes and chunk-count
+    /// ceilings, which now have the typed [`Self::BodyTooLarge`] and
+    /// [`Self::TooManyChunks`] variants so the operator can tell WHICH cap
+    /// fired without parsing the message.
     #[error("limit exceeded: {0}")]
     LimitExceeded(String),
+
+    /// Body payload exceeded [`crate::constants::MAX_MEMORY_BODY_LEN`] bytes.
+    /// Maps to exit code `6` (same contract as [`Self::LimitExceeded`]).
+    ///
+    /// v1.1.1 (P11): the two independent write ceilings — body bytes and chunk
+    /// count — used to collapse into the generic `LimitExceeded` string, so an
+    /// operator hitting exit 6 could not tell WHICH cap fired. This variant
+    /// carries the measured size and the cap, and the message names the
+    /// constant, so both the stderr line and the JSON envelope identify the
+    /// ceiling deterministically (never by substring matching).
+    #[error(
+        "limit exceeded: body is {bytes} bytes, above the {limit}-byte cap \
+         (MAX_MEMORY_BODY_LEN); split the content into multiple memories"
+    )]
+    BodyTooLarge { bytes: u64, limit: u64 },
+
+    /// Chunking produced more chunks than
+    /// [`crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS`]. Maps to exit
+    /// code `6` (same contract as [`Self::LimitExceeded`]).
+    ///
+    /// v1.1.1 (P11): counterpart of [`Self::BodyTooLarge`] for the chunk-count
+    /// ceiling. Carries the measured chunk count and the cap so the operator
+    /// can distinguish a chunk overflow from a byte overflow on exit 6.
+    #[error(
+        "limit exceeded: document produces {chunks} chunks, above the \
+         {limit}-chunk cap (REMEMBER_MAX_SAFE_MULTI_CHUNKS); split the \
+         document before writing"
+    )]
+    TooManyChunks { chunks: usize, limit: usize },
 
     /// Low-level SQLite error propagated from `rusqlite`. Maps to exit code `10`.
     #[error("database error: {0}")]
@@ -269,8 +325,11 @@ impl AppError {
             Self::NotFound(_) => 4,
             Self::MemoryNotFound { .. } => 4,
             Self::MemoryNotFoundById { .. } => 4,
+            Self::EntityNotYetMaterialized { .. } => 4,
             Self::NamespaceError(_) => 5,
             Self::LimitExceeded(_) => 6,
+            Self::BodyTooLarge { .. } => 6,
+            Self::TooManyChunks { .. } => 6,
             Self::Database(_) => 10,
             Self::Embedding(_) => 11,
             Self::VecExtension(_) => 12,
@@ -316,6 +375,7 @@ impl AppError {
                 | Self::LowMemory { .. }
                 | Self::RateLimited { .. }
                 | Self::Timeout { .. }
+                | Self::EntityNotYetMaterialized { .. }
         )
     }
 
@@ -366,6 +426,8 @@ impl AppError {
                 | Self::MemoryNotFoundById { .. }
                 | Self::NamespaceError(_)
                 | Self::LimitExceeded(_)
+                | Self::BodyTooLarge { .. }
+                | Self::TooManyChunks { .. }
                 | Self::VecExtension(_)
                 | Self::PreFlightFailed { .. }
                 | Self::ProviderError { .. }
@@ -398,6 +460,12 @@ impl AppError {
             }
             Self::LimitExceeded(_) => {
                 Some("split the input into smaller memories or raise the documented cap before retrying")
+            }
+            Self::BodyTooLarge { .. } => {
+                Some("the body-bytes cap (MAX_MEMORY_BODY_LEN) fired; split the content into multiple memories or use --body-file")
+            }
+            Self::TooManyChunks { .. } => {
+                Some("the chunk-count cap (REMEMBER_MAX_SAFE_MULTI_CHUNKS) fired; split the document into smaller memories before writing")
             }
             Self::Embedding(_) => Some(
                 "verify the embedding backend and OPENROUTER_API_KEY; re-run `enrich --operation re-embed` once resolved",
@@ -463,8 +531,13 @@ impl AppError {
             Self::NotFound(msg) => pt::not_found(msg),
             Self::MemoryNotFound { name, namespace } => pt::memory_not_found(name, namespace),
             Self::MemoryNotFoundById { id } => pt::memory_not_found_by_id(*id),
+            Self::EntityNotYetMaterialized { name, namespace } => {
+                pt::entity_not_yet_materialized(name, namespace)
+            }
             Self::NamespaceError(msg) => pt::namespace_error(msg),
             Self::LimitExceeded(msg) => pt::limit_exceeded(msg),
+            Self::BodyTooLarge { bytes, limit } => pt::body_too_large(*bytes, *limit),
+            Self::TooManyChunks { chunks, limit } => pt::too_many_chunks(*chunks, *limit),
             Self::Database(e) => pt::database(&e.to_string()),
             Self::Embedding(msg) => pt::embedding(msg),
             Self::VecExtension(msg) => pt::vec_extension(msg),
@@ -552,6 +625,97 @@ mod tests {
             AppError::LimitExceeded("body too large".into()).exit_code(),
             6
         );
+    }
+
+    // v1.1.1 (P11): both typed ceiling variants keep the exit 6 contract.
+    #[test]
+    fn exit_code_body_too_large_and_too_many_chunks_return_6() {
+        assert_eq!(
+            AppError::BodyTooLarge {
+                bytes: 600_000,
+                limit: 512_000
+            }
+            .exit_code(),
+            6
+        );
+        assert_eq!(
+            AppError::TooManyChunks {
+                chunks: 700,
+                limit: 512
+            }
+            .exit_code(),
+            6
+        );
+    }
+
+    // v1.1.1 (P11): the message identifies WHICH cap fired, with the measured
+    // value and the limit — bytes vs chunks are distinguishable without
+    // substring classification of a generic string.
+    #[test]
+    fn body_too_large_message_identifies_bytes_cap() {
+        let err = AppError::BodyTooLarge {
+            bytes: 600_000,
+            limit: 512_000,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("limit exceeded"), "obtido: {msg}");
+        assert!(msg.contains("600000 bytes"), "obtido: {msg}");
+        assert!(msg.contains("512000-byte cap"), "obtido: {msg}");
+        assert!(msg.contains("MAX_MEMORY_BODY_LEN"), "obtido: {msg}");
+        assert!(!msg.contains("chunk"), "obtido: {msg}");
+    }
+
+    #[test]
+    fn too_many_chunks_message_identifies_chunk_cap() {
+        let err = AppError::TooManyChunks {
+            chunks: 700,
+            limit: 512,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("limit exceeded"), "obtido: {msg}");
+        assert!(msg.contains("700 chunks"), "obtido: {msg}");
+        assert!(msg.contains("512-chunk cap"), "obtido: {msg}");
+        assert!(
+            msg.contains("REMEMBER_MAX_SAFE_MULTI_CHUNKS"),
+            "obtido: {msg}"
+        );
+        assert!(!msg.contains("byte cap"), "obtido: {msg}");
+    }
+
+    #[test]
+    fn typed_limit_variants_are_permanent_with_suggestion() {
+        let body = AppError::BodyTooLarge { bytes: 1, limit: 1 };
+        let chunks = AppError::TooManyChunks {
+            chunks: 1,
+            limit: 1,
+        };
+        assert!(body.is_permanent());
+        assert!(chunks.is_permanent());
+        assert!(!body.is_retryable());
+        assert!(!chunks.is_retryable());
+        assert!(body.suggestion().unwrap().contains("MAX_MEMORY_BODY_LEN"));
+        assert!(chunks
+            .suggestion()
+            .unwrap()
+            .contains("REMEMBER_MAX_SAFE_MULTI_CHUNKS"));
+    }
+
+    #[test]
+    fn typed_limit_variants_localize_to_pt() {
+        let body = AppError::BodyTooLarge {
+            bytes: 600_000,
+            limit: 512_000,
+        };
+        let pt = body.localized_message_for(crate::i18n::Language::Portuguese);
+        assert!(pt.contains("limite excedido"), "obtido: {pt}");
+        assert!(pt.contains("600000"), "obtido: {pt}");
+        let chunks = AppError::TooManyChunks {
+            chunks: 700,
+            limit: 512,
+        };
+        let pt = chunks.localized_message_for(crate::i18n::Language::Portuguese);
+        assert!(pt.contains("limite excedido"), "obtido: {pt}");
+        assert!(pt.contains("700"), "obtido: {pt}");
     }
 
     #[test]
@@ -824,6 +988,41 @@ mod tests {
             .exit_code(),
             1
         );
+    }
+
+    // GAP-SG-78: EntityNotYetMaterialized is a transitory absence (the entity is
+    // materialized on a later enrich pass), NOT a terminal not-found.
+    #[test]
+    fn entity_not_yet_materialized_exit_code_is_4() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn entity_not_yet_materialized_is_retryable_not_permanent() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert!(e.is_retryable());
+        assert!(!e.is_permanent());
+    }
+
+    #[test]
+    fn entity_not_yet_materialized_user_message_non_empty() {
+        let e = AppError::EntityNotYetMaterialized {
+            name: "acme".into(),
+            namespace: "global".into(),
+        };
+        assert!(!e
+            .localized_message_for(crate::i18n::Language::English)
+            .is_empty());
+        assert!(!e
+            .localized_message_for(crate::i18n::Language::Portuguese)
+            .is_empty());
     }
 
     #[test]

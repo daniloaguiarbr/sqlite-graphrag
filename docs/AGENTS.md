@@ -9,7 +9,7 @@
 - Semantic distinction the fix resolves: `ANTHROPIC_API_KEY` (paid API key, PROHIBITED by ADR-0011), `ANTHROPIC_AUTH_TOKEN` (OAuth token for custom provider, PRESERVED), `OPENAI_API_KEY` (PROHIBITED), `OPENAI_BASE_URL` (PRESERVED), `ANTHROPIC_BASE_URL` (PRESERVED). The v1.0.69 mandate was correct; the v1.0.69 env-clear whitelist was overly broad
 - See `docs/decisions/adr-0041-preserve-custom-provider-env.md` for the full architectural rationale and `docs/MIGRATION.md#migrating-to-v1083` for operator upgrade steps
 - G58 partial resolution: custom-provider env vars route around OAuth quota contention, providing a deterministic fallback for `recall`/`hybrid-search` under official OAuth fatigue
-# sqlite-graphrag for AI Agents (v1.0.93)
+# sqlite-graphrag for AI Agents (v1.1.01)
 
 > Persistent memory for 27 AI agents in a single 14.6 MiB Rust binary.
 > v1.0.93 is **LLM-only and one-shot**: every `remember` / `ingest`
@@ -17,6 +17,7 @@
 > (OAuth, no MCP, no hooks). There is no daemon, no ONNX runtime,
 > no local embedding model.
 > New in v1.0.93: OpenRouter REST API added as a direct HTTP embedding backend via `--embedding-backend openrouter` (~200ms vs. ~15-20s headless subprocess).
+> New in v1.1.01 (current release): entity embedding via OpenRouter REST even with `--llm-backend none`; `enrich --operation re-embed --target`; new `graph recompute-degree`; `ingest --name-prefix`.
 
 ## New in v1.0.93 — OpenRouter Embedding Backend (GAP-OR-INGEST)
 - New embedding backend: OpenRouter REST API via `--embedding-backend openrouter --embedding-model MODEL`
@@ -339,7 +340,7 @@ Agents that try to set them will see a clear validation error.
 - New flags: `--rrf-k` (default 60), `--graph-decay` (default 0.7), `--graph-min-score` (default 0.05), `--max-neighbors-per-hop`
 ### Entity Normalization
 - Entity names are now normalized to lowercase kebab-case on every write path (remember, ingest, link, rename-entity)
-- `--max-entity-degree N` warning flag on `link` and `remember` — emits `tracing::warn!` when an entity exceeds N edges
+- `--max-entity-degree N` flag REMOVED on `link` and `remember` in v1.0.99 — writes are now purely additive and NEVER prune, delete edges, or emit a degree warning
 ### Health Command Additions
 - `health` now reports `top_relation`, `top_relation_ratio`, `applies_to_ratio`, and `relation_concentration_warning` when any single relation type exceeds 40% of all edges
 
@@ -922,6 +923,7 @@ let output = Command::new("sqlite-graphrag")
 - VALID values: `user`, `feedback`, `project`, `reference`, `decision`, `incident`, `skill`, `document`, `note`
 - INVOKE `ingest` separately per type when mixing
 - GROUP files by directory according to the desired type
+- USE `--name-prefix <prefix>` (v1.1.01) to prefix the name of every ingested memory
 ### REQUIRED — RAM Control
 - USE `--low-memory` in containers with less than 4 GB
 - SET `SQLITE_GRAPHRAG_LOW_MEMORY=1` as a persistent override
@@ -1298,6 +1300,7 @@ let output = Command::new("sqlite-graphrag")
 - INSPECT `node_count`, `edge_count`, `avg_degree`, `max_degree`
 - CHOOSE traversal depth based on actual density
 - DETECT subgraph isolation before planning searches
+- USE `graph recompute-degree --json` (v1.1.01) to rebuild stored entity degrees in one transaction; `--dry-run` previews, `--namespace` scopes; envelope `{total, updated, zeroed, unchanged}`
 ### Canonical Relation Vocabulary
 - `applies-to`, `uses`, `depends-on`, `causes`, `fixes`, `contradicts`
 - `supports`, `follows`, `related`, `mentions`, `replaces`, `tracked-in`
@@ -1350,7 +1353,7 @@ let output = Command::new("sqlite-graphrag")
 - `edit` accepts `--type` to change memory type without re-creating (v1.0.66)
 - `deep-research` response includes optional `graph_context` with entities and relationships from result memories (v1.0.66)
 - `health` response includes `vec_memories_missing` and `vec_memories_orphaned` for vector index diagnostics (v1.0.66)
-- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships; since v1.0.65 also emits `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), and `relation_concentration_warning` (string?) when any single relation exceeds 40%
+- `health` returns `integrity_ok`, `schema_ok`, `vec_memories_ok`, `vec_entities_ok`, `vec_chunks_ok`, `fts_ok`, `fts_query_ok`, `model_ok`, `counts`, `wal_size_mb`, `journal_mode`, `db_path`, `db_size_bytes`, `sqlite_version`, `checks[]`; also emits `mentions_ratio` (float) and `mentions_warning` (string) when `mentions` edges exceed 50% of all relationships; since v1.0.65 also emits `top_relation` (string?), `top_relation_ratio` (float?), `applies_to_ratio` (float?), and `relation_concentration_warning` (string?) when any single relation exceeds 40%; since v1.1.01 also emits `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` and `vec_memories_coverage_pct`/`vec_entities_coverage_pct`/`vec_chunks_coverage_pct`
 - `health.counts` contains: `memories`, `entities`, `relationships`, `vec_memories`
 - `stats` returns GLOBAL data (no namespace filter): `memories`, `entities`, `relationships`, `chunks_total`, `avg_body_len`, `namespaces[]`, `db_size_bytes`, `schema_version`, `elapsed_ms`; also includes legacy aliases `db_bytes`, `edges`, `memories_total`, `entities_total`, `relationships_total`
 - `ingest` per file: `file`, `name`, `status` (`"indexed"`/`"skipped"`/`"failed"`/`"preview"`), `truncated`, `original_name?`, `original_filename?`, `memory_id?`, `action?`, `error?`, `body_length?` (byte length of indexed body, present on `"indexed"` lines)
@@ -1643,7 +1646,7 @@ cargo install --path . && sqlite-graphrag init
 - LOCK crate is `fs4 = "0.9"` with `sync` (NOT `fs2`); native backend is `fcntl(F_SETLK)` on Unix and `LockFileEx` on Windows
 - COMBINE with `--llm-max-host-concurrency N` to override the default ceiling
 ### REQUIRED — embedding (Pending Queue Health, ADR-0040)
-- USE `sqlite-graphrag embedding status --json` for aggregate counts per status
+- USE `sqlite-graphrag embedding status --json` for aggregate counts per status; since v1.1.01 the `coverage` object also reports `memories_missing`, `entities_missing`, `chunks_missing`
 - USE `sqlite-graphrag embedding list --json` for per-entry inspection
 - SCHEMAS: `docs/schemas/embedding-status.schema.json` and `embedding-list.schema.json`
 ### REQUIRED — --llm-backend Global Flag (ADR-0038)
@@ -1693,6 +1696,18 @@ cargo install --path . && sqlite-graphrag init
 - There is NO definitive upstream fix; mitigation depends on operator-driven `codex login`
 
 
+## New in v1.1.01 — REST Entity Embedding, Re-Embed Targets, Graph Degree Maintenance
+- The release name is v1.1.01; `Cargo.toml` ships `1.1.1` because SemVer rejects leading zeros (User-Agent `sqlite-graphrag/1.1.1`). No migration; schema stays at v15. Binary ~19 MiB.
+- P1: entity embedding now runs through the OpenRouter REST backend even with `--llm-backend none`; every embedding upsert gained an empty-vector guard.
+- P2: `enrich --operation re-embed` gained `--target memories|entities|chunks|all`; `enrich --status` reports `scan_backlog` per target. P10: the re-embed predicate now also covers divergent dimension and empty blob.
+- P3: new `graph recompute-degree` command — recomputes stored entity degrees in a single transaction; accepts `--dry-run` and `--namespace`; envelope `{total, updated, zeroed, unchanged}`.
+- P4: `reclassify-relation --literal-from` matches the stored relation value verbatim (bypasses clap normalization) — migrates legacy edges such as `applies_to` with underscore.
+- P5: `merge-entities` gained `--ids` and `--into-id`; `rename-entity` gained `--id` — entity maintenance by id in addition to by name.
+- P6: `health --json` gained `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` and `vec_*_coverage_pct`; the `coverage` object of `embedding status --json` gained `memories_missing`, `entities_missing`, `chunks_missing`.
+- P7: `EntityType` now has a manual `Deserialize` whose error message lists the 13 canonical types.
+- P11: payload errors are typed (`AppError::BodyTooLarge`, `AppError::TooManyChunks`); exit 6 is preserved — only the envelope message became specific (it reports the limit and the actual value).
+- P12: `ingest --name-prefix <prefix>` prefixes the names of ingested memories.
+
 ## New in v1.0.97 — Enrich Dead-Letter Recovery + Write Ergonomics (GAP-20, SG-32)
 - Dead-letter recovery: `enrich --requeue-dead` moves terminal `dead` items back to `pending`; `enrich --list-dead` is a read-only JSON listing of each dead item with its `error_class` and `message`; `enrich --ignore-backoff` dequeues eligible items immediately, bypassing the `next_retry_at` cooldown; `enrich --prune-dead-orphans` deletes dead-letter rows (`status='dead'`, `item_type='memory'`) whose `item_key` (memory name) is absent from the main DB — read-only inspector (no LLM, no singleton), only the `.enrich-queue.sqlite` sidecar is mutated; entity-keyed dead rows are untouched; clears orphan dead-letter from memories renamed or purged after enqueue (`--requeue-dead` would only re-fail those); `DeadSummary` JSON gains a `pruned` count (ADR-0058, GAP-SG-66, v1.0.97).
 - `enrich --status`, `--list-dead`, `--requeue-dead` and `--prune-dead-orphans` now run WITHOUT `--operation`/`--mode` (previously `--mode` was mandatory) — agents can poll/recover the queue without naming an operation.
@@ -1706,7 +1721,7 @@ cargo install --path . && sqlite-graphrag init
 - Dead-letter (GAP-ENRICH-BACKLOG-CONVERGE): the enrich queue gains a terminal `dead` status plus `error_class` and `next_retry_at` columns (idempotent `ALTER TABLE` + `idx_enrich_queue_eligible`); the live set strictly decreases so the backlog always converges.
 - Transient outcomes (rate-limit/timeout/5xx) schedule `next_retry_at` with exponential backoff (reusing `AttemptOutcome` + `compute_delay` from `src/retry.rs`); a HardFailure (validation/parse) goes terminal immediately; an item turns `dead` after `--max-attempts` Transient retries or on the first HardFailure.
 - `enrich --until-empty` runs an internal scan→drain loop until no eligible items remain or `--max-runtime <SECONDS>` (default 3600) expires — it replaces the external bash retry loop entirely. Agents should drop the `while` wrapper and pass `--until-empty`.
-- `enrich --max-attempts <N>` (default 8, range 1..=20) is the Transient retry budget before `dead`. `enrich --status` is a read-only JSON queue report (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) that NEVER calls the LLM and NEVER acquires the singleton — safe to poll mid-run.
+- `enrich --max-attempts <N>` (default 8, range 1..=20) is the Transient retry budget before `dead`. `enrich --status` is a read-only JSON queue report (`unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) that NEVER calls the LLM and NEVER acquires the singleton — safe to poll mid-run. `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it.
 - `enrich --rest-concurrency <N>` (default 8, clamp 1..=16) caps the bounded `JoinSet` REST fan-out for `--mode openrouter`; distinct from `--llm-parallelism`. Embedding fan-out (GAP-OPENROUTER-REST-CONCURRENCY) batches 32 passages with per-chunk order preserved; the SQLite write stays serialized via WAL + atomic claim (single-writer intact).
 - No migration; schema stays at v15. nextest: 1086 passed, 0 failed, 6 skipped. See ADR-0055.
 

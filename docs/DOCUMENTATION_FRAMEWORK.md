@@ -79,8 +79,8 @@ This section updates the framework to cover the documentation generated for the 
 
 ### v1.0.96 — Enrich Dead-Letter + REST Concurrency (ADR-0055)
 - New `enrich --until-empty` drives an internal scan->drain loop until the eligible queue empties or `--max-runtime` (default 3600s) expires, replacing the external bash drain loop; resolves GAP-ENRICH-BACKLOG-CONVERGE.
-- Dead-letter discipline: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status and the `idx_enrich_queue_eligible` index; Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff (reusing `AttemptOutcome`/`compute_delay` from `src/retry.rs`), HardFailures (validation, parse) go terminal at once, and an item turns `dead` after `--max-attempts` (default 5, range 1..=20) Transient retries or on the first HardFailure — the live set strictly shrinks toward convergence.
-- New flags: `--until-empty`, `--max-runtime <SECONDS>`, `--max-attempts <N>`, `--status` (read-only JSON counts: `unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting` — calls NO LLM, acquires NO singleton), `--rest-concurrency <N>` (clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`).
+- Dead-letter discipline: the `.enrich-queue.sqlite` queue gains `error_class` and `next_retry_at` columns (idempotent ALTER TABLE) plus a terminal `dead` status and the `idx_enrich_queue_eligible` index; Transient failures (rate-limit, timeout, 5xx) reschedule with exponential backoff (reusing `AttemptOutcome`/`compute_delay` from `src/retry.rs`), HardFailures (validation, parse) go terminal at once, and an item turns `dead` after `--max-attempts` (default 8, range 1..=20) Transient retries or on the first HardFailure — the live set strictly shrinks toward convergence.
+- New flags: `--until-empty`, `--max-runtime <SECONDS>`, `--max-attempts <N>`, `--status` (read-only JSON counts: `unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting` — calls NO LLM, acquires NO singleton; `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it), `--rest-concurrency <N>` (clamp 1..=16, default 8, DISTINCT from `--llm-parallelism`).
 - REST fan-out (GAP-OPENROUTER-REST-CONCURRENCY): `embed_passages_parallel_with_embedding_choice` (`src/embedder.rs`) fans out OpenRouter REST calls per 32-chunk batch via a bounded `tokio::task::JoinSet` (NO new dependency); chunk order preserved by index, in-flight clamp 1..16 (Cloudflare-safe); SQLite writes stay serialized via WAL + atomic claim (single-writer intact).
 - New ADR: ADR-0055 (enrich-deadletter-rest-concurrency) — EN + PT-BR; docs/decisions/INDEX.md updated.
 - New schema: `docs/schemas/enrich-status.schema.json` (DERIVED per ADR-0048, regenerated via `dump_schema` — NEVER hand-edited).
@@ -94,25 +94,37 @@ This section updates the framework to cover the documentation generated for the 
 - Flaky `llm_slots::tests` hardened (GAP-SG-63); global binary realigned via `cargo install --path . --locked --force` so `installed_binary_smoke` runs 26/0 without bypass (GAP-SG-62).
 - Documented in: README, CHANGELOG, AGENTS, COOKBOOK, HOW_TO_USE, HEADLESS_INVOCATION, INTEGRATIONS (root EN+PT); llms.txt, llms.pt-BR.txt, llms-full.txt; SKILL (EN+PT); TESTING, MIGRATION (EN+PT); docs/decisions/INDEX.md + ADR-0056/0057/0058 (EN+PT).
 
-### Documentation Drift Status (as of v1.0.97)
+### v1.0.99 — Remove Destructive Degree-Cap Pruning + Doc/Convergence Fixes (ADR-0059, GAP-SG-67/68/69)
+- **GAP-SG-67** — the destructive GLOBAL degree-cap pruning is REMOVED: `graph::enforce_degree_cap` and its two call sites (`remember`, `link`) are deleted, and the `--max-entity-degree` flag is REMOVED (BREAKING: clap exit 2 if passed; the `--max-entity-degree 0` mitigation is now obsolete). Writes are 100% additive — they never prune/delete edges nor emit a warn, and the total `relationships` count never decreases on a normal write. Schema stays v15 (no migration). Trade-off: hub degree grows unbounded; future normalisation is an explicit MAINTENANCE command only.
+- **GAP-SG-68** — `graph entities --sort-by degree` sorted ascending against a doc-comment that promised "descending by default"; fixed by aligning the DOC to the ascending behaviour ("Sort by degree (total number of relationships). Use --order desc for most-connected-first."). 6 `build_order_by_*` tests stay green; only `src/commands/graph_export.rs` (one line) changed.
+- **GAP-SG-69** — `enrich --operation body-enrich --until-empty` did not converge (scan re-scanned bodies rejected by the preservation guard, status `skipped`); fixed with the `skipped_item_keys` helper (`queue.rs`), the BodyEnrich initial scan + rescan now exclude preservation-vetoed `skipped` keys, the `.enrich-queue.sqlite` sidecar is preserved while `skipped` rows remain (removed only when `dead==0` AND `skipped==0`), and `cleanup_queue_entry` clears the veto when the body changes. Empirical convergence 55→3; test `skipped_item_keys_excludes_only_skipped_for_operation`.
+- New ADR: ADR-0059 (EN + PT-BR); docs/decisions/INDEX.md updated.
+- Updated: README, CHANGELOG, AGENTS, INTEGRATIONS (root EN+PT); docs/AGENTS, MIGRATION (EN+PT); DOCUMENTATION_FRAMEWORK; llms.txt, llms.pt-BR.txt, llms-full.txt.
+
+### v1.1.01 — Production-Database Audit Remediation (12-priority roadmap, gaps.md)
+- Official release name is v1.1.01; the crate manifest carries `version = "1.1.1"` (SemVer rejects a leading zero in the patch component). Schema stays v15 (no migration). Binary ~19 MiB.
+- New command: `graph recompute-degree` (P3) reconciles the `entities.degree` cache from the real `relationships` rows; new schema `docs/schemas/graph-recompute-degree.schema.json`.
+- New flags: `--target` (`enrich --operation re-embed`), `--literal-from` (`reclassify-relation`), `--ids`/`--into-id` (`merge-entities`, response gains required `target_id`), `--id` (`rename-entity`), `--name-prefix` (`ingest`).
+- Coverage observability (P6): `health` and `embedding status` gain `*_missing` counters (LEFT JOIN, absent embedding table reports ALL missing); `embedding-status.schema.json` and `health.schema.json` updated.
+- Exit code 6 limit errors are fully typed (structured message instead of a generic payload error).
 
 | Document | EN Coverage | PT-BR Coverage | Drift |
 |---|---|---|---|
-| `README.md` / `README.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.97 (100%) | v1.0.97 (100%) | Current |
-| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (no v1.0.97 exit code/env var change) | v1.0.96 (espelhado) | Current |
-| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (no v1.0.97 contributor-flow change) | v1.0.96 (espelhado) | Current |
-| `llms.txt` / `llms.pt-BR.txt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `llms-full.txt` | v1.0.97 (post-sealing audit) | N/A | Current |
-| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.97 (queue sidecar from `--db`, ADR-0057) | v1.0.97 (espelhado) | Current |
-| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.96 (no v1.0.97 platform change) | v1.0.96 (espelhado) | Current |
-| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
-| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.96 (no v1.0.97 test-plan phase change) | v1.0.96 (espelhado) | Current |
+| `README.md` / `README.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `CHANGELOG.md` / `CHANGELOG.pt-BR.md` | v1.0.99 (100%) | v1.0.99 (100%) | Current |
+| `AGENTS.md` / `AGENTS.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `INTEGRATIONS.md` / `INTEGRATIONS.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `SECURITY.md` / `SECURITY.pt-BR.md` | v1.0.96 (no v1.0.99 exit code/env var change) | v1.0.96 (espelhado) | Current |
+| `CONTRIBUTING.md` / `CONTRIBUTING.pt-BR.md` | v1.0.96 (no v1.0.99 contributor-flow change) | v1.0.96 (espelhado) | Current |
+| `llms.txt` / `llms.pt-BR.txt` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `llms-full.txt` | v1.0.99 (GAP-SG-67/68/69) | N/A | Current |
+| `COOKBOOK.md` / `COOKBOOK.pt-BR.md` | v1.0.99 (GAP-SG-67 upgrade recipe) | v1.0.99 (espelhado) | Current |
+| `HOW_TO_USE.md` / `HOW_TO_USE.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69) | v1.0.99 (espelhado) | Current |
+| `MIGRATION.md` / `MIGRATION.pt-BR.md` | v1.0.99 (--max-entity-degree removal, GAP-SG-67) | v1.0.99 (espelhado) | Current |
+| `TESTING.md` / `TESTING.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69 test changes) | v1.0.99 (espelhado) | Current |
+| `CROSS_PLATFORM.md` / `CROSS_PLATFORM.pt-BR.md` | v1.0.97 (no v1.0.99 platform change) | v1.0.97 (espelhado) | Current |
+| `HEADLESS_INVOCATION.md` / `HEADLESS_INVOCATION.pt-BR.md` | v1.0.97 (no v1.0.99 change) | v1.0.97 (espelhado) | Current |
+| `TEST_PLAN.md` / `TEST_PLAN.pt-BR.md` | v1.0.99 (GAP-SG-67/68/69 test plan) | v1.0.99 (espelhado) | Current |
 | `skill/sqlite-graphrag-en` / `skill/sqlite-graphrag-pt` | v1.0.97 (post-sealing audit) | v1.0.97 (espelhado) | Current |
 | `docs/decisions/` (52 ADRs) | 100% (52/52) | 77% (40/52) | 12 ADRs missing PT-BR (adr-0007 through adr-0018) |
 | `docs/schemas/` (70+ schemas) | 100% (backend_invoked includes openrouter) | N/A | Current |

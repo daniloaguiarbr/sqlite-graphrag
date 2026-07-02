@@ -1,3 +1,97 @@
+# MIGRATING TO v1.1.01 — Embedding Backfill, graph recompute-degree, Literal Relation Reclassify
+
+> This guide covers upgrading from v1.1.0 to v1.1.01. No migration runs on the main database; the schema remains at v15 — `migrate` is NOT required. The official release name is v1.1.01; `Cargo.toml` carries `1.1.1` because SemVer rejects a leading zero in the patch segment. Binary ~19 MiB. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+
+## v1.1.01 — Embedding Backfill, graph recompute-degree, Literal Relation Reclassify
+
+### What Changed
+- **P1**: entity embedding now routes through the OpenRouter REST path even with `--llm-backend none`; an empty-vector guard on the upserts prevents zero-byte embedding blobs.
+- **P2**: `enrich --operation re-embed --target memories|entities|chunks|all` selects which embedding table to backfill; `--status` reports the per-target `scan_backlog`.
+- **P3**: new command `graph recompute-degree` recomputes every entity degree in a single transaction; supports `--dry-run`; the envelope reports `{total, updated, zeroed, unchanged}`.
+- **P4**: `reclassify-relation --literal-from` matches the stored relation verbatim, bypassing clap normalisation; mutually exclusive with `--from-relation`.
+- **P5**: `merge-entities --ids <a,b> --into-id <N>` and `rename-entity --id <N>` address entities by numeric id.
+- **P6**: `health --json` gains `vec_memories_missing` / `vec_entities_missing` / `vec_chunks_missing` plus `vec_*_coverage_pct`; `embedding status --json` gains `memories_missing` / `entities_missing` / `chunks_missing` under `coverage`.
+- **P7**: `EntityType` error messages list the 13 canonical entity types.
+- **P10**: the re-embed predicate also covers divergent-dimension and empty-blob rows, not only missing rows.
+- **P11**: `AppError::BodyTooLarge` / `AppError::TooManyChunks` are typed variants; exit 6 is preserved and the JSON envelope message is now specific.
+- **P12**: `ingest --name-prefix <PREFIX>` prefixes generated memory names (local staging path only).
+- NO main-database schema migration (stays at v15). NO sidecar file migration.
+
+### Breaking Changes
+- None. All changes are additive; existing invocations are untouched.
+
+### Recommended Post-Upgrade Pass (existing databases)
+Existing databases typically carry missing entity/chunk embeddings, historically accumulated degree drift, and legacy underscore relation edges. Run once after upgrading:
+
+```bash
+# 1. Backfill missing entity and chunk embeddings
+sqlite-graphrag enrich --operation re-embed --target entities \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+sqlite-graphrag enrich --operation re-embed --target chunks \
+  --mode openrouter --openrouter-model MODEL --until-empty --max-runtime 600 --json
+
+# 2. Fix historically accumulated entity degrees (preview first)
+sqlite-graphrag graph recompute-degree --dry-run --json
+sqlite-graphrag graph recompute-degree --json
+
+# 3. Migrate legacy underscore relation edges (verbatim match)
+sqlite-graphrag reclassify-relation --literal-from applies_to \
+  --to-relation applies-to --batch --json
+
+# Verify embedding coverage afterwards
+sqlite-graphrag health --json | jaq '{memories: .vec_memories_missing, entities: .vec_entities_missing, chunks: .vec_chunks_missing}'
+```
+
+### Library API Pinning
+Change the exact pin from `=1.1.0` to `=1.1.1` (the lib API remains unstable within v1.x.y, ADR-0032):
+
+```toml
+[dependencies]
+sqlite-graphrag = "=1.1.1"
+```
+
+### Rollback
+Roll back to v1.1.0 by reinstalling the previous binary. No database changes to undo — the schema is unchanged at v15; backfilled embeddings and recomputed degrees remain valid data under v1.1.0.
+
+# MIGRATING TO v1.0.99 — Remove Destructive Degree-Cap Pruning (ADR-0059, GAP-SG-67)
+
+> This guide covers upgrading to v1.0.99. No migration runs on the main database; the schema remains at v15. ONE breaking change: the `--max-entity-degree` flag is removed from `remember`/`link`. Reinstall with `cargo install sqlite-graphrag --locked --force`.
+
+## v1.0.99 — Remove Destructive Degree-Cap Pruning (ADR-0059, GAP-SG-67)
+
+### What Changed
+- **GAP-SG-67 (ADR-0059)**: the destructive GLOBAL degree-cap pruning is removed. `graph::enforce_degree_cap` and its two call sites (`remember`, `link`) are deleted, so a write is now 100% additive — it never prunes/deletes edges nor emits a warn, and the total `relationships` count never decreases on a normal write. Trade-off: hub degree grows unbounded; any future normalisation must be an explicit MAINTENANCE command.
+- **GAP-SG-68**: documentation-only fix to the `graph entities --sort-by degree` doc-comment (now describes the ascending default; use `--order desc` for most-connected-first). No behaviour change.
+- **GAP-SG-69**: `enrich --operation body-enrich --until-empty` now converges by excluding preservation-vetoed (`skipped`) bodies from rescans. Internal-only — no CLI change.
+- NO main-database schema migration (stays at v15). NO sidecar file migration.
+
+### Breaking Change — `--max-entity-degree` is removed
+
+The `--max-entity-degree <N>` flag on `remember` and `link` is REMOVED. Passing it is rejected by clap (exit 2). The previous `--max-entity-degree 0` mitigation is obsolete and unnecessary — there is no degree-cap pruning anymore.
+
+**Before (v1.0.97 — fails in v1.0.99 with exit 2):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --max-entity-degree 50 --json
+sqlite-graphrag link --from a --to b --relation uses --max-entity-degree 0 --json
+```
+
+**After (v1.0.99 — drop the flag):**
+```bash
+sqlite-graphrag remember --name n --type note --body "x" --json
+sqlite-graphrag link --from a --to b --relation uses --json
+```
+
+### Who Is Affected
+- Any script, CI pipeline, or scheduled job that passes `--max-entity-degree` (including the `--max-entity-degree 0` no-op mitigation) to `remember` or `link`.
+
+### How to Upgrade
+1. Audit your invocations: `rg -- "--max-entity-degree" your-scripts/`
+2. Remove every `--max-entity-degree <N>` occurrence from `remember` / `link` calls.
+3. Reinstall: `cargo install sqlite-graphrag --locked --force`. No database migration — schema stays at v15.
+
+### Rollback
+Roll back to v1.0.97 by reinstalling the previous binary. No database changes to undo — writes were additive and the schema is unchanged at v15.
+
 # MIGRATING TO v1.0.97 — Queue Sidecar Derived from `--db` (ADR-0057)
 
 > This guide covers upgrading to v1.0.97. No migration runs on the main database; the schema remains at v15. The `.enrich-queue.sqlite` / `.ingest-queue.sqlite` worklist sidecars are now derived from the `--db` directory (ADR-0057) instead of the process CWD — no operator action for the canonical default DB. Reinstall with `cargo install sqlite-graphrag --locked --force`.
@@ -17,7 +111,7 @@
 ## v1.0.96 — Enrich Dead-Letter + REST Concurrency (ADR-0055)
 
 ### What Changed
-- **GAP-ENRICH-BACKLOG-CONVERGE**: `enrich` now drives the backlog to convergence via a dead-letter queue. The `.enrich-queue.sqlite` database gains two columns through an IDEMPOTENT `ALTER TABLE` — `error_class` and `next_retry_at` — plus the index `idx_enrich_queue_eligible ON queue(status, next_retry_at)` and a new terminal status `dead`. Transient failures (rate-limit/timeout/5xx) reschedule `next_retry_at` with exponential backoff; hard failures (validation/parse) go terminal immediately. An item turns `dead` after `--max-attempts` transient retries (default 5 in v1.0.96; raised to 8 in v1.0.97) or on the first hard failure. Dequeue honours `next_retry_at` and excludes `dead`, so the live set is strictly decreasing.
+- **GAP-ENRICH-BACKLOG-CONVERGE**: `enrich` now drives the backlog to convergence via a dead-letter queue. The `.enrich-queue.sqlite` database gains two columns through an IDEMPOTENT `ALTER TABLE` — `error_class` and `next_retry_at` — plus the index `idx_enrich_queue_eligible ON queue(status, next_retry_at)` and a new terminal status `dead`. Transient failures (rate-limit/timeout/5xx) reschedule `next_retry_at` with exponential backoff; hard failures (validation/parse) go terminal immediately. An item turns `dead` after `--max-attempts` transient retries (default 8, range 1..=20) or on the first hard failure. Dequeue honours `next_retry_at` and excludes `dead`, so the live set is strictly decreasing.
 - **GAP-OPENROUTER-REST-CONCURRENCY**: REST embedding for `--mode openrouter` fans out per batch with a bounded `tokio::task::JoinSet` (no new dependency), in-flight clamp 1..16 (Cloudflare-safe range). Chunk order is preserved by index; SQLite writes stay serialized via WAL + atomic claim (single-writer intact).
 
 ### Queue Migration — Automatic and In-Place
@@ -27,8 +121,8 @@
 ### New enrich Flags
 - `--until-empty` — internal scan→drain loop until the queue runs out of eligible items or `--max-runtime` expires; replaces the external bash retry loop.
 - `--max-runtime <SECONDS>` — wall-clock ceiling for `--until-empty`; default 3600.
-- `--max-attempts <N>` — transient-retry budget before `dead`; default 5; range 1..=20.
-- `--status` — read-only JSON report of queue counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); does NOT call the LLM, does NOT acquire the singleton.
+- `--max-attempts <N>` — transient-retry budget before `dead`; default 8; range 1..=20.
+- `--status` — read-only JSON report of queue counts (`unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); does NOT call the LLM, does NOT acquire the singleton. `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it.
 - `--rest-concurrency <N>` — REST concurrency for `--mode openrouter`; clamp 1..=16; default 8; distinct from `--llm-parallelism`.
 
 ### Nothing Breaks
@@ -39,7 +133,7 @@
 # Drive the backlog to convergence headlessly (no external loop)
 sqlite-graphrag enrich --operation memory-bindings --mode openrouter \
   --openrouter-model MODEL --until-empty --max-runtime 1800 \
-  --max-attempts 5 --rest-concurrency 8 --json
+  --max-attempts 8 --rest-concurrency 8 --json
 
 # Inspect the queue without spawning the LLM or taking the singleton
 sqlite-graphrag enrich --status --json

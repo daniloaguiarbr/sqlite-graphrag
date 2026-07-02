@@ -131,6 +131,17 @@ pub fn upsert_entity_vec(
     embedding: &[f32],
     _name: &str,
 ) -> Result<(), AppError> {
+    // v1.1.1 (P1): an empty vector means the embedding backend was skipped
+    // (`--llm-backend none` without OpenRouter). Writing an empty BLOB would
+    // hide the entity from the re-embed backfill scanner (the row exists but
+    // carries no vector), so skip the write and leave the entity scannable.
+    if embedding.is_empty() {
+        tracing::debug!(
+            entity_id,
+            "empty entity embedding: skipping entity_embeddings row (backfill via enrich re-embed --target entities)"
+        );
+        return Ok(());
+    }
     let embedding_bytes = f32_to_bytes(embedding);
     with_busy_retry(|| {
         conn.execute(
@@ -847,6 +858,67 @@ mod tests {
     // ------------------------------------------------------------------ //
     // upsert_entity_vec — covers DELETE+INSERT (new branch after the OOM fix)
     // ------------------------------------------------------------------ //
+
+    // v1.1.1 (P1): an empty embedding must NOT create a vector row, so the
+    // entity stays visible to `enrich re-embed --target entities`.
+    #[test]
+    fn test_upsert_entity_vec_empty_embedding_skips_row() -> TestResult {
+        let (_tmp, conn) = setup_db()?;
+        let e = new_entity_helper("vec-vazia");
+        let entity_id = upsert_entity(&conn, "global", &e)?;
+
+        upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &[],
+            "vec-vazia",
+        )?;
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(count, 0, "empty embedding must not persist a row");
+        Ok(())
+    }
+
+    // v1.1.1 (P1): an empty embedding must NOT delete an existing live vector.
+    #[test]
+    #[serial_test::serial(env)]
+    fn test_upsert_entity_vec_empty_embedding_preserves_existing_row() -> TestResult {
+        let (_tmp, conn) = setup_db()?;
+        let e = new_entity_helper("vec-preservada");
+        let entity_id = upsert_entity(&conn, "global", &e)?;
+        let emb = embedding_zero();
+        upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &emb,
+            "vec-preservada",
+        )?;
+
+        upsert_entity_vec(
+            &conn,
+            entity_id,
+            "global",
+            EntityType::Project,
+            &[],
+            "vec-preservada",
+        )?;
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM entity_embeddings WHERE entity_id = ?1",
+            params![entity_id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(count, 1, "existing vector must survive an empty upsert");
+        Ok(())
+    }
 
     #[test]
     #[serial_test::serial(env)]

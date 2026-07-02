@@ -334,6 +334,32 @@ pub const EMBEDDING_MAX_TOKENS: usize = 512;
 /// is the per-chunk ceiling that drives chunking.
 pub const EMBEDDING_REQUEST_MAX_TOKENS: usize = 30_000;
 
+/// Initial `max_tokens` budget sent on an `enrich` chat-completion request
+/// (GAP-SG-70/71).
+///
+/// Chosen well below [`ENRICH_MAX_TOKENS_CEILING`] so a well-formed response
+/// completes in one attempt for the common case; only bodies that need more
+/// room trigger the growth loop below.
+pub const ENRICH_INITIAL_MAX_TOKENS: u32 = 4_096;
+
+/// Multiplier applied to `max_tokens` each time OpenRouter reports
+/// `finish_reason: "length"` on an `enrich` chat-completion (GAP-SG-70/71).
+pub const ENRICH_MAX_TOKENS_GROWTH_FACTOR: u32 = 2;
+
+/// Upper bound on `max_tokens` growth for an `enrich` chat-completion
+/// (GAP-SG-70/71).
+///
+/// Kept with margin under the ~32K-token context ceiling of
+/// `deepseek/deepseek-v4-flash:nitro` (see [`EMBEDDING_REQUEST_MAX_TOKENS`]
+/// for the equivalent embedding-side ceiling) so growth never requests a
+/// budget the model cannot honour.
+pub const ENRICH_MAX_TOKENS_CEILING: u32 = 16_384;
+
+/// Maximum number of `max_tokens`-growth re-attempts after a truncated
+/// (`finish_reason: "length"`) `enrich` chat-completion, before giving up and
+/// returning the truncation as an error (GAP-SG-70/71).
+pub const ENRICH_MAX_LENGTH_RETRIES: u32 = 2;
+
 /// Byte budget for one auto-split partition (sub-memory) in `ingest`
 /// (GAP-SG-04/07).
 ///

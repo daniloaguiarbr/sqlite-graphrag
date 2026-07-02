@@ -66,7 +66,7 @@ In strict mode, only `PATH` is preserved. The custom-provider vars stay in the p
 | --- | --- | --- |
 | `exit 11` with `401 Invalid authentication credentials` | v1.0.82 or earlier; env_clear stripped the token | Upgrade to v1.0.83 (`cargo install sqlite-graphrag --version 1.0.83 --force`) |
 | `exit 1` with `OAuth-only mandate violated` | `ANTHROPIC_API_KEY` is set; guard rejects it | Unset `ANTHROPIC_API_KEY`; use `ANTHROPIC_AUTH_TOKEN` instead |
-| Embedding succeeds but `recall` returns nothing | Provider returned different dimensionality than the database | Run `sqlite-graphrag enrich --operation re-embed --limit 100 --mode codex` to refresh embeddings at the active provider's dim |
+| Embedding succeeds but `recall` returns nothing | Provider returned different dimensionality than the database | Run `sqlite-graphrag enrich --operation re-embed --target all --limit 100 --mode codex` to refresh embeddings at the active provider's dim (`--target all` since v1.1.01; omit it on older binaries) |
 | Token appears in stderr logs | (should never happen; audit test enforces) | File a bug with stderr capture; the no-leak test `audit_no_token_leak_in_subprocess_stderr` enforces this invariant |
 
 
@@ -221,6 +221,24 @@ sqlite-graphrag --embedding-backend openrouter \
 - Recipe "How to bootstrap memory database in 60 seconds"
 - Recipe "How to benchmark hybrid-search against pure vec search"
 
+
+## How To Upgrade To v1.1.01 (Vector-Coverage Backfill + Graph Maintenance)
+- No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force` (release name v1.1.01; `Cargo.toml` version is `1.1.1`; binary ~19 MiB).
+- `enrich --operation re-embed` gains `--target memories|entities|chunks|all` (P2): entity and chunk embeddings can now be backfilled, and `enrich --status` reports `scan_backlog` per target.
+- New maintenance command `graph recompute-degree` (P3): recomputes `entities.degree` from the real edges in a single transaction; preview with `--dry-run`; envelope `{total, updated, zeroed, unchanged}`.
+- `reclassify-relation --literal-from` (P4): verbatim match on the stored relation value, bypassing clap normalisation — the canonical recipe migrates legacy underscore edges (e.g. `applies_to`) to the hyphenated canonical form.
+- ID-based entity maintenance (P5): `merge-entities --ids "1,2,3" --into-id 4` and `rename-entity --id N --new-name x`.
+- Vector-coverage diagnostics (P6): `health --json` now emits `vec_memories_missing`/`vec_entities_missing`/`vec_chunks_missing` plus `vec_*_coverage_pct`; `embedding status --json` adds `memories_missing`/`entities_missing`/`chunks_missing` under `coverage`.
+- `ingest --name-prefix <prefix>` (P12): prefixes the names of ingested memories to avoid collisions between projects sharing a namespace.
+- Context: entity embedding now goes through OpenRouter REST even with `--llm-backend none` (P1); exit 6 now carries a typed message stating which cap was exceeded — the 512000-byte body or the 512-chunk limit (P11).
+- See "Recipes added in v1.1.01" at the end of this cookbook.
+
+## How To Upgrade To v1.0.99 (Degree-Cap Removal — BREAKING)
+- No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force`.
+- BREAKING: the `--max-entity-degree` flag is REMOVED from `remember` and `link`. Passing it fails with clap exit 2. Audit your scripts (`rg -- "--max-entity-degree" your-scripts/`) and delete every occurrence, including the no-op `--max-entity-degree 0` mitigation, which is obsolete.
+- Writes are now 100% additive: `remember`/`link` never prune or delete edges, so the total relationship count never decreases on a normal write (GAP-SG-67, ADR-0059). Trade-off: hub degree grows unbounded; normalise later only with an explicit MAINTENANCE command.
+- `graph entities --sort-by degree` sorts ascending by default; add `--order desc` for most-connected-first (GAP-SG-68).
+- `enrich --operation body-enrich ... --until-empty` now converges; vetoed short bodies are not re-enqueued (GAP-SG-69).
 
 ## How To Upgrade To v1.0.94 (Four-Gap Remediation)
 - No database migration; schema stays at v15. Just `cargo install sqlite-graphrag --locked --force`.
@@ -2171,8 +2189,8 @@ sqlite-graphrag enrich --operation memory-bindings --mode claude-code --limit 50
 - Resume after interruption: `sqlite-graphrag enrich --operation memory-bindings --mode claude-code --resume --json`
 - Use Codex instead of Claude: `sqlite-graphrag enrich --operation memory-bindings --mode codex --limit 50 --json`
 - Enrich via OpenRouter REST without a local CLI: `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model <model> --json` — `--openrouter-model` is required (no default; absence exits 1 before any network call) and the key comes from `OPENROUTER_API_KEY`; the JUDGE runs over `/chat/completions` with strict `json_schema`, and `--openrouter-timeout` defaults to 300s (`--openrouter-base-url` optional)
-- Drain the backlog until it converges (v1.0.96, no external loop): `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --until-empty --rest-concurrency 8 --json` — `--until-empty` scans and drains until no eligible items remain or `--max-runtime` (default 3600s) expires; the dead-letter queue (`error_class`/`next_retry_at`, terminal `dead` after `--max-attempts`, default 5) guarantees the live set strictly decreases
-- Inspect the queue without running the LLM (v1.0.96): `sqlite-graphrag enrich --status --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json` — read-only counts (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); never spawns the LLM and never acquires the singleton, so it is safe to poll mid-drain
+- Drain the backlog until it converges (v1.0.96, no external loop): `sqlite-graphrag enrich --operation memory-bindings --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --until-empty --rest-concurrency 8 --json` — `--until-empty` scans and drains until no eligible items remain or `--max-runtime` (default 3600s) expires; the dead-letter queue (`error_class`/`next_retry_at`, terminal `dead` after `--max-attempts`, default 8) guarantees the live set strictly decreases
+- Inspect the queue without running the LLM (v1.0.96): `sqlite-graphrag enrich --status --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json` — read-only counts (`unbound_backlog`, per-operation `scan_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); never spawns the LLM and never acquires the singleton, so it is safe to poll mid-drain. `scan_backlog` (GAP-SG-77, v1.1.0) is the real per-operation database backlog a scan would enqueue — it kills the false `pending=0` for `entity-descriptions`/`body-enrich`/`re-embed`, and `state` derives `pending-scan` from it; since v1.1.01, `re-embed` reports `scan_backlog` per `--target` (memories/entities/chunks)
 - Run with parallel LLM workers: `sqlite-graphrag enrich --operation entity-descriptions --mode claude-code --llm-parallelism 4 --json`
 
 
@@ -2660,3 +2678,80 @@ Switching models mid-project requires re-embedding existing memories.
 - `docs/HOW_TO_USE.md` → "What Changed in v1.0.93 — OpenRouter Embedding
   Backend (GAP-OR-INGEST)"
 - Recipe "How to ingest a directory of markdown files into the graph"
+
+
+## Recipes added in v1.1.01
+### Recipe — Backfill Entity And Chunk Embeddings With `re-embed --target` (P2)
+```bash
+# Backfill only entity embeddings
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  enrich --operation re-embed --target entities --limit 100 \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+
+# Backfill everything in one pass (memories + entities + chunks)
+sqlite-graphrag \
+  --embedding-backend openrouter \
+  --embedding-model "qwen/qwen3-embedding-8b" \
+  enrich --operation re-embed --target all --limit 100 \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+
+# Inspect the per-target backlog without spawning the LLM
+sqlite-graphrag enrich --operation re-embed --status \
+  --mode openrouter --openrouter-model deepseek/deepseek-v4-flash:nitro --json
+```
+- `--target` defaults to `memories`, preserving pre-v1.1.01 behaviour
+- `--status` reports `scan_backlog` per target, so you know when each embedding table has converged to zero backlog
+- Pair with the vector-coverage recipe below to decide which target still needs work
+
+### Recipe — Recompute Entity Degrees After Bulk Graph Maintenance (P3)
+```bash
+# Preview the drift without writing
+sqlite-graphrag graph recompute-degree --dry-run --json
+
+# Apply — recomputed from the real edges in a single transaction
+sqlite-graphrag graph recompute-degree --json
+# {"total":812,"updated":37,"zeroed":4,"unchanged":771}
+```
+- `entities.degree` can drift after `prune-relations`, `merge-entities`, `delete-entity` or bulk `unlink`
+- The envelope reports `total`, `updated`, `zeroed` (entities left with zero edges) and `unchanged`
+- Run it before trusting `graph entities --sort-by degree` rankings
+
+### Recipe — Migrate Legacy Underscore Relations With `--literal-from` (P4)
+```bash
+# Canonical recipe: applies_to (legacy underscore) -> applies-to (canonical hyphen)
+sqlite-graphrag reclassify-relation \
+  --literal-from "applies_to" --to-relation applies-to --batch --json
+```
+- `--literal-from` matches the stored relation value verbatim, bypassing the clap normalisation that would otherwise rewrite `applies_to` before it can match
+- Use it for any legacy edge whose stored spelling differs from the canonical hyphenated form
+
+### Recipe — Merge And Rename Entities By ID (P5)
+```bash
+# Merge duplicates by ID when names are ambiguous
+sqlite-graphrag merge-entities --ids "1,2,3" --into-id 4 --json
+
+# Rename an entity by ID
+sqlite-graphrag rename-entity --id 12 --new-name jwt-auth --json
+```
+- IDs come from `graph entities --json`; ID addressing disambiguates entities with confusing or non-kebab names
+- The name-based forms (`--names`/`--into`, `--name`/`--new-name`) keep working unchanged
+
+### Recipe — Diagnose Vector Coverage With health And embedding status (P6)
+```bash
+sqlite-graphrag health --json | jaq '{vec_memories_missing, vec_entities_missing, vec_chunks_missing, vec_memories_coverage_pct, vec_entities_coverage_pct, vec_chunks_coverage_pct}'
+
+sqlite-graphrag embedding status --json | jaq '.coverage'
+```
+- `health --json` exposes `vec_*_missing` counters plus `vec_*_coverage_pct` percentages per embedding table
+- `embedding status --json` reports `memories_missing`/`entities_missing`/`chunks_missing` under `coverage`
+- Any non-zero `*_missing` counter points straight at the `re-embed --target` recipe above
+
+### Recipe — Prefix Ingested Memory Names Per Project (P12)
+```bash
+sqlite-graphrag --llm-backend none ingest ./docs \
+  --recursive --pattern "*.md" --name-prefix projeto-x- --json
+```
+- Every ingested memory name receives the prefix, so two projects ingesting `README.md` into the same namespace no longer collide
+- Combine with `--namespace` when you want isolation instead of mere disambiguation

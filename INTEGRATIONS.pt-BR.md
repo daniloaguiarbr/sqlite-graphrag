@@ -27,6 +27,18 @@
 - Para extração de entidades/relacionamentos curada por LLM use `ingest --mode claude-code` ou `ingest --mode codex`.
 - Os tipos de entidade agora incluem `organization`, `location`, `date` além de `person`, `project`, `tool`, `file`, `concept`, `decision`, `incident`, `dashboard`, `issue_tracker`, `memory`.
 
+## Novos Comandos e Flags (desde v1.1.01)
+- O nome oficial da release é v1.1.01; o manifesto do crate carrega `version = "1.1.1"` porque o parser SemVer rejeita zero à esquerda no componente patch — faça pin com `=1.1.1`. O `User-Agent` HTTP é `sqlite-graphrag/1.1.1` (derivado de `CARGO_PKG_VERSION`); o binário de release tem aproximadamente 19 MiB; o schema permanece na versão 15 sem migração
+- Vetores de entidade são escritos pelo path REST OpenRouter mesmo sob `--llm-backend none` (a chain de embedding de entidade resolve para `[OpenRouter]`, sem subprocesso), e uma guarda de vetor vazio em `upsert_entity_vec`/`upsert_chunk_vec`/`memories::upsert_vec` mantém linhas sem vetor visíveis ao backfill do re-embed em vez de mascará-las atrás de um BLOB vazio (P1)
+- `enrich --operation re-embed --target memories|entities|chunks|all` — backfill retroativo de embedding por tabela de vetor (padrão `memories`, totalmente retrocompatível); `enrich --status` reporta o `scan_backlog` por alvo; os predicados do re-embed também selecionam linhas cujo `dim` gravado diverge do `--embedding-dim` configurado ou cujo blob está vazio (P2, P10)
+- `graph recompute-degree` — reconcilia o `entities.degree` cacheado com as contagens reais de arestas em uma única transação IMMEDIATE, por namespace (ou todos), com `--dry-run` e o envelope `{namespace, dry_run, total, updated, zeroed, unchanged, elapsed_ms}` (P3)
+- `reclassify-relation --literal-from <REL>` — casa a relação armazenada VERBATIM (sem normalização hífen→underscore na borda do clap), tornando alcançáveis as arestas legadas com hífen como `applies-to`; mutuamente exclusiva com `--from-relation` (P4)
+- `merge-entities --ids <a,b> --into-id <N>` e `rename-entity --id <N>` — seleção por ID escopada por namespace para manutenção de entidades quando nomes duplicados entre namespaces bloqueiam merges e renomeações (P5)
+- `health --json` ganha `vec_memories_missing`, `vec_entities_missing`, `vec_chunks_missing` e os campos `vec_*_coverage_pct` por tabela; `embedding status --json` ganha os contadores `*_missing` por tabela (P6)
+- A desserialização de `EntityType` é um `Deserialize` manual com erro rico de borda listando os 13 valores válidos, exposto como erro de Validação (exit 1) com validação precoce do input de grafo curado (`--graph-stdin`, `--entities-file`) em vez de um erro serde cru (exit 20) (P7)
+- Os erros de limite do exit 6 são tipados: `AppError::BodyTooLarge { bytes, limit }` e `AppError::TooManyChunks { chunks, limit }` substituem a mensagem genérica `LimitExceeded` em todo call site de tamanho de corpo — o CÓDIGO de saída continua 6, apenas a MENSAGEM do envelope ganha contexto acionável (P11)
+- `ingest --name-prefix <PREFIXO>` — prefixo kebab-case aplicado a todo nome de memória derivado, com o orçamento da parte derivada reduzido para que `prefixo + derivado` sempre respeite o teto de 80 caracteres do nome (P12)
+
 ## Novos Comandos e Flags (desde v1.0.94)
 - `--embedding-backend auto|openrouter|llm` — seleciona o backend de embedding (flag global)
 - `--embedding-model MODEL` — seleciona o modelo de embedding para OpenRouter (flag global, OBRIGATÓRIO com openrouter)
@@ -59,7 +71,7 @@
 - `enrich --until-empty` — loop interno scan→drain que roda até a fila não ter mais itens elegíveis ou `--max-runtime` expirar; substitui o loop de retry externo em bash (GAP-ENRICH-BACKLOG-CONVERGE, ADR-0055)
 - `--max-runtime <SEGUNDOS>` — teto wall-clock para `--until-empty` (padrão 3600)
 - `--max-attempts <N>` — orçamento de retries Transient antes de um item virar terminal `dead` (padrão 5, faixa 1..=20)
-- `--status` — relatório read-only JSON das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`); NÃO chama o LLM e NÃO adquire o singleton — a saída determinística é ideal para integração com hooks/timers
+- `--status` — relatório read-only JSON das contagens da fila (`unbound_backlog`, `queue_pending/done/failed/dead/skipped`, `eligible_now`, `waiting`) mais o `scan_backlog` por operação (os candidatos reais do banco que um scan enfileiraria, compartilhando os predicados WHERE dos scanners de modo que nunca diverge de um scan real; o GAP-SG-77 elimina o falso `pending=0` para `entity-descriptions`/`body-enrich`/`re-embed`, e o `state` deriva `pending-scan` dele); NÃO chama o LLM e NÃO adquire o singleton — a saída determinística é ideal para integração com hooks/timers
 - `--rest-concurrency <N>` — fan-out REST bounded para os lotes de embedding em `--mode openrouter`; clamp 1..=16 (padrão 8), distinta de `--llm-parallelism`
 - Convergência por dead-letter: a fila `.enrich-queue.sqlite` ganha colunas `error_class` e `next_retry_at` (ALTER TABLE idempotente) mais o status terminal `dead`; falhas Transient (rate-limit/timeout/5xx) reagendam com backoff exponencial, HardFailures (validação/parse) vão a terminal imediatamente, e o dequeue exclui `dead` para o conjunto vivo decrescer estritamente
 
@@ -179,7 +191,7 @@
 - `normalize-entities --yes` normaliza todos os nomes de entidade para kebab-case ASCII minúsculo; mescla colisões automaticamente; `--dry-run` faz preview
 - `enrich --operation <op> --mode claude-code` qualidade do grafo aumentada por LLM; operações: `memory-bindings`, `entity-descriptions`, `body-enrich`; `--dry-run` faz preview sem LLM; `--max-cost-usd`, `--resume`, `--retry-failed`
 - `deep-research` novas flags: `--rrf-k` (padrão 60), `--graph-decay` (padrão 0.7), `--graph-min-score` (padrão 0.05), `--max-neighbors-per-hop`
-- `--max-entity-degree N` em `link` e `remember` emite `tracing::warn!` quando entidade excede N conexões
+- flag `--max-entity-degree` REMOVIDA de `link` e `remember` na v1.0.99 — a escrita agora é puramente aditiva e NUNCA poda, deleta arestas nem emite warn de grau (passar a flag agora resulta em clap exit 2)
 - `health` reporta `top_relation`, `top_relation_ratio`, `applies_to_ratio`, `relation_concentration_warning` quando qualquer relação excede 40%
 - Nomes de entidade normalizados para kebab-case em todo path de escrita (remember, ingest, link, rename-entity)
 

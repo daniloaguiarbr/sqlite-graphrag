@@ -137,10 +137,18 @@ struct EmbeddingStatusCounts {
 struct EmbeddingCoverage {
     memories_total: i64,
     memories_with_vec: i64,
+    /// v1.1.1 (P6b): active memories WITHOUT a row in `memory_embeddings`
+    /// (LEFT JOIN, so orphaned vectors never mask a gap). Additive field —
+    /// the pre-existing totals keep their meaning.
+    memories_missing: i64,
     entities_total: i64,
     entities_with_vec: i64,
+    /// v1.1.1 (P6b): entities without a row in `entity_embeddings`.
+    entities_missing: i64,
     chunks_total: i64,
     chunks_with_vec: i64,
+    /// v1.1.1 (P6b): memory_chunks rows without a row in `chunk_embeddings`.
+    chunks_missing: i64,
 }
 
 /// Counts a table, returning 0 when the table is absent (legacy DB) instead of
@@ -151,6 +159,23 @@ fn count_table(conn: &rusqlite::Connection, sql: &str) -> i64 {
         Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => 0,
         Err(e) => {
             tracing::warn!(target: "embedding", error = %e, sql, "coverage count failed");
+            0
+        }
+    }
+}
+
+/// v1.1.1 (P6b): counts source rows without a vector via LEFT JOIN. When the
+/// embedding table does not exist (legacy DB) EVERY source row is missing, so
+/// the fallback is `total_when_absent` — never a silent 0 that would report
+/// full coverage on a table that is not there.
+fn count_missing(conn: &rusqlite::Connection, sql: &str, total_when_absent: i64) -> i64 {
+    match conn.query_row(sql, [], |r| r.get::<_, i64>(0)) {
+        Ok(n) => n,
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            total_when_absent
+        }
+        Err(e) => {
+            tracing::warn!(target: "embedding", error = %e, sql, "coverage missing-count failed");
             0
         }
     }
@@ -260,16 +285,42 @@ fn run_status(args: EmbeddingStatusArgs, llm_backend: LlmBackendChoice) -> Resul
     // GAP-SG-41: query the actual vector tables so coverage is observable even
     // when the async queue is empty (the synchronous OpenRouter REST path never
     // populates `pending_embeddings`).
+    let memories_total = count_table(
+        &conn,
+        "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
+    );
+    let entities_total = count_table(&conn, "SELECT COUNT(*) FROM entities");
+    let chunks_total = count_table(&conn, "SELECT COUNT(*) FROM memory_chunks");
     let coverage = EmbeddingCoverage {
-        memories_total: count_table(
-            &conn,
-            "SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL",
-        ),
+        memories_total,
         memories_with_vec: count_table(&conn, "SELECT COUNT(*) FROM memory_embeddings"),
-        entities_total: count_table(&conn, "SELECT COUNT(*) FROM entities"),
+        // v1.1.1 (P6b): missing counts via LEFT JOIN so orphaned vector rows
+        // never inflate coverage; absent embedding table means ALL missing.
+        memories_missing: count_missing(
+            &conn,
+            "SELECT COUNT(*) FROM memories m \
+             LEFT JOIN memory_embeddings me ON me.memory_id = m.id \
+             WHERE me.memory_id IS NULL AND m.deleted_at IS NULL",
+            memories_total,
+        ),
+        entities_total,
         entities_with_vec: count_table(&conn, "SELECT COUNT(*) FROM entity_embeddings"),
-        chunks_total: count_table(&conn, "SELECT COUNT(*) FROM memory_chunks"),
+        entities_missing: count_missing(
+            &conn,
+            "SELECT COUNT(*) FROM entities e \
+             LEFT JOIN entity_embeddings ee ON ee.entity_id = e.id \
+             WHERE ee.entity_id IS NULL",
+            entities_total,
+        ),
+        chunks_total,
         chunks_with_vec: count_table(&conn, "SELECT COUNT(*) FROM chunk_embeddings"),
+        chunks_missing: count_missing(
+            &conn,
+            "SELECT COUNT(*) FROM memory_chunks c \
+             LEFT JOIN chunk_embeddings ce ON ce.chunk_id = c.id \
+             WHERE ce.chunk_id IS NULL",
+            chunks_total,
+        ),
     };
 
     let output = EmbeddingStatusOutput {
@@ -328,10 +379,13 @@ mod tests {
             coverage: EmbeddingCoverage {
                 memories_total: 10,
                 memories_with_vec: 9,
+                memories_missing: 1,
                 entities_total: 4,
                 entities_with_vec: 4,
+                entities_missing: 0,
                 chunks_total: 7,
                 chunks_with_vec: 7,
+                chunks_missing: 0,
             },
             elapsed_ms: 1,
         };
@@ -340,6 +394,54 @@ mod tests {
         assert_eq!(json["coverage"]["memories_with_vec"], 9);
         assert_eq!(json["coverage"]["entities_with_vec"], 4);
         assert_eq!(json["coverage"]["chunks_with_vec"], 7);
+        // v1.1.1 (P6b): the missing counters serialize alongside the totals.
+        assert_eq!(json["coverage"]["memories_missing"], 1);
+        assert_eq!(json["coverage"]["entities_missing"], 0);
+        assert_eq!(json["coverage"]["chunks_missing"], 0);
+    }
+
+    // v1.1.1 (P6b): the LEFT JOIN counts real gaps and the absent-table
+    // fallback reports EVERYTHING missing instead of a silent 0.
+    #[test]
+    fn count_missing_counts_gaps_and_falls_back_when_table_absent() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE entities (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE entity_embeddings (
+                entity_id INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entity_embeddings (entity_id, embedding) VALUES (1, X'00')",
+            [],
+        )
+        .unwrap();
+
+        let missing = count_missing(
+            &conn,
+            "SELECT COUNT(*) FROM entities e \
+             LEFT JOIN entity_embeddings ee ON ee.entity_id = e.id \
+             WHERE ee.entity_id IS NULL",
+            3,
+        );
+        assert_eq!(missing, 2, "2 of 3 entities lack a vector row");
+
+        // Absent embedding table: everything counts as missing.
+        let missing_absent = count_missing(
+            &conn,
+            "SELECT COUNT(*) FROM entities e \
+             LEFT JOIN chunk_embeddings ce ON ce.chunk_id = e.id \
+             WHERE ce.chunk_id IS NULL",
+            3,
+        );
+        assert_eq!(missing_absent, 3, "absent table must report all missing");
     }
 
     #[test]

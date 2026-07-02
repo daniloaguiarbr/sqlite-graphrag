@@ -29,12 +29,60 @@ pub(super) fn call_claude(
     Ok((result.value, result.cost_usd, result.is_oauth))
 }
 
+/// GAP-SG-72/73 (v1.1.00): per-item failure diagnostics captured from a
+/// [`crate::chat_api::ChatError`] returned by [`call_openrouter`]. The
+/// `retry_class` is computed AT THE ORIGIN by `chat_api.rs` (the exact HTTP
+/// status / provider code), never inferred downstream by matching the
+/// formatted error string. `finish_reason` and the token counts are the raw
+/// truncation diagnostics OpenRouter attached to the failing response, when
+/// one was decoded.
+pub(super) struct OpenRouterFailureDiagnostics {
+    pub(super) retry_class: crate::retry::AttemptOutcome,
+    pub(super) finish_reason: Option<String>,
+    pub(super) prompt_tokens: Option<i64>,
+    pub(super) completion_tokens: Option<i64>,
+}
+
+// GAP-SG-72/73: `call_openrouter` returns the same `(Value, f64, bool)` tuple
+// shape as the subprocess providers (`call_claude`/`call_codex`/
+// `call_opencode`) so every `call_*` helper above can keep matching on
+// `mode` uniformly. That tuple has no room for `ChatError`'s typed
+// `retry_class` / truncation diagnostics, so they are stashed here on
+// failure and drained by the caller in `mod.rs` right after every
+// `call_result` (mirrors the `ENRICH_LAST_BACKEND` accumulator in
+// `postprocess.rs`). `thread_local` — NOT a process-wide `Mutex` — because
+// the parallel worker loop runs one item per OS thread at a time: a
+// process-wide slot would let a diagnostic from one worker's item leak into
+// another worker's unrelated failure.
+thread_local! {
+    static LAST_OPENROUTER_FAILURE: std::cell::RefCell<Option<OpenRouterFailureDiagnostics>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Drains the diagnostics stashed by the most recent [`call_openrouter`]
+/// failure on THIS thread. Callers must invoke this unconditionally right
+/// after every `call_result` (success or failure) so a diagnostic never
+/// survives past the item that produced it — see the doc comment on
+/// [`OpenRouterFailureDiagnostics`].
+pub(super) fn take_last_openrouter_failure() -> Option<OpenRouterFailureDiagnostics> {
+    LAST_OPENROUTER_FAILURE.with(|cell| cell.borrow_mut().take())
+}
+
 /// v1.0.95 (ADR-0054): route a single JUDGE turn through the OpenRouter
 /// chat-completions REST API. Unlike the subprocess runners there is no
 /// `binary` argument: the process-wide chat client (initialised in `run()`
 /// before scan) is fetched from the singleton and driven synchronously via
 /// the shared tokio runtime. Returns `(value, cost_usd, is_oauth=false)`
 /// where `cost_usd` is read from the response `usage.cost`.
+///
+/// v1.1.00 (GAP-SG-70/72/73): `complete` now returns a typed
+/// `Result<ChatCompletion, ChatError>` carrying `finish_reason` / token
+/// diagnostics and an origin-computed `retry_class`. On success those
+/// diagnostics are simply discarded (the item succeeded); on failure they
+/// are stashed via [`take_last_openrouter_failure`] so the queue recorder in
+/// `mod.rs` can call `record_item_failure_typed` with the precise verdict
+/// instead of falling back to the untyped `classify_enrich_outcome` message
+/// sniffing.
 pub(super) fn call_openrouter(
     prompt: &str,
     json_schema: &str,
@@ -52,7 +100,25 @@ pub(super) fn call_openrouter(
         )
     })?;
     let runtime = crate::embedder::shared_runtime()?;
-    runtime.block_on(client.complete(prompt, input_text, json_schema, None))
+    match runtime.block_on(client.complete(
+        prompt,
+        input_text,
+        json_schema,
+        Some(crate::constants::ENRICH_INITIAL_MAX_TOKENS),
+    )) {
+        Ok(completion) => Ok((completion.value, completion.cost_usd, false)),
+        Err(chat_err) => {
+            LAST_OPENROUTER_FAILURE.with(|cell| {
+                *cell.borrow_mut() = Some(OpenRouterFailureDiagnostics {
+                    retry_class: chat_err.retry_class,
+                    finish_reason: chat_err.finish_reason.clone(),
+                    prompt_tokens: chat_err.prompt_tokens.map(i64::from),
+                    completion_tokens: chat_err.completion_tokens.map(i64::from),
+                });
+            });
+            Err(chat_err.source)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,9 +245,10 @@ pub(super) fn call_entity_description(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => {
-                AppError::NotFound(format!("entity '{entity_name}' not found"))
-            }
+            rusqlite::Error::QueryReturnedNoRows => AppError::EntityNotYetMaterialized {
+                name: entity_name.to_string(),
+                namespace: namespace.to_string(),
+            },
             other => AppError::Database(other),
         })?;
 
@@ -297,9 +364,10 @@ pub(super) fn call_body_enrich(
             })?
             .len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         std::fs::read_to_string(tmpl_path).map_err(|e| {
             AppError::Io(std::io::Error::new(
@@ -428,14 +496,43 @@ pub(super) fn call_body_enrich(
     })
 }
 
+// GAP-SG-73: failures from `reembed_memory_vector` below reach the queue
+// as bare `AppError::Embedding`, not a typed `EmbedError` — see the doc
+// comment on the `AppError::Embedding` arm of `classify_enrich_outcome` in
+// `queue.rs` for why the origin-typed `retry_class` is not threaded through
+// here, and why Transient is the documented, deliberate safe floor.
 pub(super) fn call_reembed(
     conn: &Connection,
     namespace: &str,
-    memory_name: &str,
+    item_key: &str,
     paths: &crate::paths::AppPaths,
     llm_backend: crate::cli::LlmBackendChoice,
     embedding_backend: crate::cli::EmbeddingBackendChoice,
 ) -> Result<EnrichItemResult, AppError> {
+    // v1.1.1 (P2): prefixed keys route to the entity/chunk backfill paths
+    // (`re-embed --target entities|chunks|all`); bare keys keep the
+    // historical memory behaviour, so pre-v1.1.1 queue rows still work.
+    if let Some(entity_name) = item_key.strip_prefix("entity:") {
+        return call_reembed_entity(
+            conn,
+            namespace,
+            entity_name,
+            paths,
+            llm_backend,
+            embedding_backend,
+        );
+    }
+    if let Some(chunk_key) = item_key.strip_prefix("chunk:") {
+        return call_reembed_chunk(
+            conn,
+            namespace,
+            chunk_key,
+            paths,
+            llm_backend,
+            embedding_backend,
+        );
+    }
+    let memory_name = item_key;
     let (memory_id, body, memory_type): (i64, String, String) = conn
         .query_row(
             "SELECT id, COALESCE(body,''), COALESCE(type,'note')
@@ -476,6 +573,133 @@ pub(super) fn call_reembed(
         rels: 0,
         chars_before: Some(body.chars().count()),
         chars_after: Some(body.chars().count()),
+        cost: 0.0,
+        is_oauth: true,
+    })
+}
+
+/// v1.1.1 (P2): rebuilds the vector of a single entity
+/// (`re-embed --target entities`).
+///
+/// Embeds the same text formula the write path uses (the entity name, plus
+/// the description when present) so backfilled vectors are comparable to the
+/// ones produced at write time by `remember`/`ingest`.
+fn call_reembed_entity(
+    conn: &Connection,
+    namespace: &str,
+    entity_name: &str,
+    paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<EnrichItemResult, AppError> {
+    let (entity_id, description, entity_type): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, COALESCE(description,''), type
+             FROM entities
+             WHERE namespace=?1 AND name=?2",
+            rusqlite::params![namespace, entity_name],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::NotFound(format!("entity '{entity_name}' not found"))
+            }
+            other => AppError::Database(other),
+        })?;
+
+    let text = if description.is_empty() {
+        entity_name.to_string()
+    } else {
+        format!("{entity_name} {description}")
+    };
+    let (embedding, backend_kind) = crate::embedder::embed_passage_with_embedding_choice(
+        &paths.models,
+        &text,
+        embedding_backend,
+        llm_backend,
+    )?;
+    if embedding.is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "embedding backend returned an empty vector (chain resolved to none)"
+                .to_string(),
+        });
+    }
+    super::postprocess::record_enrich_backend(backend_kind.as_str());
+    entities::upsert_entity_vec(
+        conn,
+        entity_id,
+        namespace,
+        EntityType::map_to_canonical(&entity_type),
+        &embedding,
+        entity_name,
+    )?;
+    Ok(EnrichItemResult::Done {
+        memory_id: None,
+        entity_id: Some(entity_id),
+        entities: 1,
+        rels: 0,
+        chars_before: Some(text.chars().count()),
+        chars_after: Some(text.chars().count()),
+        cost: 0.0,
+        is_oauth: true,
+    })
+}
+
+/// v1.1.1 (P2): rebuilds the vector of a single chunk
+/// (`re-embed --target chunks`). The key carries the `memory_chunks.id`.
+fn call_reembed_chunk(
+    conn: &Connection,
+    namespace: &str,
+    chunk_key: &str,
+    paths: &crate::paths::AppPaths,
+    llm_backend: crate::cli::LlmBackendChoice,
+    embedding_backend: crate::cli::EmbeddingBackendChoice,
+) -> Result<EnrichItemResult, AppError> {
+    let chunk_id: i64 = chunk_key.parse().map_err(|_| {
+        AppError::Validation(format!("invalid chunk id in re-embed key: {chunk_key}"))
+    })?;
+    let (memory_id, chunk_idx, chunk_text): (i64, i32, String) = conn
+        .query_row(
+            "SELECT c.memory_id, c.chunk_idx, c.chunk_text
+             FROM memory_chunks c
+             JOIN memories m ON m.id = c.memory_id
+             WHERE c.id = ?1 AND m.namespace = ?2 AND m.deleted_at IS NULL",
+            rusqlite::params![chunk_id, namespace],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!(
+                "chunk {chunk_id} not found in namespace '{namespace}'"
+            )),
+            other => AppError::Database(other),
+        })?;
+
+    if chunk_text.trim().is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "chunk text is empty".to_string(),
+        });
+    }
+    let (embedding, backend_kind) = crate::embedder::embed_passage_with_embedding_choice(
+        &paths.models,
+        &chunk_text,
+        embedding_backend,
+        llm_backend,
+    )?;
+    if embedding.is_empty() {
+        return Ok(EnrichItemResult::Skipped {
+            reason: "embedding backend returned an empty vector (chain resolved to none)"
+                .to_string(),
+        });
+    }
+    super::postprocess::record_enrich_backend(backend_kind.as_str());
+    crate::storage::chunks::upsert_chunk_vec(conn, chunk_id, memory_id, chunk_idx, &embedding)?;
+    Ok(EnrichItemResult::Done {
+        memory_id: Some(memory_id),
+        entity_id: None,
+        entities: 0,
+        rels: 0,
+        chars_before: Some(chunk_text.chars().count()),
+        chars_after: Some(chunk_text.chars().count()),
         cost: 0.0,
         is_oauth: true,
     })
@@ -781,7 +1005,7 @@ pub(super) fn call_entity_connect(
 /// G27 P2: Validate entity type assignment via LLM.
 pub(super) fn call_entity_type_validate(
     conn: &Connection,
-    _namespace: &str,
+    namespace: &str,
     item_key: &str,
     binary: &Path,
     model: Option<&str>,
@@ -790,11 +1014,17 @@ pub(super) fn call_entity_type_validate(
 ) -> Result<EnrichItemResult, AppError> {
     let (ent_id, ent_name, ent_type): (i64, String, String) = conn
         .query_row(
-            "SELECT id, name, type FROM entities WHERE name = ?1",
-            rusqlite::params![item_key],
+            "SELECT id, name, type FROM entities WHERE namespace = ?1 AND name = ?2",
+            rusqlite::params![namespace, item_key],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
-        .map_err(|_| AppError::NotFound(format!("entity '{item_key}' not found")))?;
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::EntityNotYetMaterialized {
+                name: item_key.to_string(),
+                namespace: namespace.to_string(),
+            },
+            other => AppError::Database(other),
+        })?;
     let input_text = format!("Entity: {ent_name}\nCurrent type: {ent_type}");
     let (value, cost, is_oauth) = match mode {
         EnrichMode::ClaudeCode => call_claude(

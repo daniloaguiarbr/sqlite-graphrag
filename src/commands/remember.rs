@@ -209,10 +209,6 @@ Accepts Unix epoch (e.g. 1700000000) or RFC 3339 (e.g. 2026-04-19T12:00:00Z)."
     #[arg(long, default_value_t = crate::constants::DEFAULT_MAX_RSS_MB,
           help = "Maximum process RSS in MiB; abort if exceeded during embedding (default: 8192)")]
     pub max_rss_mb: u64,
-    /// Emit a warning (but do not reject) when persisting an entity whose degree would
-    /// exceed this value after the upsert. Default 50. Set 0 to disable the check.
-    #[arg(long, default_value_t = 50, value_name = "N")]
-    pub max_entity_degree: u32,
     /// G42/S3 (v1.0.79): maximum simultaneous LLM embedding subprocesses.
     /// The effective value is further bounded by CPU count and available
     /// RAM (permits = min(N, cpus, ram_livre*0.5/350MB), clamp [1, 32]).
@@ -343,9 +339,10 @@ pub fn run(
     } else if let Some(ref path) = args.body_file {
         let file_size = std::fs::metadata(path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         match std::fs::read_to_string(path) {
             Ok(s) => s,
@@ -369,22 +366,30 @@ pub fn run(
     if let Some(path) = args.entities_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-        graph.entities = serde_json::from_str(&content)?;
+        // v1.1.1 (P7): boundary validation with context — an invalid
+        // entity_type surfaces the FromStr message (13 valid values + hints)
+        // as a Validation error instead of a bare Json error (exit 20).
+        graph.entities = serde_json::from_str(&content)
+            .map_err(|e| AppError::Validation(format!("invalid JSON in --entities-file: {e}")))?;
     }
     if let Some(path) = args.relationships_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-        graph.relationships = serde_json::from_str(&content)?;
+        graph.relationships = serde_json::from_str(&content).map_err(|e| {
+            AppError::Validation(format!("invalid JSON in --relationships-file: {e}"))
+        })?;
     }
     if args.graph_stdin {
         graph = serde_json::from_str::<GraphInput>(&raw_body).map_err(|e| {
@@ -401,9 +406,10 @@ pub fn run(
     if let Some(path) = args.graph_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         let mut gf = serde_json::from_str::<GraphInput>(&content)
@@ -437,9 +443,10 @@ pub fn run(
     normalize_and_validate_graph_input(&mut graph)?;
 
     if raw_body.len() > MAX_MEMORY_BODY_LEN {
-        return Err(AppError::LimitExceeded(
-            crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-        ));
+        return Err(AppError::BodyTooLarge {
+            bytes: raw_body.len() as u64,
+            limit: MAX_MEMORY_BODY_LEN as u64,
+        });
     }
 
     // v1.0.22 P1: reject empty or whitespace-only body when no external graph is provided.
@@ -461,9 +468,10 @@ pub fn run(
     } else if let Some(path) = args.metadata_file {
         let file_size = std::fs::metadata(&path).map_err(AppError::Io)?.len();
         if file_size > MAX_MEMORY_BODY_LEN as u64 {
-            return Err(AppError::LimitExceeded(
-                crate::i18n::validation::body_exceeds(MAX_MEMORY_BODY_LEN),
-            ));
+            return Err(AppError::BodyTooLarge {
+                bytes: file_size,
+                limit: MAX_MEMORY_BODY_LEN as u64,
+            });
         }
         let content = std::fs::read_to_string(&path).map_err(AppError::Io)?;
         serde_json::from_str(&content)?
@@ -695,10 +703,10 @@ pub fn run(
     );
 
     if chunks_created > crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS {
-        return Err(AppError::LimitExceeded(format!(
-            "document produces {chunks_created} chunks; current safe operational limit is {} chunks; split the document before using remember",
-            crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS
-        )));
+        return Err(AppError::TooManyChunks {
+            chunks: chunks_created,
+            limit: crate::constants::REMEMBER_MAX_SAFE_MULTI_CHUNKS,
+        });
     }
 
     output::emit_progress_i18n("Computing embedding...", "Calculando embedding...");
@@ -1057,28 +1065,6 @@ pub fn run(
 
         for &eid in &affected_entity_ids {
             entities::recalculate_degree(&tx, eid)?;
-        }
-        // GAP-SG-49: enforce the degree cap instead of only warning (was the
-        // GAP-17 advisory). Prune the weakest incident edge(s) until each
-        // affected entity is back under the cap.
-        if args.max_entity_degree > 0 {
-            let cap = args.max_entity_degree as i64;
-            for &eid in &affected_entity_ids {
-                let pruned = crate::graph::enforce_degree_cap(&tx, eid, cap)?;
-                if pruned > 0 {
-                    let name: String = tx.query_row(
-                        "SELECT name FROM entities WHERE id = ?1",
-                        rusqlite::params![eid],
-                        |r| r.get(0),
-                    )?;
-                    tracing::warn!(target: "remember",
-                        entity = %name,
-                        cap = cap,
-                        pruned = pruned,
-                        "entity degree cap exceeded; pruned lowest-weight edge(s)"
-                    );
-                }
-            }
         }
     }
     tx.commit()?;
